@@ -15,8 +15,17 @@ export async function openSpatialDataStore(storeUrl: string): Promise<SpatialDat
   const store = new FetchStore(storeUrl);
   const group = await open(store, { kind: 'group' });
   const attrs = group.attrs;
+  console.log(attrs);
 
   // Validate and parse the metadata using zod schema
+  // this is what is actually returned:
+  // {
+  //     "spatialdata_attrs": {
+  //         "spatialdata_software_version": "0.3.1.dev0+gae71ae1.d20250414",
+  //         "version": "0.1"
+  //     }
+  // }
+  // we need to get rid of the nonsense vibe-code and write some actual code.
   return spatialDataSchema.parse(attrs);
 }
 
