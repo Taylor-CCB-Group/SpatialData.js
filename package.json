@@ -1,0 +1,27 @@
+{
+  "name": "spatialdata-monorepo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A library for interfacing with SpatialData stores in TS/JS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Taylor-CCB-Group/SpatialData.ts.git"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter='!docs' run build",
+    "test": "pnpm -r --filter='!docs' run test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "docs:dev": "pnpm --filter docs dev",
+    "docs:build": "pnpm --filter docs build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=8"
+  }
+}
