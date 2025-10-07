@@ -119,7 +119,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Wellcome Centre of Human Genetics. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Centre for Human Genetics, Oxford University. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

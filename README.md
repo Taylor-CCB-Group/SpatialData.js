@@ -58,4 +58,4 @@ pnpm docs:dev
 
 ## 📝 License
 
-MIT © Wellcome Centre of Human Genetics
+MIT © Centre For Human Genetics, Oxford University

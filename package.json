@@ -21,7 +21,7 @@
     "@biomejs/biome": "^1.9.4"
   },
   "engines": {
-    "node": ">=18",
-    "pnpm": ">=8"
+    "node": ">=20",
+    "pnpm": ">=10"
   }
 }
