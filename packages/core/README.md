@@ -2,37 +2,18 @@
 
 Core library for interfacing with SpatialData stores in TypeScript/JavaScript.
 
-## Features
-
-- 🔍 Read and validate SpatialData from zarr stores using zarrita
-- 🛡️ Type-safe schemas with Zod
-- 📦 Works in Node.js and browsers
-- 🎯 Full TypeScript support
-
-## Installation
-
-```bash
-pnpm add @spatialdata/core
-```
-
-## Usage
-
-```typescript
-import { openSpatialDataStore, readArray } from '@spatialdata/core';
-
-// Open a SpatialData store
-const metadata = await openSpatialDataStore('path/to/store.zarr');
-console.log(metadata);
-
-// Read an array from the store
-const array = await readArray('path/to/store.zarr', 'images/image1');
-```
 
 ## Development
+
+The documentation package has a dependency on `packages/core` and can be used for experimenting with functionality inline with the documentation itself.
+
 
 ```bash
 # Install dependencies
 pnpm install
+
+# develop docs & packages
+pnpm dev
 
 # Run tests
 pnpm test

@@ -14,6 +14,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "format:check": "biome format .",
+    "dev": "pnpm -r --parallel dev",
     "docs:dev": "pnpm --filter docs dev",
     "docs:build": "pnpm --filter docs build"
   },
