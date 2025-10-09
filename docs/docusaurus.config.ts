@@ -5,7 +5,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: 'SpatialData.ts',
+  title: 'SpatialData.js',
   tagline: 'A library for interfacing with SpatialData stores in TS/JS',
   favicon: 'img/favicon.ico',
 
@@ -18,12 +18,12 @@ const config: Config = {
   url: 'https://taylor-ccb-group.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/SpatialData.ts/',
+  baseUrl: '/SpatialData.js/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
   organizationName: 'Taylor-CCB-Group', // Usually your GitHub org/user name.
-  projectName: 'SpatialData.ts', // Usually your repo name.
+  projectName: 'SpatialData.js', // Usually your repo name.
 
   onBrokenLinks: 'throw',
 
@@ -43,7 +43,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl: 'https://github.com/Taylor-CCB-Group/SpatialData.ts/tree/main/docs/',
+          editUrl: 'https://github.com/Taylor-CCB-Group/SpatialData.js/tree/main/docs/',
         },
         blog: {
           showReadingTime: true,
@@ -53,7 +53,7 @@ const config: Config = {
           },
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl: 'https://github.com/Taylor-CCB-Group/SpatialData.ts/tree/main/docs/',
+          editUrl: 'https://github.com/Taylor-CCB-Group/SpatialData.js/tree/main/docs/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -73,9 +73,9 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'SpatialData.ts',
+      title: 'SpatialData.js',
       logo: {
-        alt: 'SpatialData.ts Logo',
+        alt: 'SpatialData.js Logo',
         src: 'img/logo.svg',
       },
       items: [
@@ -87,7 +87,7 @@ const config: Config = {
         },
         { to: '/blog', label: 'Blog', position: 'left' },
         {
-          href: 'https://github.com/Taylor-CCB-Group/SpatialData.ts',
+          href: 'https://github.com/Taylor-CCB-Group/SpatialData.js',
           label: 'GitHub',
           position: 'right',
         },
@@ -114,7 +114,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/Taylor-CCB-Group/SpatialData.ts',
+              href: 'https://github.com/Taylor-CCB-Group/SpatialData.js',
             },
           ],
         },

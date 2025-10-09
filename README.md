@@ -1,4 +1,4 @@
-# SpatialData.ts
+# SpatialData.js
 
 A library for interfacing with SpatialData stores in TypeScript/JavaScript.
 

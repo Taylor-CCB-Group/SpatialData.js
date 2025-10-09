@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Taylor-CCB-Group/SpatialData.ts.git"
+    "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git"
   },
   "scripts": {
     "build": "pnpm -r --filter='!docs' run build",
