@@ -4,7 +4,6 @@ import Layout from '@theme/Layout';
 import clsx from 'clsx';
 
 import styles from './index.module.css';
-import Sketch from '@site/src/components/Sketch/';
 
 function HomepageHeader() {
   const { siteConfig } = useDocusaurusContext();
@@ -29,7 +28,7 @@ export default function Home() {
     >
       <HomepageHeader />
       <main>
-        <Sketch />
+        
       </main>
     </Layout>
   );

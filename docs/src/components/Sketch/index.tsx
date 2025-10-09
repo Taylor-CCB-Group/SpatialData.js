@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { openSpatialDataStore } from '@spatialdata/core';
+import { readZarr } from '@spatialdata/core';
 
 const useSpatialData = (url: string) => {
   const [data, setData] = useState([]);
 
   useEffect(() => {
-    openSpatialDataStore(url).then(setData).catch((error) => {
+    readZarr(url).then(setData).catch((error) => {
       console.error('Error loading spatial data:', error);
       setData(error);
     });
