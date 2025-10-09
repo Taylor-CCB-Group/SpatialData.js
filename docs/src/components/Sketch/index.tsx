@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { readZarr } from '@spatialdata/core';
 
 const useSpatialData = (url: string) => {
-  const [data, setData] = useState([]);
+  const [data, setData] = useState();
 
   useEffect(() => {
     readZarr(url).then(setData).catch((error) => {
@@ -21,7 +21,14 @@ export default function Sketch() {
   return (
     <div>
       <h2>Sketching out some functionality</h2>
+      
+      <h3>SpatialData URL:</h3>
       <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} />
+      <h3>String representation:</h3>
+      <pre>
+        {data ? data.toString() : 'Loading...'}
+      </pre>
+      <h3>Full data object:</h3>
       <pre>{JSON.stringify(data, null, 2)}</pre>
     </div>
   );
