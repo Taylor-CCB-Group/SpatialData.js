@@ -4,6 +4,7 @@
 
 import * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
+import { type ZGroup, parseStoreContents } from './zarrUtils';
 // import type { SpatialData } from '../schemas/index.js';
 // import { spatialDataSchema } from '../schemas/index.js';
 
@@ -32,35 +33,6 @@ class Tables(Elements[AnnData])
 
 export type SpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 
-function parseStoreContents(store: zarr.Listable<zarr.FetchStore>) {
-  const contents = store.contents().map(v => {
-    const pathParts = v.path.split('/');
-    // might do something with the top-level element name - ie, make a different kind of object for each
-
-    // const elementName = pathParts[0];
-    // if (!ElementNames.includes(elementName as ElementName) && pathParts.length >= 1) {
-    //   console.warn(`Unexpected top-level element in SpatialData Zarr store: ${elementName}`);
-    // }
-    // const path = pathParts.slice(1);
-      
-    const path = pathParts.slice(1);
-    return { path, kind: v.kind };
-  }).sort((a, b) => a.path.length - b.path.length);
-
-  // biome-ignore lint/suspicious/noExplicitAny: use any internally for building tree, at least for now
-  type TreeNode = Record<string, any>;
-  const tree: TreeNode = {};
-  for (const item of contents) {
-    let currentNode = tree;
-    for (const part of item.path) {
-      if (!(part in currentNode)) {
-        currentNode[part] = {};
-      }
-      currentNode = currentNode[part];
-    }
-  }
-  return tree;
-}
 
 // these should be things with easy to access properties for lazy loading (partial) data
 // not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
@@ -96,7 +68,6 @@ async function reprA(element: SpatialElement, name: ElementName) {
 }
 
 // we might not always use the FetchStore, this is for convenience & could change
-type ZGroup = zarr.Group<zarr.FetchStore>;
 
 /**
  * There is a tendency for .zmetadata to be misnamed as zmetadata...
@@ -123,6 +94,7 @@ export class SpatialData {
   _ready: Promise<void>;
   // we could potentially have ListableSpatialData type...
   private _listableStore?: zarr.Listable<zarr.FetchStore>;
+  private _root?: ZGroup;
 
   images?: Elements<'images'>;
   points?: Elements<'points'>;
@@ -140,26 +112,28 @@ export class SpatialData {
   private async _init(selection?: ElementName[], onBadFiles?: BadFileHandler) {
     const store = new zarr.FetchStore(this.url);
     const listableStore = await tryConsolidated(store);
+    const root = await zarr.open(store, { kind: 'group' });
+    this._root = root;
     if ('contents' in listableStore) {
       console.log("contents", listableStore.contents()); // we could do something with this
       this._listableStore = listableStore;
+      // const parsed = parseStoreContents(listableStore, root);
     } else {
       console.warn("Could not list contents of the Zarr store");
       //!!! we don't really want to throw here... 
       // but sometimes I want to a type-guard that we have a listable store
       // throw new Error("Could not list contents of the Zarr store");
+      const elementsToLoad = selection ?? ElementNames;
+      await Promise.allSettled([
+        ...elementsToLoad.map(async (elementName) => {
+          const element = await loadElement(root, elementName, onBadFiles);
+          if (element) {
+            //!!! tbd... this whole Promise.allSettled block will probably be replaced by a parseStoreContents variant?
+            this[elementName] = { test: element };
+          }
+        })
+      ]);
     }
-    const root = await zarr.open(store, { kind: 'group' });
-    const elementsToLoad = selection ?? ElementNames;
-    await Promise.allSettled([
-      ...elementsToLoad.map(async (elementName) => {
-        const element = await loadElement(root, elementName, onBadFiles);
-        if (element) {
-          //!!! tbd... this whole Promise.allSettled block will probably be replaced by a parseStoreContents variant?
-          this[elementName] = { test: element };
-        }
-      })
-    ]);
   }
 
   private* _genSpatialElementValues() {
@@ -215,8 +189,8 @@ export class SpatialData {
   async representation() {
     await this._ready;
 
-    if (this._listableStore) {
-      return JSON.stringify(parseStoreContents(this._listableStore), null, 2);
+    if (this._listableStore && this._root) {
+      return JSON.stringify(parseStoreContents(this._listableStore, this._root), null, 2);
     }
 
     const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);
