@@ -22,15 +22,17 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "zarrita": "^0.5.4",
-    "zod": "^3.24.1"
+    "zarrita": "catalog:",
+    "zod": "catalog:",
+    "apache-arrow": "catalog:",
+    "parquet-wasm": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.7",
+    "typescript": "catalog:",
+    "vite": "catalog:",
     "vite-plugin-dts": "^4.3.0",
-    "vitest": "^2.1.8"
+    "vitest": "catalog:"
   },
   "license": "MIT",
   "repository": {
