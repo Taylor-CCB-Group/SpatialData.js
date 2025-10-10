@@ -29,7 +29,42 @@ class Tables(Elements[AnnData])
 
 
 */
+
 export type SpatialElement = Awaited<ReturnType<typeof zarr.open>>;
+
+function parseStoreContents(store: zarr.Listable<zarr.FetchStore>) {
+  const contents = store.contents().map(v => {
+    const pathParts = v.path.split('/');
+    // might do something with the top-level element name - ie, make a different kind of object for each
+
+    // const elementName = pathParts[0];
+    // if (!ElementNames.includes(elementName as ElementName) && pathParts.length >= 1) {
+    //   console.warn(`Unexpected top-level element in SpatialData Zarr store: ${elementName}`);
+    // }
+    // const path = pathParts.slice(1);
+      
+    const path = pathParts.slice(1);
+    return { path, kind: v.kind };
+  }).sort((a, b) => a.path.length - b.path.length);
+
+  // biome-ignore lint/suspicious/noExplicitAny: use any internally for building tree, at least for now
+  type TreeNode = Record<string, any>;
+  const tree: TreeNode = {};
+  for (const item of contents) {
+    let currentNode = tree;
+    for (const part of item.path) {
+      if (!(part in currentNode)) {
+        currentNode[part] = {};
+      }
+      currentNode = currentNode[part];
+    }
+  }
+  return tree;
+}
+
+// these should be things with easy to access properties for lazy loading (partial) data
+// not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
+export type Elements<T extends ElementName> = Record<string, SpatialElement>;
 
 function repr(element: SpatialElement) {
   if (element.kind === 'array') {
@@ -83,16 +118,17 @@ async function loadElement(root: ZGroup, name: ElementName, onBadFiles?: BadFile
     return undefined;
   }
 }
-// http://localhost:8080/spatialdata-XETG00156__0073158__CYTO2_1NM__20250807__152057.zarr
 export class SpatialData {
   readonly url: StoreLocation;
   _ready: Promise<void>;
+  // we could potentially have ListableSpatialData type...
+  private _listableStore?: zarr.Listable<zarr.FetchStore>;
 
-  images?: SpatialElement;
-  points?: SpatialElement;
-  labels?: SpatialElement;
-  shapes?: SpatialElement;
-  tables?: SpatialElement;
+  images?: Elements<'images'>;
+  points?: Elements<'points'>;
+  labels?: Elements<'labels'>;
+  shapes?: Elements<'shapes'>;
+  tables?: Elements<'tables'>;
   
   constructor(url: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
     this.url = url;
@@ -106,38 +142,31 @@ export class SpatialData {
     const listableStore = await tryConsolidated(store);
     if ('contents' in listableStore) {
       console.log("contents", listableStore.contents()); // we could do something with this
+      this._listableStore = listableStore;
+    } else {
+      console.warn("Could not list contents of the Zarr store");
+      //!!! we don't really want to throw here... 
+      // but sometimes I want to a type-guard that we have a listable store
+      // throw new Error("Could not list contents of the Zarr store");
     }
     const root = await zarr.open(store, { kind: 'group' });
     const elementsToLoad = selection ?? ElementNames;
     await Promise.allSettled([
       ...elementsToLoad.map(async (elementName) => {
-        this[elementName] = await loadElement(root, elementName, onBadFiles);
+        const element = await loadElement(root, elementName, onBadFiles);
+        if (element) {
+          //!!! tbd... this whole Promise.allSettled block will probably be replaced by a parseStoreContents variant?
+          this[elementName] = { test: element };
+        }
       })
     ]);
   }
-  /* in python:
-  @property
-  def coordinate_systems(self) -> list[str]:
-    from spatialdata.transformations.operations import get_transformation
 
-    all_cs = set()
-    gen = self._gen_spatial_element_values()
-    for obj in gen:
-      transformations = get_transformation(obj, get_all=True)
-      assert isinstance(transformations, dict)
-    for cs in transformations:
-        all_cs.add(cs)
-    return list(all_cs)
-  def _gen_spatial_element_values(self):
-    for element_type in ["images", "labels", "points", "shapes"]:
-      d = getattr(SpatialData, element_type).fget(self)
-      yield from d.values()
-  */
   private* _genSpatialElementValues() {
     for (const elementType of SpatialElementNames) {
       const d = this[elementType];
       if (d) {
-        // we probably need to do something with zarrita here
+        // we may need to do something with zarrita here?
         yield* Object.values(d) as SpatialElement[]; // pseudo type safety
       }
     }
@@ -172,7 +201,8 @@ export class SpatialData {
     const elements = nonEmptyElements.map((name) => {
       const element = this[name];
       if (element) {
-        return `  └── ${name}:\n      └── ${repr(element)}`;
+        // return `  └── ${name}:\n      └── ${repr(element)}`;
+        return Object.entries(element).map(([key, val]) => `  └── ${name}/${key}:\n      └── ${repr(val)}`).join('\n');
       }
       return `- ${name}: not loaded`;
     }).join('\n');
@@ -184,6 +214,11 @@ export class SpatialData {
   
   async representation() {
     await this._ready;
+
+    if (this._listableStore) {
+      return JSON.stringify(parseStoreContents(this._listableStore), null, 2);
+    }
+
     const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);
     if (nonEmptyElements.length === 0) {
       return `SpatialData object, with asssociated Zarr store: ${this.url}\n(No elements loaded)`;
@@ -191,7 +226,9 @@ export class SpatialData {
     const elements = (await Promise.all(nonEmptyElements.map(async (name) => {
       const element = this[name];
       if (element) {
-        return `  └── ${name}:\n      └── ${await reprA(element, name)}`; 
+        //return `  └── ${name}:\n      └── ${await reprA(element, name)}`; 
+        // return `  └── ${name}:\n      └── ${repr(element)}`;
+        return Object.entries(element).map(([key, val]) => `  └── ${name}/${key}:\n      └── ${repr(val)}`).join('\n');
       }
       return `- ${name}: not loaded`;
     }))).join('\n');
