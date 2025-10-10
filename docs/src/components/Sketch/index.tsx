@@ -18,6 +18,20 @@ const defaultUrl = 'https://storage.googleapis.com/vitessce-demo-data/spatialdat
 export default function Sketch() {
   const [url, setUrl] = useState(defaultUrl);
   const data = useSpatialData(url);
+  const [repr, setRepr] = useState('Loading...');
+  useEffect(() => {
+    if (data && !(data instanceof Error)) {
+      data.representation().then(setRepr).catch((error) => {
+        console.error('Error getting representation:', error);
+        setRepr('Error getting representation');
+      });
+    } else if (data instanceof Error) {
+      setRepr(`Error loading data: ${data.message}`);
+    } else {
+      setRepr('Loading...');
+    }
+  }, [data]);
+
   return (
     <div>
       <h2>Sketching out some functionality</h2>
@@ -26,7 +40,7 @@ export default function Sketch() {
       <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} />
       <h3>String representation:</h3>
       <pre>
-        {data ? data.toString() : 'Loading...'}
+        {repr}
       </pre>
       <h3>Full data object:</h3>
       <pre>{JSON.stringify(data, null, 2)}</pre>
