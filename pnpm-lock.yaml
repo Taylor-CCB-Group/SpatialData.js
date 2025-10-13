@@ -79,8 +79,8 @@ importers:
   packages/core:
     dependencies:
       anndata.js:
-        specifier: ^0.0.1
-        version: 0.0.1
+        specifier: ^0.0.2
+        version: 0.0.2
       apache-arrow:
         specifier: 'catalog:'
         version: 17.0.0
@@ -2244,8 +2244,8 @@ packages:
   alien-signals@0.4.14:
     resolution: {integrity: sha512-itUAVzhczTmP2U5yX67xVpsbbOiquusbWVyA9N+sy6+r6YVbFkahXvNCeEPWEOMhwDYwbVbGHFkVL03N9I5g+Q==}
 
-  anndata.js@0.0.1:
-    resolution: {integrity: sha512-m5t4wZ7CbjzL+Z29XCTen8um4seRioZtth26CVqCrYifxhGC1RkuH24nGrzJTrMV3Q+EEMJEQOZOtxgEc29+pA==}
+  anndata.js@0.0.2:
+    resolution: {integrity: sha512-26Y9mW7Jho41ydD8loW0rpMKgANEzvcBVn8+QH/6vX5rS5DBs5wBDdtMKQxFGsgE7mLj4/xErIiJyISW8tlQww==}
 
   ansi-align@3.0.1:
     resolution: {integrity: sha512-IOfwwBF5iczOjp/WeY4YxyjqAFMQoZufdQWDd19SEExbVLNXqvpzSJ/M7Za4/sCPmQ0+GRquoA7bGcINcxew6w==}
@@ -8829,7 +8829,7 @@ snapshots:
 
   alien-signals@0.4.14: {}
 
-  anndata.js@0.0.1:
+  anndata.js@0.0.2:
     dependencies:
       numcodecs: 0.2.2
       zarrita: 0.5.1
