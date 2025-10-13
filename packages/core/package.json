@@ -25,7 +25,8 @@
     "zarrita": "catalog:",
     "zod": "catalog:",
     "apache-arrow": "catalog:",
-    "parquet-wasm": "catalog:"
+    "parquet-wasm": "catalog:",
+    "anndata.js": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
