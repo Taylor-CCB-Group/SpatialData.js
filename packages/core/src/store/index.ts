@@ -3,6 +3,7 @@
  */
 
 import * as zarr from 'zarrita';
+import * as ad from 'anndata.js'
 import { getTransformation } from '../transformations';
 import { type ZGroup, parseStoreContents } from './zarrUtils';
 // import type { SpatialData } from '../schemas/index.js';
@@ -11,7 +12,7 @@ import { type ZGroup, parseStoreContents } from './zarrUtils';
 type StoreLocation = string | URL;
 
 export const SpatialElementNames = ['images', 'points', 'labels', 'shapes'] as const;
-const ElementNames = [...SpatialElementNames, 'tables'] as const;
+export const ElementNames = [...SpatialElementNames, 'tables'] as const;
 export type ElementName = typeof ElementNames[number];
 
 
@@ -36,7 +37,16 @@ export type SpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 
 // these should be things with easy to access properties for lazy loading (partial) data
 // not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
-export type Elements<T extends ElementName> = Record<string, SpatialElement>;
+// export type Tables = Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
+export type Elements<T extends ElementName> = Record<string, Promise<
+T extends 'tables' ? ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>
+  : SpatialElement>>;
+  // 'tables': Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
+  // 'images': Record<string, SpatialElement>;
+  // 'points': Record<string, SpatialElement>;
+  // 'labels': Record<string, SpatialElement>;
+  // 'shapes': Record<string, SpatialElement>;
+
 
 function repr(element: SpatialElement) {
   if (element.kind === 'array') {
@@ -109,7 +119,7 @@ export class SpatialData {
     // in general, we favor use of the `readZarr` function to create and await the object
     this._ready = this._init(selection, onBadFiles);
   }
-  private async _init(selection?: ElementName[], onBadFiles?: BadFileHandler) {
+  private async _init(selection?: ElementName[], _onBadFiles?: BadFileHandler) {
     const store = new zarr.FetchStore(this.url);
     const listableStore = await tryConsolidated(store);
     const root = await zarr.open(store, { kind: 'group' });
@@ -117,22 +127,35 @@ export class SpatialData {
     if ('contents' in listableStore) {
       console.log("contents", listableStore.contents()); // we could do something with this
       this._listableStore = listableStore;
-      // const parsed = parseStoreContents(listableStore, root);
+      const parsed = parseStoreContents(listableStore, root);
+      if (parsed.tables) {
+        this.tables = {};
+        for (const [key] of Object.entries(parsed.tables)) {
+          // not sure we want these immediately invoked or not.
+          this.tables[key] = (async () => {
+            // I don't think anndata.js has a function for reading a whole anndata object from a path within a store?
+            // so we need a new store for each one?
+            const store = await tryConsolidated(new zarr.FetchStore(`${this.url}/tables/${key}`));
+            const adata = await ad.readZarr(store);
+            return adata;
+          })();
+        }
+      }
     } else {
       console.warn("Could not list contents of the Zarr store");
       //!!! we don't really want to throw here... 
       // but sometimes I want to a type-guard that we have a listable store
       // throw new Error("Could not list contents of the Zarr store");
       const elementsToLoad = selection ?? ElementNames;
-      await Promise.allSettled([
-        ...elementsToLoad.map(async (elementName) => {
-          const element = await loadElement(root, elementName, onBadFiles);
-          if (element) {
-            //!!! tbd... this whole Promise.allSettled block will probably be replaced by a parseStoreContents variant?
-            this[elementName] = { test: element };
-          }
-        })
-      ]);
+      // await Promise.allSettled([
+      //   ...elementsToLoad.map(async (elementName) => {
+      //     const element = await loadElement(root, elementName, onBadFiles);
+      //     if (element) {
+      //       //!!! tbd... this whole Promise.allSettled block will probably be replaced by a parseStoreContents variant?
+      //       this[elementName] = { test: element };
+      //     }
+      //   })
+      // ]);
     }
   }
 
@@ -140,26 +163,29 @@ export class SpatialData {
     for (const elementType of SpatialElementNames) {
       const d = this[elementType];
       if (d) {
-        // we may need to do something with zarrita here?
-        yield* Object.values(d) as SpatialElement[]; // pseudo type safety
+        yield* Object.values(d);
       }
     }
   }
   get coordinateSystems() {
-    const gen = this._genSpatialElementValues();
-    const allCS = new Set<string>();
-    for (const obj of gen) {
-      const transformations = getTransformation(obj, undefined, true);
-      if (transformations instanceof Map) {
-        for (const cs of transformations.keys()) {
-          allCS.add(cs);
+    // does this need to be async?
+    return new Promise<string[]>(resolve => {
+      const gen = [...this._genSpatialElementValues()];
+      const allCS = new Set<string>();
+      Promise.all(gen.map(async (obj) => {
+        const transformations = getTransformation(await obj, undefined, true);
+        // nb, should we be more consistent about Map vs Record?
+        if (transformations instanceof Map) {
+          for (const cs of transformations.keys()) {
+            allCS.add(cs);
+          }
+        } else {
+          throw new Error("Expected getTransformation to return a Map when getAll is true");
         }
-      } else {
-        throw new Error("Expected getTransformation to return a Map when getAll is true");
-      }
-    }
-    console.warn("SpatialData.coordinateSystems is not yet implemented; returning a placeholder value.");
-    return Array.from(allCS);
+      })).then(() => {
+        resolve(Array.from(allCS));
+      });
+    });
   }
   /**
    * Generates a string representation of the SpatialData object, similar to the Python `__repr__` method.
@@ -182,8 +208,8 @@ export class SpatialData {
     }).join('\n');
     // to do this properly, there are async calls involved... we can't really leak async into `toString`
     // so we probably have another method for deeper inspection
-    const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
-    return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements},\n${cs}`;
+    // const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
+    return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements}`;
   }
   
   async representation() {
@@ -208,7 +234,7 @@ export class SpatialData {
     }))).join('\n');
     // to do this properly, there are async calls involved... we can't really leak async into `toString`
     // so we probably have another method for deeper inspection
-    const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
+    const cs = `with coordinate systems: ${(await this.coordinateSystems).join(', ')}`;
     return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements},\n${cs}`;
   }
 }
