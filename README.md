@@ -2,14 +2,15 @@
 
 A library for interfacing with SpatialData stores in TypeScript/JavaScript.
 
-## 📦 Packages
+## Packages
 
 This monorepo contains:
 
 - **[@spatialdata/core](./packages/core)** - Core library for reading and validating SpatialData stores
+- **[@spatialdata/react](./packages/react)** - React hooks & components
 - **[docs](./docs)** - Documentation site built with Docusaurus
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -45,16 +46,6 @@ pnpm format
 pnpm docs:dev
 ```
 
-## 🛠️ Tech Stack
-
-- **pnpm** - Fast, disk space efficient package manager
-- **TypeScript** - Type-safe JavaScript
-- **Vite** - Next generation frontend tooling for building
-- **Vitest** - Blazing fast unit test framework
-- **Biome** - Fast formatter and linter
-- **Zod** - TypeScript-first schema validation
-- **zarrita** - JavaScript implementation for reading Zarr stores
-- **Docusaurus** - Modern static website generator
 
 ## 📝 License
 
