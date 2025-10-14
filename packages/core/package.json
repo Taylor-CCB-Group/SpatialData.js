@@ -30,7 +30,7 @@
     "@types/node": "^22.10.5",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vite-plugin-dts": "^4.3.0",
+    "vite-plugin-dts": "catalog:",
     "vitest": "catalog:"
   },
   "license": "MIT",
