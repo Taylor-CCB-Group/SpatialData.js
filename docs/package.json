@@ -23,7 +23,8 @@
     "prism-react-renderer": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@spatialdata/core": "workspace:*"
+    "@spatialdata/core": "workspace:*",
+    "@spatialdata/react": "workspace:*"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.9.1",

@@ -1,7 +1,7 @@
 {
-  "name": "@spatialdata/core",
+  "name": "@spatialdata/react",
   "version": "0.0.1",
-  "description": "Core library for interfacing with SpatialData stores",
+  "description": "React hooks and components for SpatialData",
   "type": "module",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,15 +19,18 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
+  "peerDependencies": {
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20"
+  },
   "dependencies": {
-    "zarrita": "catalog:",
-    "zod": "catalog:",
-    "apache-arrow": "catalog:",
-    "parquet-wasm": "catalog:",
-    "anndata.js": "^0.0.2"
+    "@spatialdata/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plugin-dts": "^4.3.0",
@@ -37,6 +40,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git",
-    "directory": "packages/core"
+    "directory": "packages/react"
   }
 }
