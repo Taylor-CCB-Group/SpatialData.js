@@ -13,7 +13,7 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
+    "build": "vite build && tsc --noEmit",
     "dev": "vite build --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -24,7 +24,9 @@
     "react-dom": ">=18 <20"
   },
   "dependencies": {
-    "@spatialdata/core": "workspace:*"
+    "@spatialdata/core": "workspace:*",
+    "anndata.js": "catalog:",
+    "zarrita": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
