@@ -5,7 +5,7 @@
 import * as zarr from 'zarrita';
 import * as ad from 'anndata.js'
 import { getTransformation } from '../transformations';
-import { type ZGroup, parseStoreContents } from './zarrUtils';
+import { type ZGroup, type ZarrTree, parseStoreContents } from './zarrUtils';
 // import type { SpatialData } from '../schemas/index.js';
 // import { spatialDataSchema } from '../schemas/index.js';
 
@@ -38,8 +38,9 @@ export type SpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 // these should be things with easy to access properties for lazy loading (partial) data
 // not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
 // export type Tables = Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
+export type Table = ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>;
 export type Elements<T extends ElementName> = Record<string, Promise<
-T extends 'tables' ? ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>
+T extends 'tables' ? Table
   : SpatialElement>>;
   // 'tables': Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
   // 'images': Record<string, SpatialElement>;
@@ -111,6 +112,11 @@ export class SpatialData {
   labels?: Elements<'labels'>;
   shapes?: Elements<'shapes'>;
   tables?: Elements<'tables'>;
+
+  /**
+   * Keeping this for experimenting with this structure vs AnnData.js for Tables etc.
+   */
+  parsed?: ZarrTree;
   
   constructor(url: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
     this.url = url;
@@ -127,10 +133,10 @@ export class SpatialData {
     if ('contents' in listableStore) {
       console.log("contents", listableStore.contents()); // we could do something with this
       this._listableStore = listableStore;
-      const parsed = parseStoreContents(listableStore, root);
-      if (parsed.tables) {
+      this.parsed = parseStoreContents(listableStore, root);
+      if (this.parsed.tables) {
         this.tables = {};
-        for (const [key] of Object.entries(parsed.tables)) {
+        for (const [key] of Object.entries(this.parsed.tables)) {
           // not sure we want these immediately invoked or not.
           this.tables[key] = (async () => {
             // I don't think anndata.js has a function for reading a whole anndata object from a path within a store?
@@ -139,6 +145,7 @@ export class SpatialData {
             const adata = await ad.readZarr(store);
             return adata;
           })();
+          // break;
         }
       }
     } else {
@@ -215,8 +222,8 @@ export class SpatialData {
   async representation() {
     await this._ready;
 
-    if (this._listableStore && this._root) {
-      return JSON.stringify(parseStoreContents(this._listableStore, this._root), null, 2);
+    if (this.parsed) {
+      return JSON.stringify(this.parsed, null, 2);
     }
 
     const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);

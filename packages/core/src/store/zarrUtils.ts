@@ -31,23 +31,24 @@ export function parseStoreContents(store: zarr.Listable<zarr.FetchStore>, root: 
   const tree: ZarrTree = {};
   for (const item of contents) {
     let currentNode = tree;
-    for (const part of item.path) {
+    for (const [i, part] of item.path.entries()) {
       if (!(part in currentNode)) {
         // probably don't want to be over-eager with opening arrays here:
         // (and if we do, maybe for prototyping, they definitely shouldn't await sequentially)
         // there should be a value, of a type that relates to the element-type, with properties for lazily querying.
-        currentNode[part] = {}; //to be over-written if it's an array leaf
+        // const leaf = i === item.path.length -1 && item.kind === "array";
+        const leaf = (i === (item.path.length - 1)) && item.kind === "array";
+        if (leaf) {
+          // I suppose this could cache itself as well, but I'm not sure this is really for actual use
+          currentNode[part] = () => zarr.open(root.resolve(item.v.path), { kind: 'array' });
+        } else {
+          currentNode[part] = {};
+        }
       }
-      if (currentNode[part] instanceof Function) {
-        // this isn't expected to happen
-        throw new Error(`Conflict in store contents: ${item.path.join('/')} traverses an array`);
-      }
-      currentNode = currentNode[part];
-    }
-    if (item.kind === "array") {
-      // I suppose this could cache itself as well, but I'm not sure this is really for actual use
-      currentNode[item.path[item.path.length - 1]] = async () => zarr.open(root.resolve(item.v.path), { kind: 'array' });
+      // `as ZarrTree` isn't correct, but believed ok for now internally
+      currentNode = currentNode[part] as ZarrTree;
     }
   }
+  // console.log("Tree:", tree);
   return tree;
 }
