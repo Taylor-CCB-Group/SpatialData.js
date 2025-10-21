@@ -1,7 +1,7 @@
 {
-  "name": "@spatialdata/react",
+  "name": "@spatialdata/vis",
   "version": "0.0.1",
-  "description": "React hooks and components for SpatialData",
+  "description": "React visualisation components for SpatialData",
   "type": "module",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "vite build && tsc --noEmit",
     "dev": "vite build --watch",
@@ -26,7 +28,8 @@
     "zarrita": "catalog:"
   },
   "dependencies": {
-    "@spatialdata/core": "workspace:*"
+    "@spatialdata/core": "workspace:*",
+    "@spatialdata/react": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -42,6 +45,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git",
-    "directory": "packages/react"
+    "directory": "packages/vis"
   }
 }

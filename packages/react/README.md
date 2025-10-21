@@ -1,6 +1,6 @@
 # @spatialdata/react
 
-React hooks and components for SpatialData.
+React hooks for SpatialData. This package should have a relatively minimal set of dependencies, such that it should be easy to integrate into other React applications. It is mostly focused on providing react-idiomatic ways of accessing the data itself, with appropriate abstractions around the core vanilla API, managing the `async` nature of fetching data etc.
 
 ## Install
 
