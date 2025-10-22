@@ -16,4 +16,67 @@ There are a few places in the code where I've left `//@ts-expect-error` annotati
 
 I would definitely prefer that we can type things well enough to avoid this.
 
-There are a few places where could make better use of generics on things like `Chunk<DataType>` etc... but life is short.
+There are a few places where better use of generics on things like `Chunk<DataType>` etc would help... here is a concrete example using Zarrita's `is` to type-guard in a `loadNumeric` method:
+
+```ts
+async loadNumeric(path: string) {
+  const { storeRoot } = this;
+  const arr = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
+  if (!arr.is("number")) {
+    throw new Error(`Expected a numeric array at ${path}, but got ${arr.dtype}`);
+  }
+  // now we have a type-guarded array, the return type will be correctly inferred
+  return await zarrGet(arr);
+  // return zarrOpen(storeRoot.resolve(path), { kind: 'array' })
+  //   .then(arr => zarrGet(arr));
+}
+```
+
+This will change runtime behaviour in cases where the `arr.is("number")` check doesn't pass. It seems like the occassions on that would be different should only be when the underlying assumptions in the code are false, and that it will result in better error-handling, but it is also possible that there is something wrong in my understanding here.
+
+This type design in Zarrita seems like a really good thing, encouraging the use of types in a way that properly ensures actual runtime validation is reflected in what the LSP is able to understand about the working of the code (even if the above code was written in JS, a modern editor would likely have enough information to accurately reflect the types, aside from the trivial `path: string`).
+
+If we do end up extensively using Vitessce code in SpatialData.js, hopefully it is useful to have another pair of eyes on it - and better levereging this feature is definitely something that I advocate.
+
+## Inheritence hierarchy - is this the right abstraction?
+
+`class SpatialDataShapesSource extends SpatialDataTableSource` 
+
+```ts
+/**
+ * This class is a parent class for tables, shapes, and points.
+ * This is because these share functionality, for example:
+ * - both shapes (the latest version) and points use parquet-based formats.
+ * - both shapes (a previous version) and tables use zarr-based formats.
+ * - logic for manipulating spatialdata element paths is shared across all elements.
+ */
+export default class SpatialDataTableSource extends AnnDataSource
+```
+
+This means that the interface for `Shapes` inherits everything from `AnnData`, which is not an accurate way of modelling the actual spec - there are a lot of things about `AnnData` that are not inherent to `GeoDataFrame`, which in python is what is used for `class Shapes(Elements[GeoDataFrame])`.
+
+I find this distracting as my habbit when learning and reasoning about code tends to rely heavily on exploring what the editor thinks it 'knows' about what interface a given symbol...
+
+I posit that the sharing of functionality between tables/points/shapes mentioned here could probably be accomplished through composition than inheritence; I haven't formulated a precise design for this just yet.
+
+So... as I write this, on top of my local changes to rev `8ff418e` in this repository, I am investigating how the code looks if we start trying to use this `SpatialDataShapesSource` for `Elements<'shapes'>`
+
+```ts
+export type Elements<T extends ElementName> = Record<string, Promise<
+T extends 'tables' ? Table
+  : T extends 'shapes' ? SpatialDataShapesSource : SpatialElement>>;
+
+...
+class SpatialData {
+  ...
+  this.shapes[key] = (async () => {
+    // we already have a store in scope at this point and want to open a path within it, but I'm not sure we're allowed?
+    const store = await tryConsolidated(new zarr.FetchStore(`${this.url}/shapes/${key}`));
+    return new SpatialDataShapesSource({ store, fileType: '.zarr' });
+  })(); // side-note, would rather these not be immediately-invoked
+}
+```
+
+When I start trying to write some hooks that access `SpatialData.shapes`, while there are undoubtedly ways of using it to get the actual data we're interested in, it is somewhat obscured by other inherited things. In order to use the `loadPolygonShapes()` method I need to know a `path` to it... 
+
+So, working through my thought process... perhaps I should indeed be using the root `store` from the outer scope, and providing a more focused API for interfacing with the actual internal parquet data, with any relevant `path` captured within an appropriate scope - but as of this writing I seem to have a broken build, HMR not working as expected, and I think I need to get some fresh air/excercise/rest before a bit of other refactoring.
