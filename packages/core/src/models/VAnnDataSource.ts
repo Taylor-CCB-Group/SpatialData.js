@@ -153,8 +153,15 @@ export default class AnnDataSource extends ZarrDataSource {
    */
   async loadNumeric(path: string) {
     const { storeRoot } = this;
-    return zarrOpen(storeRoot.resolve(path), { kind: 'array' })
-      .then(arr => zarrGet(arr));
+    const arr = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
+    const isNumber = arr.is("number");
+    if (!isNumber) {
+      throw new Error(`Expected a numeric array at ${path}, but got ${arr.dtype}`);
+    }
+    // now we have a type-guarded array, the return type will be correctly inferred
+    return await zarrGet(arr);
+    // return zarrOpen(storeRoot.resolve(path), { kind: 'array' })
+    //   .then(arr => zarrGet(arr));
   }
 
   /**

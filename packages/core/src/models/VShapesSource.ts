@@ -8,12 +8,13 @@ const log = console;
 
 // import SpatialDataTableSource from './SpatialDataTableSource.js';
 
-import type { TypedArray, Chunk, DataType } from 'zarrita';
+import type { TypedArray as ZarrTypedArray, Chunk, NumberDataType } from 'zarrita';
 import type { Table as ArrowTable } from 'apache-arrow';
 import type { Vector } from 'apache-arrow/vector';
 import SpatialDataTableSource from './VTableSource';
-//type ZarrTypedArray = TypedArray<DataType>;
 export type PolygonShape = Array<Array<[number, number]>>;
+//nb, not totally happy with this type.
+export type ZarrNumericArray = ZarrTypedArray<NumberDataType> | BigInt64Array | Array<number>;
 
 // If the array path starts with table/something/rest
 // capture table/something.
@@ -53,7 +54,7 @@ function getParquetPath(arrPath?: string) {
  * @param input - The typed array to convert.
  * @returns The converted or original Float32Array.
  */
-function toFloat32Array(input: Float32Array | BigInt64Array | Array<number>): Float32Array {
+function toFloat32Array(input: ZarrNumericArray): Float32Array {
   if (input instanceof Float32Array) {
     return input; // Already a Float32Array
   }
@@ -105,7 +106,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
    * @param path A string like obsm.X_pca.
    * @returns A promise for a zarr array containing the data.
    */
-  async loadNumeric(path: string): Promise<Chunk<any>> {
+  async loadNumeric(path: string): Promise<Chunk<NumberDataType>> {
     const elementPath = getShapesElementPath(path);
     const formatVersion = await this.getShapesFormatVersion(elementPath);
     if (formatVersion === '0.1') {
@@ -115,7 +116,6 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       return {
         stride: zarrArr.stride,
         shape: zarrArr.shape,
-        //@ts-expect-error zarrArr.data is not fully typed because the return from loadNumeric is Chunk<DataType>
         data: toFloat32Array(zarrArr.data),
       };
     }
