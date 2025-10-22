@@ -1,7 +1,7 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
 import { tableFromIPC, type Table as ArrowTable } from 'apache-arrow';
-import type { DataSourceParams, _any } from '../Vutils';
+import type { DataSourceParams } from '../Vutils';
 import AnnDataSource from './VAnnDataSource';
 
 // Note: This file also serves as the parent for
@@ -127,7 +127,7 @@ function getVarPath(arrPath?: string) {
  * - logic for manipulating spatialdata element paths is shared across all elements.
  */
 export default class SpatialDataTableSource extends AnnDataSource {
-  parquetModulePromise: Promise<{ readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => _any, readSchema: (bytes: Uint8Array) => _any }>;
+  parquetModulePromise: Promise<{ readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => any, readSchema: (bytes: Uint8Array) => any }>;
   rootAttrs: { softwareVersion: string; formatVersion: string } | null;
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;

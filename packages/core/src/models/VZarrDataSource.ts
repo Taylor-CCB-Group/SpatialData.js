@@ -1,6 +1,5 @@
 // import { zarrOpenRoot } from '@vitessce/zarr-utils';
 import { open as zarrOpen, root as zarrRoot } from 'zarrita';
-import type { _any } from '../Vutils';
 import type { Group, Location, Readable } from 'zarrita';
 import { zarrOpenRoot, type DataSourceParams } from '../Vutils';
 
@@ -44,7 +43,7 @@ export default class ZarrDataSource {
    * that resolves to the parsed JSON if successful.
    * @throws This may throw an error.
    */
-  async getJson(key: string, storeRootParam: Location<Readable> | null = null): Promise<Record<string, _any>> {
+  async getJson(key: string, storeRootParam: Location<Readable> | null = null): Promise<Record<string, any>> {
     const { storeRoot } = this;
     const storeRootToUse = storeRootParam || storeRoot;
 

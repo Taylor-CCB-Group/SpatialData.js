@@ -116,5 +116,3 @@ export function zarrOpenRoot(url: string, fileType?: string, opts?: ZarrOpenRoot
   return zarrRoot(store);
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: any uses should be reviewed, but swept under here for now.
-export type _any = any;

@@ -14,8 +14,6 @@ import type { Vector } from 'apache-arrow/vector';
 import SpatialDataTableSource from './VTableSource';
 //type ZarrTypedArray = TypedArray<DataType>;
 export type PolygonShape = Array<Array<[number, number]>>;
-// biome-ignore lint/suspicious/noExplicitAny: any uses should be reviewed
-type _any = any;
 
 // If the array path starts with table/something/rest
 // capture table/something.
@@ -107,7 +105,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
    * @param path A string like obsm.X_pca.
    * @returns A promise for a zarr array containing the data.
    */
-  async loadNumeric(path: string): Promise<Chunk<_any>> {
+  async loadNumeric(path: string): Promise<Chunk<any>> {
     const elementPath = getShapesElementPath(path);
     const formatVersion = await this.getShapesFormatVersion(elementPath);
     if (formatVersion === '0.1') {
