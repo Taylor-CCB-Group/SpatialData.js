@@ -43,8 +43,6 @@ async function getParquetModule() {
  * Get the name of the index column from an Apache Arrow table.
  * In the future, this may not be needed if more metadata is included in the Zarr Attributes.
  * Reference: https://github.com/scverse/spatialdata/issues/958
- * @param {import('apache-arrow').Table} arrowTable
- * @returns {string|null}
  */
 function tableToIndexColumnName(arrowTable: ArrowTable) {
   const pandasMetadata = arrowTable.schema.metadata.get('pandas');
@@ -54,11 +52,11 @@ function tableToIndexColumnName(arrowTable: ArrowTable) {
       Array.isArray(pandasMetadataJson.index_columns)
       && pandasMetadataJson.index_columns.length === 1
     ) {
-      return pandasMetadataJson.index_columns?.[0];
+      return pandasMetadataJson.index_columns?.[0] as string;
     }
     throw new Error('Expected a single index column in the pandas metadata.');
   }
-  return null;
+  return; //changing this to return undefined rather than null, better fits uses elsewhere.
 }
 
 
@@ -70,11 +68,6 @@ const singularSubElementRegex = /^table\/([^/]*)\/(.*)$/;
 const pluralRegex = /^tables\/([^/]*)$/;
 const singularRegex = /^table\/([^/]*)$/;
 
-/**
- *
- * @param arrPath
- * @returns
- */
 function getTableElementPath(arrPath?: string) {
   if (arrPath) {
     // First try the plural "tables/{something}/{arr}"
@@ -101,20 +94,10 @@ function getTableElementPath(arrPath?: string) {
   return ''; // TODO: throw an error?
 }
 
-/**
- *
- * @param {string|undefined} arrPath
- * @returns
- */
 function getObsPath(arrPath?: string) {
   return `${getTableElementPath(arrPath)}/obs`;
 }
 
-/**
- *
- * @param {string|undefined} arrPath
- * @returns
- */
 function getVarPath(arrPath?: string) {
   return `${getTableElementPath(arrPath)}/var`;
 }
