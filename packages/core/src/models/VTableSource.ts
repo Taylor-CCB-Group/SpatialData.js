@@ -127,7 +127,7 @@ function getVarPath(arrPath?: string) {
  * - logic for manipulating spatialdata element paths is shared across all elements.
  */
 export default class SpatialDataTableSource extends AnnDataSource {
-  parquetModulePromise: Promise<{ readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => any, readSchema: (bytes: Uint8Array) => any }>;
+  static parquetModulePromise: Promise<{ readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => any, readSchema: (bytes: Uint8Array) => any }>;
   rootAttrs: { softwareVersion: string; formatVersion: string } | null;
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
@@ -139,7 +139,9 @@ export default class SpatialDataTableSource extends AnnDataSource {
     super(params);
 
     // Non-table-specific properties
-    this.parquetModulePromise = getParquetModule();
+    if (!SpatialDataTableSource.parquetModulePromise) {
+      SpatialDataTableSource.parquetModulePromise = getParquetModule();
+    }
 
     this.rootAttrs = null;
     /**
@@ -329,7 +331,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * @returns
    */
   async loadParquetTable(parquetPath: string, columns?: string[]) {
-    const { readParquet, readSchema } = await this.parquetModulePromise;
+    const { readParquet, readSchema } = await SpatialDataTableSource.parquetModulePromise;
 
     const options = {
       columns,
