@@ -1,14 +1,11 @@
 // Direct copy of Vitessce implementation.
 // some things from various different places are combined here...
-// changes mostly minor error handling & type syntax, not using ZipFileStore for now.
-// (would like to use ZipFileStore if it works sensibly, 
-// but it caused build issues earlier in MDV and is marked experimental in zarrita.js)
-
+// (ie file-types/zarr/ utils & zarr-utils/normalize.ts)
 
 import type { AbsolutePath, Readable } from "zarrita";
 import ReferenceStore from '@zarrita/storage/ref';
-// import { ZipFileStore } from "zarrita";
-
+import ZipFileStore from "@zarrita/storage/zip";
+import type { ZipInfo } from 'unzipit';
 import { FetchStore } from "@zarrita/storage";
 import { root as zarrRoot } from "zarrita";
 /**
@@ -77,17 +74,47 @@ class RelaxedFetchStore extends FetchStore {
     }
   }
 }
+// Define a transformEntries function that expects a single top-level .zarr directory
+// and strips that prefix from all entries.
+export function transformEntriesForZipFileStore(entries: ZipInfo['entries']) {
+  // Find all top-level directories that end with .zarr
+  const topLevelZarrDirectories = new Set(
+    Object.keys(entries)
+      .map(k => k.split('/')[0])
+      .filter(firstPathItem => firstPathItem?.endsWith('.zarr')),
+  );
+  if (topLevelZarrDirectories.size === 0) {
+    return entries;
+  }
+  // Check that there is exactly one such directory.
+  if (topLevelZarrDirectories.size > 1) {
+    throw Error('expected exactly one top-level .zarr directory');
+  }
+  const topLevelZarrDirectory = Array.from(topLevelZarrDirectories)[0];
+  // Modify the entries to strip the top-level .zarr directory prefix from paths.
+  const newEntries = Object.fromEntries(
+    Object.entries(entries).map(([k, v]) => {
+      let newKey = k;
+      if (k.split('/')[0] === topLevelZarrDirectory) {
+        // Use substring to remove the top-level directory name
+        // and the following slash from the internal zip paths.
+        newKey = k.substring(topLevelZarrDirectory.length + 1);
+      }
+      return [newKey, v];
+    }),
+  );
+  return newEntries;
+}
 
 export function zarrOpenRoot(url: string, fileType?: string, opts?: ZarrOpenRootOptions) {
   let store: Readable;
   if (fileType?.endsWith('.zip')) {
     //note: when I was prototyping use of zarrita in MDV, I had build issues with ZipFileStore.
-    //so I'm disabling it here for now pending review. It seemed to work well in dev server...
-    throw new Error('ZipFileStore is not supported yet');
-    // store = ZipFileStore.fromUrl(url, {
-    //   overrides: opts?.requestInit,
-    //   transformEntries: transformEntriesForZipFileStore,
-    // });
+    //seems to be building ok here, so keeping it around but would be good to keep in mind.
+    store = ZipFileStore.fromUrl(url, {
+      overrides: opts?.requestInit,
+      transformEntries: transformEntriesForZipFileStore,
+    });
   }
   if (fileType?.endsWith('.h5ad')) {
     if (!opts?.refSpecUrl) {

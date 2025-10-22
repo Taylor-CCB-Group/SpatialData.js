@@ -139,6 +139,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
+      unzipit:
+        specifier: ^1.4.3
+        version: 1.4.3
       vite:
         specifier: 'catalog:'
         version: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
