@@ -3,7 +3,7 @@
 While copying Vitessce code across, I had initially disabled use of `ZipFileStore` because I had a memory of it being problematic for me in earlier prototypes - and marked 'experimental' in the zarrita documentation.
 
 At some point I thought that I was satisfied it was in fact working ok - but now I notice that there is in fact a related issues showing up, even without `ZipFileStore`, but perhaps more generally with `'@zarrita/storage'`?
-
+{/* truncate */}
 ```
 error during build:
 │ ../../node_modules/.pnpm/@zarrita+storage@0.1.3/node_modules/@zarrita/storage/dist/src/fs.js (1:9): "Buffer" is not exported by "__vite-browser-external", imported by "..…

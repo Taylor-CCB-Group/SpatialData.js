@@ -2,6 +2,8 @@
 
 Given that the idea is to have something analogous to the Python library, that would mean that each type of `SpatialElement` would return something somewhat equivalent to the corresponding library in Python - to characterise the dependencies of that package as 'minimalist', even without the batteries-included `[extras]`, seems disingenious... Perhaps the philosophy is not so much that these will be minimal, but they should avoid needless bloat and especially any likelihood of tricky conflicts to manage (*`<cough>deck.gl</cough>`*).
 
+{/* truncate */}
+
 Here is an approximate summary of the ways in which these are typed in Python:
 
 ```python

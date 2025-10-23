@@ -4,6 +4,8 @@ This project is a TypeScript implementation of the [SpatialData](https://spatial
 
 It is a collaborative effort by the [Taylor CCB Group](https://github.com/Taylor-CCB-Group) at the Center for Human Genetics, Oxford University and the Gihlenborg Group at the Harvard Medical School - Department of Biomedical Informatics.
 
+{/* truncate */}
+
 The approach taken to the design is to follow the structure of the original Python library, adapting it to TypeScript with the intention that it should be familiar to users of the original library and aligned with best practices in frontend development. It should be usable in a server-side environment as well, and some consideration will be given to this, but it is not the primary focus of the project and at this stage isn't something that is anticipated to be a priority.
 
 Once it has reached a state in which a useful subset of the functionality has been implemented, it will be released in an 'alpha' state as a package on npm.
