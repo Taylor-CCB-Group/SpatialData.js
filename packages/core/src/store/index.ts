@@ -6,6 +6,7 @@ import * as zarr from 'zarrita';
 import * as ad from 'anndata.js'
 import { getTransformation } from '../transformations';
 import { type ZGroup, type ZarrTree, parseStoreContents } from './zarrUtils';
+import SpatialDataShapesSource from '../models/VShapesSource';
 // import type { SpatialData } from '../schemas/index.js';
 // import { spatialDataSchema } from '../schemas/index.js';
 
@@ -39,9 +40,11 @@ export type SpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 // not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
 // export type Tables = Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
 export type Table = ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>;
-export type Elements<T extends ElementName> = Record<string, Promise<
+export type Shapes = Awaited<ReturnType<typeof SpatialDataShapesSource.prototype.loadPolygonShapes>>;
+// we probably don't immediately invoke these, not sure if the type should be an async function or not.
+export type Elements<T extends ElementName> = Record<string, () => Promise<
 T extends 'tables' ? Table
-  : SpatialElement>>;
+  : T extends 'shapes' ? Shapes : SpatialElement>>;
   // 'tables': Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
   // 'images': Record<string, SpatialElement>;
   // 'points': Record<string, SpatialElement>;
@@ -144,25 +147,32 @@ export class SpatialData {
             const store = await tryConsolidated(new zarr.FetchStore(`${this.url}/tables/${key}`));
             const adata = await ad.readZarr(store);
             return adata;
-          })();
+          });
           // break;
         }
       }
+      // we should be looking up these loaders in a dictionary maybe.
+      // source of truth for element types could then be derived from that.
+      if (this.parsed.shapes) {
+        this.shapes = {};
+        for (const [key] of Object.entries(this.parsed.shapes)) {
+          this.shapes[key] = (async () => {
+            // maybe we can use the root store - and remember the path... that seems like the type we need.
+            // const store = await tryConsolidated(new zarr.FetchStore(`${this.url}/shapes/${key}`));
+            const shapes = new SpatialDataShapesSource({ store, fileType: '.zarr' });
+            // we definitely don't want to be immediately invoking a thing that loads data here...
+            console.log('loading polygon shapes for', `shapes/${key}`);
+            // is this always known to be the right path?
+            // in vitessce there is a `getGeometryPath` function that returns `${path}/geometry`
+            // so that supports the notion that it is.s
+            const polygonShapes = await shapes.loadPolygonShapes(`shapes/${key}/geometry`);
+            console.log('polygonShapes', polygonShapes);
+            return polygonShapes;
+          });
+        }
+      }
     } else {
-      console.warn("Could not list contents of the Zarr store");
-      //!!! we don't really want to throw here... 
-      // but sometimes I want to a type-guard that we have a listable store
-      // throw new Error("Could not list contents of the Zarr store");
-      const elementsToLoad = selection ?? ElementNames;
-      // await Promise.allSettled([
-      //   ...elementsToLoad.map(async (elementName) => {
-      //     const element = await loadElement(root, elementName, onBadFiles);
-      //     if (element) {
-      //       //!!! tbd... this whole Promise.allSettled block will probably be replaced by a parseStoreContents variant?
-      //       this[elementName] = { test: element };
-      //     }
-      //   })
-      // ]);
+      throw new Error("Could not list contents of the Zarr store - for now, we only support listable Zarr stores");
     }
   }
 

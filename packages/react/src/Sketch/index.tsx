@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { readZarr, SpatialData, type Table } from '@spatialdata/core';
-import { get } from 'anndata.js';
-import * as zarr from 'zarrita';
-import { LazyZarrArray } from '@spatialdata/core/store/zarrUtils';
+import type { Shapes } from '@spatialdata/core/store';
 
 const useSpatialData = (url: string) => {
   const [data, setData] = useState<SpatialData | Error>();
@@ -22,7 +20,7 @@ const useFirstAvailableTable = (data: SpatialData | Error | undefined) => {
   const [table, setTable] = useState<Table>();
   useEffect(() => {
     if (data instanceof SpatialData && data.tables) {
-      Object.entries(data.tables)[0][1].then(setTable).catch((error) => {
+      Object.entries(data.tables)[0][1]().then(setTable).catch((error) => {
         console.error('Error loading table:', error);
         // setTable(error);
       });
@@ -30,6 +28,19 @@ const useFirstAvailableTable = (data: SpatialData | Error | undefined) => {
   }, [data]);
   console.log('table', table);
   return table;
+}
+
+const useFirstAvailableShape = (data: SpatialData | Error | undefined) => {
+  const [shape, setShape] = useState<Shapes>();
+  useEffect(() => {
+    if (data instanceof SpatialData && data.shapes) {
+      Object.entries(data.shapes)[0][1]().then(setShape).catch((error) => {
+        console.error('Error loading shape:', error);
+      });
+    }
+  }, [data]);
+  console.log('shape', shape);
+  return shape;
 }
 
 function TableViewer({ table }: { table: Table }) {
@@ -116,6 +127,12 @@ function TableViewer({ table }: { table: Table }) {
   return <div>{repr}</div>;
 }
 
+function ShapeViewer({ shape }: { shape: Shapes }) {
+  const len = shape.data.length;
+  const [repr, setRepr] = useState(shape ? `${len} polygons` : 'Loading...');
+  return <div>{repr}</div>;
+}
+
 const TestParsed = ({ data }: { data: SpatialData | Error }) => {
   if (data instanceof Error) {
     return <div>Error: {data.message}</div>;
@@ -161,7 +178,8 @@ export default function Sketch() {
   const [url, setUrl] = useState(defaultUrl);
   const data = useSpatialData(url);
   const table = useFirstAvailableTable(data);
-
+  // as of writing - this will load all of the shapes into memory, and probably crash if it's large (as per default demo data)
+  // const shape = useFirstAvailableShape(data);
   const [repr, setRepr] = useState('Loading...');
   useEffect(() => {
     if (data && !(data instanceof Error)) {
@@ -190,6 +208,7 @@ export default function Sketch() {
       <h3>Full data object:</h3>
       <pre>{JSON.stringify(data, null, 2)}</pre>
       {table && <TableViewer table={table} />}
+      {/* {shape && <ShapeViewer shape={shape} />} */}
     </div>
   );
 }
