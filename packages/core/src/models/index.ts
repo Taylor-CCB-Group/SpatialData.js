@@ -17,13 +17,11 @@ export type LoaderParams<T extends ElementName> = {
 
 function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
   const url = `${sdata.url}/${name}/${key}`;
-  let loaded: Table | undefined;
-  return async () => {
-    if (loaded) {
-      return loaded;
+  let loaded: Promise<Table> | undefined;
+  return () => {
+    if (!loaded) {
+      loaded = tryConsolidated(new zarr.FetchStore(url)).then(store => ad.readZarr(store));
     }
-    const store = await tryConsolidated(new zarr.FetchStore(url));
-    loaded = await ad.readZarr(store);
     return loaded;
   }
 }
