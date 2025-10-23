@@ -10,7 +10,7 @@ It means that there is now the potential for the existence of two divergent impl
 
 ## I prefer `//@ts-expect-error` to `//@ts-ignore`.
 
-There are a few places in the code where I've left `//@ts-expect-error` annotations, with comments. I prefer this to `ts-ignore` as it means that in such cases where later changes to other parts of the code make them redundant, they then appear as errors, showing that the annotation can be removed. It's less easy to know whether a `ts-ignore` is still relevant.
+There are a few places in the code where I've left `//@ts-expect-error` annotations, with comments. I prefer this to `ts-ignore` as it means that in such cases where later changes to other parts of the code make them redundant, they then appear as errors, showing that the annotation can be removed. It's less easy to know whether a `ts-ignore` is still relevant. There is only one `ts-ignore` in Vitessce so in a sense a bit of a moot point there - as of this writing there are a few here, and I would like to aim to eradicate them (there are quite a few in MDV sadly, and I don't know when I'll manage to get around to those).
 
 ## Hopefully we can make `any` history at some point.
 
