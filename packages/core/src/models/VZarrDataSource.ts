@@ -1,7 +1,7 @@
 // import { zarrOpenRoot } from '@vitessce/zarr-utils';
 import { open as zarrOpen, root as zarrRoot } from 'zarrita';
 import type { Group, Location, Readable } from 'zarrita';
-import { zarrOpenRoot, type DataSourceParams } from '../Vutils';
+import type { DataSourceParams } from '../Vutils';
 
 
 /**
@@ -19,17 +19,15 @@ export default class ZarrDataSource {
       // TODO: check here that it is a valid Zarrita Readable?
       this.storeRoot = zarrRoot(store);
     } else if (url) {
-      this.storeRoot = zarrOpenRoot(url, fileType, { requestInit, refSpecUrl });
+      // come to think of it, there's an argument to be made that it could be confusing having 'url' and 'store' being mutually exclusive.
+      // could use a discriminated union to make it clearer (at least to people familiar with typescript).
+      throw new Error('The version of ZarrDataSource in this experimental codebase should not reach this code path.');
+      // this.storeRoot = zarrOpenRoot(url, fileType, { requestInit, refSpecUrl });
     } else {
       throw new Error('Either a store or a URL must be provided to the ZarrDataSource constructor.');
     }
   }
 
-  /**
-   *
-   * @param {string} path
-   * @returns {ZarrLocation<Readable>}
-   */
   getStoreRoot(path: string): Location<Readable> {
     return this.storeRoot.resolve(path);
   }
