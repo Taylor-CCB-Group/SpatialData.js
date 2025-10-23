@@ -364,16 +364,14 @@ export default class AnnDataSource extends ZarrDataSource {
       } = zattrs;
 
       if (encodingType === 'dict' && encodingVersion === '0.1.0') {
-        /** @type {{ [k: string]: string|string[]|null|undefined }} */
         const result: Record<string, string | string[] | null | undefined> = {};
         await Promise.all(keys.map(async (key) => {
-          let val: string | string[] | null | undefined;
           try {
-            val = await this._loadElement(`${path}/${key}`);
+            result[key] = await this._loadElement(`${path}/${key}`);
           } catch (e) {
             console.error(`Error in _loadDict: could not load ${key}`);
+            result[key] = undefined; //not sure how useful this is
           }
-          result[key] = val;
         }));
         return result;
       }

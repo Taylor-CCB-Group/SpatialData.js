@@ -33,7 +33,8 @@ class Tables(Elements[AnnData])
 
 */
 
-export type SpatialElement = Awaited<ReturnType<typeof zarr.open>>;
+// placeholder for elements of a general type pending proper modelling
+type XSpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 
 
 // these should be things with easy to access properties for lazy loading (partial) data
@@ -44,15 +45,19 @@ export type Shapes = Awaited<ReturnType<typeof SpatialDataShapesSource.prototype
 // we probably don't immediately invoke these, not sure if the type should be an async function or not.
 export type Elements<T extends ElementName> = Record<string, () => Promise<
 T extends 'tables' ? Table
-  : T extends 'shapes' ? Shapes : SpatialElement>>;
-  // 'tables': Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
-  // 'images': Record<string, SpatialElement>;
-  // 'points': Record<string, SpatialElement>;
-  // 'labels': Record<string, SpatialElement>;
-  // 'shapes': Record<string, SpatialElement>;
+  : T extends 'shapes' ? Shapes : XSpatialElement>
+>;
 
 
-function repr(element: SpatialElement) {
+//yay typescript! so intuitive!
+//this is a descriminated union type, i.e. 
+// `Elements<'tables'> | Elements<'shapes'> ...`
+//rather than `Elements<'tables' | 'shapes' ...>` which causes covariance issues.
+export type SpatialElement = {
+  [T in ElementName]: Elements<T>[string];
+}[ElementName];
+
+function repr(element: XSpatialElement) {
   if (element.kind === 'array') {
     return `shape=${element.shape}`;
   }
@@ -63,7 +68,7 @@ function repr(element: SpatialElement) {
   return `attrs=${JSON.stringify(element.attrs)}`;
 }
 
-async function reprA(element: SpatialElement, name: ElementName) {
+async function reprA(element: XSpatialElement, name: ElementName) {
   if (name === 'labels') {
     const { labels } = element.attrs;
     const labelsArr = Array.isArray(labels) ? labels : (typeof labels === 'string' ? [labels] : []);
@@ -180,29 +185,27 @@ export class SpatialData {
     for (const elementType of SpatialElementNames) {
       const d = this[elementType];
       if (d) {
-        yield* Object.values(d);
+        // it would probably be possible to have some elementType specific generic here, but not particularly useful.
+        yield* Object.values(d) as SpatialElement[];
       }
     }
   }
   get coordinateSystems() {
-    // does this need to be async?
-    return new Promise<string[]>(resolve => {
-      const gen = [...this._genSpatialElementValues()];
-      const allCS = new Set<string>();
-      Promise.all(gen.map(async (obj) => {
-        const transformations = getTransformation(await obj, undefined, true);
-        // nb, should we be more consistent about Map vs Record?
-        if (transformations instanceof Map) {
-          for (const cs of transformations.keys()) {
-            allCS.add(cs);
-          }
-        } else {
-          throw new Error("Expected getTransformation to return a Map when getAll is true");
+    // does this need to be async? probably not - working on the model for what a SpatialElement is...
+    // but we should probably already have enough information about it to establish coordinate systems, for instance.
+    const gen = [...this._genSpatialElementValues()];
+    const allCS = new Set<string>();
+    for (const obj of gen) {
+      const transformations = getTransformation(obj, undefined, true);
+      if (transformations instanceof Map) {
+        for (const cs of transformations.keys()) {
+          allCS.add(cs);
         }
-      })).then(() => {
-        resolve(Array.from(allCS));
-      });
-    });
+      } else {
+        throw new Error("Expected getTransformation to return a Map when getAll is true");
+      }
+    }
+    return Array.from(allCS);
   }
   /**
    * Generates a string representation of the SpatialData object, similar to the Python `__repr__` method.
