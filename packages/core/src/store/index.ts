@@ -3,10 +3,11 @@
  */
 
 import * as zarr from 'zarrita';
-import * as ad from 'anndata.js'
+import type * as ad from 'anndata.js'
 import { getTransformation } from '../transformations';
-import { type ZGroup, type ZarrTree, parseStoreContents } from './zarrUtils';
-import SpatialDataShapesSource from '../models/VShapesSource';
+import { type ZGroup, type ZarrTree, parseStoreContents, tryConsolidated } from './zarrUtils';
+import type SpatialDataShapesSource from '../models/VShapesSource';
+import { loadElement } from '../models';
 // import type { SpatialData } from '../schemas/index.js';
 // import { spatialDataSchema } from '../schemas/index.js';
 
@@ -86,28 +87,6 @@ async function reprA(element: XSpatialElement, name: ElementName) {
   return repr(element);
 }
 
-// we might not always use the FetchStore, this is for convenience & could change
-
-/**
- * There is a tendency for .zmetadata to be misnamed as zmetadata...
- */
-async function tryConsolidated(store: zarr.FetchStore) {
-  return zarr.withConsolidated(store).catch(() => zarr.tryWithConsolidated(store, { metadataKey: 'zmetadata' }));
-}
-/**
- * This can be expanded so that it has a generic for ElementName, with some more specific validation and typing.
- */
-async function loadElement(root: ZGroup, name: ElementName, onBadFiles?: BadFileHandler) {
-  try {
-    const element = await zarr.open(root.resolve(name), { kind: 'group' });
-    return element;
-  } catch (error) {
-    if (onBadFiles && error instanceof Error) {
-      onBadFiles(name, error);
-    }
-    return undefined;
-  }
-}
 export class SpatialData {
   readonly url: StoreLocation;
   _ready: Promise<void>;
@@ -138,46 +117,14 @@ export class SpatialData {
     const listableStore = await tryConsolidated(store);
     const root = await zarr.open(store, { kind: 'group' });
     this._root = root;
-    if ('contents' in listableStore) {
-      console.log("contents", listableStore.contents()); // we could do something with this
-      this._listableStore = listableStore;
-      this.parsed = parseStoreContents(listableStore, root);
-      if (this.parsed.tables) {
-        this.tables = {};
-        for (const [key] of Object.entries(this.parsed.tables)) {
-          // not sure we want these immediately invoked or not.
-          this.tables[key] = (async () => {
-            // I don't think anndata.js has a function for reading a whole anndata object from a path within a store?
-            // so we need a new store for each one?
-            const store = await tryConsolidated(new zarr.FetchStore(`${this.url}/tables/${key}`));
-            const adata = await ad.readZarr(store);
-            return adata;
-          });
-          // break;
-        }
-      }
-      // we should be looking up these loaders in a dictionary maybe.
-      // source of truth for element types could then be derived from that.
-      if (this.parsed.shapes) {
-        this.shapes = {};
-        for (const [key] of Object.entries(this.parsed.shapes)) {
-          this.shapes[key] = (async () => {
-            // maybe we can use the root store - and remember the path... that seems like the type we need.
-            // const store = await tryConsolidated(new zarr.FetchStore(`${this.url}/shapes/${key}`));
-            const shapes = new SpatialDataShapesSource({ store, fileType: '.zarr' });
-            // we definitely don't want to be immediately invoking a thing that loads data here...
-            console.log('loading polygon shapes for', `shapes/${key}`);
-            // is this always known to be the right path?
-            // in vitessce there is a `getGeometryPath` function that returns `${path}/geometry`
-            // so that supports the notion that it is.s
-            const polygonShapes = await shapes.loadPolygonShapes(`shapes/${key}/geometry`);
-            console.log('polygonShapes', polygonShapes);
-            return polygonShapes;
-          });
-        }
-      }
-    } else {
+    if (!('contents' in listableStore)) {
       throw new Error("Could not list contents of the Zarr store - for now, we only support listable Zarr stores");
+    }
+    this._listableStore = listableStore;
+    this.parsed = parseStoreContents(listableStore, root);
+    const _selection = selection || ElementNames;
+    for (const elementType of _selection) {
+      this[elementType] = loadElement(this, elementType, _onBadFiles);
     }
   }
 

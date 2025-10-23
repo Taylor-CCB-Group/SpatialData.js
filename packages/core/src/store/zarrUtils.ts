@@ -25,7 +25,6 @@ export function parseStoreContents(store: zarr.Listable<zarr.FetchStore>, root: 
     const path = pathParts.slice(1);
     return { path, kind: v.kind, v };
   }).sort((a, b) => a.path.length - b.path.length).slice(1); // skip the root group itself
-  console.log("Parsed store contents:", contents);
 
 
   const tree: ZarrTree = {};
@@ -51,4 +50,12 @@ export function parseStoreContents(store: zarr.Listable<zarr.FetchStore>, root: 
   }
   // console.log("Tree:", tree);
   return tree;
+}
+// we might not always use the FetchStore, this is for convenience & could change
+/**
+ * There is a tendency for .zmetadata to be misnamed as zmetadata...
+ */
+
+export async function tryConsolidated(store: zarr.FetchStore) {
+  return zarr.withConsolidated(store).catch(() => zarr.tryWithConsolidated(store, { metadataKey: 'zmetadata' }));
 }
