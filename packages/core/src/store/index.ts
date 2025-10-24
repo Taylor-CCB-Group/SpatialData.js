@@ -3,23 +3,21 @@
  */
 
 import * as zarr from 'zarrita';
-import type * as ad from 'anndata.js'
 import { getTransformation } from '../transformations';
-import { type ZGroup, type ZarrTree, parseStoreContents, tryConsolidated } from './zarrUtils';
-import type SpatialDataShapesSource from '../models/VShapesSource';
+import { parseStoreContents, tryConsolidated } from './zarrUtils';
 import { loadElement } from '../models';
-// import type { SpatialData } from '../schemas/index.js';
-// import { spatialDataSchema } from '../schemas/index.js';
-
-type StoreLocation = string | URL;
-
-export const SpatialElementNames = ['images', 'points', 'labels', 'shapes'] as const;
-export const ElementNames = [...SpatialElementNames, 'tables'] as const;
-export type ElementName = typeof ElementNames[number];
+import type { 
+  ElementName, 
+  XSpatialElement, 
+  StoreLocation, 
+  BadFileHandler,
+  ZGroup,
+  ZarrTree
+} from '../types';
+import { SpatialElementNames, ElementNames } from '../types';
 
 
 /*
-Not the actual type we want
 In Python, we have
 
 class Elements(UserDict[str, T])
@@ -30,25 +28,17 @@ class Shapes(Elements[GeoDataFrame])
 class Points(Elements[DaskDataFrame])
 class Tables(Elements[AnnData])
 
-
-
 */
-
-// placeholder for elements of a general type pending proper modelling
-type XSpatialElement = Awaited<ReturnType<typeof zarr.open>>;
-
 
 // these should be things with easy to access properties for lazy loading (partial) data
 // not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
 // export type Tables = Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
-export type Table = ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>;
-export type Shapes = Awaited<ReturnType<typeof SpatialDataShapesSource.prototype.loadPolygonShapes>>;
 // we probably don't immediately invoke these, not sure if the type should be an async function or not.
-export type Elements<T extends ElementName> = Record<string, () => Promise<
-T extends 'tables' ? Table
-  : T extends 'shapes' ? Shapes : XSpatialElement>
->;
-
+// export type Elements<T extends ElementName> = Record<string, () => Promise<
+// T extends 'tables' ? Table
+//   : T extends 'shapes' ? Shapes : XSpatialElement>
+// >;
+import type { InferredElements as Elements } from '../models';
 
 //yay typescript! so intuitive!
 //this is a descriminated union type, i.e. 
@@ -68,7 +58,6 @@ function repr(element: XSpatialElement) {
   // debugger;
   return `attrs=${JSON.stringify(element.attrs)}`;
 }
-
 async function reprA(element: XSpatialElement, name: ElementName) {
   if (name === 'labels') {
     const { labels } = element.attrs;
@@ -124,7 +113,9 @@ export class SpatialData {
     this.parsed = parseStoreContents(listableStore, root);
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
-      this[elementType] = loadElement(this, elementType, _onBadFiles);
+      // would prefer not to need this type annotation but at least it's not `as` etc.
+      const elements: Elements<typeof elementType> = loadElement(this, elementType, _onBadFiles) || {};
+      this[elementType] = elements;
     }
   }
 
@@ -205,8 +196,6 @@ export class SpatialData {
     return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements},\n${cs}`;
   }
 }
-
-export type BadFileHandler = (file: string, error: Error) => void;
 
 export async function readZarr(storeUrl: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
   const sdata = new SpatialData(storeUrl, selection, onBadFiles);

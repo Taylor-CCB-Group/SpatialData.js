@@ -1,9 +1,5 @@
 import * as zarr from 'zarrita';
-
-export type ZGroup = zarr.Group<zarr.FetchStore>;
-export type LazyZarrArray<T extends zarr.DataType> = () => Promise<zarr.Array<T>>;
-export interface ZarrTree { [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; };
-
+import type { ZGroup, ZarrTree } from '../types';
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.

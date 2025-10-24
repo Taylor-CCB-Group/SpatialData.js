@@ -5,4 +5,6 @@
  */
 
 // export * from './schemas/index.js';
+export * from './types.js';
 export * from './store/index.js';
+export * from './models/index.js';

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { readZarr, SpatialData, type Table } from '@spatialdata/core';
-import type { Shapes } from '@spatialdata/core/store';
+import { readZarr, SpatialData, type Table, type Shapes } from '@spatialdata/core';
 
 const useSpatialData = (url: string) => {
   const [data, setData] = useState<SpatialData | Error>();
