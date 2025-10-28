@@ -18,3 +18,6 @@ catalog:
   "@types/react-dom": ^19.2.0
   "@vitejs/plugin-react": ^4.3.4
   "@types/node": ^22.10.5
+  "@luma.gl/core": "~9.1.9"
+  "deck.gl": "~9.1.11"
+  "@vivjs-experimental/viv": "^1.0.1"
