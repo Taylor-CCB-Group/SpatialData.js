@@ -22,14 +22,15 @@
     "test:coverage": "vitest run --coverage"
   },
   "peerDependencies": {
+    "anndata.js": "catalog:",
     "react": ">=18 <20",
     "react-dom": ">=18 <20",
-    "anndata.js": "catalog:",
     "zarrita": "catalog:"
   },
   "dependencies": {
     "@spatialdata/core": "workspace:*",
-    "@spatialdata/react": "workspace:*"
+    "@spatialdata/react": "workspace:*",
+    "@uiw/react-json-view": "2.0.0-alpha.39"
   },
   "devDependencies": {
     "@types/node": "catalog:",

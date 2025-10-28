@@ -36,7 +36,12 @@ export type ElementName = typeof ElementNames[number];
  * loader implementations in models/index.ts.
  */
 export type Table = ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>;
-export type Shapes = Awaited<ReturnType<typeof SpatialDataShapesSource.prototype.loadPolygonShapes>>;
+// export type Shapes = {
+//   attrs: Record<string, unknown>;
+//   loadPolygonShapes: () => Promise<Array<Array<Array<[number, number]>>>>;
+//   loadCircleShapes: () => Promise<Array<Array<Array<[number, number]>>>>;
+//   loadShapesIndex: () => Promise<Array<number>>;
+// };
 
 // Placeholder for elements of a general type pending proper modelling
 export type XSpatialElement = Awaited<ReturnType<typeof zarr.open>>;

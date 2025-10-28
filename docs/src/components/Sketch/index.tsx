@@ -1,1 +1,1 @@
-export { Sketch as default } from '@spatialdata/react';
+export { Sketch as default } from '@spatialdata/vis';

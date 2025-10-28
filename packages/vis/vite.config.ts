@@ -43,7 +43,7 @@ export default defineConfig({
     outDir: path.resolve(pkgRoot, 'dist'),
     lib: {
       entry: path.resolve(pkgRoot, 'src/index.ts'),
-      name: 'SpatialDataReact',
+      name: 'SpatialDataVis',
       fileName: () => 'index.js',
       formats: ['es']
     },

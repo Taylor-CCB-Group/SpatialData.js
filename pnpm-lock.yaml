@@ -203,6 +203,9 @@ importers:
       '@spatialdata/react':
         specifier: workspace:*
         version: link:../react
+      '@uiw/react-json-view':
+        specifier: 2.0.0-alpha.39
+        version: 2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       anndata.js:
         specifier: 'catalog:'
         version: 0.0.2
@@ -2203,6 +2206,13 @@ packages:
 
   '@types/yargs@17.0.33':
     resolution: {integrity: sha512-WpxBCKWPLr4xSsHgz511rFJAM+wS28w2zEO1QDNY5zM/S8ok70NNfztH0xwhqKyaK0OHCbN98LDAZuy1ctxDkA==}
+
+  '@uiw/react-json-view@2.0.0-alpha.39':
+    resolution: {integrity: sha512-D9MHNan56WhtdAsmjtE9x18YLY0JSMnh0a6Ji0/2sVXCF456ZVumYLdx2II7hLQOgRMa4QMaHloytpTUHxsFRw==}
+    peerDependencies:
+      '@babel/runtime': '>=7.10.0'
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
@@ -8820,6 +8830,12 @@ snapshots:
   '@types/yargs@17.0.33':
     dependencies:
       '@types/yargs-parser': 21.0.3
+
+  '@uiw/react-json-view@2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
+    dependencies:
+      '@babel/runtime': 7.28.4
+      react: 19.2.0
+      react-dom: 19.2.0(react@19.2.0)
 
   '@ungap/structured-clone@1.3.0': {}
 

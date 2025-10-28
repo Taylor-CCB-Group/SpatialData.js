@@ -1,21 +1,14 @@
 import { useState, useEffect } from 'react';
-import { readZarr, SpatialData, type Table, type Shapes } from '@spatialdata/core';
+import { SpatialData, type Table, type Shapes } from '@spatialdata/core';
+import { SpatialDataProvider } from '@spatialdata/react';
+import { useSpatialData } from '@spatialdata/react';
+import SpatialDataTree from '../Tree';
 
-const useSpatialData = (url: string) => {
-  const [data, setData] = useState<SpatialData | Error>();
 
-  useEffect(() => {
-    readZarr(url).then(setData).catch((error) => {
-      console.error('Error loading spatial data:', error);
-      setData(error);
-    });
-  }, [url]);
-
-  return data;
-};
 const defaultUrl = 'https://storage.googleapis.com/vitessce-demo-data/spatialdata-august-2025/visium_hd_3.0.0.spatialdata.zarr';
 
-const useFirstAvailableTable = (data: SpatialData | Error | undefined) => {
+const useFirstAvailableTable = () => {
+  const data = useSpatialData();
   const [table, setTable] = useState<Table>();
   useEffect(() => {
     if (data instanceof SpatialData && data.tables) {
@@ -29,7 +22,8 @@ const useFirstAvailableTable = (data: SpatialData | Error | undefined) => {
   return table;
 }
 
-const useFirstAvailableShape = (data: SpatialData | Error | undefined) => {
+const useFirstAvailableShape = () => {
+  const data = useSpatialData();
   const [shape, setShape] = useState<Shapes>();
   useEffect(() => {
     if (data instanceof SpatialData && data.shapes) {
@@ -127,9 +121,9 @@ function TableViewer({ table }: { table: Table }) {
 }
 
 function ShapeViewer({ shape }: { shape: Shapes }) {
-  const len = shape.data.length;
-  const [repr, setRepr] = useState(shape ? `${len} polygons` : 'Loading...');
-  return <div>{repr}</div>;
+  const len = shape.attrs;
+  const repr = JSON.stringify(shape.attrs, null, 2);
+  return <pre>Shape attributes:  {repr}</pre>;
 }
 
 const TestParsed = ({ data }: { data: SpatialData | Error }) => {
@@ -173,25 +167,42 @@ const TestParsed = ({ data }: { data: SpatialData | Error }) => {
   return <div>{tableNames.map(name => <div key={name}>{name}</div>)}</div>;
 }
 
-export default function Sketch() {
+function DataSource({children}: React.PropsWithChildren) {
   const [url, setUrl] = useState(defaultUrl);
-  const data = useSpatialData(url);
-  const table = useFirstAvailableTable(data);
+  return (
+    <SpatialDataProvider storeUrl={url}>
+      {children}
+    </SpatialDataProvider>
+  )
+}
+
+export default function App() {
+  return (
+    <DataSource>
+      <Sketch />
+    </DataSource>
+  )
+}
+
+function Sketch() {
+  const [url, setUrl] = useState(defaultUrl);
+  const { spatialData, loading, error } = useSpatialData();
+  const table = useFirstAvailableTable();
   // as of writing - this will load all of the shapes into memory, and probably crash if it's large (as per default demo data)
-  // const shape = useFirstAvailableShape(data);
+  const shape = useFirstAvailableShape();
   const [repr, setRepr] = useState('Loading...');
   useEffect(() => {
-    if (data && !(data instanceof Error)) {
-      data.representation().then(setRepr).catch((error) => {
+    if (spatialData && !(spatialData instanceof Error)) {
+      spatialData.representation().then(setRepr).catch((error) => {
         console.error('Error getting representation:', error);
         setRepr('Error getting representation');
       });
-    } else if (data instanceof Error) {
-      setRepr(`Error loading data: ${data.message}`);
+    } else if (spatialData instanceof Error) {
+      setRepr(`Error loading data: ${spatialData.message}`);
     } else {
       setRepr('Loading...');
     }
-  }, [data]);
+  }, [spatialData]);
 
   return (
     <div>
@@ -199,15 +210,15 @@ export default function Sketch() {
       
       <h3>SpatialData URL:</h3>
       <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} />
-      {data && <TestParsed data={data} />}
+      {spatialData && <TestParsed data={spatialData} />}
       <h3>String representation:</h3>
       <pre>
         {repr}
       </pre>
       <h3>Full data object:</h3>
-      <pre>{JSON.stringify(data, null, 2)}</pre>
+      <SpatialDataTree />
       {table && <TableViewer table={table} />}
-      {/* {shape && <ShapeViewer shape={shape} />} */}
+      {shape && <ShapeViewer shape={shape} />}
     </div>
   );
 }

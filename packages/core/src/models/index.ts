@@ -43,8 +43,15 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
     // We don't want to act like Shapes are AnnData, but also not just geometry.
     // we very much want to be able to conveniently access the attributes before thinking about loading any geometry.
     // and then we want sensible ways of getting the bits of geometry we need when we want to do that.
-    const polygonShapes = await shapes.loadPolygonShapes(`${url}/geometry`);
-    return polygonShapes;
+    // const polygonShapes = await shapes.loadPolygonShapes(`${url}/geometry`);
+    return {
+      attrs: shapes.elementAttrs,
+      loadPolygonShapes() { 
+        return shapes.loadPolygonShapes(`${url}/geometry`)
+      },
+      loadCircleShapes: shapes.loadCircleShapes,
+      loadShapesIndex: shapes.loadShapesIndex,
+    };
   }
 }
 
@@ -102,7 +109,9 @@ type InferredElementsA<K extends ElementName> = {
 }[K];
 type InferredElementsB<T extends ElementName> =
 Record<string, ReturnType<Loaders<T>>>;
-
+// still way too many layers of indirection here.
+type InferredElement<T extends ElementName> = Awaited<ReturnType<ReturnType<Loaders<T>>>>;
+export type Shapes = InferredElement<'shapes'>;
 //these are both the same type
 //type TablesA = InferredElementsA<'tables'>
 //type TablesB = InferredElementsB<'tables'>
