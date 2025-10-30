@@ -10,6 +10,6 @@ export default function SpatialDataTree() {
   if (error) return <div>Error: {error.message}</div>;
   if (!spatialData) return <div>No spatial data</div>;
   return (
-    <JsonView value={spatialData.parsed} style={darkTheme} />
+    <JsonView value={spatialData} style={darkTheme} collapsed={true} />
   )
 }

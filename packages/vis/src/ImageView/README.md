@@ -1,0 +1,3 @@
+This is not ideal in the current form...
+
+`avivatorish` adapted from butchered MDV versions of Avivator state hooks etc.

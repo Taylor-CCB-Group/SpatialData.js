@@ -1,33 +1,96 @@
-import type { ElementName, Table, BadFileHandler, SDataProps } from '../types';
+import type { ElementName, Table, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import { tryConsolidated } from '../store/zarrUtils';
 import SpatialDataShapesSource from './VShapesSource';
+import type { MappingToCoordinateSytem_t } from '../transformations';
+
+
 
 /**
  * For internal use only and subject to change.
  * Maybe passing sdata isn't the right thing to do.
- */
+*/
 export type LoaderParams<T extends ElementName> = {
   sdata: SDataProps;
   name: T;
   key: string;
   onBadFiles?: BadFileHandler;
 }
+
+abstract class AbstractElement<T extends ElementName> {
+  kind: T;
+  key: string;
+  url: string;
+  parsed: ZarrTree | LazyZarrArray<zarr.DataType>;
+  constructor({ sdata, name, key }: LoaderParams<T>) {
+    this.kind = name;
+    this.key = key;
+    this.url = `${sdata.url}/${name}/${key}`;
+    // all kinds of element can have a reference to the `parsed` store for this path in `sdata`
+    const { parsed } = sdata;
+    if (!parsed) {
+      throw new Error("Parsed store contents not available");
+    }
+    if (!(name in parsed)) {
+      throw new Error(`Unknown element type: ${name}`);
+    }
+    const p1 = parsed[name] as ZarrTree;
+    if (!(key in p1)) {
+      throw new Error(`Unknown element key: ${key}`);
+    }
+    this.parsed = p1[key];
+  }
+}
+class TableElement extends AbstractElement<'tables'> {
+  // annData: Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>>;
+  async getAnnDataJS(): Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>> {
+    return await ad.readZarr(new zarr.FetchStore(this.url));
+  }
+}
+
+abstract class AbstractSpatialElement<T extends Exclude<ElementName, 'tables'>> extends AbstractElement<T> {
+  abstract getTransformations(toCoordinateSystem?: string, getAll?: boolean): MappingToCoordinateSytem_t | undefined;
+}
+class ShapesElement extends AbstractSpatialElement<'shapes'> {
+  getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
+    return undefined;
+  }
+}
+class RasterElement<T extends 'images' | 'labels'> extends AbstractSpatialElement<T> {
+  constructor(params: LoaderParams<T>) {
+    super(params);
+    const { sdata, name, key } = params;
+    const url = `${sdata.url}/${name}/${key}`;
+    //sdata.parsed[name][key]
+  }
+  getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
+    // is it multiscale or not? (is zarrStore a group or an array?)
+    return undefined;
+  }
+}
+class PointsElement extends AbstractSpatialElement<'points'> {
+  getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
+    return undefined;
+  }
+}
+
 function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
   if (name !== "tables") {
     //type of `name` is `never` here and this should be unreachable, we don't ever expect to see this.
     throw new Error(`Expected 'tables', got '${name}' - something went wrong in the type system for '${name}/${key}'`);
   }
   const url = `${sdata.url}/${name}/${key}`;
-  let loaded: Promise<Table> | undefined;
+  let loaded: TableElement | undefined;
   // these things that we return should just be a function returning a promise 
   // - it should be a thing with enough useful information as we have without having to fetch anything else,
   // - and a way of fetching the actual data when we need it.
+  
   return async () => {
     if (!loaded) {
       // do we want to use AnnData.js here, or the Vitessce implementation in SpatialDataTableSource?
-      loaded = tryConsolidated(new zarr.FetchStore(url)).then(store => ad.readZarr(store));
+      // loaded = tryConsolidated(new zarr.FetchStore(url)).then(store => ad.readZarr(store));
+      loaded = new TableElement({ sdata, name, key });
     }
     return loaded;
   }
@@ -104,9 +167,9 @@ function getLoader<T extends ElementName>(name: T): Loaders<T> {
 }
 
 
-type InferredElementsA<K extends ElementName> = {
-  [K in ElementName]: Record<string, ReturnType<Loaders<K>>>;
-}[K];
+// type InferredElementsA<K extends ElementName> = {
+//   [K in ElementName]: Record<string, ReturnType<Loaders<K>>>;
+// }[K];
 type InferredElementsB<T extends ElementName> =
 Record<string, ReturnType<Loaders<T>>>;
 // still way too many layers of indirection here.
@@ -138,54 +201,16 @@ export function loadElement<T extends ElementName>(
   if (!(name in parsed)) {
     return {};
   }
-  // const loader = elementLoaders[name];
-  // if (!loader) {
-  //   throw new Error(`Unknown element type: ${name}`);
-  // }
-  // const result: InferredElements<T> = {};
-  // for (const [key] of Object.entries(parsed[name])) {
-  //   // @ts-expect-error - typescript rabbit hole.
-  //   result[key] = loader({ sdata, name, key, onBadFiles });
-  // }
-  // return result;
-
-  // ended up with this unrolled for now because of T not working how I'd like...
-  // maybe I should run away and join a circus instead, this programming thing may not be for me.
-  if (name === 'tables') {
-    const result: InferredElements<'tables'> = {};
-    for (const [key] of Object.entries(parsed[name])) {
-      result[key] = elementLoaders.tables({ sdata, name, key, onBadFiles });
-    }
-    return result;
+  const loader = elementLoaders[name];
+  if (!loader) {
+    throw new Error(`Unknown element type: ${name}`);
   }
-  if (name === 'shapes') {
-    const result: InferredElements<'shapes'> = {};
-    for (const [key] of Object.entries(parsed[name])) {
-      result[key] = elementLoaders.shapes({ sdata, name, key, onBadFiles });
-    }
-    return result;
+  const result: InferredElements<T> = {};
+  for (const [key] of Object.entries(parsed[name])) {
+    // @ts-expect-error - typescript rabbit hole.
+    result[key] = loader({ sdata, name, key, onBadFiles });
   }
-  if (name === 'images') {
-    const result: InferredElements<'images'> = {};
-    for (const [key] of Object.entries(parsed[name])) {
-      result[key] = elementLoaders.images({ sdata, name, key, onBadFiles });
-    }
-    return result;
-  }
-  if (name === 'labels') {
-    const result: InferredElements<'labels'> = {};
-    for (const [key] of Object.entries(parsed[name])) {
-      result[key] = elementLoaders.labels({ sdata, name, key, onBadFiles });
-    }
-    return result;
-  }
-  if (name === 'points') {
-    const result: InferredElements<'points'> = {};
-    for (const [key] of Object.entries(parsed[name])) {
-      result[key] = elementLoaders.points({ sdata, name, key, onBadFiles });
-    }
-    return result;
-  }
+  return result;
 }
 
 
