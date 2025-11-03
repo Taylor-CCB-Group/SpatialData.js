@@ -84,11 +84,6 @@ export default class AnnDataSource extends ZarrDataSource {
     return Promise.all(promises);
   }
 
-  /**
-   *
-   * @param {string} pathOrig
-   * @returns
-   */
   async _loadColumn(pathOrig: string) {
     const { storeRoot } = this;
 
@@ -103,8 +98,7 @@ export default class AnnDataSource extends ZarrDataSource {
         storeRoot.resolve(`${prefix}/${categories}`),
         { kind: 'array' },
       );
-      //@ts-expect-error this seems to incorrect in the vitessce code? '|O' is not a valid dtype.
-      if (dtype === 'v2:object' || dtype === '|O') {
+      if (dtype === 'v2:object') {
         categoriesValues = await this.getFlatArrDecompressed(
           `${prefix}/${categories}`,
         );
@@ -114,9 +108,7 @@ export default class AnnDataSource extends ZarrDataSource {
         storeRoot.resolve(`${path}/categories`),
         { kind: 'array' },
       );
-
-      //@ts-expect-error this seems to incorrect in the vitessce code? '|O' is not a valid dtype.
-      if (dtype === 'v2:object' || dtype === '|O') {
+      if (dtype === 'v2:object') {
         categoriesValues = await this.getFlatArrDecompressed(
           `${path}/categories`,
         );
@@ -129,8 +121,7 @@ export default class AnnDataSource extends ZarrDataSource {
         storeRoot.resolve(path),
         { kind: 'array' },
       );
-      //@ts-expect-error this seems to incorrect in the vitessce code? '|O' is not a valid dtype.
-      if (dtype === 'v2:object' || dtype === '|O') {
+      if (dtype === 'v2:object') {
         return this.getFlatArrDecompressed(path);
       }
     }
