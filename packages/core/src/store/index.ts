@@ -80,7 +80,7 @@ export class SpatialData {
   readonly url: StoreLocation;
   _ready: Promise<void>;
   // we could potentially have ListableSpatialData type...
-  private _listableStore?: zarr.Listable<zarr.FetchStore>;
+  rootStore: zarr.Listable<zarr.FetchStore>;
   private _root?: ZGroup;
 
   images?: Elements<'images'>;
@@ -94,23 +94,17 @@ export class SpatialData {
    */
   parsed?: ZarrTree;
   
-  constructor(url: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
+  constructor(url: StoreLocation, rootStore: zarr.Listable<zarr.FetchStore>, selection?: ElementName[], onBadFiles?: BadFileHandler) {
     this.url = url;
+    this.rootStore = rootStore;
     // is it a good idea to have this kind of async side-effect in the constructor?
     // maybe not, but for now making the init method private avoids accidentally not passing other arguments
     // in general, we favor use of the `readZarr` function to create and await the object
     this._ready = this._init(selection, onBadFiles);
   }
   private async _init(selection?: ElementName[], _onBadFiles?: BadFileHandler) {
-    const store = new zarr.FetchStore(this.url);
-    const listableStore = await tryConsolidated(store);
-    const root = await zarr.open(store, { kind: 'group' });
-    this._root = root;
-    if (!('contents' in listableStore)) {
-      throw new Error("Could not list contents of the Zarr store - for now, we only support listable Zarr stores");
-    }
-    this._listableStore = listableStore;
-    this.parsed = parseStoreContents(listableStore, root);
+    // we might use some async here for getting zattrs
+    this.parsed = await parseStoreContents(this.rootStore);
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
       // would prefer not to need this type annotation but at least it's not `as` etc.
@@ -198,7 +192,12 @@ export class SpatialData {
 }
 
 export async function readZarr(storeUrl: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
-  const sdata = new SpatialData(storeUrl, selection, onBadFiles);
+  const store = new zarr.FetchStore(storeUrl);
+  const listableStore = await tryConsolidated(store);
+  if (!('contents' in listableStore)) {
+    throw new Error("Could not list contents of the Zarr store - spatialdata stores are expected to be listable");
+  }
+  const sdata = new SpatialData(storeUrl, listableStore, selection, onBadFiles);
   await sdata._ready;
   return sdata;
 }

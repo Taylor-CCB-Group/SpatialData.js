@@ -3,6 +3,7 @@ import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import SpatialDataTree from '../Tree';
 import Table from '../Table';
 import ImageView from '../ImageView';
+import Shapes from '../Shapes';
 
 
 const defaultUrl =
@@ -33,6 +34,7 @@ export default function Sketch() {
 
       <SpatialDataTree />
       <Table />
+      <Shapes />
       <ImageView />
     </DataSource>
   );

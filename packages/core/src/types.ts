@@ -81,4 +81,5 @@ export type SDataProps = {
   parsed?: ZarrTree;
   onBadFiles?: BadFileHandler;
   selection?: ElementName[];
+  rootStore: zarr.Listable<zarr.FetchStore>;
 }

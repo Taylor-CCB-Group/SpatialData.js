@@ -1,5 +1,5 @@
 import * as zarr from 'zarrita';
-import type { ZGroup, ZarrTree } from '../types';
+import type { ZarrTree } from '../types';
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.
@@ -7,7 +7,8 @@ import type { ZGroup, ZarrTree } from '../types';
  * This traverses arbitrary group depth etc - handy for a generic zarr thing, but for SpatialData we can have
  * something more explicitly targetting the expected structure.
  */
-export function parseStoreContents(store: zarr.Listable<zarr.FetchStore>, root: ZGroup) {
+export async function parseStoreContents(store: zarr.Listable<zarr.FetchStore>) {
+  const root = await zarr.open(store, { kind: 'group' });
   const contents = store.contents().map(v => {
     const pathParts = v.path.split('/');
     // might do something with the top-level element name - ie, make a different kind of object for each

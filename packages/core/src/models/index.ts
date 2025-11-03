@@ -100,6 +100,12 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
   const url = `${sdata.url}/${name}/${key}`;
   return async () => {
     const shapes = new SpatialDataShapesSource({ store: new zarr.FetchStore(url), fileType: '.zarr' });
+    // ok, gradually getting somewhere, should probably make this be something more general.
+    // const attrs = await shapes.loadSpatialDataElementAttrs(""); //unnecessary fetch etc, this is already in zmetadata.
+    // although we use `await` here, we expect this to have the information already in `known_meta`.
+    const attrBytes = await sdata.rootStore.get(`/${name}/${key}/.zattrs`);
+    const attrs = JSON.parse(new TextDecoder().decode(attrBytes)); //this is bizarrely necessary.
+    
     // shapes.elementAttrs
     // this is very much not the right thing - we don't just want the geometry,
     // and we need to be careful about how much geometry we load, etc.
@@ -108,7 +114,7 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
     // and then we want sensible ways of getting the bits of geometry we need when we want to do that.
     // const polygonShapes = await shapes.loadPolygonShapes(`${url}/geometry`);
     return {
-      attrs: shapes.elementAttrs,
+      attrs,
       loadPolygonShapes() { 
         return shapes.loadPolygonShapes(`${url}/geometry`)
       },
