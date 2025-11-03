@@ -16,7 +16,8 @@
   ],
   "scripts": {
     "build": "vite build && tsc --noEmit",
-    "dev": "vite build --watch",
+    "dev": "vite --config vite.config.demo.ts",
+    "watch": "vite build --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
