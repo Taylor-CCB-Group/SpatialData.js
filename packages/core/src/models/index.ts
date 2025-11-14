@@ -58,12 +58,6 @@ class ShapesElement extends AbstractSpatialElement<'shapes'> {
   }
 }
 class RasterElement<T extends 'images' | 'labels'> extends AbstractSpatialElement<T> {
-  constructor(params: LoaderParams<T>) {
-    super(params);
-    const { sdata, name, key } = params;
-    const url = `${sdata.url}/${name}/${key}`;
-    //sdata.parsed[name][key]
-  }
   getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
     // is it multiscale or not? (is zarrStore a group or an array?)
     return undefined;
@@ -80,7 +74,6 @@ function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
     //type of `name` is `never` here and this should be unreachable, we don't ever expect to see this.
     throw new Error(`Expected 'tables', got '${name}' - something went wrong in the type system for '${name}/${key}'`);
   }
-  const url = `${sdata.url}/${name}/${key}`;
   let loaded: TableElement | undefined;
   // these things that we return should just be a function returning a promise 
   // - it should be a thing with enough useful information as we have without having to fetch anything else,
@@ -99,6 +92,7 @@ function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
 function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
   const url = `${sdata.url}/${name}/${key}`;
   return async () => {
+    // todo - what happens if the user has passed a store rather than a url?
     const shapes = new SpatialDataShapesSource({ store: new zarr.FetchStore(url), fileType: '.zarr' });
     // ok, gradually getting somewhere, should probably make this be something more general.
     // const attrs = await shapes.loadSpatialDataElementAttrs(""); //unnecessary fetch etc, this is already in zmetadata.

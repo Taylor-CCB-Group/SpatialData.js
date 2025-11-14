@@ -14,7 +14,6 @@
 
 import type * as ad from 'anndata.js';
 import type * as zarr from 'zarrita';
-import type SpatialDataShapesSource from './models/VShapesSource';
 
 /**
  * Element name constants and types
@@ -49,10 +48,9 @@ export type XSpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 /**
  * Store location type
  * 
- * Represents where a SpatialData store can be located - either a URL string
- * or a URL object.
+ * Represents where a SpatialData store can be located.
  */
-export type StoreLocation = string | URL;
+export type StoreLocation = string;
 
 /**
  * Bad file handler type
