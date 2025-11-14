@@ -41,7 +41,7 @@ function VivImage({url, width, height}: {url?: string | URL, width: number, heig
     if (!url) return;
     const source = { urlOrFile: url.toString(), description: 'image' };
     console.log('setting source', source);
-    viewerStore.setState({ source });
+    viewerStore.setState({ source, viewState: null });
   }, [url, viewerStore]);
   useEffect(() => {
     if (!_isValidImage(loader)) return;
@@ -79,6 +79,13 @@ export default function ImageView() {
   const { spatialData } = useSpatialData();
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [ref, { width, height }] = useMeasure();
+  
+  useEffect(() => {
+    if (!spatialData?.images) return;
+    if (selectedImage === '' || !spatialData.images[selectedImage]) {
+      setSelectedImage(Object.keys(spatialData.images)[0]);
+    }
+  }, [spatialData?.images, selectedImage]);
 
   const vivStores = useMemo(() => {
     return createVivStores();
