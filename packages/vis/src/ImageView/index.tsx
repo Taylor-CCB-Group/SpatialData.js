@@ -2,13 +2,21 @@ import { useSpatialData } from "@spatialdata/react";
 import { useEffect, useMemo, useState, useId, type CSSProperties } from "react";
 import { useMeasure } from "@uidotdev/usehooks";
 import { createVivStores, useChannelsStore, useLoader, useViewerStore, useViewerStoreApi, VivProvider } from "./avivatorish/state";
-import { DetailView, VivViewer } from "@vivjs-experimental/viv";
+import { DetailView, VivViewer, getDefaultInitialViewState } from "@vivjs-experimental/viv";
 import { useImage } from "./avivatorish/hooks";
+
+function _isValidImage(image: ReturnType<typeof useLoader>) {
+  if (!image) return false;
+  // when trying to getDefaultInitialViewState, it'll do something a bit like this internally...
+  // the conditions under which this function returns false are conditions where internally it would have pixelWidth undefined, etc.
+  const source = Array.isArray(image) ? image[0] : image;
+  return source.shape.length > 0;
+}
 
 function VivImage({url, width, height}: {url?: string | URL, width: number, height: number}) {
   //TODO: fix viewState... seems like this should be simpler than it is.
 
-  const loader = useLoader();
+  const loader = useLoader(); //could do with typing this...
   const channels = useChannelsStore(({colors, contrastLimits, channelsVisible, selections}) => ({colors, contrastLimits, channelsVisible, selections}));
   const layerConfig = useMemo(() => ({loader, ...channels}), [loader, channels]);
   const id = useId();
@@ -35,6 +43,16 @@ function VivImage({url, width, height}: {url?: string | URL, width: number, heig
     console.log('setting source', source);
     viewerStore.setState({ source });
   }, [url, viewerStore]);
+  useEffect(() => {
+    if (!_isValidImage(loader)) return;
+    if (width === 0 || height === 0) return;
+    if (!viewState) {
+      const zoomBackOff = 0.2;
+      const viewState = getDefaultInitialViewState(loader, {width, height}, zoomBackOff);
+      console.log('setting viewState', viewState);
+      viewerStore.setState({ viewState });
+    }
+  }, [loader, viewState, viewerStore, viewerStore.setState, width, height]);
   const source = useViewerStore((state) => state.source);
   useImage(source);
   if (isViewerLoading) return <div>Loading...</div>;
@@ -61,7 +79,6 @@ export default function ImageView() {
   const { spatialData } = useSpatialData();
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [ref, { width, height }] = useMeasure();
-  console.log('width', width, 'height', height);
 
   const vivStores = useMemo(() => {
     return createVivStores();
