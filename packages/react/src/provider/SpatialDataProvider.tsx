@@ -8,7 +8,7 @@ type SpatialDataContextValue = {
 const SpatialDataContext = createContext<SpatialDataContextValue>({ spatialDataPromise: null });
 
 export type SpatialDataProviderProps = {
-  storeUrl: string | URL;
+  storeUrl: string;
   selection?: ElementName[];
 } & PropsWithChildren;
 
