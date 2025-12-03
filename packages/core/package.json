@@ -29,7 +29,8 @@
     "ol": "^10.6.1",
     "parquet-wasm": "catalog:",
     "zarrita": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "zod-ome-ngff": "^0.3.0"
   },
   "overrides": {
     "zarrita": "catalog:"
