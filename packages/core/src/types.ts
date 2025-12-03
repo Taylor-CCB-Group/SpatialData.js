@@ -61,17 +61,22 @@ export type StoreLocation = string;
 export type BadFileHandler = (file: string, error: Error) => void;
 
 /**
+ * If we support drag 'n' drop loading then presumably this will need to be something different.
+ */
+type Store = zarr.FetchStore;
+
+/**
  * Zarr tree type
  * 
  * This is a tree of zarr arrays and groups, with the leaves being lazy arrays.
  * It is used to represent the structure of the zarr store.
  * Leaf type subject to change.
  */
-export type ZGroup = zarr.Group<zarr.FetchStore>;
+export type ZGroup = zarr.Group<Store>;
 export type LazyZarrArray<T extends zarr.DataType> = () => Promise<zarr.Array<T>>;
 export interface ZarrTree { [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; };
 
-export type ConsolidatedStore = zarr.Listable<zarr.FetchStore>;
+export type ConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
 
 
 /**

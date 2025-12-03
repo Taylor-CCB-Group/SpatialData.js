@@ -56,20 +56,44 @@ export async function parseStoreContents(store: ConsolidatedStore) {
  * There is a tendency for .zmetadata to be misnamed as zmetadata...
  */
 
-export async function tryConsolidated(store: zarr.FetchStore) {
-  return zarr.withConsolidated(store).catch(() => zarr.tryWithConsolidated(store, { metadataKey: 'zmetadata' }));
+export async function tryConsolidated(store: zarr.FetchStore): Promise<ConsolidatedStore> {
+  // in future, first we'll try zarr.json
+  // and I'm sure we can make this implementation less ugly, kinda trivial though so cba for now.
+  //!!! nb - we need to also handle local files, in which case we don't fetch(url), we need another method - this is important
+  // maybe if zarrita allows us to do something sensible then we won't need to resort to these hacks.
+  try {
+    const path = `${store.url}/.zmetadata`;
+    // is there a zod schema we could be using here?
+    const zmetadata = await (await fetch(path)).json();
+    const zarrita = await zarr.withConsolidated(store);
+    return { ...zarrita, zmetadata }
+  } catch {
+    try {
+      const path = `${store.url}/zmetadata`;
+      const zmetadata = await (await fetch(path)).json();
+      const zarrita = await zarr.withConsolidated(store, { metadataKey: 'zmetadata' });
+      return { ...zarrita, zmetadata }
+    } catch {
+      throw new Error(`Couldn't open consolidated metadata for '${store.url}' - n.b. zarr v3 / spatialdata >0.5 is not supported yet`);
+    }
+  }
+  
+  // nb for now we explicitly only support consolidated store, so if it doesn't find either key this is an error
+  // return zarr.withConsolidated(store).catch(() => zarr.withConsolidated(store, { metadataKey: 'zmetadata' }));
 }
 
 async function getZattrs(path: `/${string}`, store: ConsolidatedStore) {
-  try {
-    // this is convoluted, and while for existing properties it will at least resolve quickly,
-    // in other cases it will do a fetch, (eventually) get an error, spam the console, etc.
-    // really finding it hard to relate to the mental model here.
-    const result = JSON.parse(new TextDecoder().decode(await store.get(`${path}/.zattrs`)));
-    console.log(`.zattrs ok for '${path}'`);
-    return result;
-  } catch {
-    console.warn(`no .zattrs for '${path}'`);
-    return {}
-  }
+  const attrPath = `${path}/.zattrs`.slice(1);
+  return store.zmetadata.metadata[attrPath]; //may be undefined, that's fine.
+  // try {
+  //   // this is convoluted, and while for existing properties it will at least resolve quickly,
+  //   // in other cases it will do a fetch, (eventually) get an error, spam the console, etc.
+  //   // really finding it hard to relate to the mental model here.
+  //   const result = JSON.parse(new TextDecoder().decode(await store.get(`${path}/.zattrs`)));
+  //   console.log(`.zattrs ok for '${path}'`);
+  //   return result;
+  // } catch {
+  //   console.warn(`no .zattrs for '${path}'`);
+  //   return {}
+  // }
 }
