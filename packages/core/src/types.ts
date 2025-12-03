@@ -71,6 +71,9 @@ export type ZGroup = zarr.Group<zarr.FetchStore>;
 export type LazyZarrArray<T extends zarr.DataType> = () => Promise<zarr.Array<T>>;
 export interface ZarrTree { [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; };
 
+export type ConsolidatedStore = zarr.Listable<zarr.FetchStore>;
+
+
 /**
  * Used internally when passing around properties of a spatialdata object to be used by the models/loaders.
  */

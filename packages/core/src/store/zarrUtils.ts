@@ -1,5 +1,5 @@
 import * as zarr from 'zarrita';
-import type { ZarrTree } from '../types';
+import type { ZarrTree, ConsolidatedStore } from '../types';
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.
@@ -7,7 +7,8 @@ import type { ZarrTree } from '../types';
  * This traverses arbitrary group depth etc - handy for a generic zarr thing, but for SpatialData we can have
  * something more explicitly targetting the expected structure.
  */
-export async function parseStoreContents(store: zarr.Listable<zarr.FetchStore>) {
+export async function parseStoreContents(store: ConsolidatedStore) {
+  // this can await get metadata without too much issue given we know it's already there...
   const root = await zarr.open(store, { kind: 'group' });
   const contents = store.contents().map(v => {
     const pathParts = v.path.split('/');
@@ -34,11 +35,13 @@ export async function parseStoreContents(store: zarr.Listable<zarr.FetchStore>) 
         // there should be a value, of a type that relates to the element-type, with properties for lazily querying.
         // const leaf = i === item.path.length -1 && item.kind === "array";
         const leaf = (i === (item.path.length - 1)) && item.kind === "array";
+        // get zattrs... we'd like to only do this when we know it's actually there and won't need fetch
+        const zattrs = await getZattrs(item.v.path, store);
         if (leaf) {
           // I suppose this could cache itself as well, but I'm not sure this is really for actual use
           currentNode[part] = () => zarr.open(root.resolve(item.v.path), { kind: 'array' });
         } else {
-          currentNode[part] = {};
+          currentNode[part] = { zattrs };
         }
       }
       // `as ZarrTree` isn't correct, but believed ok for now internally
@@ -55,4 +58,18 @@ export async function parseStoreContents(store: zarr.Listable<zarr.FetchStore>) 
 
 export async function tryConsolidated(store: zarr.FetchStore) {
   return zarr.withConsolidated(store).catch(() => zarr.tryWithConsolidated(store, { metadataKey: 'zmetadata' }));
+}
+
+async function getZattrs(path: `/${string}`, store: ConsolidatedStore) {
+  try {
+    // this is convoluted, and while for existing properties it will at least resolve quickly,
+    // in other cases it will do a fetch, (eventually) get an error, spam the console, etc.
+    // really finding it hard to relate to the mental model here.
+    const result = JSON.parse(new TextDecoder().decode(await store.get(`${path}/.zattrs`)));
+    console.log(`.zattrs ok for '${path}'`);
+    return result;
+  } catch {
+    console.warn(`no .zattrs for '${path}'`);
+    return {}
+  }
 }
