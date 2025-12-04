@@ -120,6 +120,8 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
 
 function defaultLoader({ sdata, name, key }: LoaderParams<'images' | 'labels' | 'points'>) {
   const url = `${sdata.url}/${name}/${key}`;
+  // we should be able to parse attrs here with an appropriate schema
+  // doing it in zarrUtils for experimentation
   return async () => {
     const element = await zarr.open(new zarr.FetchStore(url), { kind: 'group' });
     return element;

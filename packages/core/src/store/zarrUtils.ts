@@ -1,5 +1,9 @@
 import * as zarr from 'zarrita';
 import type { ZarrTree, ConsolidatedStore } from '../types';
+import { z } from "zod";
+import * as ngff_v4 from "../schemas/zod-ome-ngff/0.4";
+const Attrs = z.union([ngff_v4.ImageSchema, ngff_v4.StrictImageSchema]);
+
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.
@@ -36,11 +40,12 @@ export async function parseStoreContents(store: ConsolidatedStore) {
         // const leaf = i === item.path.length -1 && item.kind === "array";
         const leaf = (i === (item.path.length - 1)) && item.kind === "array";
         // get zattrs... we'd like to only do this when we know it's actually there and won't need fetch
-        const zattrs = await getZattrs(item.v.path, store);
+        const zattrs = await getZattrs(item.v.path, store, root, item.kind);
         if (leaf) {
           // I suppose this could cache itself as well, but I'm not sure this is really for actual use
           currentNode[part] = () => zarr.open(root.resolve(item.v.path), { kind: 'array' });
         } else {
+          //@ts-ignore pending typing (different permutations)
           currentNode[part] = { zattrs };
         }
       }
@@ -48,7 +53,6 @@ export async function parseStoreContents(store: ConsolidatedStore) {
       currentNode = currentNode[part] as ZarrTree;
     }
   }
-  // console.log("Tree:", tree);
   return tree;
 }
 // we might not always use the FetchStore, this is for convenience & could change
@@ -82,16 +86,32 @@ export async function tryConsolidated(store: zarr.FetchStore): Promise<Consolida
   // return zarr.withConsolidated(store).catch(() => zarr.withConsolidated(store, { metadataKey: 'zmetadata' }));
 }
 
-async function getZattrs(path: `/${string}`, store: ConsolidatedStore) {
+async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, root: zarr.Group<ConsolidatedStore>, kind: "group" | "array") {
   const attrPath = `${path}/.zattrs`.slice(1);
-  return store.zmetadata.metadata[attrPath]; //may be undefined, that's fine.
+  const attr = store.zmetadata.metadata[attrPath]; //may be undefined, that's fine.
+  if (!attr) return undefined;
+  // return attr;
+  try {
+    // we probably want to move this to models - just having some loose attrs here may be fine.
+    const imgAttr = Attrs.parse(attr);
+    if ("multiscales" in imgAttr) {
+      console.log("multiscales attributes parsed", path, imgAttr);
+    }
+    console.log(`parsed image metadata for ${path}`, imgAttr);
+    return imgAttr;
+  } catch (e) {
+    if ("multiscales" in attr) {
+      console.error(e);
+    }
+    return attr;
+  }
+  
   // try {
   //   // this is convoluted, and while for existing properties it will at least resolve quickly,
   //   // in other cases it will do a fetch, (eventually) get an error, spam the console, etc.
   //   // really finding it hard to relate to the mental model here.
-  //   const result = JSON.parse(new TextDecoder().decode(await store.get(`${path}/.zattrs`)));
-  //   console.log(`.zattrs ok for '${path}'`);
-  //   return result;
+  //   const item = await zarr.open(root.resolve(path), { kind });
+  //   return item.attrs;
   // } catch {
   //   console.warn(`no .zattrs for '${path}'`);
   //   return {}

@@ -76,6 +76,9 @@ export type ZGroup = zarr.Group<Store>;
 export type LazyZarrArray<T extends zarr.DataType> = () => Promise<zarr.Array<T>>;
 export interface ZarrTree { [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; };
 
+/**
+ * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ */
 export type ConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
 
 
