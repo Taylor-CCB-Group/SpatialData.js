@@ -104,6 +104,7 @@ export class SpatialData {
   }
   private async _init(selection?: ElementName[], _onBadFiles?: BadFileHandler) {
     // we might use some async here for getting zattrs
+    //@ts-expect-error nb adding zmetadata for typing but we may want to change that.
     this.parsed = await parseStoreContents(this.rootStore);
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
