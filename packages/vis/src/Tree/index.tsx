@@ -9,7 +9,17 @@ export default function SpatialDataTree() {
   if (loading) return <div>Loading...</div>;
   if (error) return <div>Error: {error.message}</div>;
   if (!spatialData) return <div>No spatial data</div>;
-  return (
-    <JsonView value={spatialData} style={darkTheme} collapsed={true} />
-  )
+  try {
+    const json = spatialData.toJSON();
+    if (!json) {
+      throw new Error("SpatialData.toJSON() falsey, this should never happen");
+    }
+    return (
+      <JsonView value={json} style={darkTheme} collapsed={true} />
+    )
+  } catch {
+    return (
+      <JsonView value={spatialData} style={darkTheme} collapsed={true} />
+    )
+  }
 }

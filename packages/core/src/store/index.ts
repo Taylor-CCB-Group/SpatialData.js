@@ -4,7 +4,7 @@
 
 import * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
-import { parseStoreContents, tryConsolidated } from './zarrUtils';
+import { parseStoreContents, serializeZarrTree, tryConsolidated } from './zarrUtils';
 import { loadElement } from '../models';
 import type { 
   ElementName, 
@@ -104,6 +104,7 @@ export class SpatialData {
   }
   private async _init(selection?: ElementName[], _onBadFiles?: BadFileHandler) {
     // we might use some async here for getting zattrs
+    //@ts-expect-error nb adding zmetadata for typing but we may want to change that.
     this.parsed = await parseStoreContents(this.rootStore);
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
@@ -162,6 +163,11 @@ export class SpatialData {
     // so we probably have another method for deeper inspection
     // const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
     return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements}`;
+  }
+
+  toJSON() {
+    if (!this.parsed) return this;
+    return serializeZarrTree(this.parsed);
   }
   
   async representation() {

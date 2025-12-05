@@ -6,45 +6,18 @@ settings:
 
 catalogs:
   default:
-    '@luma.gl/core':
-      specifier: ~9.1.9
-      version: 9.1.10
     '@math.gl/core':
       specifier: ^4.1.0
       version: 4.1.0
-    '@types/node':
-      specifier: ^22.10.5
-      version: 22.18.8
-    '@types/react':
-      specifier: ^19.2.0
-      version: 19.2.2
-    '@types/react-dom':
-      specifier: ^19.2.0
-      version: 19.2.2
-    '@vitejs/plugin-react':
-      specifier: ^4.3.4
-      version: 4.7.0
-    '@vivjs-experimental/viv':
-      specifier: ^1.0.1
-      version: 1.0.1
     anndata.js:
       specifier: ^0.0.2
       version: 0.0.2
     apache-arrow:
       specifier: ^17.0.0
       version: 17.0.0
-    deck.gl:
-      specifier: ~9.1.11
-      version: 9.1.15
     parquet-wasm:
       specifier: ^0.6.1
       version: 0.6.1
-    react:
-      specifier: ^19.2.0
-      version: 19.2.0
-    react-dom:
-      specifier: ^19.2.0
-      version: 19.2.0
     typescript:
       specifier: ^5.7.3
       version: 5.9.3

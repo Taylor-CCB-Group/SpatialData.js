@@ -61,15 +61,36 @@ export type StoreLocation = string;
 export type BadFileHandler = (file: string, error: Error) => void;
 
 /**
+ * If we support drag 'n' drop loading then presumably this will need to be something different.
+ */
+type Store = zarr.FetchStore;
+
+/**
  * Zarr tree type
  * 
  * This is a tree of zarr arrays and groups, with the leaves being lazy arrays.
  * It is used to represent the structure of the zarr store.
  * Leaf type subject to change.
  */
-export type ZGroup = zarr.Group<zarr.FetchStore>;
-export type LazyZarrArray<T extends zarr.DataType> = () => Promise<zarr.Array<T>>;
-export interface ZarrTree { [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; };
+export type ZGroup = zarr.Group<Store>;
+export const ATTRS_KEY = Symbol('attrs');
+export const ZARRAY_KEY = Symbol('.zarray')
+export type ZAttrsAny = Record<string, unknown>
+export type LazyZarrArray<T extends zarr.DataType> = {
+  [ATTRS_KEY]?: ZAttrsAny,
+  [ZARRAY_KEY]: ZAttrsAny,
+  get: () => Promise<zarr.Array<T>>
+};
+export interface ZarrTree { 
+  [ATTRS_KEY]?: ZAttrsAny,
+  [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; 
+};
+
+/**
+ * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ */
+export type ConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
+
 
 /**
  * Used internally when passing around properties of a spatialdata object to be used by the models/loaders.
