@@ -1,7 +1,6 @@
-import type { ElementName, Table, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray } from '../types';
+import { type ElementName, type Table, type BadFileHandler, type SDataProps, type ZarrTree, type LazyZarrArray, ATTRS_KEY } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
-import { tryConsolidated } from '../store/zarrUtils';
 import SpatialDataShapesSource from './VShapesSource';
 import type { MappingToCoordinateSytem_t } from '../transformations';
 
@@ -91,14 +90,12 @@ function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
 
 function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
   const url = `${sdata.url}/${name}/${key}`;
+  //@ts-expect-error
+  const attrs = sdata.parsed?.[name][key][ATTRS_KEY];
+
   return async () => {
     // todo - what happens if the user has passed a store rather than a url?
     const shapes = new SpatialDataShapesSource({ store: new zarr.FetchStore(url), fileType: '.zarr' });
-    // ok, gradually getting somewhere, should probably make this be something more general.
-    // const attrs = await shapes.loadSpatialDataElementAttrs(""); //unnecessary fetch etc, this is already in zmetadata.
-    // although we use `await` here, we expect this to have the information already in `known_meta`.
-    const attrBytes = await sdata.rootStore.get(`/${name}/${key}/.zattrs`);
-    const attrs = JSON.parse(new TextDecoder().decode(attrBytes)); //this is bizarrely necessary.
     
     // shapes.elementAttrs
     // this is very much not the right thing - we don't just want the geometry,
@@ -121,11 +118,21 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
 function defaultLoader({ sdata, name, key }: LoaderParams<'images' | 'labels' | 'points'>) {
   const url = `${sdata.url}/${name}/${key}`;
   // we should be able to parse attrs here with an appropriate schema
-  // doing it in zarrUtils for experimentation
-  return async () => {
+  //@ts-expect-error
+  const attr = sdata.parsed?.[name][key][ATTRS_KEY];
+  console.log(name, key, attr);
+  const fn = async () => {
     const element = await zarr.open(new zarr.FetchStore(url), { kind: 'group' });
+    //it might seem like it's a lot easier to just get the attrs once we've loaded the group for the element
+    //but then if we want to do something as basic as list coordinate systems for the whole object etc
+    //or generally show something comparable to the python __repr
+    //then we have a lot of `await` to do, and I just can't accept that.
+    //element.attrs;
     return element;
   }
+  fn.attr = attr;
+  fn.toJSON = () => ({attr});
+  return fn;
 }
 
 // nb - we can make it so that this is the source of truth for Elements<K>

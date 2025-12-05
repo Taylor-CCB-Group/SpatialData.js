@@ -83,3 +83,33 @@ async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, root
   if (!attr) return undefined;
   return attr;
 }
+
+/**
+ * Deep clone a ZarrTree, converting Symbol-keyed attrs to string keys for serialization/debugging
+ */
+export function serializeZarrTree(obj: ZarrTree | unknown) {
+  if (obj === null || typeof obj !== 'object') return obj;
+
+  const result: Record<string, unknown> = {};
+
+  // Copy Symbol properties to string keys
+  if (ATTRS_KEY in obj && obj[ATTRS_KEY]) {
+    result._attrs = obj[ATTRS_KEY];
+  }
+
+  // Copy regular properties
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      //@ts-expect-error
+      const val = obj[key];
+      // Don't serialize functions (like 'get')
+      if (typeof val === 'function') {
+        result[key] = '<function>';
+      } else {
+        result[key] = serializeZarrTree(val);
+      }
+    }
+  }
+
+  return result;
+}
