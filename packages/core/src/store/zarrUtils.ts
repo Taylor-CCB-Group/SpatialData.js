@@ -1,6 +1,6 @@
 import * as zarr from 'zarrita';
 import type { ZarrTree, ConsolidatedStore } from '../types';
-import { ATTRS_KEY } from '../types';
+import { ATTRS_KEY, ZARRAY_KEY } from '../types';
 
 
 /**
@@ -29,11 +29,13 @@ export async function parseStoreContents(store: ConsolidatedStore) {
         const leaf = (i === (item.path.length - 1)) && item.kind === "array";
         // get zattrs... says it's `async` but I strongly don't want it to actually be fetching unncessarily.
         // current implementation will use the existing zmetadata and will need to be adapted to zarr.json in v3
-        const attrs = await getZattrs(item.v.path, store, root, item.kind);
+        const attrs = await getZattrs(item.v.path, store);
         if (leaf) {
+          const zarray = await getZattrs(item.v.path, store, ".zarray");
           // I suppose this could cache itself as well, but I'm not sure this is really for actual use
           currentNode[part] = {
             [ATTRS_KEY]: attrs,
+            [ZARRAY_KEY]: zarray,
             get: () => zarr.open(root.resolve(item.v.path), { kind: 'array' })
           };
         } else {
@@ -77,8 +79,8 @@ export async function tryConsolidated(store: zarr.FetchStore): Promise<Consolida
   // return zarr.withConsolidated(store).catch(() => zarr.withConsolidated(store, { metadataKey: 'zmetadata' }));
 }
 
-async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, root: zarr.Group<ConsolidatedStore>, kind: "group" | "array") {
-  const attrPath = `${path}/.zattrs`.slice(1);
+async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, k=".zattrs") {
+  const attrPath = `${path}/${k}`.slice(1);
   const attr = store.zmetadata.metadata[attrPath]; //may be undefined, that's fine.
   if (!attr) return undefined;
   return attr;
@@ -95,6 +97,9 @@ export function serializeZarrTree(obj: ZarrTree | unknown) {
   // Copy Symbol properties to string keys
   if (ATTRS_KEY in obj && obj[ATTRS_KEY]) {
     result._attrs = obj[ATTRS_KEY];
+  }
+  if (ZARRAY_KEY in obj && obj[ZARRAY_KEY]) {
+    result._zarray = obj[ZARRAY_KEY];
   }
 
   // Copy regular properties

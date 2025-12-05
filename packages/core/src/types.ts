@@ -74,9 +74,11 @@ type Store = zarr.FetchStore;
  */
 export type ZGroup = zarr.Group<Store>;
 export const ATTRS_KEY = Symbol('attrs');
+export const ZARRAY_KEY = Symbol('.zarray')
 export type ZAttrsAny = Record<string, unknown>
 export type LazyZarrArray<T extends zarr.DataType> = {
   [ATTRS_KEY]?: ZAttrsAny,
+  [ZARRAY_KEY]: ZAttrsAny,
   get: () => Promise<zarr.Array<T>>
 };
 export interface ZarrTree { 
