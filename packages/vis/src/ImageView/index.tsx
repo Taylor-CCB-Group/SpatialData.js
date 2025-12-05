@@ -1,7 +1,7 @@
 import { useSpatialData } from "@spatialdata/react";
-import { useEffect, useMemo, useState, useId, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, useId, type CSSProperties, useCallback } from "react";
 import { useMeasure } from "@uidotdev/usehooks";
-import { createVivStores, useChannelsStore, useLoader, useViewerStore, useViewerStoreApi, VivProvider } from "./avivatorish/state";
+import { createVivStores, useChannelsStore, useLoader, useViewerStore, useViewerStoreApi, VivProvider, useChannelsStoreApi, DEFAUlT_CHANNEL_STATE } from "./avivatorish/state";
 import { DetailView, VivViewer, getDefaultInitialViewState } from "@vivjs-experimental/viv";
 import { useImage } from "./avivatorish/hooks";
 
@@ -13,8 +13,8 @@ function _isValidImage(image: ReturnType<typeof useLoader>) {
   return source.shape.length > 0;
 }
 
-function VivImage({url, width, height}: {url?: string | URL, width: number, height: number}) {
-  //TODO: fix viewState... seems like this should be simpler than it is.
+function VivImage({ url, width, height }: { url?: string | URL; width: number; height: number }) {
+	//TODO: fix viewState... seems like this should be simpler than it is.
 
   const loader = useLoader(); //could do with typing this...
   const channels = useChannelsStore(({colors, contrastLimits, channelsVisible, selections}) => ({colors, contrastLimits, channelsVisible, selections}));
@@ -37,31 +37,51 @@ function VivImage({url, width, height}: {url?: string | URL, width: number, heig
     }
   }), []);
   const viewerStore = useViewerStoreApi();
-  useEffect(() => {
-    if (!url) return;
-    const source = { urlOrFile: url.toString(), description: 'image' };
-    console.log('setting source', source);
-    viewerStore.setState({ source, viewState: null });
-  }, [url, viewerStore]);
-  useEffect(() => {
-    if (!_isValidImage(loader)) return;
-    if (width === 0 || height === 0) return;
-    if (!viewState) {
-      const zoomBackOff = 0.2;
-      const viewState = getDefaultInitialViewState(loader, {width, height}, zoomBackOff);
-      console.log('setting viewState', viewState);
-      viewerStore.setState({ viewState });
-    }
-  }, [loader, viewState, viewerStore, viewerStore.setState, width, height]);
+  const channelsStore = useChannelsStoreApi();
+
+	const resetViewState = useCallback(() => {
+		if (!_isValidImage(loader) || width === 0 || height === 0) return;
+		const zoomBackOff = 0.2;
+		const newViewState = getDefaultInitialViewState(loader, { width, height }, zoomBackOff);
+		console.log("resetting viewState", newViewState);
+		viewerStore.setState({ viewState: newViewState });
+	}, [loader, width, height, viewerStore]);
+
+	useEffect(() => {
+		if (!url) return;
+		const source = { urlOrFile: url.toString(), description: "image" };
+		viewerStore.setState({ source, viewState: null });
+		channelsStore.setState({ loader: DEFAUlT_CHANNEL_STATE.loader });
+	}, [url, viewerStore, channelsStore]);
+
+	useEffect(() => {
+		if (viewState === null && _isValidImage(loader)) {
+			resetViewState();
+		}
+	}, [viewState, resetViewState, loader]);
+
+	// useEffect(() => {
+	// 	const listener = (e: KeyboardEvent) => {
+	// 		if (e.key === ".") {
+	// 			resetViewState();
+	// 		}
+	// 	};
+	// 	window.addEventListener("keydown", listener);
+	// 	return () => window.removeEventListener("keydown", listener);
+	// }, [resetViewState]);
+
   const source = useViewerStore((state) => state.source);
   useImage(source);
-  if (isViewerLoading) return <div>Loading...</div>;
+  if (isViewerLoading || !viewState) return <div>Loading...</div>;
   return (
   <VivViewer 
     deckProps={deckProps}
     layerProps={[layerConfig]} 
     views={[detailView]} 
-    viewStates={[{ ...viewState, id: detailId }]} 
+    viewStates={[{ ...viewState, id: detailId }]}
+    onViewStateChange={({ viewState: newViewState }) => {
+				viewerStore.setState({ viewState: newViewState });
+			}}
   />);
 }
 
