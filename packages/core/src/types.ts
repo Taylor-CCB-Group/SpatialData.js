@@ -73,8 +73,16 @@ type Store = zarr.FetchStore;
  * Leaf type subject to change.
  */
 export type ZGroup = zarr.Group<Store>;
-export type LazyZarrArray<T extends zarr.DataType> = () => Promise<zarr.Array<T>>;
-export interface ZarrTree { [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; };
+export const ATTRS_KEY = Symbol('attrs');
+export type ZAttrsAny = Record<string, unknown>
+export type LazyZarrArray<T extends zarr.DataType> = {
+  [ATTRS_KEY]?: ZAttrsAny,
+  get: () => Promise<zarr.Array<T>>
+};
+export interface ZarrTree { 
+  [ATTRS_KEY]?: ZAttrsAny,
+  [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; 
+};
 
 /**
  * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
