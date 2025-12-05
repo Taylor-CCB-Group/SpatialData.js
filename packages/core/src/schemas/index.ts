@@ -11,39 +11,43 @@
 
 import { z } from 'zod';
 
-/// nb - most of the rest of this file is somewhat dead...
-
-
-// this is generated from https://github.com/ome/ngff/blob/8cbba216e37407bd2d4bd5c7128ab13bd0a6404e/schemas/image.schema
-// -> https://stefanterdell.github.io/json-schema-to-zod-react/ (the output of which had lots of errors
-// which were 'fixed' by Cursor (gemini-2.5-pro, lgtm but not checked carefully), then refactored into smaller schemas.
-// so entirely possible that something is not entirely correct.)
-// Also not sure if we want to actually pass data through this for validation without having proper versioning...
-
 
 /**
  * Schema for coordinate transformations
+ * 
+ * Note: Uses z.lazy() for the 'sequence' type to handle self-referential structure
+ * where a sequence transformation contains an array of transformations
  */
-export const coordinateTransformationSchema = z
-  .array(
-    z.union([
-      // other transformations surely exist but not in the 0.5 OME-NGFF image.schema this is based on...
-      // so if we want more general support we should consider how we structure our types/schemas etc.
-      z.object({
-        type: z.literal('scale'),
-        scale: z.array(z.number()).min(2),
-      }),
-      z.object({
-        type: z.literal('translation'),
-        translation: z.array(z.number()).min(2),
-      }),
-      // we're surely going to need something more here to be able to handle a reasonable subset of data
-      z.object({
-        type: z.literal('identity'),
-      })
-    ])
-  )
-  .min(1);
+const baseTransformationSchema = z.union([
+  z.object({
+    type: z.literal('scale'),
+    scale: z.array(z.number()).min(2),
+  }),
+  z.object({
+    type: z.literal('translation'),
+    translation: z.array(z.number()).min(2),
+  }),
+  z.object({
+    type: z.literal('identity'),
+  }),
+  z.object({
+    type: z.literal('affine'),
+    affine: z.array(z.array(z.number())).min(2),
+  })
+]);
+
+// Recursive transformation type that includes 'sequence'
+const transformationSchema: z.ZodType = z.lazy(() =>
+  z.union([
+    baseTransformationSchema,
+    z.object({
+      type: z.literal('sequence'),
+      transformations: z.array(transformationSchema).min(1),
+    }),
+  ])
+);
+
+export const coordinateTransformationSchema = z.array(transformationSchema).min(1);
 
 const axesSchema = z
   .array(
