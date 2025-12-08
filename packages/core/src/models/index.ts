@@ -1,4 +1,5 @@
-import { type ElementName, type Table, type BadFileHandler, type SDataProps, type ZarrTree, type LazyZarrArray, ATTRS_KEY } from '../types';
+import type { ElementName, Table, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZGroup } from '../types';
+import { ATTRS_KEY } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';
@@ -27,6 +28,7 @@ abstract class AbstractElement<T extends ElementName> {
     this.key = key;
     this.url = `${sdata.url}/${name}/${key}`;
     // all kinds of element can have a reference to the `parsed` store for this path in `sdata`
+    // that means that they MUST have `attrs` and a method for parsing that.
     const { parsed } = sdata;
     if (!parsed) {
       throw new Error("Parsed store contents not available");
@@ -59,6 +61,9 @@ class ShapesElement extends AbstractSpatialElement<'shapes'> {
 class RasterElement<T extends 'images' | 'labels'> extends AbstractSpatialElement<T> {
   getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
     // is it multiscale or not? (is zarrStore a group or an array?)
+    // do we use this class, or 'just' the defaultLoader thing but with some schema parsing etc?
+    // OOP is probably an easier abstraction to understand here, and I'm not sure why it wouldn't be the choice
+    // but for some reason I have some vague feeling we may not want it?
     return undefined;
   }
 }
@@ -89,6 +94,8 @@ function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
 }
 
 function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
+  // shall we change this to use the `class ShapesElement` (with appropriate implementation)?
+  // Almost certainly, yes.
   const url = `${sdata.url}/${name}/${key}`;
   //@ts-expect-error
   const attrs = sdata.parsed?.[name][key][ATTRS_KEY];
@@ -106,6 +113,7 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
     // const polygonShapes = await shapes.loadPolygonShapes(`${url}/geometry`);
     return {
       attrs,
+      // what would we need to do in order to load some useful subset of shapes for a given area etc?
       loadPolygonShapes() { 
         return shapes.loadPolygonShapes(`${url}/geometry`)
       },
@@ -115,14 +123,24 @@ function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
   }
 }
 
-function defaultLoader({ sdata, name, key }: LoaderParams<'images' | 'labels' | 'points'>) {
+function defaultLoader<T extends 'images' | 'labels' | 'points'>({ sdata, name, key }: LoaderParams<T>) {
   const url = `${sdata.url}/${name}/${key}`;
+  // we could look up a schema for `name` here and return something validated & typed accordingly.
+  // i.e. with transforms, shape etc.
+  // we should be able to access this without another fetch/await.
+
+  // do we ever want to release this reference?
+  // to what extent do we leak resources?
+  // probably not important for first version, but might be for future.
+  let element: ZGroup | undefined;
   // we should be able to parse attrs here with an appropriate schema
   //@ts-expect-error
   const attr = sdata.parsed?.[name][key][ATTRS_KEY];
   console.log(name, key, attr);
   const fn = async () => {
-    const element = await zarr.open(new zarr.FetchStore(url), { kind: 'group' });
+    if (!element) {
+      element = await zarr.open(new zarr.FetchStore(url), { kind: 'group' });
+    }
     //it might seem like it's a lot easier to just get the attrs once we've loaded the group for the element
     //but then if we want to do something as basic as list coordinate systems for the whole object etc
     //or generally show something comparable to the python __repr
