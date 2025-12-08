@@ -1,5 +1,5 @@
-import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny } from '../types';
-import { ATTRS_KEY } from '../types';
+import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny, Result } from '../types';
+import { ATTRS_KEY, Ok, Err } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';
@@ -14,6 +14,11 @@ import {
   tableAttrsSchema,
   type TableAttrs,
 } from '../schemas';
+import { 
+  type BaseTransformation, 
+  Identity,
+  parseTransforms, 
+} from '../transformations';
 
 
 /**
@@ -63,6 +68,28 @@ abstract class AbstractElement<T extends ElementName> {
   }
 }
 
+const DEFAULT_COORDINATE_SYSTEM = 'global';
+
+/**
+ * Error returned when a requested coordinate system is not available.
+ */
+export class CoordinateSystemNotFoundError extends Error {
+  readonly coordinateSystem: string;
+  readonly elementKey: string;
+  readonly availableCoordinateSystems: string[];
+  
+  constructor(coordinateSystem: string, elementKey: string, available: string[]) {
+    super(
+      `No transformation to coordinate system '${coordinateSystem}' is available for element '${elementKey}'.\n` +
+      `Available coordinate systems: [${available.join(', ')}]`
+    );
+    this.name = 'CoordinateSystemNotFoundError';
+    this.coordinateSystem = coordinateSystem;
+    this.elementKey = elementKey;
+    this.availableCoordinateSystems = available;
+  }
+}
+
 /**
  * Base class for spatial elements (everything except tables).
  * Spatial elements have coordinate transformations.
@@ -74,59 +101,86 @@ abstract class AbstractSpatialElement<
   abstract readonly attrs: TAttrs;
   
   /**
-   * Subclasses must implement this to provide access to their coordinate transformations.
+   * Subclasses must implement this to provide access to their raw coordinate transformations.
    * Different element types store transforms in different locations.
    */
   protected abstract get rawCoordinateTransformations(): CoordinateTransformation | undefined;
   
   /**
-   * Get coordinate transformations for this element.
-   * @param toCoordinateSystem - Optional target coordinate system name.
-   *   If not provided, returns all transformations for this element.
-   * @returns The transformations, or undefined if not available
+   * Get the list of coordinate systems this element has transformations to.
    */
-  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
+  get coordinateSystems(): string[] {
     const transforms = this.rawCoordinateTransformations;
+    if (!transforms) return [];
     
-    if (!transforms || transforms.length === 0) {
-      return undefined;
-    }
-    
-    // If no target specified, return all transformations
-    if (!toCoordinateSystem) {
-      return transforms;
-    }
-    
-    // Filter to transformations with matching output coordinate system
-    const matching = transforms.filter(t => {
+    const systems = new Set<string>();
+    for (const t of transforms) {
       const output = (t as { output?: { name?: string } }).output;
-      return output?.name === toCoordinateSystem;
-    });
+      systems.add(output?.name ?? DEFAULT_COORDINATE_SYSTEM);
+    }
+    return Array.from(systems);
+  }
+  
+  /**
+   * Get coordinate transformation for this element to a target coordinate system.
+   * Returns a Result that the caller can unwrap or handle.
+   * 
+   * @param toCoordinateSystem - Target coordinate system name. Defaults to 'global'.
+   * @returns Result containing the transformation, or an error if not found
+   * 
+   * @example
+   * ```ts
+   * const result = element.getTransformation('global');
+   * if (result.ok) {
+   *   const matrix = result.value.toMatrix();
+   * } else {
+   *   console.error(result.error.availableCoordinateSystems);
+   * }
+   * 
+   * // Or unwrap to throw on error:
+   * const transform = unwrap(element.getTransformation('global'));
+   * ```
+   */
+  getTransformation(toCoordinateSystem: string = DEFAULT_COORDINATE_SYSTEM): Result<BaseTransformation, CoordinateSystemNotFoundError> {
+    const allTransforms = this.getAllTransformations();
     
-    return matching.length > 0 ? matching : undefined;
+    const transform = allTransforms.get(toCoordinateSystem);
+    if (!transform) {
+      const available = Array.from(allTransforms.keys());
+      return Err(new CoordinateSystemNotFoundError(toCoordinateSystem, this.key, available));
+    }
+    
+    return Ok(transform);
   }
   
   /**
    * Get all coordinate system mappings for this element.
    * Groups transformations by their output coordinate system name.
-   * @returns A Map from output coordinate system name to transformations
+   * @returns A Map from output coordinate system name to BaseTransformation
    */
-  getAllTransformations(): Map<string, CoordinateTransformation> {
-    const result = new Map<string, CoordinateTransformation>();
+  getAllTransformations(): Map<string, BaseTransformation> {
+    const result = new Map<string, BaseTransformation>();
     const transforms = this.rawCoordinateTransformations;
     
     if (!transforms) return result;
     
+    // Group raw transforms by output coordinate system
+    const grouped = new Map<string, CoordinateTransformation>();
     for (const t of transforms) {
       const output = (t as { output?: { name?: string } }).output;
-      const outputName = output?.name ?? 'global';
+      const outputName = output?.name ?? DEFAULT_COORDINATE_SYSTEM;
       
-      const existing = result.get(outputName);
+      const existing = grouped.get(outputName);
       if (existing) {
-        result.set(outputName, [...existing, t]);
+        grouped.set(outputName, [...existing, t]);
       } else {
-        result.set(outputName, [t]);
+        grouped.set(outputName, [t]);
       }
+    }
+    
+    // Parse each group into a BaseTransformation
+    for (const [csName, coordTransforms] of grouped.entries()) {
+      result.set(csName, parseTransforms(coordTransforms));
     }
     
     return result;
@@ -228,7 +282,7 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
    * Get transforms for a specific resolution level.
    * Returns both element-level and dataset-level transforms.
    */
-  getTransformationsForLevel(level: number | string, toCoordinateSystem?: string) {
+  getTransformationForLevel(level: number | string, toCoordinateSystem?: string) {
     const datasets = this.attrs.multiscales[0]?.datasets ?? [];
     const dataset = typeof level === 'number' 
       ? datasets[level] 
@@ -236,9 +290,11 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
     
     if (!dataset) return undefined;
     
+    const datasetTransforms = dataset.coordinateTransformations;
+    
     return {
-      element: this.getTransformations(toCoordinateSystem),
-      dataset: dataset.coordinateTransformations,
+      element: this.getTransformation(toCoordinateSystem),
+      dataset: datasetTransforms ? parseTransforms(datasetTransforms) : new Identity(),
     };
   }
 }

@@ -7,19 +7,35 @@ import { useEffect, useMemo, useState } from "react";
 export default function ShapesComponent() {
   const { spatialData } = useSpatialData();
   const [selectedShapes, setSelectedShapes] = useState<string>('');
-  const table = useMemo(() => {
+  const shapes = useMemo(() => {
     return spatialData?.shapes?.[selectedShapes];
   }, [selectedShapes, spatialData?.shapes]);
   const [shapesData, setShapesData] = useState<any>(undefined);
   useEffect(() => {
-    if (table) {
-      table().then(t => setShapesData(t));
+    if (shapes) {
+      const result = shapes.getTransformation();
+      if (result.ok) {
+        const t = result.value;
+        setShapesData({
+          type: t.type,
+          input: t.input,
+          output: t.output,
+          matrix: t.toArray(),
+        });
+      } else {
+        // Show the error info
+        setShapesData({
+          error: result.error.message,
+          availableCoordinateSystems: result.error.availableCoordinateSystems,
+        });
+      }
     } else {
       setShapesData(undefined);
     }
-  }, [table]);
+  }, [shapes]);
   return (
     <div>
+      <h3>Shapes component:</h3>
       {spatialData?.shapes &&
         <select value={selectedShapes || ''} onChange={(e) => setSelectedShapes(e.target.value)}>
           {Object.keys(spatialData.shapes).map((key) => (

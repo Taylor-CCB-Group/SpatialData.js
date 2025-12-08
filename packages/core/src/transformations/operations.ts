@@ -1,23 +1,28 @@
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialElement } from "../models";
-import { Identity, type BaseTransformation, parseTransforms } from "./transformations";
+import type { SpatialElement, CoordinateSystemNotFoundError } from "../models";
+import type { BaseTransformation } from "./transformations";
+import type { Result } from "../types";
+import { unwrap } from "../types";
 
-
-const DEFAULT_COORDINATE_SYSTEM = 'global';
 
 export type MappingToCoordinateSystem_t = Map<string, BaseTransformation>;
 
 /**
  * Get the transformation(s) for a given SpatialElement.
  * 
- * Uses the element's getAllTransformations() method to retrieve coordinate system mappings.
- * Transformations are stored at the element level with input/output coordinate system refs.
+ * This is a convenience wrapper around element.getTransformation() and element.getAllTransformations().
+ * For most use cases, prefer calling those methods directly on the element.
+ * 
+ * @param element - A spatial element (ImageElement, ShapesElement, etc.)
+ * @param toCoordinateSystem - Target coordinate system. Defaults to 'global'.
+ * @param getAll - If true, return all coordinate system mappings as a Map
+ * @returns Result containing the transformation, or a Map of all transformations
  */
 export function getTransformation(
   element: SpatialElement,
   toCoordinateSystem?: string,
   getAll?: false
-): BaseTransformation;
+): Result<BaseTransformation, CoordinateSystemNotFoundError>;
 export function getTransformation(
   element: SpatialElement,
   toCoordinateSystem: string | undefined,
@@ -27,59 +32,26 @@ export function getTransformation(
   element: SpatialElement,
   toCoordinateSystem?: string,
   getAll = false
-): BaseTransformation | Map<string, BaseTransformation> {
-  
-  // Use the element's getAllTransformations method
-  const allTransforms = element.getAllTransformations();
-  
-  if (allTransforms.size === 0) {
-    // No coordinate systems defined - return identity
-    if (getAll) {
-      const map = new Map<string, BaseTransformation>();
-      map.set(DEFAULT_COORDINATE_SYSTEM, new Identity());
-      return map;
-    }
-    return new Identity();
-  }
-  
+): Result<BaseTransformation, CoordinateSystemNotFoundError> | Map<string, BaseTransformation> {
   if (getAll) {
-    // Return all coordinate system mappings, parsed into BaseTransformation instances
-    const map = new Map<string, BaseTransformation>();
-    for (const [csName, coordTransforms] of allTransforms.entries()) {
-      map.set(csName, parseTransforms(coordTransforms));
-    }
-    return map;
+    return element.getAllTransformations();
   }
-  
-  // Get transformation for a specific coordinate system
-  const targetCS = toCoordinateSystem ?? DEFAULT_COORDINATE_SYSTEM;
-  const coordTransforms = allTransforms.get(targetCS);
-  
-  if (coordTransforms) {
-    return parseTransforms(coordTransforms);
-  }
-  
-  // Fallback: return first available transform or identity
-  const firstEntry = allTransforms.entries().next();
-  if (!firstEntry.done) {
-    return parseTransforms(firstEntry.value[1]);
-  }
-  
-  return new Identity();
+  return element.getTransformation(toCoordinateSystem);
 }
 
 /**
  * Get a Matrix4 transformation for a spatial element to a target coordinate system.
- * This is the preferred method for getting transforms for rendering.
+ * Convenience method for rendering that unwraps the Result and throws on error.
  * 
  * @param element - A spatial element
  * @param toCoordinateSystem - Target coordinate system name (defaults to 'global')
- * @returns A Matrix4 transform, or identity matrix if no transforms defined
+ * @throws CoordinateSystemNotFoundError if the coordinate system is not available
+ * @returns A Matrix4 transform
  */
 export function getTransformMatrix(
   element: SpatialElement, 
   toCoordinateSystem?: string
 ): Matrix4 {
-  const transform = getTransformation(element, toCoordinateSystem, false);
-  return transform.toMatrix();
+  const result = element.getTransformation(toCoordinateSystem);
+  return unwrap(result).toMatrix();
 }
