@@ -34,39 +34,68 @@ const coordinateSystemRefSchema = z.object({
  * In NGFF 0.5+, transformations can have input/output coordinate system references
  * to specify which coordinate systems they map between.
  */
-const baseTransformationSchema = z.union([
-  z.object({
-    type: z.literal('scale'),
-    scale: z.array(z.number()).min(2),
-    input: coordinateSystemRefSchema.optional(),
-    output: coordinateSystemRefSchema.optional(),
-  }),
-  z.object({
-    type: z.literal('translation'),
-    translation: z.array(z.number()).min(2),
-    input: coordinateSystemRefSchema.optional(),
-    output: coordinateSystemRefSchema.optional(),
-  }),
-  z.object({
-    type: z.literal('identity'),
-    input: coordinateSystemRefSchema.optional(),
-    output: coordinateSystemRefSchema.optional(),
-  }),
-  z.object({
-    type: z.literal('affine'),
-    affine: z.array(z.array(z.number())).min(2),
-    input: coordinateSystemRefSchema.optional(),
-    output: coordinateSystemRefSchema.optional(),
-  })
-]);
+/**
+ * Base transformation types (non-recursive)
+ */
+const scaleTransformSchema = z.object({
+  type: z.literal('scale'),
+  scale: z.array(z.number()).min(2),
+  input: coordinateSystemRefSchema.optional(),
+  output: coordinateSystemRefSchema.optional(),
+});
 
-// Recursive transformation type that includes 'sequence'
-const transformationSchema: z.ZodType = z.lazy(() =>
+const translationTransformSchema = z.object({
+  type: z.literal('translation'),
+  translation: z.array(z.number()).min(2),
+  input: coordinateSystemRefSchema.optional(),
+  output: coordinateSystemRefSchema.optional(),
+});
+
+const identityTransformSchema = z.object({
+  type: z.literal('identity'),
+  input: coordinateSystemRefSchema.optional(),
+  output: coordinateSystemRefSchema.optional(),
+});
+
+const affineTransformSchema = z.object({
+  type: z.literal('affine'),
+  affine: z.array(z.array(z.number())).min(2),
+  input: coordinateSystemRefSchema.optional(),
+  output: coordinateSystemRefSchema.optional(),
+});
+
+/**
+ * Union of base transformation types
+ */
+type BaseTransformation = z.infer<typeof scaleTransformSchema>
+  | z.infer<typeof translationTransformSchema>
+  | z.infer<typeof identityTransformSchema>
+  | z.infer<typeof affineTransformSchema>;
+
+/**
+ * Full transformation type including sequence (recursive)
+ */
+type SequenceTransformation = {
+  type: 'sequence';
+  transformations: Transformation[];
+  input?: z.infer<typeof coordinateSystemRefSchema>;
+  output?: z.infer<typeof coordinateSystemRefSchema>;
+};
+
+type Transformation = BaseTransformation | SequenceTransformation;
+
+// Recursive transformation schema with explicit type annotation
+const transformationSchema: z.ZodType<Transformation> = z.lazy(() =>
   z.union([
-    baseTransformationSchema,
+    scaleTransformSchema,
+    translationTransformSchema,
+    identityTransformSchema,
+    affineTransformSchema,
     z.object({
       type: z.literal('sequence'),
       transformations: z.array(transformationSchema).min(1),
+      input: coordinateSystemRefSchema.optional(),
+      output: coordinateSystemRefSchema.optional(),
     }),
   ])
 );

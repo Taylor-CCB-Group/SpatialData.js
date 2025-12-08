@@ -6,18 +6,45 @@ settings:
 
 catalogs:
   default:
+    '@luma.gl/core':
+      specifier: ~9.1.9
+      version: 9.1.10
     '@math.gl/core':
       specifier: ^4.1.0
       version: 4.1.0
+    '@types/node':
+      specifier: ^22.10.5
+      version: 22.18.8
+    '@types/react':
+      specifier: ^19.2.0
+      version: 19.2.2
+    '@types/react-dom':
+      specifier: ^19.2.0
+      version: 19.2.2
+    '@vitejs/plugin-react':
+      specifier: ^4.3.4
+      version: 4.7.0
+    '@vivjs-experimental/viv':
+      specifier: ^1.0.1
+      version: 1.0.1
     anndata.js:
       specifier: ^0.0.2
       version: 0.0.2
     apache-arrow:
       specifier: ^17.0.0
       version: 17.0.0
+    deck.gl:
+      specifier: ~9.1.11
+      version: 9.1.15
     parquet-wasm:
       specifier: ^0.6.1
       version: 0.6.1
+    react:
+      specifier: ^19.2.0
+      version: 19.2.0
+    react-dom:
+      specifier: ^19.2.0
+      version: 19.2.0
     typescript:
       specifier: ^5.7.3
       version: 5.9.3
@@ -34,8 +61,8 @@ catalogs:
       specifier: ^0.5.4
       version: 0.5.4
     zod:
-      specifier: ^3.24.1
-      version: 3.25.76
+      specifier: ^4.1.13
+      version: 4.1.13
 
 importers:
 
@@ -131,7 +158,7 @@ importers:
         version: 0.5.4
       zod:
         specifier: 'catalog:'
-        version: 3.25.76
+        version: 4.1.13
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
@@ -7287,6 +7314,9 @@ packages:
 
   zod@4.1.12:
     resolution: {integrity: sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ==}
+
+  zod@4.1.13:
+    resolution: {integrity: sha512-AvvthqfqrAhNH9dnfmrfKzX5upOdjUVJYFqNSlkmGf64gRaTzlPwz99IHYnVs28qYAybvAlBV+H7pn0saFY4Ig==}
 
   zstd-codec@0.1.5:
     resolution: {integrity: sha512-v3fyjpK8S/dpY/X5WxqTK3IoCnp/ZOLxn144GZVlNUjtwAchzrVo03h+oMATFhCIiJ5KTr4V3vDQQYz4RU684g==}
@@ -16254,6 +16284,8 @@ snapshots:
   zod@3.25.76: {}
 
   zod@4.1.12: {}
+
+  zod@4.1.13: {}
 
   zstd-codec@0.1.5:
     optional: true
