@@ -129,19 +129,19 @@ if (transform.ok) {
 }
 ```
 
-## Working with Matrix4
-
-The `Matrix4` class from `@math.gl/core` is used for matrix operations:
-
-```ts
 import { Matrix4 } from '@math.gl/core';
 
-const transform = unwrap(element.getTransformation('global'));
-const matrix = transform.toMatrix();
+const transformResult = element.getTransformation('global');
+if (!transformResult.ok) {
+  console.error('Could not get transformation');
+  return;
+}
+const matrix = transformResult.value.toMatrix();
 
 // Transform a point
 const point = [100, 200, 0, 1];  // Homogeneous coordinates
 const transformed = matrix.transform(point);
+// (nb doing this to large numbers of points is sub-optimal)
 
 // Compose with another matrix
 const combined = matrix.clone().multiplyRight(otherMatrix);

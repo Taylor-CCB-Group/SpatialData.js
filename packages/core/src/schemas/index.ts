@@ -263,6 +263,5 @@ export const spatialDataSchema = z.object({
 });  
 
 
-//todo: fix this type
 export type CoordinateTransformation = z.infer<typeof coordinateTransformationSchema>;
 export type SpatialData = z.infer<typeof spatialDataSchema>;
