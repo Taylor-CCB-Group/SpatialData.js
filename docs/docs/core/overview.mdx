@@ -1,0 +1,104 @@
+---
+sidebar_position: 1
+---
+
+# Core Package Overview
+
+The `@spatialdata/core` package provides a TypeScript/JavaScript interface for reading and working with [SpatialData](https://spatialdata.scverse.org/en/stable/) Zarr stores. It mostly mirrors the Python library's API design while adapting to TypeScript idioms and the asynchronous nature of browser-based data loading. Hot-paths should make use of WASM with safe and ergonomic TypeScript interfaces where appropriate.
+
+The bundle should be tree-shakeable and avoid loading heavy dependencies before they are needed (please raise an issue if this is found not to be the case - it's not something that's been given much attention in the initial implementation).
+
+## Installation
+
+:::info you can't actually install this from npm right now
+
+As of writing, this isn't actually published to npm yet and when it is it may not be under this exact name. This documentation is evolving with the implementation, anticipating the expected usage.
+
+You're more than welcome to clone the git repo and do what you will with it.
+
+Note that as of now it only works with older stores (this should change reasonably soon).
+
+:::
+
+```bash
+npm install @spatialdata/core
+# or
+pnpm add @spatialdata/core
+```
+
+## Quick Start
+
+```ts
+import { readZarr } from '@spatialdata/core';
+
+// Load a SpatialData store from a URL
+const sdata = await readZarr('https://example.com/my-spatialdata.zarr');
+
+// View a representation of what's in the store
+console.log(sdata.toString());
+
+// Access elements by type
+const images = sdata.images;    // Record<string, ImageElement>
+const shapes = sdata.shapes;    // Record<string, ShapesElement>
+const tables = sdata.tables;    // Record<string, TableElement>
+const labels = sdata.labels;    // Record<string, LabelsElement>
+const points = sdata.points;    // Record<string, PointsElement>
+
+// Get coordinate systems
+const coordinateSystems = sdata.coordinateSystems; // ['global', ...]
+```
+
+## Design Philosophy
+
+The library follows several key principles:
+
+1. **Read-Only (for now)**: The current API is focused on reading and representing SpatialData stores as essentially immutable. You can load stores, access elements, query transformations, and load data—but not create or modify stores. Write operations may be added in a future revision.
+
+2. **Python API Familiarity**: Method and class names mirror the Python `spatialdata` library where practical, making it easy to translate workflows.
+
+3. **Type Safety**: Full TypeScript types with Zod schema validation for metadata, giving you confidence in the data structures.
+
+4. **Lazy Loading of Heavy Data**: Data is loaded on-demand rather than all at once, critical for working with large datasets in the browser.
+
+5. **Eager Loading of Metadata**: Consolidated metadata from the zarr store is loaded up-front and used to build a representation of the object structure such that it can be programmatically exposed without `async` leaking where it isn't needed.
+
+6. **Explicit Error Handling**: Uses a Rust-inspired `Result` type for operations that can fail, allowing you to handle errors gracefully without exceptions.
+
+## Public API Surface
+
+The main entry points for application code are:
+
+| Export | Purpose |
+|--------|---------|
+| `readZarr(url)` | Load a SpatialData store from a URL |
+| `SpatialData` | The loaded store object with element collections |
+| Element classes | `ImageElement`, `ShapesElement`, `LabelsElement`, `PointsElement`, `TableElement` |
+| `Result` utilities | `Ok`, `Err`, `isOk`, `isErr`, `unwrap`, `unwrapOr` |
+| `getTransformMatrix()` | Convenience function for getting Matrix4 transforms |
+
+For internal architecture details, module organization, and APIs intended for contributors or advanced tooling, see [Internals & Architecture](./internals).
+
+## Element Types
+
+SpatialData stores contain different types of elements:
+
+### Spatial Elements
+
+These have coordinate transformations and can be rendered in shared coordinate systems:
+
+- **Images** (`ImageElement`): Multiscale raster images following OME-NGFF
+- **Labels** (`LabelsElement`): Segmentation label images (also OME-NGFF)
+- **Shapes** (`ShapesElement`): Vector geometries (polygons, circles)
+- **Points** (`PointsElement`): Point cloud data (transcripts, etc.)
+
+### Non-Spatial Elements
+
+- **Tables** (`TableElement`): AnnData tables with region annotations
+
+## Next Steps
+
+- [Element Classes](./elements) - Working with different element types
+- [Transformations](./transformations) - Understanding coordinate systems and transforms
+- [Error Handling](./error-handling) - Using the Result type pattern
+- [Internals](./internals) - Architecture and internal APIs (for contributors)
+

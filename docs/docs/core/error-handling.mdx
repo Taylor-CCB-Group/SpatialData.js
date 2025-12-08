@@ -1,0 +1,218 @@
+---
+sidebar_position: 4
+---
+
+# Error Handling
+
+The `@spatialdata/core` package uses a `Result` type pattern inspired by Rust for explicit error handling. This approach makes error cases visible in the type system and avoids unexpected exceptions.
+
+:::info Error types and safety
+
+The use of this pattern in some parts of the code should not be taken as an assertion that all possible exceptions are handled in this way.
+
+This aspect of the design may be subject to review, and community feedback is encouraged.
+
+:::
+
+## The Result Type
+
+```ts
+type Result<T, E = Error> = 
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+```
+
+A `Result` is either successful (`ok: true`) with a `value`, or failed (`ok: false`) with an `error`. This forces you to handle both cases explicitly.
+
+## Creating Results
+
+```ts
+import { Ok, Err } from '@spatialdata/core';
+
+// Create a success
+const success = Ok(42);           // { ok: true, value: 42 }
+
+// Create a failure  
+const failure = Err(new Error('Something went wrong'));  // { ok: false, error: Error }
+```
+
+## Checking Results
+
+### Type Guards
+
+```ts
+import { isOk, isErr } from '@spatialdata/core';
+
+const result = element.getTransformation('global');
+
+if (isOk(result)) {
+  // TypeScript knows result.value exists and is BaseTransformation
+  const matrix = result.value.toMatrix();
+}
+
+if (isErr(result)) {
+  // TypeScript knows result.error exists
+  console.error(result.error.message);
+}
+```
+
+### Direct Property Check
+
+```ts
+const result = element.getTransformation('global');
+
+if (result.ok) {
+  // result.value is available
+  const matrix = result.value.toMatrix();
+} else {
+  // result.error is available
+  console.log('Available systems:', result.error.availableCoordinateSystems);
+}
+```
+
+## Unwrapping Results
+
+### unwrap()
+
+Extracts the value or throws if it's an error. Use when you want to convert back to exception-based error handling:
+
+```ts
+import { unwrap } from '@spatialdata/core';
+
+// Throws if result is an error
+const transform = unwrap(element.getTransformation('global'));
+const matrix = transform.toMatrix();
+```
+
+### unwrapOr()
+
+Returns the value or a default if it's an error:
+
+```ts
+import { unwrapOr, Identity } from '@spatialdata/core';
+
+// Returns Identity if the coordinate system isn't found
+const transform = unwrapOr(
+  element.getTransformation('custom_system'),
+  new Identity()
+);
+```
+
+## CoordinateSystemNotFoundError
+
+When requesting a transformation to a coordinate system that doesn't exist, the error provides helpful context:
+
+```ts
+import type { CoordinateSystemNotFoundError } from '@spatialdata/core';
+
+const result = element.getTransformation('nonexistent');
+
+if (!result.ok) {
+  const error: CoordinateSystemNotFoundError = result.error;
+  
+  console.log(error.coordinateSystem);           // 'nonexistent'
+  console.log(error.elementKey);                 // 'my_image'
+  console.log(error.availableCoordinateSystems); // ['global', 'anatomical']
+  console.log(error.message);                    
+  // "No transformation to coordinate system 'nonexistent' is available for element 'my_image'.
+  //  Available coordinate systems: [global, anatomical]"
+}
+```
+
+## Patterns and Best Practices
+
+### Pattern 1: Handle Both Cases
+
+Best for user-facing code where you need to show feedback:
+
+```ts
+const result = element.getTransformation(selectedCoordinateSystem);
+
+if (result.ok) {
+  renderWithTransform(result.value.toMatrix());
+} else {
+  showError(`Cannot transform to ${result.error.coordinateSystem}`);
+  showAvailableOptions(result.error.availableCoordinateSystems);
+}
+```
+
+### Pattern 2: Default Fallback
+
+Good for optional transformations where a default is acceptable:
+
+```ts
+import { unwrapOr, Identity } from '@spatialdata/core';
+
+// Use identity transform if coordinate system not found
+const transform = unwrapOr(
+  element.getTransformation('optional_system'),
+  new Identity()
+);
+```
+
+### Pattern 3: Throw and Catch
+
+When you prefer exception-based handling in try/catch blocks:
+
+```ts
+import { unwrap } from '@spatialdata/core';
+
+try {
+  const transform = unwrap(element.getTransformation('global'));
+  const matrix = transform.toMatrix();
+} catch (error) {
+  if (error instanceof CoordinateSystemNotFoundError) {
+    console.log('Available:', error.availableCoordinateSystems);
+  }
+  throw error;
+}
+```
+
+### Pattern 4: Chain Operations
+
+Process multiple results together:
+
+```ts
+const elements = Object.values(sdata.images ?? {});
+
+const transforms = elements
+  .map(el => ({ element: el, result: el.getTransformation('global') }))
+  .filter(({ result }) => result.ok)
+  .map(({ element, result }) => ({
+    key: element.key,
+    matrix: (result as { ok: true; value: BaseTransformation }).value.toMatrix()
+  }));
+```
+
+### Pattern 5: Aggregate Errors
+
+Collect all errors for batch operations:
+
+```ts
+const errors: CoordinateSystemNotFoundError[] = [];
+const transforms: Map<string, Matrix4> = new Map();
+
+for (const [key, element] of Object.entries(sdata.images ?? {})) {
+  const result = element.getTransformation('global');
+  if (result.ok) {
+    transforms.set(key, result.value.toMatrix());
+  } else {
+    errors.push(result.error);
+  }
+}
+
+if (errors.length > 0) {
+  console.warn(`${errors.length} elements missing 'global' coordinate system`);
+}
+```
+
+## Why Result Instead of Exceptions?
+
+1. **Explicit error handling**: The type system shows you when operations can fail
+2. **No hidden control flow**: Errors don't jump up the call stack unexpectedly
+3. **Self-documenting**: Function signatures show error types
+4. **Composable**: Easy to chain, map, and aggregate results
+5. **Performance**: Avoids the overhead of exception creation when errors are common
+
+This is especially valuable for coordinate system lookups where it's common and expected that some systems may not be available for all elements.
+

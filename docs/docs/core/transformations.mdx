@@ -1,0 +1,157 @@
+---
+sidebar_position: 3
+---
+
+# Coordinate Transformations
+
+Coordinate transformations are fundamental to SpatialData, allowing different elements to be placed in shared coordinate systems. The `@spatialdata/core` package aims to provide a comprehensive implementation of transformation classes that can be represented in the standard.
+
+:::info Read-Only API
+
+The current version of `@spatialdata/core` is focused on **reading** SpatialData stores. Stores are treated as immutable—you load elements and access their transformations, but you don't construct or modify them.
+
+Direct construction of transformation instances (e.g., `new Scale([2, 2])`) is primarily for internal use. Application code should retrieve transformations from elements via methods like `element.getTransformation()`.
+
+Future revisions may introduce APIs for creating and modifying SpatialData stores - but this implies issues around (meta)data integrity etc.
+
+:::
+
+## Accessing Transformations
+
+The primary way to work with transformations is through element methods:
+
+```ts
+const sdata = await readZarr('https://example.com/data.zarr');
+const image = sdata.images?.['my_image'];
+
+// Get available coordinate systems
+console.log(image.coordinateSystems);  // ['global', 'anatomical', ...]
+
+// Get transformation to a specific coordinate system
+const result = image.getTransformation('global');
+if (result.ok) {
+  const matrix = result.value.toMatrix();  // Matrix4 for rendering
+}
+
+// Get all transformations
+const allTransforms = image.getAllTransformations();
+```
+
+For rendering, you'll typically want the `Matrix4` form:
+
+```ts
+import { getTransformMatrix } from '@spatialdata/core';
+
+// Convenience function that unwraps and returns Matrix4 directly
+const matrix = getTransformMatrix(image, 'global');
+```
+
+## Transformation Classes Reference
+
+Transformations parsed from store metadata are represented by classes extending `BaseTransformation`:
+
+```ts
+abstract class BaseTransformation {
+  readonly input?: CoordinateSystemRef;   // Source coordinate system
+  readonly output?: CoordinateSystemRef;  // Target coordinate system
+  
+  abstract toArray(): number[];           // 16-element column-major array
+  toMatrix(): Matrix4;                    // Matrix4 from @math.gl/core
+  abstract get type(): string;            // 'identity' | 'scale' | 'translation' | etc.
+}
+```
+
+The following transformation types are supported:
+
+| Type | Description |
+|------|-------------|
+| `Identity` | No transformation (identity matrix) |
+| `Scale` | Uniform or non-uniform scaling |
+| `Translation` | Coordinate offset |
+| `Affine` | Full affine matrix (2×3, 3×3, or 4×4 formats) |
+| `Sequence` | Composition of multiple transformations |
+| `MapAxis` | Axis remapping (stub implementation) |
+
+## Multiscale Image Transforms
+
+For multiscale images, transformations exist at both the element level and per-dataset (resolution) level. Use the convenience method on `ImageElement` / `LabelsElement`:
+
+```ts
+const image = sdata.images?.['my_image'];
+
+const { element, dataset } = image.getTransformationForLevel(0, 'global');
+// element: Result<BaseTransformation> - element-level transform
+// dataset: BaseTransformation - per-resolution-level transform
+```
+
+For advanced use cases, you can compose transforms manually:
+
+```ts
+import { composeTransforms } from '@spatialdata/core';
+
+// Element-level transforms (element space → coordinate system)
+const elementTransforms = image.attrs.multiscales[0].coordinateTransformations;
+
+// Dataset-level transforms (pixel space → element space)  
+const datasetTransforms = image.attrs.multiscales[0].datasets[0].coordinateTransformations;
+
+// Compose into a single matrix (dataset first, then element)
+const fullMatrix = composeTransforms(elementTransforms, datasetTransforms);
+```
+
+## Coordinate System References
+
+Transformations in NGFF 0.5+ can specify input and output coordinate systems:
+
+```ts
+// Example transformation with coordinate system references
+{
+  type: 'affine',
+  affine: [[2, 0, 0], [0, 2, 0]],
+  input: { 
+    name: 'pixel_space',
+    axes: [{ name: 'x', type: 'space' }, { name: 'y', type: 'space' }]
+  },
+  output: { 
+    name: 'global',
+    axes: [{ name: 'x', type: 'space', unit: 'micrometer' }, { name: 'y', type: 'space', unit: 'micrometer' }]
+  }
+}
+```
+
+Access these on parsed transformations:
+
+```ts
+const transform = element.getTransformation('global');
+if (transform.ok) {
+  console.log(transform.value.input?.name);   // Source coordinate system
+  console.log(transform.value.output?.name);  // Target coordinate system
+}
+```
+
+## Working with Matrix4
+
+The `Matrix4` class from `@math.gl/core` is used for matrix operations:
+
+```ts
+import { Matrix4 } from '@math.gl/core';
+
+const transform = unwrap(element.getTransformation('global'));
+const matrix = transform.toMatrix();
+
+// Transform a point
+const point = [100, 200, 0, 1];  // Homogeneous coordinates
+const transformed = matrix.transform(point);
+
+// Compose with another matrix
+const combined = matrix.clone().multiplyRight(otherMatrix);
+
+// Get the inverse
+const inverse = matrix.clone().invert();
+```
+
+## See Also
+
+- [Error Handling](./error-handling) - Working with Result types from `getTransformation()`
+- [Internals](./internals) - Transformation parsing and internal APIs
+

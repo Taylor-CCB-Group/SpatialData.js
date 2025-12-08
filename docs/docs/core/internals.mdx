@@ -1,0 +1,188 @@
+---
+sidebar_position: 10
+---
+
+# Internals & Architecture
+
+:::caution For Contributors & Advanced Users
+
+This page documents internal implementation details of `@spatialdata/core`. These APIs are **not part of the public interface** and may change without notice.
+
+If you're building an application with this library, you likely don't need anything on this page—see the other documentation sections instead.
+
+:::
+
+## Module Architecture
+
+The package is organized into these internal modules:
+
+```
+@spatialdata/core/
+├── store/          # SpatialData class, readZarr entry point
+│   ├── index.ts    # Main store class
+│   └── zarrUtils.ts # Zarr store parsing utilities
+├── models/         # Element class implementations
+│   ├── index.ts    # Element classes and factory
+│   ├── VShapesSource.ts   # Shapes geometry loader
+│   ├── VTableSource.ts    # Table loader utilities  
+│   └── VZarrDataSource.ts # Zarr data source base
+├── schemas/        # Zod validation schemas
+│   └── index.ts    # OME-NGFF and SpatialData schemas
+├── transformations/
+│   ├── transformations.ts # Transformation classes
+│   └── operations.ts      # Helper functions
+└── types.ts        # Core type definitions
+```
+
+## Element Factory (Internal)
+
+Elements are created internally when loading stores. These functions are not intended for application use:
+
+```ts
+// Internal - do not use directly
+import { createElement, loadElements } from '@spatialdata/core';
+
+// createElement instantiates a single element from parsed metadata
+const element = createElement('images', sdataProps, 'my_image');
+
+// loadElements creates all elements of a type from the parsed store
+const allImages = loadElements(sdataProps, 'images');
+```
+
+Application code should always obtain elements via `readZarr()`:
+
+```ts
+// Correct usage
+const sdata = await readZarr('https://example.com/data.zarr');
+const image = sdata.images?.['my_image'];
+```
+
+## Transformation Parsing
+
+The transformation system parses NGFF coordinate transformations from zarr metadata into typed classes:
+
+### parseTransformEntry
+
+Parses a single transformation object from metadata:
+
+```ts
+import { parseTransformEntry } from '@spatialdata/core';
+
+const entry = { type: 'scale', scale: [0.5, 0.5] };
+const transform = parseTransformEntry(entry);
+// Returns: Scale { scale: [0.5, 0.5] }
+```
+
+### parseTransforms
+
+Parses an array of transformations, returning a single `BaseTransformation`:
+
+```ts
+import { parseTransforms } from '@spatialdata/core';
+
+const transforms = parseTransforms([
+  { type: 'scale', scale: [0.5, 0.5] },
+  { type: 'translation', translation: [1000, 2000] },
+]);
+// Returns: Sequence containing Scale and Translation
+```
+
+### buildMatrix4FromTransforms
+
+Convenience function to get a `Matrix4` directly from metadata:
+
+```ts
+import { buildMatrix4FromTransforms } from '@spatialdata/core';
+
+const matrix = buildMatrix4FromTransforms([
+  { type: 'scale', scale: [2, 2] },
+]);
+```
+
+### composeTransforms
+
+Composes element-level and dataset-level transforms:
+
+```ts
+import { composeTransforms } from '@spatialdata/core';
+
+const fullMatrix = composeTransforms(elementTransforms, datasetTransforms);
+```
+
+## Transformation Classes
+
+These classes represent parsed transformations internally. They're returned by element methods but shouldn't be constructed directly in application code:
+
+| Class | Constructor | Description |
+|-------|-------------|-------------|
+| `Identity` | `new Identity(input?, output?)` | Identity matrix |
+| `Scale` | `new Scale(scale[], input?, output?)` | Scale transform |
+| `Translation` | `new Translation(translation[], input?, output?)` | Translation |
+| `Affine` | `new Affine(matrix[][], input?, output?)` | Full affine |
+| `Sequence` | `new Sequence(transforms[], input?, output?)` | Composed transforms |
+| `MapAxis` | `new MapAxis(...)` | Axis remapping (stub) |
+
+All classes extend `BaseTransformation` and provide:
+
+```ts
+abstract class BaseTransformation {
+  readonly input?: CoordinateSystemRef;
+  readonly output?: CoordinateSystemRef;
+  
+  abstract toArray(): number[];  // 16-element column-major
+  toMatrix(): Matrix4;           // Matrix4 from @math.gl/core
+  abstract get type(): string;
+}
+```
+
+## Type Utilities
+
+Type aliases for working with elements generically:
+
+```ts
+import type { 
+  ElementInstanceMap,  // Maps element names to class types
+  SpatialElement,      // Union of spatial element types
+  AnyElement,          // Union of all element types
+  ElementName,         // 'images' | 'shapes' | 'labels' | 'points' | 'tables'
+} from '@spatialdata/core';
+```
+
+## Zod Schemas
+
+Validation schemas for metadata are defined in `schemas/index.ts`:
+
+- `rasterAttrsSchema` - Image/Labels OME-NGFF metadata
+- `shapesAttrsSchema` - Shapes element metadata
+- `pointsAttrsSchema` - Points element metadata  
+- `tableAttrsSchema` - AnnData table metadata
+- `coordinateTransformationSchema` - Transformation arrays
+- `spatialDataSchema` - Root store metadata
+
+These are used internally during element construction to validate and type metadata.
+
+## Store Parsing
+
+The `zarrUtils.ts` module handles parsing zarr store contents:
+
+- `tryConsolidated(store)` - Attempts to load consolidated metadata
+- `parseStoreContents(store)` - Builds the `ZarrTree` structure
+- `serializeZarrTree(tree)` - Serializes for JSON output
+
+## Result Type Implementation
+
+The `Result` type and utilities are in `types.ts`:
+
+```ts
+type Result<T, E = Error> = 
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+const Ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+const Err = <E>(error: E): Result<never, E> => ({ ok: false, error });
+const isOk = <T, E>(result: Result<T, E>): result is { ok: true; value: T } => result.ok;
+const isErr = <T, E>(result: Result<T, E>): result is { ok: false; error: E } => !result.ok;
+const unwrap = <T, E>(result: Result<T, E>): T => { ... };
+const unwrapOr = <T, E>(result: Result<T, E>, defaultValue: T): T => { ... };
+```
+
