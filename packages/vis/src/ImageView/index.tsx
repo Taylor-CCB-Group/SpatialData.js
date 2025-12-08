@@ -17,8 +17,8 @@ function _isValidImage(image: ReturnType<typeof useLoader>) {
 
 function VivImage({ url, width, height }: { url?: string | URL; width: number; height: number }) {
   const loader = useLoader(); //could do with typing this...
-  const channels = useChannelsStore(({colors, contrastLimits, channelsVisible, selections}) => ({colors, contrastLimits, channelsVisible, selections}));
-  const layerConfig = useMemo(() => ({loader, ...channels}), [loader, channels]);
+  const channels = useChannelsStore(({ colors, contrastLimits, channelsVisible, selections }) => ({ colors, contrastLimits, channelsVisible, selections }));
+  const layerConfig = useMemo(() => ({ loader, ...channels }), [loader, channels]);
   const id = useId();
   const detailId = `${id}detail-react`;
   const viewState = useViewerStore((state) => state.viewState);
@@ -39,50 +39,50 @@ function VivImage({ url, width, height }: { url?: string | URL; width: number; h
   const viewerStore = useViewerStoreApi();
   const channelsStore = useChannelsStoreApi();
 
-	const resetViewState = useCallback(() => {
-		if (!_isValidImage(loader) || width === 0 || height === 0) return;
-		const zoomBackOff = 0.2;
-		const newViewState = getDefaultInitialViewState(loader, { width, height }, zoomBackOff);
-		console.log("resetting viewState", newViewState);
-		viewerStore.setState({ viewState: newViewState });
-	}, [loader, width, height, viewerStore]);
+  const resetViewState = useCallback(() => {
+    if (!_isValidImage(loader) || width === 0 || height === 0) return;
+    const zoomBackOff = 0.2;
+    const newViewState = getDefaultInitialViewState(loader, { width, height }, zoomBackOff);
+    console.log("resetting viewState", newViewState);
+    viewerStore.setState({ viewState: newViewState });
+  }, [loader, width, height, viewerStore]);
 
-	useEffect(() => {
-		if (!url) return;
-		const source = { urlOrFile: url.toString(), description: "image" };
-		viewerStore.setState({ source, viewState: null });
-		channelsStore.setState({ loader: DEFAUlT_CHANNEL_STATE.loader });
-	}, [url, viewerStore, channelsStore]);
+  useEffect(() => {
+    if (!url) return;
+    const source = { urlOrFile: url.toString(), description: "image" };
+    viewerStore.setState({ source, viewState: null });
+    channelsStore.setState({ loader: DEFAUlT_CHANNEL_STATE.loader });
+  }, [url, viewerStore, channelsStore]);
 
-	useEffect(() => {
-		if (viewState === null && _isValidImage(loader)) {
-			resetViewState();
-		}
-	}, [viewState, resetViewState, loader]);
+  useEffect(() => {
+    if (viewState === null && _isValidImage(loader)) {
+      resetViewState();
+    }
+  }, [viewState, resetViewState, loader]);
 
-	// useEffect(() => {
-	// 	const listener = (e: KeyboardEvent) => {
-	// 		if (e.key === ".") {
-	// 			resetViewState();
-	// 		}
-	// 	};
-	// 	window.addEventListener("keydown", listener);
-	// 	return () => window.removeEventListener("keydown", listener);
-	// }, [resetViewState]);
+  // useEffect(() => {
+  // 	const listener = (e: KeyboardEvent) => {
+  // 		if (e.key === ".") {
+  // 			resetViewState();
+  // 		}
+  // 	};
+  // 	window.addEventListener("keydown", listener);
+  // 	return () => window.removeEventListener("keydown", listener);
+  // }, [resetViewState]);
 
   const source = useViewerStore((state) => state.source);
   useImage(source);
   if (isViewerLoading || !viewState) return <div>Loading...</div>;
   return (
-  <VivViewer 
-    deckProps={deckProps}
-    layerProps={[layerConfig]} 
-    views={[detailView]} 
-    viewStates={[{ ...viewState, id: detailId }]}
-    onViewStateChange={({ viewState: newViewState }) => {
-				viewerStore.setState({ viewState: newViewState });
-			}}
-  />);
+    <VivViewer
+      deckProps={deckProps}
+      layerProps={[layerConfig]}
+      views={[detailView]}
+      viewStates={[{ ...viewState, id: detailId }]}
+      onViewStateChange={({ viewState: newViewState }) => {
+        viewerStore.setState({ viewState: newViewState });
+      }}
+    />);
 }
 
 // todo better styling to customise, easily fit into application layout etc.
@@ -113,7 +113,7 @@ export default function ImageView() {
   const { spatialData } = useSpatialData();
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [ref, { width, height }] = useMeasure();
-  
+
   useEffect(() => {
     if (!spatialData?.images) return;
     if (selectedImage === '' || !spatialData.images[selectedImage]) {
@@ -151,7 +151,6 @@ export default function ImageView() {
       <VivProvider vivStores={vivStores}>
         <VivImage url={imageUrl} width={width || 0} height={height || 0} />
       </VivProvider>
-      
     </div>
   )
 }
