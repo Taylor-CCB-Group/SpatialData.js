@@ -7,6 +7,15 @@ import { useEffect, useMemo, useState } from "react";
 export default function ShapesComponent() {
   const { spatialData } = useSpatialData();
   const [selectedShapes, setSelectedShapes] = useState<string>('');
+  const shapeKeys = useMemo(() => Object.keys(spatialData?.shapes ?? {}), [spatialData?.shapes]);
+  
+  // Default to first available shape
+  useEffect(() => {
+    if (shapeKeys.length > 0 && !selectedShapes) {
+      setSelectedShapes(shapeKeys[0]);
+    }
+  }, [shapeKeys, selectedShapes]);
+
   const shapes = useMemo(() => {
     return spatialData?.shapes?.[selectedShapes];
   }, [selectedShapes, spatialData?.shapes]);
@@ -43,7 +52,7 @@ export default function ShapesComponent() {
           ))}
         </select>
       }
-      {shapesData && <JsonView value={shapesData} style={darkTheme} />}
+      {shapesData && <JsonView value={shapesData} style={darkTheme} collapsed />}
     </div>
   )
 }
