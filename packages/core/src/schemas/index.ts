@@ -13,26 +13,50 @@ import { z } from 'zod';
 
 
 /**
+ * Schema for coordinate system references in NGFF 0.5+ transformations.
+ * Each transformation can specify input/output coordinate systems.
+ */
+const coordinateSystemRefSchema = z.object({
+  name: z.string(),
+  axes: z.array(z.object({
+    name: z.string(),
+    type: z.enum(['space', 'time', 'channel']).optional(),
+    unit: z.string().optional(),
+  })).optional(),
+});
+
+/**
  * Schema for coordinate transformations
  * 
  * Note: Uses z.lazy() for the 'sequence' type to handle self-referential structure
- * where a sequence transformation contains an array of transformations
+ * where a sequence transformation contains an array of transformations.
+ * 
+ * In NGFF 0.5+, transformations can have input/output coordinate system references
+ * to specify which coordinate systems they map between.
  */
 const baseTransformationSchema = z.union([
   z.object({
     type: z.literal('scale'),
     scale: z.array(z.number()).min(2),
+    input: coordinateSystemRefSchema.optional(),
+    output: coordinateSystemRefSchema.optional(),
   }),
   z.object({
     type: z.literal('translation'),
     translation: z.array(z.number()).min(2),
+    input: coordinateSystemRefSchema.optional(),
+    output: coordinateSystemRefSchema.optional(),
   }),
   z.object({
     type: z.literal('identity'),
+    input: coordinateSystemRefSchema.optional(),
+    output: coordinateSystemRefSchema.optional(),
   }),
   z.object({
     type: z.literal('affine'),
     affine: z.array(z.array(z.number())).min(2),
+    input: coordinateSystemRefSchema.optional(),
+    output: coordinateSystemRefSchema.optional(),
   })
 ]);
 
@@ -125,13 +149,12 @@ export const imageSchema = z.object({ ome }).describe('The zarr.json attributes 
 export type NgffImage = z.infer<typeof imageSchema>;
 
 /**
- * Schema for spatialdata_attrs metadata (common to spatial elements)
- * This describes how an element maps to coordinate systems.
+ * Schema for spatialdata_attrs metadata (common to spatial elements).
+ * Contains version info and other spatialdata-specific metadata.
+ * Note: Transformations are stored at the top level of attrs, not inside spatialdata_attrs.
  */
 export const spatialDataAttrsSchema = z.object({
   version: z.string(),
-  // Maps coordinate system names to their transformations
-  coordinateSystems: z.record(z.string(), coordinateTransformationSchema).optional(),
 }).passthrough(); // allow extra fields we don't validate yet
 
 export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
@@ -165,20 +188,26 @@ export const rasterAttrsSchema = z.object({
 export type RasterAttrs = z.infer<typeof rasterAttrsSchema>;
 
 /**
- * Schema for shapes element attrs
+ * Schema for shapes element attrs.
+ * Transformations are at the top level with input/output coordinate system references.
  */
 export const shapesAttrsSchema = z.object({
   'encoding-type': z.string().optional(), // e.g., 'ngff:shapes'
+  axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
+  coordinateTransformations: coordinateTransformationSchema.optional(),
   spatialdata_attrs: spatialDataAttrsSchema.optional(),
 }).passthrough();
 
 export type ShapesAttrs = z.infer<typeof shapesAttrsSchema>;
 
 /**
- * Schema for points element attrs
+ * Schema for points element attrs.
+ * Transformations are at the top level with input/output coordinate system references.
  */
 export const pointsAttrsSchema = z.object({
   'encoding-type': z.string().optional(), // e.g., 'ngff:points'
+  axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
+  coordinateTransformations: coordinateTransformationSchema.optional(),
   spatialdata_attrs: spatialDataAttrsSchema.optional(),
 }).passthrough();
 

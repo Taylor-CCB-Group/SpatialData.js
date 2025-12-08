@@ -72,11 +72,63 @@ abstract class AbstractSpatialElement<
   abstract readonly attrs: TAttrs;
   
   /**
+   * Subclasses must implement this to provide access to their coordinate transformations.
+   * Different element types store transforms in different locations.
+   */
+  protected abstract get rawCoordinateTransformations(): CoordinateTransformation | undefined;
+  
+  /**
    * Get coordinate transformations for this element.
-   * @param toCoordinateSystem - Optional target coordinate system name
+   * @param toCoordinateSystem - Optional target coordinate system name.
+   *   If not provided, returns all transformations for this element.
    * @returns The transformations, or undefined if not available
    */
-  abstract getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined;
+  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
+    const transforms = this.rawCoordinateTransformations;
+    
+    if (!transforms || transforms.length === 0) {
+      return undefined;
+    }
+    
+    // If no target specified, return all transformations
+    if (!toCoordinateSystem) {
+      return transforms;
+    }
+    
+    // Filter to transformations with matching output coordinate system
+    const matching = transforms.filter(t => {
+      const output = (t as { output?: { name?: string } }).output;
+      return output?.name === toCoordinateSystem;
+    });
+    
+    return matching.length > 0 ? matching : undefined;
+  }
+  
+  /**
+   * Get all coordinate system mappings for this element.
+   * Groups transformations by their output coordinate system name.
+   * @returns A Map from output coordinate system name to transformations
+   */
+  getAllTransformations(): Map<string, CoordinateTransformation> {
+    const result = new Map<string, CoordinateTransformation>();
+    const transforms = this.rawCoordinateTransformations;
+    
+    if (!transforms) return result;
+    
+    for (const t of transforms) {
+      const output = (t as { output?: { name?: string } }).output;
+      const outputName = output?.name ?? 'global';
+      
+      const existing = result.get(outputName);
+      if (existing) {
+        result.set(outputName, [...existing, t]);
+      } else {
+        result.set(outputName, [t]);
+      }
+    }
+    
+    return result;
+  }
 }
 
 // ============================================
@@ -158,19 +210,10 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
   }
   
   /**
-   * Get transformations for this element to a target coordinate system.
+   * For raster elements, transformations are in multiscales[0].coordinateTransformations.
    */
-  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
-    const { spatialdata_attrs, multiscales } = this.attrs;
-    
-    // Priority: explicit coordinateSystems mapping from spatialdata_attrs
-    if (toCoordinateSystem && spatialdata_attrs?.coordinateSystems) {
-      const transforms = spatialdata_attrs.coordinateSystems[toCoordinateSystem];
-      if (transforms) return transforms;
-    }
-    
-    // Fallback: multiscale-level transforms (applies to all resolution levels)
-    return multiscales[0]?.coordinateTransformations;
+  protected get rawCoordinateTransformations(): CoordinateTransformation | undefined {
+    return this.attrs.multiscales[0]?.coordinateTransformations;
   }
   
   /**
@@ -242,14 +285,11 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
     });
   }
   
-  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
-    const { spatialdata_attrs } = this.attrs;
-    
-    if (toCoordinateSystem && spatialdata_attrs?.coordinateSystems) {
-      return spatialdata_attrs.coordinateSystems[toCoordinateSystem];
-    }
-    
-    return undefined;
+  /**
+   * Transformations are at attrs.coordinateTransformations with input/output refs.
+   */
+  protected get rawCoordinateTransformations(): CoordinateTransformation | undefined {
+    return this.attrs.coordinateTransformations;
   }
   
   /**
@@ -297,14 +337,11 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     }
   }
   
-  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
-    const { spatialdata_attrs } = this.attrs;
-    
-    if (toCoordinateSystem && spatialdata_attrs?.coordinateSystems) {
-      return spatialdata_attrs.coordinateSystems[toCoordinateSystem];
-    }
-    
-    return undefined;
+  /**
+   * Transformations are at attrs.coordinateTransformations with input/output refs.
+   */
+  protected get rawCoordinateTransformations(): CoordinateTransformation | undefined {
+    return this.attrs.coordinateTransformations;
   }
   
   // Points-specific loading methods can be added here

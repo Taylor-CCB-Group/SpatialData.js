@@ -11,6 +11,9 @@ export type MappingToCoordinateSytem_t = Map<string, BaseTransformation>;
 /**
  * Get the transformation(s) for a given SpatialElement.
  * 
+ * Uses the element's getAllTransformations() method to retrieve coordinate system mappings.
+ * Transformations are stored at the element level with input/output coordinate system refs.
+ * 
  * @param element - A spatial element (ImageElement, ShapesElement, etc.)
  * @param toCoordinateSystem - Target coordinate system. If undefined, returns transforms for all coordinate systems.
  * @param getAll - If true, return all coordinate system mappings as a Map
@@ -22,11 +25,11 @@ export function getTransformation(
   getAll = false
 ): BaseTransformation | Map<string, BaseTransformation> | undefined {
   
-  // Get spatialdata_attrs from the element's parsed attrs
-  const spatialDataAttrs = element.attrs.spatialdata_attrs;
+  // Use the element's getAllTransformations method
+  const allTransforms = element.getAllTransformations();
   
-  if (!spatialDataAttrs?.coordinateSystems) {
-    // No coordinate systems defined - return identity or undefined
+  if (allTransforms.size === 0) {
+    // No coordinate systems defined - return identity
     if (getAll) {
       const map = new Map<string, BaseTransformation>();
       map.set(DEFAULT_COORDINATE_SYSTEM, new Identity());
@@ -35,22 +38,26 @@ export function getTransformation(
     return new Identity();
   }
   
-  const { coordinateSystems } = spatialDataAttrs;
-  
   if (getAll) {
-    // Return all coordinate system mappings
+    // Return all coordinate system mappings (as Identity for now - TODO: convert properly)
     const map = new Map<string, BaseTransformation>();
-    for (const [csName] of Object.entries(coordinateSystems)) {
-      // For now, return Identity as placeholder - actual transform parsing can be added
+    for (const csName of allTransforms.keys()) {
+      // TODO: Convert CoordinateTransformation to BaseTransformation properly
       map.set(csName, new Identity());
     }
     return map;
   }
   
   // Get transformation for a specific coordinate system
-  if (toCoordinateSystem && coordinateSystems[toCoordinateSystem]) {
+  const targetCS = toCoordinateSystem ?? DEFAULT_COORDINATE_SYSTEM;
+  if (allTransforms.has(targetCS)) {
     // TODO: Convert CoordinateTransformation to BaseTransformation
     // For now return Identity
+    return new Identity();
+  }
+  
+  // Fallback: return first available transform or identity
+  if (allTransforms.size > 0) {
     return new Identity();
   }
   
