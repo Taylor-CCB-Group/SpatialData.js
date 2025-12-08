@@ -97,7 +97,7 @@ export class SpatialData {
   toString() {
     const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);
     if (nonEmptyElements.length === 0) {
-      return `SpatialData object, with asssociated Zarr store: ${this.url}\n(No elements loaded)`;
+      return `SpatialData object, with associated Zarr store: ${this.url}\n(No elements loaded)`;
     }
     const elements = nonEmptyElements.map((name, i) => {
       const element = this[name];
