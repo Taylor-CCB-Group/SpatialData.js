@@ -105,18 +105,24 @@ export class SpatialData {
     if (nonEmptyElements.length === 0) {
       return `SpatialData object, with asssociated Zarr store: ${this.url}\n(No elements loaded)`;
     }
-    const elements = nonEmptyElements.map((name) => {
+    const elements = nonEmptyElements.map((name, i) => {
       const element = this[name];
+      const isLast = i === nonEmptyElements.length - 1;
+      const prefix = isLast ? '└──' : '├──';
+      const childPrefix = isLast ? '    ' : '│   ';
       if (element) {
-        // return `  └── ${name}:\n      └── ${repr(element)}`;
-        return Object.entries(element).map(([key, val]) => `  └── ${name}/${key}:\n      └── ${repr(val)}`).join('\n');
+        const keys = Object.keys(element);
+        const children = keys.map((key, j) => {
+          const childIsLast = j === keys.length - 1;
+          const childBranch = childIsLast ? '└──' : '├──';
+          return `${childPrefix}${childBranch} ${key}`;
+        }).join('\n');
+        return `${prefix} ${name}:\n${children}`;
       }
-      return `- ${name}: not loaded`;
+      return `${prefix} ${name}: (empty)`;
     }).join('\n');
-    // to do this properly, there are async calls involved... we can't really leak async into `toString`
-    // so we probably have another method for deeper inspection
-    // const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
-    return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements}`;
+    const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
+    return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements}\n${cs}`;
   }
 
   toJSON() {
@@ -135,14 +141,21 @@ export class SpatialData {
     if (nonEmptyElements.length === 0) {
       return `SpatialData object, with asssociated Zarr store: ${this.url}\n(No elements loaded)`;
     }
-    const elements = (await Promise.all(nonEmptyElements.map(async (name) => {
+    const elements = (await Promise.all(nonEmptyElements.map(async (name, i) => {
       const element = this[name];
+      const isLast = i === nonEmptyElements.length - 1;
+      const prefix = isLast ? '└──' : '├──';
+      const childPrefix = isLast ? '    ' : '│   ';
       if (element) {
-        //return `  └── ${name}:\n      └── ${await reprA(element, name)}`; 
-        // return `  └── ${name}:\n      └── ${repr(element)}`;
-        return Object.entries(element).map(([key, val]) => `  └── ${name}/${key}:\n      └── ${repr(val)}`).join('\n');
+        const keys = Object.keys(element);
+        const children = keys.map((key, j) => {
+          const childIsLast = j === keys.length - 1;
+          const childBranch = childIsLast ? '└──' : '├──';
+          return `${childPrefix}${childBranch} ${key}`;
+        }).join('\n');
+        return `${prefix} ${name}:\n${children}`;
       }
-      return `- ${name}: not loaded`;
+      return `${prefix} ${name}: (empty)`;
     }))).join('\n');
     // to do this properly, there are async calls involved... we can't really leak async into `toString`
     // so we probably have another method for deeper inspection
