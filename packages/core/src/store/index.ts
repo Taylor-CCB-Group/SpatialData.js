@@ -116,7 +116,7 @@ export class SpatialData {
       return `${prefix} ${name}: (empty)`;
     }).join('\n');
     const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
-    return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements}\n${cs}`;
+    return `SpatialData object, with associated Zarr store: ${this.url}\nElements:\n${elements}\n${cs}`;
   }
 
   toJSON() {
