@@ -1,52 +1,79 @@
-import type { SpatialElement } from "../store";
-import { Identity, type BaseTransformation } from "./transformations";
+import { Matrix4 } from '@math.gl/core';
+import type { SpatialElement } from "../models";
+import { Identity, type BaseTransformation, buildMatrix4FromTransforms } from "./transformations";
+import type { CoordinateTransformation } from "../schemas";
 
 
 const DEFAULT_COORDINATE_SYSTEM = 'global';
-const TRANSFORM_KEY = "transform";
 
 export type MappingToCoordinateSytem_t = Map<string, BaseTransformation>;
 
-// python has this used for points and shapes
-function _getTransformationsFromDictContainer(element: SpatialElement) { //'GeoDataFrame' | 'DaskDataFrame' in Python
-  if (TRANSFORM_KEY in element) {
-    return element[TRANSFORM_KEY];
-  }
-  return undefined;
-}
-
-function _getTransformationsXArray(element: SpatialElement) { //'DataArray' in Python
-
-}
-
-function _getTransformationForMultiscaleImage(element: SpatialElement) { //'DataTree' in Python
-  // in python, there are various `@_get_transformations.register(DataType)` overloads
-  // we could have something like `{ 'images' : getImageTransformations }` mapping...
-  // or perhaps simpler to make SpatialElement be a class with a method for getting transformations?
-  // if possible to do that without deviating too much from the python style that seems easy to use and understand.
-  
-}
-
-function _getTransformations(element: SpatialElement) {
-  // in python, there are various `@_get_transformations.register(DataArray)` overloads
-  // we could have something like `{ 'images' : getImageTransformations }` mapping...
-  // or perhaps simpler to make SpatialElement be a class with a method for getting transformations?
-  // if possible to do that without deviating too much from the python style that seems easy to use and understand.
-  // if we want to stick slavishly to following through the python logic that means that we
-}
-
-
 /**
  * Get the transformation(s) for a given SpatialElement.
+ * 
+ * @param element - A spatial element (ImageElement, ShapesElement, etc.)
+ * @param toCoordinateSystem - Target coordinate system. If undefined, returns transforms for all coordinate systems.
+ * @param getAll - If true, return all coordinate system mappings as a Map
+ * @returns A single transformation, a Map of coordinate systems to transformations, or undefined
  */
-export function getTransformation(element: SpatialElement, toCoordinateSystem?: string, getAll = false): BaseTransformation | Map<string, BaseTransformation> {
-  // Map vs Record<string, ...> ?
-  // Map is more 'correct' but Record is easier to use and we're not dealing with a huge number of keys
-  // So maybe Record is actually better and looks more like the python dict.
-  const map = new Map<string, BaseTransformation>();
+export function getTransformation(
+  element: SpatialElement, 
+  toCoordinateSystem?: string, 
+  getAll = false
+): BaseTransformation | Map<string, BaseTransformation> | undefined {
+  
+  // Get spatialdata_attrs from the element's parsed attrs
+  const spatialDataAttrs = element.attrs.spatialdata_attrs;
+  
+  if (!spatialDataAttrs?.coordinateSystems) {
+    // No coordinate systems defined - return identity or undefined
+    if (getAll) {
+      const map = new Map<string, BaseTransformation>();
+      map.set(DEFAULT_COORDINATE_SYSTEM, new Identity());
+      return map;
+    }
+    return new Identity();
+  }
+  
+  const { coordinateSystems } = spatialDataAttrs;
+  
+  if (getAll) {
+    // Return all coordinate system mappings
+    const map = new Map<string, BaseTransformation>();
+    for (const [csName] of Object.entries(coordinateSystems)) {
+      // For now, return Identity as placeholder - actual transform parsing can be added
+      map.set(csName, new Identity());
+    }
+    return map;
+  }
+  
+  // Get transformation for a specific coordinate system
+  if (toCoordinateSystem && coordinateSystems[toCoordinateSystem]) {
+    // TODO: Convert CoordinateTransformation to BaseTransformation
+    // For now return Identity
+    return new Identity();
+  }
+  
+  return new Identity();
+}
 
-  console.warn("getTransformation is not yet implemented; returning a placeholder value.");
-  map.set(DEFAULT_COORDINATE_SYSTEM, new Identity());
-  map.set('fake_cs', new Identity());
-  return map;
+/**
+ * Get a Matrix4 transformation for a spatial element to a target coordinate system.
+ * This is the preferred method for getting transforms for rendering.
+ * 
+ * @param element - A spatial element
+ * @param toCoordinateSystem - Target coordinate system name
+ * @returns A Matrix4 transform, or identity matrix if no transforms defined
+ */
+export function getTransformMatrix(
+  element: SpatialElement, 
+  toCoordinateSystem?: string
+): Matrix4 {
+  const transforms = element.getTransformations(toCoordinateSystem);
+  
+  if (!transforms) {
+    return new Matrix4().identity();
+  }
+  
+  return buildMatrix4FromTransforms(transforms);
 }

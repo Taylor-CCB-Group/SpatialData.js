@@ -1,34 +1,50 @@
-import type { ElementName, Table, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZGroup } from '../types';
+import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny } from '../types';
 import { ATTRS_KEY } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';
-import type { MappingToCoordinateSytem_t } from '../transformations';
-
+import { 
+  rasterAttrsSchema, 
+  shapesAttrsSchema, 
+  pointsAttrsSchema,
+  type RasterAttrs,
+  type ShapesAttrs,
+  type PointsAttrs,
+  type CoordinateTransformation,
+} from '../schemas';
 
 
 /**
+ * Parameters for creating element instances.
  * For internal use only and subject to change.
- * Maybe passing sdata isn't the right thing to do.
-*/
-export type LoaderParams<T extends ElementName> = {
+ */
+export type ElementParams<T extends ElementName = ElementName> = {
   sdata: SDataProps;
   name: T;
   key: string;
   onBadFiles?: BadFileHandler;
 }
 
+// ============================================
+// Abstract Base Classes
+// ============================================
+
+/**
+ * Base class for all SpatialData elements.
+ * Handles common functionality like URL construction and raw attrs access.
+ */
 abstract class AbstractElement<T extends ElementName> {
-  kind: T;
-  key: string;
-  url: string;
-  parsed: ZarrTree | LazyZarrArray<zarr.DataType>;
-  constructor({ sdata, name, key }: LoaderParams<T>) {
+  readonly kind: T;
+  readonly key: string;
+  readonly url: string;
+  protected readonly rawAttrs: ZAttrsAny;
+  protected readonly parsed: ZarrTree | LazyZarrArray<zarr.DataType>;
+
+  constructor({ sdata, name, key }: ElementParams<T>) {
     this.kind = name;
     this.key = key;
     this.url = `${sdata.url}/${name}/${key}`;
-    // all kinds of element can have a reference to the `parsed` store for this path in `sdata`
-    // that means that they MUST have `attrs` and a method for parsing that.
+    
     const { parsed } = sdata;
     if (!parsed) {
       throw new Error("Parsed store contents not available");
@@ -41,186 +57,323 @@ abstract class AbstractElement<T extends ElementName> {
       throw new Error(`Unknown element key: ${key}`);
     }
     this.parsed = p1[key];
+    this.rawAttrs = (p1[key] as ZarrTree)[ATTRS_KEY] as ZAttrsAny ?? {};
   }
 }
-class TableElement extends AbstractElement<'tables'> {
-  // annData: Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>>;
+
+/**
+ * Base class for spatial elements (everything except tables).
+ * Spatial elements have coordinate transformations.
+ */
+abstract class AbstractSpatialElement<
+  TKind extends Exclude<ElementName, 'tables'>,
+  TAttrs
+> extends AbstractElement<TKind> {
+  abstract readonly attrs: TAttrs;
+  
+  /**
+   * Get coordinate transformations for this element.
+   * @param toCoordinateSystem - Optional target coordinate system name
+   * @returns The transformations, or undefined if not available
+   */
+  abstract getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined;
+}
+
+// ============================================
+// Table Element (non-spatial)
+// ============================================
+
+/**
+ * Element representing an AnnData table.
+ * Tables don't have spatial transformations.
+ */
+export class TableElement extends AbstractElement<'tables'> {
+  readonly attrs: ZAttrsAny;
+  
+  constructor(params: ElementParams<'tables'>) {
+    super(params);
+    // Tables may have various attrs structures; we don't validate strictly for now
+    this.attrs = this.rawAttrs;
+  }
+  
+  /**
+   * Load the table as an AnnData.js object.
+   */
   async getAnnDataJS(): Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>> {
     return await ad.readZarr(new zarr.FetchStore(this.url));
   }
 }
 
-abstract class AbstractSpatialElement<T extends Exclude<ElementName, 'tables'>> extends AbstractElement<T> {
-  abstract getTransformations(toCoordinateSystem?: string, getAll?: boolean): MappingToCoordinateSytem_t | undefined;
-}
-class ShapesElement extends AbstractSpatialElement<'shapes'> {
-  getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
-    return undefined;
-  }
-}
-class RasterElement<T extends 'images' | 'labels'> extends AbstractSpatialElement<T> {
-  getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
-    // is it multiscale or not? (is zarrStore a group or an array?)
-    // do we use this class, or 'just' the defaultLoader thing but with some schema parsing etc?
-    // OOP is probably an easier abstraction to understand here, and I'm not sure why it wouldn't be the choice
-    // but for some reason I have some vague feeling we may not want it?
-    return undefined;
-  }
-}
-class PointsElement extends AbstractSpatialElement<'points'> {
-  getTransformations(toCoordinateSystem?: string, getAll?: boolean) {
-    return undefined;
-  }
-}
+// ============================================
+// Raster Elements (images & labels)
+// ============================================
 
-function tableLoader({ sdata, name, key }: LoaderParams<'tables'>) {
-  if (name !== "tables") {
-    //type of `name` is `never` here and this should be unreachable, we don't ever expect to see this.
-    throw new Error(`Expected 'tables', got '${name}' - something went wrong in the type system for '${name}/${key}'`);
-  }
-  let loaded: TableElement | undefined;
-  // these things that we return should just be a function returning a promise 
-  // - it should be a thing with enough useful information as we have without having to fetch anything else,
-  // - and a way of fetching the actual data when we need it.
+/**
+ * Base class for raster elements (images and labels).
+ * These share OME-NGFF multiscale structure and transformation logic.
+ */
+abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpatialElement<T, RasterAttrs> {
+  readonly attrs: RasterAttrs;
   
-  return async () => {
-    if (!loaded) {
-      // do we want to use AnnData.js here, or the Vitessce implementation in SpatialDataTableSource?
-      // loaded = tryConsolidated(new zarr.FetchStore(url)).then(store => ad.readZarr(store));
-      loaded = new TableElement({ sdata, name, key });
-    }
-    return loaded;
-  }
-}
-
-function shapesLoader({ sdata, name, key }: LoaderParams<'shapes'>) {
-  // shall we change this to use the `class ShapesElement` (with appropriate implementation)?
-  // Almost certainly, yes.
-  const url = `${sdata.url}/${name}/${key}`;
-  //@ts-expect-error
-  const attrs = sdata.parsed?.[name][key][ATTRS_KEY];
-
-  return async () => {
-    // todo - what happens if the user has passed a store rather than a url?
-    const shapes = new SpatialDataShapesSource({ store: new zarr.FetchStore(url), fileType: '.zarr' });
+  constructor(params: ElementParams<T>) {
+    super(params);
     
-    // shapes.elementAttrs
-    // this is very much not the right thing - we don't just want the geometry,
-    // and we need to be careful about how much geometry we load, etc.
-    // We don't want to act like Shapes are AnnData, but also not just geometry.
-    // we very much want to be able to conveniently access the attributes before thinking about loading any geometry.
-    // and then we want sensible ways of getting the bits of geometry we need when we want to do that.
-    // const polygonShapes = await shapes.loadPolygonShapes(`${url}/geometry`);
+    // Parse attrs through schema
+    const result = rasterAttrsSchema.safeParse(this.rawAttrs);
+    if (!result.success) {
+      console.warn(`Schema validation failed for ${params.name}/${params.key}:`, result.error.issues);
+      // Fall back to raw attrs cast - allows working with non-conformant data
+      this.attrs = this.rawAttrs as RasterAttrs;
+    } else {
+      this.attrs = result.data;
+    }
+  }
+  
+  /**
+   * Get the spatial axes from the first multiscale definition.
+   */
+  get spatialAxes() {
+    return this.attrs.multiscales[0]?.axes.filter(a => a.type === 'space') ?? [];
+  }
+  
+  /**
+   * Number of spatial dimensions (2 or 3).
+   */
+  get ndim(): 2 | 3 {
+    return this.spatialAxes.length >= 3 ? 3 : 2;
+  }
+  
+  /**
+   * Whether this element has multiple resolution levels.
+   */
+  get isMultiscale(): boolean {
+    return (this.attrs.multiscales[0]?.datasets.length ?? 0) > 1;
+  }
+  
+  /**
+   * Paths to all scale levels.
+   */
+  get scaleLevels(): string[] {
+    return this.attrs.multiscales[0]?.datasets.map(d => d.path) ?? [];
+  }
+  
+  /**
+   * Get transformations for this element to a target coordinate system.
+   */
+  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
+    const { spatialdata_attrs, multiscales } = this.attrs;
+    
+    // Priority: explicit coordinateSystems mapping from spatialdata_attrs
+    if (toCoordinateSystem && spatialdata_attrs?.coordinateSystems) {
+      const transforms = spatialdata_attrs.coordinateSystems[toCoordinateSystem];
+      if (transforms) return transforms;
+    }
+    
+    // Fallback: multiscale-level transforms (applies to all resolution levels)
+    return multiscales[0]?.coordinateTransformations;
+  }
+  
+  /**
+   * Get transforms for a specific resolution level.
+   * Returns both element-level and dataset-level transforms.
+   */
+  getTransformationsForLevel(level: number | string, toCoordinateSystem?: string) {
+    const datasets = this.attrs.multiscales[0]?.datasets ?? [];
+    const dataset = typeof level === 'number' 
+      ? datasets[level] 
+      : datasets.find(d => d.path === level);
+    
+    if (!dataset) return undefined;
+    
     return {
-      attrs,
-      // what would we need to do in order to load some useful subset of shapes for a given area etc?
-      loadPolygonShapes() { 
-        return shapes.loadPolygonShapes(`${url}/geometry`)
-      },
-      loadCircleShapes: shapes.loadCircleShapes,
-      loadShapesIndex: shapes.loadShapesIndex,
+      element: this.getTransformations(toCoordinateSystem),
+      dataset: dataset.coordinateTransformations,
     };
   }
 }
 
-function defaultLoader<T extends 'images' | 'labels' | 'points'>({ sdata, name, key }: LoaderParams<T>) {
-  const url = `${sdata.url}/${name}/${key}`;
-  // we could look up a schema for `name` here and return something validated & typed accordingly.
-  // i.e. with transforms, shape etc.
-  // we should be able to access this without another fetch/await.
-
-  // do we ever want to release this reference?
-  // to what extent do we leak resources?
-  // probably not important for first version, but might be for future.
-  let element: ZGroup | undefined;
-  // we should be able to parse attrs here with an appropriate schema
-  //@ts-expect-error
-  const attr = sdata.parsed?.[name][key][ATTRS_KEY];
-  console.log(name, key, attr);
-  const fn = async () => {
-    if (!element) {
-      element = await zarr.open(new zarr.FetchStore(url), { kind: 'group' });
-    }
-    //it might seem like it's a lot easier to just get the attrs once we've loaded the group for the element
-    //but then if we want to do something as basic as list coordinate systems for the whole object etc
-    //or generally show something comparable to the python __repr
-    //then we have a lot of `await` to do, and I just can't accept that.
-    //element.attrs;
-    return element;
+/**
+ * Image element - raster data representing images.
+ */
+export class ImageElement extends RasterElement<'images'> {
+  /**
+   * Get channel metadata from omero attrs.
+   */
+  get channels() {
+    return this.attrs.omero?.channels ?? [];
   }
-  fn.attr = attr;
-  fn.toJSON = () => ({attr});
-  return fn;
 }
-
-// nb - we can make it so that this is the source of truth for Elements<K>
-// so the Elements<K> type is derived from this rather than the other way around.
-// i.e. as we flesh out/change the implementations of the loaders it will reflect that reality.
-// type ElementLoaders = {
-//   [K in ElementName]: (params: LoaderParams<K>) => Elements<K>[K]
-// }
-// const elementLoaders: ElementLoaders = {
-//   tables: tableLoader,
-//   shapes: shapesLoader,
-//   images: defaultLoader,
-//   labels: defaultLoader,
-//   points: defaultLoader,
-// } as const;
-
-// Loader functions for each element type
-// nb - still trying to figure out the nicest thing to be returning from any given loader
-// not implementing much concrete behaviour while I fiddle with that.
-const elementLoaders = {
-  tables: tableLoader,
-  shapes: shapesLoader,
-  images: defaultLoader,
-  labels: defaultLoader,
-  points: defaultLoader,
-} as const;
-
-// Type inference for the resolved element types
-type Loaders<K extends ElementName> = {
-  [K in ElementName]: (typeof elementLoaders)[K];
-}[K];
-
-
-function getLoader<T extends ElementName>(name: T): Loaders<T> {
-  const loader = elementLoaders[name];
-  if (!loader) {
-    // this is not expected to happen, some flawed logic if it does.
-    throw new Error(`Unknown element type: ${name}`);
-  }
-  return loader;
-}
-
-
-// type InferredElementsA<K extends ElementName> = {
-//   [K in ElementName]: Record<string, ReturnType<Loaders<K>>>;
-// }[K];
-type InferredElementsB<T extends ElementName> =
-Record<string, ReturnType<Loaders<T>>>;
-// still way too many layers of indirection here.
-type InferredElement<T extends ElementName> = Awaited<ReturnType<ReturnType<Loaders<T>>>>;
-export type Shapes = InferredElement<'shapes'>;
-//these are both the same type
-//type TablesA = InferredElementsA<'tables'>
-//type TablesB = InferredElementsB<'tables'>
-//these are different
-//type TA = InferredElementsA<ElementName>;
-//type TB = InferredElementsB<ElementName>;
-//even with ['tables'] this is some horrible union thing
-// type TD = InferredElementsB<ElementName>['tables'];
-// using this version for now but this whole thing is getting ridiculous.
-export type InferredElements<T extends ElementName> = InferredElementsB<T>;
 
 /**
- * Returns a record of strings to SpatialElements for a given element type in a given SpatialData object.
+ * Labels element - raster data representing segmentation labels.
  */
-export function loadElement<T extends ElementName>(
-  sdata: SDataProps, 
-  name: T, 
-  onBadFiles?: BadFileHandler
-) {
+export class LabelsElement extends RasterElement<'labels'> {
+  // Labels-specific methods can be added here
+  // e.g., colormap, associated table lookup, etc.
+}
+
+// ============================================
+// Shapes Element
+// ============================================
+
+/**
+ * Element representing geometric shapes (polygons, circles, etc.).
+ */
+export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs> {
+  readonly attrs: ShapesAttrs;
+  private readonly vShapes: SpatialDataShapesSource;
+  
+  constructor(params: ElementParams<'shapes'>) {
+    super(params);
+    
+    // Parse attrs through schema
+    const result = shapesAttrsSchema.safeParse(this.rawAttrs);
+    if (!result.success) {
+      console.warn(`Schema validation failed for shapes/${params.key}:`, result.error.issues);
+      this.attrs = this.rawAttrs as ShapesAttrs;
+    } else {
+      this.attrs = result.data;
+    }
+    
+    // Initialize the Vitessce-derived shapes source for loading geometry
+    this.vShapes = new SpatialDataShapesSource({ 
+      store: new zarr.FetchStore(this.url), 
+      fileType: '.zarr' 
+    });
+  }
+  
+  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
+    const { spatialdata_attrs } = this.attrs;
+    
+    if (toCoordinateSystem && spatialdata_attrs?.coordinateSystems) {
+      return spatialdata_attrs.coordinateSystems[toCoordinateSystem];
+    }
+    
+    return undefined;
+  }
+  
+  /**
+   * Load polygon geometry data.
+   */
+  async loadPolygonShapes() {
+    return this.vShapes.loadPolygonShapes(`${this.url}/geometry`);
+  }
+  
+  /**
+   * Load circle/point geometry data.
+   */
+  async loadCircleShapes() {
+    return this.vShapes.loadCircleShapes(`${this.url}/geometry`);
+  }
+  
+  /**
+   * Load the shapes index.
+   */
+  async loadShapesIndex() {
+    return this.vShapes.loadShapesIndex(`shapes/${this.key}`);
+  }
+}
+
+// ============================================
+// Points Element
+// ============================================
+
+/**
+ * Element representing point cloud data.
+ */
+export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs> {
+  readonly attrs: PointsAttrs;
+  
+  constructor(params: ElementParams<'points'>) {
+    super(params);
+    
+    // Parse attrs through schema
+    const result = pointsAttrsSchema.safeParse(this.rawAttrs);
+    if (!result.success) {
+      console.warn(`Schema validation failed for points/${params.key}:`, result.error.issues);
+      this.attrs = this.rawAttrs as PointsAttrs;
+    } else {
+      this.attrs = result.data;
+    }
+  }
+  
+  getTransformations(toCoordinateSystem?: string): CoordinateTransformation | undefined {
+    const { spatialdata_attrs } = this.attrs;
+    
+    if (toCoordinateSystem && spatialdata_attrs?.coordinateSystems) {
+      return spatialdata_attrs.coordinateSystems[toCoordinateSystem];
+    }
+    
+    return undefined;
+  }
+  
+  // Points-specific loading methods can be added here
+}
+
+// ============================================
+// Factory
+// ============================================
+
+/**
+ * Factory functions for creating element instances.
+ * Using functions instead of constructors directly allows proper type inference
+ * when indexing into the map.
+ */
+const elementFactories = {
+  tables: (p: ElementParams<'tables'>) => new TableElement(p),
+  shapes: (p: ElementParams<'shapes'>) => new ShapesElement(p),
+  images: (p: ElementParams<'images'>) => new ImageElement(p),
+  labels: (p: ElementParams<'labels'>) => new LabelsElement(p),
+  points: (p: ElementParams<'points'>) => new PointsElement(p),
+} as const;
+
+/**
+ * Type map from element names to their instance types.
+ */
+export type ElementInstanceMap = {
+  [K in ElementName]: ReturnType<(typeof elementFactories)[K]>;
+};
+
+/**
+ * Union of all element types.
+ */
+export type AnyElement = ElementInstanceMap[ElementName];
+
+/**
+ * Union of spatial element types (excludes tables).
+ */
+export type SpatialElement = ElementInstanceMap[Exclude<ElementName, 'tables'>];
+
+/**
+ * Create an element instance for a given element type.
+ * 
+ * @param name - The element type ('tables', 'shapes', 'images', 'labels', 'points')
+ * @param sdata - The SpatialData properties
+ * @param key - The element key within the SpatialData object
+ * @returns A typed element instance
+ */
+export function createElement<T extends ElementName>(
+  name: T,
+  sdata: SDataProps,
+  key: string
+): ElementInstanceMap[T] {
+  // Cast needed because TypeScript can't correlate the generic T with the factory map lookup
+  // See: https://github.com/microsoft/TypeScript/issues/30581
+  const factory = elementFactories[name] as unknown as (p: ElementParams<T>) => ElementInstanceMap[T];
+  return factory({ sdata, name, key });
+}
+
+/**
+ * Load all elements of a given type from a SpatialData object.
+ * 
+ * @param sdata - The SpatialData properties
+ * @param name - The element type to load
+ * @returns A record mapping element keys to element instances
+ */
+export function loadElements<T extends ElementName>(
+  sdata: SDataProps,
+  name: T
+): Record<string, ElementInstanceMap[T]> {
   const { parsed } = sdata;
   if (!parsed) {
     throw new Error("Parsed store contents not available");
@@ -228,20 +381,13 @@ export function loadElement<T extends ElementName>(
   if (!(name in parsed)) {
     return {};
   }
-  const loader = elementLoaders[name];
-  if (!loader) {
-    throw new Error(`Unknown element type: ${name}`);
-  }
-  const result: InferredElements<T> = {};
-  for (const [key] of Object.entries(parsed[name])) {
-    // @ts-expect-error - typescript rabbit hole.
-    result[key] = loader({ sdata, name, key, onBadFiles });
+  
+  const result: Record<string, ElementInstanceMap[T]> = {};
+  for (const key of Object.keys(parsed[name] as object)) {
+    result[key] = createElement(name, sdata, key);
   }
   return result;
 }
 
-
-
-export async function getTableKeys(element: Table) {
-
-}
+// Re-export types that may be useful externally
+export type { RasterAttrs, ShapesAttrs, PointsAttrs, CoordinateTransformation };

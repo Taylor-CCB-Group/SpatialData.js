@@ -5,83 +5,35 @@
 import * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
 import { parseStoreContents, serializeZarrTree, tryConsolidated } from './zarrUtils';
-import { loadElement } from '../models';
+import { loadElements, type ElementInstanceMap, type SpatialElement, type AnyElement } from '../models';
 import type { 
   ElementName, 
-  XSpatialElement, 
   StoreLocation, 
   BadFileHandler,
-  ZGroup,
   ZarrTree
 } from '../types';
 import { SpatialElementNames, ElementNames } from '../types';
 
 
-/*
-In Python, we have
+/**
+ * Type alias for element collections - maps element keys to element instances
+ */
+type Elements<T extends ElementName> = Record<string, ElementInstanceMap[T]>;
 
-class Elements(UserDict[str, T])
-  ...
-class Images(Elements[DataArray | DataTree])
-class Labels(Elements[DataArray | DataTree])
-class Shapes(Elements[GeoDataFrame])
-class Points(Elements[DaskDataFrame])
-class Tables(Elements[AnnData])
+// Re-export SpatialElement from models
+export type { SpatialElement, AnyElement } from '../models';
 
-*/
-
-// these should be things with easy to access properties for lazy loading (partial) data
-// not the zarr.Group directly, but a thin wrapper, with appropriate properties for each T
-// export type Tables = Record<string, ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
-// we probably don't immediately invoke these, not sure if the type should be an async function or not.
-// export type Elements<T extends ElementName> = Record<string, () => Promise<
-// T extends 'tables' ? Table
-//   : T extends 'shapes' ? Shapes : XSpatialElement>
-// >;
-import type { InferredElements as Elements } from '../models';
-
-//yay typescript! so intuitive!
-//this is a descriminated union type, i.e. 
-// `Elements<'tables'> | Elements<'shapes'> ...`
-//rather than `Elements<'tables' | 'shapes' ...>` which causes covariance issues.
-export type SpatialElement = {
-  [T in ElementName]: Elements<T>[string];
-}[ElementName];
-
-function repr(element: XSpatialElement) {
-  if (element.kind === 'array') {
-    return `shape=${element.shape}`;
-  }
-  // as of now, we often get empty attrs,
-  // or something like `{"labels":["rasterized_016um","rasterized_008um","rasterized_002um"]}`
-  // element.attrs is Record<string, unknown>
-  // debugger;
-  return `attrs=${JSON.stringify(element.attrs)}`;
-}
-async function reprA(element: XSpatialElement, name: ElementName) {
-  if (name === 'labels') {
-    const { labels } = element.attrs;
-    const labelsArr = Array.isArray(labels) ? labels : (typeof labels === 'string' ? [labels] : []);
-    const x = await Promise.all(labelsArr.map(async (label) => {
-      try {
-        const labelElem = await zarr.open(element.resolve(label));
-        return `      ${label}: ${repr(labelElem)}`;
-      } catch (error) {
-        return `      ${label}: could not open (${error})`;
-      }
-    }));
-    return x.join('\n');
-  }
-  console.log(element);
-  return repr(element);
+function repr(element: AnyElement) {
+  // Element classes have kind, key, and attrs properties
+  const attrsPreview = JSON.stringify(element.attrs).slice(0, 100);
+  return `${element.kind}/${element.key}: ${attrsPreview}${attrsPreview.length >= 100 ? '...' : ''}`;
 }
 
 export class SpatialData {
   readonly url: StoreLocation;
   _ready: Promise<void>;
-  // we could potentially have ListableSpatialData type...
   rootStore: zarr.Listable<zarr.FetchStore>;
-  private _root?: ZGroup;
+  // metadata: Record<string, unknown>; //todo: add this, with type (validated by zod)
 
   images?: Elements<'images'>;
   points?: Elements<'points'>;
@@ -108,9 +60,10 @@ export class SpatialData {
     this.parsed = await parseStoreContents(this.rootStore);
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
-      // would prefer not to need this type annotation but at least it's not `as` etc.
-      const elements: Elements<typeof elementType> = loadElement(this, elementType, _onBadFiles) || {};
-      this[elementType] = elements;
+      // Load all elements of this type
+      // Cast needed due to TypeScript's inability to correlate generic loop variable with property access
+      // See: https://github.com/microsoft/TypeScript/issues/30581
+      (this as Record<ElementName, Elements<ElementName>>)[elementType] = loadElements(this, elementType);
     }
   }
 
@@ -129,6 +82,7 @@ export class SpatialData {
     const gen = [...this._genSpatialElementValues()];
     const allCS = new Set<string>();
     for (const obj of gen) {
+      // Make this happen...
       const transformations = getTransformation(obj, undefined, true);
       if (transformations instanceof Map) {
         for (const cs of transformations.keys()) {
@@ -198,6 +152,8 @@ export class SpatialData {
 }
 
 export async function readZarr(storeUrl: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
+  // todo: this should be able to handle a store directly, not just a url
+  // then there are some downstream changes required for the models/loaders etc.
   const store = new zarr.FetchStore(storeUrl);
   const listableStore = await tryConsolidated(store);
   if (!('contents' in listableStore)) {

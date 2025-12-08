@@ -125,7 +125,67 @@ export const imageSchema = z.object({ ome }).describe('The zarr.json attributes 
 export type NgffImage = z.infer<typeof imageSchema>;
 
 /**
- * Schema for SpatialData metadata
+ * Schema for spatialdata_attrs metadata (common to spatial elements)
+ * This describes how an element maps to coordinate systems.
+ */
+export const spatialDataAttrsSchema = z.object({
+  version: z.string(),
+  // Maps coordinate system names to their transformations
+  coordinateSystems: z.record(z.string(), coordinateTransformationSchema).optional(),
+}).passthrough(); // allow extra fields we don't validate yet
+
+export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
+
+/**
+ * Schema for raster element attrs (images & labels)
+ * Combines OME-NGFF multiscales with spatialdata_attrs
+ */
+export const rasterAttrsSchema = z.object({
+  multiscales: z
+    .array(
+      z.object({
+        name: z.string().optional(),
+        datasets: z
+          .array(
+            z.object({
+              path: z.string(),
+              coordinateTransformations: coordinateTransformationSchema.optional(),
+            })
+          )
+          .min(1),
+        axes: axesSchema,
+        coordinateTransformations: coordinateTransformationSchema.optional(),
+      })
+    )
+    .min(1),
+  omero: omeroSchema.optional(),
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+}).passthrough();
+
+export type RasterAttrs = z.infer<typeof rasterAttrsSchema>;
+
+/**
+ * Schema for shapes element attrs
+ */
+export const shapesAttrsSchema = z.object({
+  'encoding-type': z.string().optional(), // e.g., 'ngff:shapes'
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+}).passthrough();
+
+export type ShapesAttrs = z.infer<typeof shapesAttrsSchema>;
+
+/**
+ * Schema for points element attrs
+ */
+export const pointsAttrsSchema = z.object({
+  'encoding-type': z.string().optional(), // e.g., 'ngff:points'
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+}).passthrough();
+
+export type PointsAttrs = z.infer<typeof pointsAttrsSchema>;
+
+/**
+ * Schema for SpatialData root metadata
  */
 export const spatialDataSchema = z.object({
   version: z.string(),
