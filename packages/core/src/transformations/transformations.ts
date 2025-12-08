@@ -112,7 +112,11 @@ export class Affine extends BaseTransformation {
     
     if (affine.length === 3 && affine[0].length === 3) {
       // 3x3 affine (2D with homogeneous row)
-      const [[a, b, tx], [c, d, ty]] = affine;
+      // The third row should be [0, 0, 1] for a valid 2D homogeneous affine matrix
+      const [[a, b, tx], [c, d, ty], [h0, h1, h2]] = affine;
+      if (h0 !== 0 || h1 !== 0 || h2 !== 1) {
+        console.warn(`Non-standard homogeneous row in 3x3 affine: [${h0}, ${h1}, ${h2}], expected [0, 0, 1]`);
+      }
       return [
         a, c, 0, 0,
         b, d, 0, 0,
