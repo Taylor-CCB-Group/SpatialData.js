@@ -11,6 +11,8 @@ import {
   type ShapesAttrs,
   type PointsAttrs,
   type CoordinateTransformation,
+  tableAttrsSchema,
+  type TableAttrs,
 } from '../schemas';
 
 
@@ -140,12 +142,18 @@ abstract class AbstractSpatialElement<
  * Tables don't have spatial transformations.
  */
 export class TableElement extends AbstractElement<'tables'> {
-  readonly attrs: ZAttrsAny;
+  readonly attrs: TableAttrs;
   
   constructor(params: ElementParams<'tables'>) {
     super(params);
-    // Tables may have various attrs structures; we don't validate strictly for now
-    this.attrs = this.rawAttrs;
+    // parse attrs through schema
+    const result = tableAttrsSchema.safeParse(this.rawAttrs);
+    if (!result.success) {
+      console.warn(`Schema validation failed for ${params.name}/${params.key}:`, result.error.issues);
+      this.attrs = this.rawAttrs as TableAttrs;
+    } else {
+      this.attrs = result.data;
+    }
   }
   
   /**

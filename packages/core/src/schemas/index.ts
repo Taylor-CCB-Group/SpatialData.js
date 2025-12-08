@@ -214,12 +214,26 @@ export const pointsAttrsSchema = z.object({
 export type PointsAttrs = z.infer<typeof pointsAttrsSchema>;
 
 /**
- * Schema for SpatialData root metadata
+ * Schema for anndata table metadata
+ */
+export const tableAttrsSchema = z.object({
+  'instance_key': z.string(),
+  'region': z.union([z.string(), z.array(z.string())]),
+  'region_key': z.string(),
+  'spatialdata-encoding-type': z.literal('ngff:regions_table')
+}).passthrough();
+
+export type TableAttrs = z.infer<typeof tableAttrsSchema>;
+
+/**
+ * Schema for SpatialData root metadata 
  */
 export const spatialDataSchema = z.object({
   version: z.string(),
   coordinateSystems: z.record(z.string(), coordinateTransformationSchema),
-});
+});  
 
+
+//todo: fix this type
 export type CoordinateTransformation = z.infer<typeof coordinateTransformationSchema>;
 export type SpatialData = z.infer<typeof spatialDataSchema>;
