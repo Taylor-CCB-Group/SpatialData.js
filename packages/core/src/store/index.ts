@@ -23,12 +23,6 @@ type Elements<T extends ElementName> = Record<string, ElementInstanceMap[T]>;
 // Re-export SpatialElement from models
 export type { SpatialElement, AnyElement } from '../models';
 
-function repr(element: AnyElement) {
-  // Element classes have kind, key, and attrs properties
-  const attrsPreview = JSON.stringify(element.attrs).slice(0, 100);
-  return `${element.kind}/${element.key}: ${attrsPreview}${attrsPreview.length >= 100 ? '...' : ''}`;
-}
-
 export class SpatialData {
   readonly url: StoreLocation;
   _ready: Promise<void>;
@@ -128,39 +122,6 @@ export class SpatialData {
   toJSON() {
     if (!this.parsed) return this;
     return serializeZarrTree(this.parsed);
-  }
-  
-  async representation() {
-    await this._ready;
-
-    if (this.parsed) {
-      return JSON.stringify(this.parsed, null, 2);
-    }
-
-    const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);
-    if (nonEmptyElements.length === 0) {
-      return `SpatialData object, with asssociated Zarr store: ${this.url}\n(No elements loaded)`;
-    }
-    const elements = (await Promise.all(nonEmptyElements.map(async (name, i) => {
-      const element = this[name];
-      const isLast = i === nonEmptyElements.length - 1;
-      const prefix = isLast ? '└──' : '├──';
-      const childPrefix = isLast ? '    ' : '│   ';
-      if (element) {
-        const keys = Object.keys(element);
-        const children = keys.map((key, j) => {
-          const childIsLast = j === keys.length - 1;
-          const childBranch = childIsLast ? '└──' : '├──';
-          return `${childPrefix}${childBranch} ${key}`;
-        }).join('\n');
-        return `${prefix} ${name}:\n${children}`;
-      }
-      return `${prefix} ${name}: (empty)`;
-    }))).join('\n');
-    // to do this properly, there are async calls involved... we can't really leak async into `toString`
-    // so we probably have another method for deeper inspection
-    const cs = `with coordinate systems: ${(await this.coordinateSystems).join(', ')}`;
-    return `SpatialData object, with asssociated Zarr store: ${this.url}\nElements:\n${elements},\n${cs}`;
   }
 }
 
