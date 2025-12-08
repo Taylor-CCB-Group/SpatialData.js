@@ -57,7 +57,7 @@ export type ChannelsState = {
     contrast: number[];
 };
 
-export const DEFAUlT_CHANNEL_STATE: ChannelsState = {
+export const DEFAULT_CHANNEL_STATE: ChannelsState = {
     channelsVisible: [] as boolean[],
     contrastLimits: [] as [number, number][],
     brightness: [] as number[], //not ending up as mobx observables... not sure why
@@ -187,7 +187,7 @@ export type VivContextType = {
 
 export function createVivStores() {
     const channelsStore = createStore((set) => ({
-        ...DEFAUlT_CHANNEL_STATE,
+        ...DEFAULT_CHANNEL_STATE,
         // ...chart.config.viv.channelsStore,
         ...generateToggles(DEFAUlT_CHANNEL_VALUES, set),
         toggleIsOn: (index: number) =>

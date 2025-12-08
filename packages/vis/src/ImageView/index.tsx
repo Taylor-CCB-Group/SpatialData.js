@@ -1,7 +1,7 @@
 import { useSpatialData } from "@spatialdata/react";
 import { useEffect, useMemo, useState, useId, type CSSProperties, useCallback } from "react";
 import { useMeasure } from "@uidotdev/usehooks";
-import { createVivStores, useChannelsStore, useLoader, useViewerStore, useViewerStoreApi, VivProvider, useChannelsStoreApi, DEFAUlT_CHANNEL_STATE } from "./avivatorish/state";
+import { createVivStores, useChannelsStore, useLoader, useViewerStore, useViewerStoreApi, VivProvider, useChannelsStoreApi, DEFAULT_CHANNEL_STATE } from "./avivatorish/state";
 import { DetailView, VivViewer, getDefaultInitialViewState } from "@vivjs-experimental/viv";
 import { useImage } from "./avivatorish/hooks";
 
@@ -51,7 +51,7 @@ function VivImage({ url, width, height }: { url?: string | URL; width: number; h
     if (!url) return;
     const source = { urlOrFile: url.toString(), description: "image" };
     viewerStore.setState({ source, viewState: null });
-    channelsStore.setState({ loader: DEFAUlT_CHANNEL_STATE.loader });
+    channelsStore.setState({ loader: DEFAULT_CHANNEL_STATE.loader });
   }, [url, viewerStore, channelsStore]);
 
   useEffect(() => {
