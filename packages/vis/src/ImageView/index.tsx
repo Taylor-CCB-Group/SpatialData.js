@@ -5,17 +5,17 @@ import { createVivStores, useChannelsStore, useLoader, useViewerStore, useViewer
 import { DetailView, VivViewer, getDefaultInitialViewState } from "@vivjs-experimental/viv";
 import { useImage } from "./avivatorish/hooks";
 
+/**
+ * when trying to getDefaultInitialViewState, it'll do something a bit like this internally...
+ * the conditions under which this function returns false are conditions where internally it would have pixelWidth undefined, etc.
+ */
 function _isValidImage(image: ReturnType<typeof useLoader>) {
   if (!image) return false;
-  // when trying to getDefaultInitialViewState, it'll do something a bit like this internally...
-  // the conditions under which this function returns false are conditions where internally it would have pixelWidth undefined, etc.
   const source = Array.isArray(image) ? image[0] : image;
   return source.shape.length > 0;
 }
 
 function VivImage({ url, width, height }: { url?: string | URL; width: number; height: number }) {
-	//TODO: fix viewState... seems like this should be simpler than it is.
-
   const loader = useLoader(); //could do with typing this...
   const channels = useChannelsStore(({colors, contrastLimits, channelsVisible, selections}) => ({colors, contrastLimits, channelsVisible, selections}));
   const layerConfig = useMemo(() => ({loader, ...channels}), [loader, channels]);
@@ -85,6 +85,7 @@ function VivImage({ url, width, height }: { url?: string | URL; width: number; h
   />);
 }
 
+// todo better styling to customise, easily fit into application layout etc.
 const containerStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -95,7 +96,20 @@ const containerStyle: CSSProperties = {
   padding: 10,
 };
 
+/**
+ * This component can be used within a `SpatialDataContext` and provides a UI for selecting
+ * images from the loaded object to be viewed with Viv.
+ * 
+ * It internally manages 'Avivator-ish' zustand state, with a React context that is independent
+ * of any other instances (which also entails not being able to share image data between components).
+ * 
+ * As of writing, it doesn't expose any public API for interacting with these stores, customisation etc.
+ * That should be changed - but the API will probably not be stable, particularly initially.
+ */
 export default function ImageView() {
+  // todo decide what public API should like etc 
+  // - particularly with more complex spatial layers arrangement
+  // enough tools to do useful things
   const { spatialData } = useSpatialData();
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [ref, { width, height }] = useMeasure();
