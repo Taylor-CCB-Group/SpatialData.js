@@ -135,10 +135,6 @@ export default function ImageView() {
       setImageUrl("");
     }
   }, [image]);
-  if (image) {
-    const result = image.getTransformation();
-    console.log(result.ok ? result.value : result.error);
-  }
   return (
     <div ref={ref} style={containerStyle}>
       {spatialData?.images && (
