@@ -373,17 +373,22 @@ export function createElement<T extends ElementName>(
 export function loadElements<T extends ElementName>(
   sdata: SDataProps,
   name: T
-): Record<string, ElementInstanceMap[T]> {
+): Record<string, ElementInstanceMap[T]> | undefined {
   const { parsed } = sdata;
   if (!parsed) {
     throw new Error("Parsed store contents not available");
   }
   if (!(name in parsed)) {
-    return {};
+    return undefined;
+  }
+  
+  const keys = Object.keys(parsed[name] as object);
+  if (keys.length === 0) {
+    return undefined;
   }
   
   const result: Record<string, ElementInstanceMap[T]> = {};
-  for (const key of Object.keys(parsed[name] as object)) {
+  for (const key of keys) {
     result[key] = createElement(name, sdata, key);
   }
   return result;

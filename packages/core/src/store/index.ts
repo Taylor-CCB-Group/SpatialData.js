@@ -57,7 +57,7 @@ export class SpatialData {
       // Load all elements of this type
       // Cast needed due to TypeScript's inability to correlate generic loop variable with property access
       // See: https://github.com/microsoft/TypeScript/issues/30581
-      (this as Record<ElementName, Elements<ElementName>>)[elementType] = loadElements(this, elementType);
+      (this as Record<ElementName, Elements<ElementName> | undefined>)[elementType] = loadElements(this, elementType);
     }
   }
 
