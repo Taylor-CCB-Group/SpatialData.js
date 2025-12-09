@@ -4,6 +4,7 @@ import SpatialDataTree from '../Tree';
 import Table from '../Table';
 import ImageView from '../ImageView';
 import Shapes from '../Shapes';
+import Transforms from '../Transforms';
 
 
 const defaultUrl =
@@ -45,6 +46,7 @@ export default function Sketch() {
       <SpatialDataTree />
       <Table />
       <Shapes />
+      <Transforms />
       <ImageView />
       <ImageView />
     </DataSource>
