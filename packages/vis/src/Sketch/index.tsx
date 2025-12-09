@@ -3,8 +3,8 @@ import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import SpatialDataTree from '../Tree';
 import Table from '../Table';
 import ImageView from '../ImageView';
-import Shapes from '../Shapes';
 import Transforms from '../Transforms';
+import SpatialCanvas from '../SpatialCanvas';
 
 
 const defaultUrl =
@@ -43,9 +43,14 @@ export default function Sketch() {
       <h2>Sketching out some functionality</h2>
 
       <Repr />
+      
+      <h3>SpatialCanvas</h3>
+      <div style={{ height: '500px', marginBottom: '20px' }}>
+        <SpatialCanvas />
+      </div>
+
       <SpatialDataTree />
       <Table />
-      <Shapes />
       <Transforms />
       <ImageView />
       <ImageView />

@@ -170,29 +170,26 @@ const timeUnitSchema = z.enum([
  * but we'll certainly care about units more in future.
  */
 const axisUnitSchema = z.union([spaceUnitSchema, timeUnitSchema, z.string()]);
-const axesSchema = z
-  .array(
-    z.union([
-      z.object({
-        name: z.string(),
-        type: z.enum(['channel', 'time', 'space']),
-        longName: z.string().optional(),
-        unit: axisUnitSchema.optional(),
-      }),
-      z.object({
-        name: z.string(),
-        type: z
-          .any()
-          .refine(
-            (value) => !z.enum(['space', 'time', 'channel']).safeParse(value).success,
-            'Invalid input: Should NOT be valid against schema'
-          )
-          .optional(),
-      }),
-    ])
-  )
-  .min(2)
-  .max(5);
+const axisSchema = z.union([
+  z.object({
+    name: z.string(),
+    type: z.enum(['channel', 'time', 'space']),
+    longName: z.string().optional(),
+    unit: axisUnitSchema.optional(),
+  }),
+  z.object({
+    name: z.string(),
+    type: z
+      .any()
+      .refine(
+        (value) => !z.enum(['space', 'time', 'channel']).safeParse(value).success,
+        'Invalid input: Should NOT be valid against schema'
+      )
+      .optional(),
+  }),
+]);
+export type Axis = z.infer<typeof axisSchema>;
+const axesSchema = z.array(axisSchema).min(2).max(5);
 
 const omeroSchema = z.object({
   channels: z.array(
