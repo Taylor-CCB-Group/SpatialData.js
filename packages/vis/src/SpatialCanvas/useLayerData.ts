@@ -113,7 +113,10 @@ export function useLayerData(
             const data = await loadShapesData(element.element as ShapesElement);
             loadedDataRef.current.shapes.set(element.key, data);
           } else if (element.type === 'points') {
-            const data = await loadPointsData(element.element as PointsElement);
+            // todo better type-guards etc here.
+            const e = element.element as PointsElement;
+            const data = await e.loadPoints();
+            //@ts-expect-error todo review how PointData type is defined & returned in VPointsSource.ts
             loadedDataRef.current.points.set(element.key, data);
           }
         } catch (error) {

@@ -86,11 +86,11 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
  */
 export async function loadPointsData(
   element: PointsElement
-): Promise<PointData[]> {
+) {
   // TODO: Implement loading from element
   // Points elements store x, y (and optionally z) coordinates
   // along with other attributes
   console.debug(`[PointsRenderer] Would load points from ${element.url}`);
-  return [];
+  return element.loadPoints();
 }
 

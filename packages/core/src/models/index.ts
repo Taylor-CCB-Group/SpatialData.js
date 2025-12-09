@@ -19,6 +19,7 @@ import {
   Identity,
   parseTransforms, 
 } from '../transformations';
+import SpatialDataPointsSource from './VPointsSource';
 
 
 /**
@@ -387,7 +388,7 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
  */
 export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs> {
   readonly attrs: PointsAttrs;
-  
+  private readonly vPoints: SpatialDataPointsSource;
   constructor(params: ElementParams<'points'>) {
     super(params);
     
@@ -399,6 +400,10 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     } else {
       this.attrs = result.data;
     }
+    this.vPoints = new SpatialDataPointsSource({
+      store: params.sdata.rootStore,
+      fileType: '.zarr' 
+    });
   }
   
   /**
@@ -408,7 +413,12 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.attrs.coordinateTransformations;
   }
   
-  // Points-specific loading methods can be added here
+  async loadPoints() {
+    //Error: Unexpected response status 500 INTERNAL SERVER ERROR
+    //IsADirectoryError: [Errno 21] Is a directory: '/MySpatialData.zarr/points/key/points.parquet'
+    //we have points.parquet/part.0.parquet etc.
+    return this.vPoints.loadPoints(`points/${this.key}`);
+  }
 }
 
 // ============================================
