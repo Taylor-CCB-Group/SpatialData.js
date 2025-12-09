@@ -13,7 +13,7 @@ export default function TableComponent() {
   const [tableData, setTableData] = useState<any>(undefined);
   useEffect(() => {
     if (table) {
-      table().then(t => setTableData(t));
+      table.getAnnDataJS().then(t => setTableData(t));
     } else {
       setTableData(undefined);
     }

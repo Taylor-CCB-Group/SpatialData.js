@@ -1,0 +1,9 @@
+{
+  "label": "Core Package",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "TypeScript library for interfacing with SpatialData Zarr stores."
+  }
+}
+

@@ -4,6 +4,7 @@ import SpatialDataTree from '../Tree';
 import Table from '../Table';
 import ImageView from '../ImageView';
 import Shapes from '../Shapes';
+import Transforms from '../Transforms';
 
 
 const defaultUrl =
@@ -25,6 +26,15 @@ function DataSource({ children }: React.PropsWithChildren) {
   );
 }
 
+function Repr() {
+  const { spatialData } = useSpatialData();
+  return (
+    <pre style={{maxWidth: '90vw'}}>
+      {spatialData?.toString()}
+    </pre>
+  )
+}
+
 export default function Sketch() {
   // const { spatialData, loading, error } = useSpatialData();
 
@@ -32,9 +42,12 @@ export default function Sketch() {
     <DataSource>
       <h2>Sketching out some functionality</h2>
 
+      <Repr />
       <SpatialDataTree />
       <Table />
       <Shapes />
+      <Transforms />
+      <ImageView />
       <ImageView />
     </DataSource>
   );

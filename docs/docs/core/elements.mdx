@@ -1,0 +1,211 @@
+---
+sidebar_position: 2
+---
+
+# Element Classes
+
+Each element type in a SpatialData store is represented by a typed class that provides access to metadata, coordinate transformations, and data loading methods.
+
+:::info Elements are loaded, not constructed
+
+Elements are obtained by loading a store via `readZarr()`. You don't create element instances directly—they're populated from the store's metadata and provide a read-only interface to the underlying data.
+
+```ts
+const sdata = await readZarr('https://example.com/data.zarr');
+const image = sdata.images?.['my_image'];  // ImageElement from the store
+```
+
+:::
+
+## Common Properties
+
+All element classes share these properties:
+
+```ts
+interface BaseElement {
+  readonly kind: ElementName;  // 'images' | 'shapes' | 'labels' | 'points' | 'tables'
+  readonly key: string;        // The element's name within its category
+  readonly url: string;        // Full URL to the element's zarr group
+  readonly attrs: object;      // Validated attributes (type varies by element)
+}
+```
+
+## Spatial Elements
+
+Spatial elements (everything except tables) inherit from `AbstractSpatialElement` and provide coordinate transformation methods:
+
+```ts
+interface SpatialElement {
+  // Get all coordinate systems this element can transform to
+  readonly coordinateSystems: string[];
+  
+  // Get transformation to a specific coordinate system (Result type)
+  getTransformation(toCoordinateSystem?: string): Result<BaseTransformation, CoordinateSystemNotFoundError>;
+  
+  // Get all transformations as a Map
+  getAllTransformations(): Map<string, BaseTransformation>;
+}
+```
+
+## ImageElement
+
+Images are multiscale raster data following the OME-NGFF specification.
+
+```ts
+const sdata = await readZarr('https://example.com/data.zarr');
+const image = sdata.images?.['my_image'];
+
+// Metadata access
+image.attrs.multiscales[0].axes;   // Axis definitions
+image.channels;                    // Channel metadata from omero
+image.ndim;                        // 2 or 3
+image.isMultiscale;                // true if multiple resolution levels
+image.scaleLevels;                 // ['0', '1', '2', ...] paths to each level
+
+// Spatial properties
+image.spatialAxes;                // Only space-type axes
+
+// Get transformation including per-resolution-level transforms
+const transforms = image.getTransformationForLevel(0, 'global');
+// Returns { element: Result<BaseTransformation>, dataset: BaseTransformation }
+```
+
+### Attributes Schema
+
+```ts
+type RasterAttrs = {
+  multiscales: Array<{
+    name?: string;
+    axes: Array<{ name: string; type: 'space' | 'time' | 'channel' }>;
+    datasets: Array<{
+      path: string;
+      coordinateTransformations?: CoordinateTransformation;
+    }>;
+    coordinateTransformations?: CoordinateTransformation;
+  }>;
+  omero?: {
+    channels: Array<{
+      window?: { start: number; end: number; min: number; max: number };
+      label?: string;
+      color?: string;
+      active?: boolean;
+    }>;
+  };
+  spatialdata_attrs?: { version: string };
+};
+```
+
+## LabelsElement
+
+Labels are segmentation masks stored as OME-NGFF multiscale rasters, identical in structure to images.
+
+```ts
+const labels = sdata.labels?.['my_segmentation'];
+
+// Same properties as ImageElement
+labels.scaleLevels;
+labels.ndim;
+labels.getTransformation('global');
+```
+
+## ShapesElement
+
+Shapes represent vector geometries like polygons and circles.
+
+```ts
+const shapes = sdata.shapes?.['cell_boundaries'];
+
+// Load geometry data
+const polygons = await shapes.loadPolygonShapes();  // For polygon geometries
+const circles = await shapes.loadCircleShapes();    // For circle/point geometries
+const indices = await shapes.loadShapesIndex();
+
+// Access metadata
+shapes.attrs.axes;                    // e.g., ['x', 'y']
+shapes.attrs['encoding-type'];        // e.g., 'ngff:shapes'
+shapes.attrs.coordinateTransformations;
+```
+
+### Attributes Schema
+
+```ts
+type ShapesAttrs = {
+  'encoding-type'?: string;
+  axes?: string[];
+  coordinateTransformations?: CoordinateTransformation;
+  spatialdata_attrs?: { version: string };
+};
+```
+
+## PointsElement
+
+Points represent point cloud data such as transcript locations.
+
+```ts
+const points = sdata.points?.['transcripts'];
+
+// Access metadata
+points.attrs.axes;                     // e.g., ['x', 'y']
+points.attrs.coordinateTransformations;
+points.coordinateSystems;              // Available coordinate systems
+```
+
+## TableElement
+
+Tables are AnnData objects that can annotate spatial elements via region keys.
+
+```ts
+const table = sdata.tables?.['annotations'];
+
+// Get as AnnData.js object for full access
+const adata = await table.getAnnDataJS();
+
+// Access region annotation metadata
+table.attrs.instance_key;   // Column name for instance IDs
+table.attrs.region;         // Element(s) this table annotates
+table.attrs.region_key;     // Column name linking to region
+```
+
+### Attributes Schema
+
+```ts
+type TableAttrs = {
+  instance_key: string;
+  region: string | string[];
+  region_key: string;
+  'spatialdata-encoding-type': 'ngff:regions_table';
+};
+```
+
+## Working with Coordinate Systems
+
+All spatial elements share a common interface for coordinate transformations:
+
+```ts
+import { unwrap } from '@spatialdata/core';
+
+const image = sdata.images?.['my_image'];
+
+// Check available coordinate systems
+console.log(image.coordinateSystems);  // ['global', 'anatomical', ...]
+
+// Get a specific transformation (returns Result type)
+const result = image.getTransformation('global');
+
+if (result.ok) {
+  const matrix = result.value.toMatrix();  // Matrix4 from @math.gl/core
+  const array = result.value.toArray();    // 16-element column-major array
+} else {
+  console.log('Available:', result.error.availableCoordinateSystems);
+}
+
+// Or unwrap to throw on error
+const transform = unwrap(image.getTransformation('global'));
+
+// Get all transformations at once
+const allTransforms = image.getAllTransformations();
+for (const [csName, transform] of allTransforms) {
+  console.log(`${csName}:`, transform.toMatrix());
+}
+```
+

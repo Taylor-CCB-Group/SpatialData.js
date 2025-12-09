@@ -4,28 +4,34 @@ import { coordinateTransformationSchema, spatialDataSchema } from './schemas/ind
 describe('SpatialData Core', () => {
   describe('schemas', () => {
     it('should validate coordinate transformation', () => {
-      const validTransform = {
-        type: 'affine',
-        transform: [
-          [1, 0],
-          [0, 1],
-        ],
-      };
+      // coordinateTransformationSchema expects an array of transformations
+      const validTransforms = [
+        {
+          type: 'affine',
+          affine: [
+            [1, 0, 0],
+            [0, 1, 0],
+          ],
+        },
+      ];
 
-      expect(() => coordinateTransformationSchema.parse(validTransform)).not.toThrow();
+      expect(() => coordinateTransformationSchema.parse(validTransforms)).not.toThrow();
     });
 
     it('should validate spatial data metadata', () => {
+      // coordinateSystems values are arrays of transformations
       const validMetadata = {
         version: '0.1.0',
         coordinateSystems: {
-          global: {
-            type: 'affine',
-            transform: [
-              [1, 0],
-              [0, 1],
-            ],
-          },
+          global: [
+            {
+              type: 'affine',
+              affine: [
+                [1, 0, 0],
+                [0, 1, 0],
+              ],
+            },
+          ],
         },
       };
 
