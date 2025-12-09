@@ -86,6 +86,7 @@ const config: Config = {
           label: 'Docs',
         },
         { to: '/blog', label: 'Blog', position: 'left' },
+        { to: '/docs/demo', label: 'Demo', position: 'left' },
         {
           href: 'https://github.com/Taylor-CCB-Group/SpatialData.js',
           label: 'GitHub',

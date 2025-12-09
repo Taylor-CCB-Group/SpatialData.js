@@ -40,8 +40,6 @@ export default function Sketch() {
 
   return (
     <DataSource>
-      <h2>Sketching out some functionality</h2>
-
       <Repr />
       
       <h3>SpatialCanvas</h3>
@@ -52,7 +50,6 @@ export default function Sketch() {
       <SpatialDataTree />
       <Table />
       <Transforms />
-      <ImageView />
       <ImageView />
     </DataSource>
   );
