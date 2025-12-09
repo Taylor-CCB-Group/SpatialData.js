@@ -10,7 +10,7 @@ export default defineConfig({
       fileName: (format) => `index.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: ['zarrita', 'zod', 'anndata.js'],
+      external: ['zarrita', 'zod', 'anndata.js', 'parquet-wasm'],
     },
     sourcemap: true,
     target: 'es2020',

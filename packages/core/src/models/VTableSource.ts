@@ -13,9 +13,13 @@ import AnnDataSource from './VAnnDataSource';
 
 async function getParquetModule() {
   // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
-  // that needs to be initialized before use.
+  // that needs to be initialized before use in browser environments.
+  // In Node.js, the module loads WASM synchronously so no init is needed.
+  // (^^^ but why would it be invoked in node.js in the current version?)
   const module = await import('parquet-wasm');
-  await module.default();
+  if (typeof module.default === 'function') {
+    await module.default();
+  }
   return { readParquet: module.readParquet, readSchema: module.readSchema };
 }
 
