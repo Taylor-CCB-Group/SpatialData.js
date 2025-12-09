@@ -3,8 +3,13 @@ Using MDX format to render a react component that will respond to HMR as we edit
 {/* truncate */}
 
 
+import BrowserOnly from '@docusaurus/BrowserOnly';
 import Sketch from '@site/src/components/Sketch/';
 
 export default function Page() {
-  return <Sketch />;
+  return (
+    <BrowserOnly>
+      {() => <Sketch />}
+    </BrowserOnly>
+  );
 }

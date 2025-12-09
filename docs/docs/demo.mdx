@@ -1,5 +1,10 @@
+import BrowserOnly from '@docusaurus/BrowserOnly';
 import Sketch from '@site/src/components/Sketch/';
 
 export default function Page() {
-  return <Sketch />;
+  return (
+    <BrowserOnly>
+      {() => <Sketch />}
+    </BrowserOnly>
+  );
 }
