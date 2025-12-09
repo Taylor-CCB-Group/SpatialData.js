@@ -12,30 +12,10 @@ import AnnDataSource from './VAnnDataSource';
 
 
 async function getParquetModule() {
-  // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
-  // TODO: host somewhere we control, like cdn.vitessce.io?
-  // TODO: PJT - review importing local version & making sure the bundle is split correctly.
-  // definitely better from an SBOM perspective if that's needed at some point (which it may be).
-  //@ts-expect-error importing parquet_wasm.js without type declaration.
-  const module = await import('https://unpkg.com/parquet-wasm@0.6.1/esm/parquet_wasm.js');
+  // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
+  // that needs to be initialized before use.
+  const module = await import('parquet-wasm');
   await module.default();
-  // We cannot use regulary dynamic import here because it breaks NextJS builds
-  // due to pointing to a remote URL.
-  // I could not figure out a NextJS webpack configuration to resolve it.
-  // The following becomes inlined by Vite in library mode
-  // eliminating the benefit of dynamic import.
-  // Reference: https://github.com/vitejs/vite/issues/4454
-  // const responsePromise = await fetch(
-  //   new URL('parquet-wasm/esm/parquet_wasm_bg.wasm', import.meta.url).href
-  // );
-  // const responsePromise = await fetch('https://unpkg.com/parquet-wasm@0.6.1/esm/parquet_wasm_bg.wasm');
-  // const wasmBuffer = await responsePromise.arrayBuffer();
-  // module.initSync(wasmBuffer);
-  // Another issue is that when we import parquet-wasm JS from node_modules,
-  // running module.default there is a MIME type issue because the Vite dev
-  // server does not serve the .wasm with a MIME type of application/wasm.
-  // I can't seem to get a custom Vite plugin that sets the MIME type in
-  // request headers to work.
   return { readParquet: module.readParquet, readSchema: module.readSchema };
 }
 
