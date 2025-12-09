@@ -217,19 +217,27 @@ export default class SpatialDataTableSource extends AnnDataSource {
       // Return the cached bytes.
       return this.parquetTableBytes[parquetPath];
     }
-    let parquetBytes = await this.storeRoot.store.get(`/${parquetPath}`);
-    if (!parquetBytes) {
+    try {
+      // PJT: this doesn't return falsey - if it fails, it throws.
+      const parquetBytes = await this.storeRoot.store.get(`/${parquetPath}`);
+      if (parquetBytes) {
+        // Cache the parquet bytes.
+        this.parquetTableBytes[parquetPath] = parquetBytes;
+      }
+      return parquetBytes;
+    } catch {
       // This may be a directory with multiple parts.
+      // Could we establish that from metadata rather than having to catch?
       const part0Path = `${parquetPath}/part.0.parquet`;
-      parquetBytes = await this.storeRoot.store.get(`/${part0Path}`);
+      const parquetBytes = await this.storeRoot.store.get(`/${part0Path}`);
 
       // TODO: support loading multiple parts.
+      if (parquetBytes) {
+        // Cache the parquet bytes.
+        this.parquetTableBytes[parquetPath] = parquetBytes;
+      }
+      return parquetBytes;
     }
-    if (parquetBytes) {
-      // Cache the parquet bytes.
-      this.parquetTableBytes[parquetPath] = parquetBytes;
-    }
-    return parquetBytes;
   }
 
   /**

@@ -9,10 +9,17 @@ import type { Matrix4 } from '@math.gl/core';
 import type { PointsElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
 
-export interface PointData {
+export interface PointDataX {
   position: [number, number] | [number, number, number];
   // Additional properties can be added for coloring, sizing, etc.
   [key: string]: unknown;
+}
+
+// this is ndarray and should be defined elsewhere
+// not that we wouldn't also want to be able to have other data & accessors
+export interface PointData {
+  shape: number[];
+  data: number[][];
 }
 
 export interface PointsLayerRenderConfig {
@@ -30,8 +37,8 @@ export interface PointsLayerRenderConfig {
   pointSize?: number;
   /** Point color [r, g, b, a] (0-255) */
   color?: [number, number, number, number];
-  /** Pre-loaded point data (optional - if not provided, will need to be loaded) */
-  pointData?: PointData[];
+  /** ndarray - if we want other data for properties like color/radius etc they will be handled differently */
+  pointData?: PointData;
 }
 
 /**
@@ -47,23 +54,23 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     modelMatrix, 
     opacity, 
     visible,
-    pointSize = 5,
+    pointSize = 1,
     color = [255, 100, 100, 200],
     pointData,
   } = config;
 
   if (!visible) return null;
   
-  if (!pointData || pointData.length === 0) {
+  if (!pointData) {
     // Data not loaded yet
     console.debug(`[PointsRenderer] No point data for layer "${id}" from ${element.url}`);
     return null;
   }
-
+  const d = pointData.data;
   return new ScatterplotLayer({
     id,
-    data: pointData,
-    getPosition: (d: PointData) => d.position,
+    data: d[0], //just for index really
+    getPosition: (_d, {index, target}) => [d[0][index], d[1][index]], //todo: 3d etc
     getRadius: pointSize,
     radiusUnits: 'pixels',
     getFillColor: color,
