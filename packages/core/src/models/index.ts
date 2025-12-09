@@ -344,7 +344,7 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
     
     // Initialize the Vitessce-derived shapes source for loading geometry
     this.vShapes = new SpatialDataShapesSource({ 
-      store: new zarr.FetchStore(this.url), 
+      store: params.sdata.rootStore,
       fileType: '.zarr' 
     });
   }
@@ -360,14 +360,14 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
    * Load polygon geometry data.
    */
   async loadPolygonShapes() {
-    return this.vShapes.loadPolygonShapes(`${this.url}/geometry`);
+    return this.vShapes.loadPolygonShapes(`shapes/${this.key}/geometry`);
   }
   
   /**
    * Load circle/point geometry data.
    */
   async loadCircleShapes() {
-    return this.vShapes.loadCircleShapes(`${this.url}/geometry`);
+    return this.vShapes.loadCircleShapes(`shapes/${this.key}/geometry`);
   }
   
   /**
