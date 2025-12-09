@@ -60,7 +60,7 @@ The library follows several key principles:
 
 4. **Lazy Loading of Heavy Data**: Data is loaded on-demand rather than all at once, critical for working with large datasets in the browser.
 
-5. **Eager Loading of Metadata**: Consolidated metadata from the zarr store is loaded up-front and used to build a representation of the object structure such that it can be programmatically exposed without `async` leaking where it isn't needed.
+5. **Eager Loading of Metadata**: Consolidated metadata from the zarr store is loaded up-front and used to build a representation of the object structure such that it can be programmatically exposed without `async` leaking where it isn't needed, which can lead to a lot of fiddly state management.
 
 6. **Explicit Error Handling**: Uses a Rust-inspired `Result` type for operations that can fail, allowing you to handle errors gracefully without exceptions.
 

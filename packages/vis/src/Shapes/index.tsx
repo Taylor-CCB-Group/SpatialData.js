@@ -11,7 +11,7 @@ export default function ShapesComponent() {
   
   // Default to first available shape
   useEffect(() => {
-    if (shapeKeys.length > 0 && !selectedShapes) {
+    if (shapeKeys.length > 0 && (!selectedShapes || !shapeKeys.includes(selectedShapes))) {
       setSelectedShapes(shapeKeys[0]);
     }
   }, [shapeKeys, selectedShapes]);
