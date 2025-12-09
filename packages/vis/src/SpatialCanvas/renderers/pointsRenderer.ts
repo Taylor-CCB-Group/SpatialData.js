@@ -70,7 +70,11 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
   return new ScatterplotLayer({
     id,
     data: d[0], //just for index really
-    getPosition: (_d, {index, target}) => [d[0][index], d[1][index]], //todo: 3d etc
+    // todo: more robust ndarray handling, be more efficient with target
+    // probably more important will be having proper spatial data-structure (quad/oct-tree)
+    // with ways of querying within view.
+    // also allow accessors for other props
+    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], d[2]?.[index]],
     getRadius: pointSize,
     radiusUnits: 'pixels',
     getFillColor: color,
