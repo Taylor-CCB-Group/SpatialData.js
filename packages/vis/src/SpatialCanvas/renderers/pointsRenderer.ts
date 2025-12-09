@@ -87,21 +87,3 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     highlightColor: [255, 255, 0, 200],
   });
 }
-
-/**
- * Load point data from a points element.
- * This is async and should be called during component setup.
- * 
- * TODO: Implement actual loading from PointsElement
- * Points data is typically stored as a parquet-like columnar format in zarr
- */
-export async function loadPointsData(
-  element: PointsElement
-) {
-  // TODO: Implement loading from element
-  // Points elements store x, y (and optionally z) coordinates
-  // along with other attributes
-  console.debug(`[PointsRenderer] Would load points from ${element.url}`);
-  return element.loadPoints();
-}
-

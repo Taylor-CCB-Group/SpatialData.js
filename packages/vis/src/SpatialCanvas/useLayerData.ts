@@ -17,14 +17,13 @@ import {
 } from './renderers/shapesRenderer';
 import { 
   renderPointsLayer, 
-  loadPointsData,
   type PointsLayerRenderConfig,
   type PointData,
 } from './renderers/pointsRenderer';
 
 interface LoadedData {
   shapes: Map<string, Array<Array<Array<[number, number]>>>>;
-  points: Map<string, PointData[]>;
+  points: Map<string, PointData>;
   images: Map<string, unknown>; // Viv loaders - to be implemented
 }
 
@@ -116,7 +115,6 @@ export function useLayerData(
             // todo better type-guards etc here.
             const e = element.element as PointsElement;
             const data = await e.loadPoints();
-            //@ts-expect-error todo review how PointData type is defined & returned in VPointsSource.ts
             loadedDataRef.current.points.set(element.key, data);
           }
         } catch (error) {
