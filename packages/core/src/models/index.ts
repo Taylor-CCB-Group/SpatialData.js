@@ -6,6 +6,7 @@ import SpatialDataShapesSource from './VShapesSource';
 import { 
   rasterAttrsSchema, 
   shapesAttrsSchema, 
+  pointsAttrsSchema,
   type RasterAttrs,
   type ShapesAttrs,
   type PointsAttrs,
@@ -18,7 +19,7 @@ import {
   Identity,
   parseTransforms, 
 } from '../transformations';
-import { PointsElement } from './PointsElement';
+import SpatialDataPointsSource from './VPointsSource';
 
 
 /**
@@ -94,7 +95,7 @@ export class CoordinateSystemNotFoundError extends Error {
  * Base class for spatial elements (everything except tables).
  * Spatial elements have coordinate transformations.
  */
-export abstract class AbstractSpatialElement<
+abstract class AbstractSpatialElement<
   TKind extends Exclude<ElementName, 'tables'>,
   TAttrs
 > extends AbstractElement<TKind> {
@@ -379,6 +380,48 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
 }
 
 // ============================================
+// Points Element
+// ============================================
+
+/**
+ * Element representing point cloud data.
+ */
+export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs> {
+  readonly attrs: PointsAttrs;
+  private readonly vPoints: SpatialDataPointsSource;
+  constructor(params: ElementParams<'points'>) {
+    super(params);
+    
+    // Parse attrs through schema
+    const result = pointsAttrsSchema.safeParse(this.rawAttrs);
+    if (!result.success) {
+      console.warn(`Schema validation failed for points/${params.key}:`, result.error.issues);
+      this.attrs = this.rawAttrs as PointsAttrs;
+    } else {
+      this.attrs = result.data;
+    }
+    this.vPoints = new SpatialDataPointsSource({
+      store: params.sdata.rootStore,
+      fileType: '.zarr' 
+    });
+  }
+  
+  /**
+   * Transformations are at attrs.coordinateTransformations with input/output refs.
+   */
+  protected get rawCoordinateTransformations(): CoordinateTransformation | undefined {
+    return this.attrs.coordinateTransformations;
+  }
+  
+  async loadPoints() {
+    //Error: Unexpected response status 500 INTERNAL SERVER ERROR
+    //IsADirectoryError: [Errno 21] Is a directory: '/MySpatialData.zarr/points/key/points.parquet'
+    //we have points.parquet/part.0.parquet etc.
+    return this.vPoints.loadPoints(`points/${this.key}`);
+  }
+}
+
+// ============================================
 // Factory
 // ============================================
 
@@ -464,4 +507,3 @@ export function loadElements<T extends ElementName>(
 
 // Re-export types that may be useful externally
 export type { RasterAttrs, ShapesAttrs, PointsAttrs, CoordinateTransformation };
-export { PointsElement }
