@@ -135,6 +135,21 @@ export class Affine extends BaseTransformation {
       }
       return result;
     }
+
+    if (affine.length === 3 && affine[0].length === 4) {
+      // 3x4 affine (3D with implicit homogeneous row [0, 0, 0, 1])
+      // Convert row-major to column-major, adding the implicit 4th row
+      const result: number[] = [];
+      // Process first 3 columns from the 3 rows
+      for (let col = 0; col < 4; col++) {
+        for (let row = 0; row < 3; row++) {
+          result.push(affine[row]?.[col] ?? 0);
+        }
+        // Add the implicit 4th row value: 0 for first 3 columns, 1 for last column
+        result.push(col === 3 ? 1 : 0);
+      }
+      return result;
+    }
     
     console.warn(`Unexpected affine matrix dimensions: ${affine.length}x${affine[0]?.length}`);
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
