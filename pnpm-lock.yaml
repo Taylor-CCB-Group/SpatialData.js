@@ -49,8 +49,8 @@ catalogs:
       specifier: ^5.7.3
       version: 5.9.3
     vite:
-      specifier: ^7.0.0
-      version: 7.1.9
+      specifier: ^7.2.7
+      version: 7.2.7
     vite-plugin-dts:
       specifier: ^4.5.0
       version: 4.5.4
@@ -73,16 +73,16 @@ importers:
         version: 1.9.4
       '@vitejs/plugin-react':
         specifier: 'catalog:'
-        version: 4.7.0(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.7.0(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
       vite:
         specifier: 'catalog:'
-        version: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+        version: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
       vite-plugin-dts:
         specifier: 'catalog:'
-        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
@@ -174,10 +174,10 @@ importers:
         version: 1.4.3
       vite:
         specifier: 'catalog:'
-        version: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+        version: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
       vite-plugin-dts:
         specifier: 'catalog:'
-        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
@@ -211,16 +211,16 @@ importers:
         version: 19.2.2(@types/react@19.2.2)
       '@vitejs/plugin-react':
         specifier: 'catalog:'
-        version: 4.7.0(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.7.0(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
       vite:
         specifier: 'catalog:'
-        version: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+        version: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
       vite-plugin-dts:
         specifier: 'catalog:'
-        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
@@ -281,16 +281,16 @@ importers:
         version: 19.2.2(@types/react@19.2.2)
       '@vitejs/plugin-react':
         specifier: 'catalog:'
-        version: 4.7.0(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.7.0(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
       vite:
         specifier: 'catalog:'
-        version: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+        version: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
       vite-plugin-dts:
         specifier: 'catalog:'
-        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
@@ -396,14 +396,14 @@ packages:
     resolution: {integrity: sha512-6beG+egPwXmvhAg+m0STCj+ZssDcjrLzf4L05aKm2nGglMXSSPz0cH/rM+kVD9krNfldiMctURd4wjojW1fV0w==}
     engines: {node: '>= 14.0.0'}
 
-  '@amcharts/amcharts5@5.14.3':
-    resolution: {integrity: sha512-RtczG2DHz8z2x1dgHjGX+xPc2W4HL46f4CCjR4KEFkDlg0W+QK058pYTipF0DD2BNnAJRNAFA4DVuOaEpUuu7g==}
+  '@amcharts/amcharts5@5.14.4':
+    resolution: {integrity: sha512-Tl7wQLWvsvyWVtlCIm1yhZtJviSDYjuNTnlUkO0D49GyByoK0nb9fr0DK4rUw4DVgyLcySxWBsb2lzTJm5Rd9Q==}
 
   '@arcgis/core@4.34.5':
     resolution: {integrity: sha512-frCW+m3ekw3Vzzvo6LfCAZ7dbfyvAQc9vCq0ATJJ1jpAXbuwuvkIWxuVMv0S4wXL6q3Zz8M/a6+3AgSxoCgT/Q==}
 
-  '@arcgis/lumina@4.34.5':
-    resolution: {integrity: sha512-PFdgoFT36SbeU5coSYd0igqLeknm2VX3YxXS/V8kzJgPZqP4Bq30NLudKGSPO1PxsowBiddm1LzD8T1lKVYi9g==}
+  '@arcgis/lumina@4.34.9':
+    resolution: {integrity: sha512-efqO+SwR+1IYf29AATh1l2FUeypRyRINTBNkaJY+KkaFe+8gqSJ45qOmputhyzF5WTRDb7WhOYgnChjp6VYPpA==}
     peerDependencies:
       '@lit/context': ^1.1.5
       lit: ^3.3.0
@@ -411,8 +411,8 @@ packages:
       '@lit/context':
         optional: true
 
-  '@arcgis/toolkit@4.34.5':
-    resolution: {integrity: sha512-GrDV1xC1NeuhBbViGOJYaKK2y+KjTpVoku90nld782bQe1ABUz8zzrFitYa+px3n0MKWm76aWos+EydzX/9xRw==}
+  '@arcgis/toolkit@4.34.9':
+    resolution: {integrity: sha512-wFST+eVnCwmg9NyICVyn9bsBnR+TlWklsGqG3L7xqSTgfXo6TuCThE7wtTb8xWxsTBkGvImqMUgpgLuwQuTQ1g==}
 
   '@babel/code-frame@7.27.1':
     resolution: {integrity: sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==}
@@ -2806,44 +2806,44 @@ packages:
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
 
-  '@vaadin/a11y-base@24.9.4':
-    resolution: {integrity: sha512-y8Rrq84MOyCYJ5rbzWtm7rqP3UNX5r5aspKFVYDNATLVcqFMFqUopz5Tn+YMRMb0MJ3K3GU3vy+xWVcF3WyzAg==}
+  '@vaadin/a11y-base@24.9.6':
+    resolution: {integrity: sha512-CWvREuPNGjnstmXMxJFXVo0ujZ4O9MtbyuYRNDQHkan83VtbbqExijhnTMp03IHC7JE+ovtHykGKjOQr3+ODxw==}
 
-  '@vaadin/checkbox@24.9.4':
-    resolution: {integrity: sha512-B381QSKkmi0bpnmw+BV/oMGrEAkLVHxrL75mrrl0jEzA9nzc+vTsb72cONnbp6XCO17hb+sVQ6gdAxBrSsr59A==}
+  '@vaadin/checkbox@24.9.6':
+    resolution: {integrity: sha512-neRarGZUlx6L2wVLVEGEsjFj6/92xOG1c8O17sf8a503vLlooOE9/XKAVxRUT6LFnA6EMr721VMU1mj3R7ptmA==}
 
-  '@vaadin/component-base@24.9.4':
-    resolution: {integrity: sha512-bS28kpICJodSHTEJQwQexNGkhdXbPtPhmUJGWk6gx+9Dmuzeq5C/xlnkYpuRbGnvR4lGUL2SdK6ZlhcPzKXncQ==}
+  '@vaadin/component-base@24.9.6':
+    resolution: {integrity: sha512-+VTUx79VsOQBCJ0XInH3yApjQK/qJUM/JMFeFrKIPrBuRwoNXuQAEG8N/W0ctc1haLHVZ/NR2pu9W0za7N9SWw==}
 
-  '@vaadin/field-base@24.9.4':
-    resolution: {integrity: sha512-ANUMWe08i0BTv9DoMcStdtxy8gKnvt7ERCLSINrIPAI19tAhrooifHXYxr6ig7ebK4gmjIc1TKqLeelWjesBhA==}
+  '@vaadin/field-base@24.9.6':
+    resolution: {integrity: sha512-TKk3ATbMJnh0dQm+1MfAElTbrysNDy89FTpGx78cKJjtJQYJmjsrBbh/mX1k/uQEakif8i9MQRlyQDC10psZRg==}
 
-  '@vaadin/grid@24.9.4':
-    resolution: {integrity: sha512-Dxr+hB4cjr3AKGE7bhn7V5TTjIU2aAvsDHx2canxUj823hTrJ6OuVY7auuDyxEwZCduTUVK4dSlY6C0GLSGqwA==}
+  '@vaadin/grid@24.9.6':
+    resolution: {integrity: sha512-Jo2caD3kGNtdXf5ekBVLsbkmm6cnueBOwZHs96ZIg85FvKHDqfMXhZPq8A0bXXtOmsGw4/yuFvEc4pyQu9VD+g==}
 
-  '@vaadin/icon@24.9.4':
-    resolution: {integrity: sha512-0JTSsi/U3z2I/gDZisLqzwJSHYeem3hQcMhNiul9gn1iWVnrfzehpZRAG9L3UhlAKssvh+ttYRjHyeiXR/Rqhg==}
+  '@vaadin/icon@24.9.6':
+    resolution: {integrity: sha512-48dmcZPTb/kvKbtRbtuRnIe5MFWk2iQQwKMRW892tG1BOayy0ykBBI/GPkaRNVkQp+rDl6FqOVM9RCPogNkTsg==}
 
-  '@vaadin/input-container@24.9.4':
-    resolution: {integrity: sha512-uS+gVgc4NPAR3YcXvJZGbeN48G1tviQZ1n7ap3CAHxai5iCxBYUOwao3FLRkWtDG5KHrEKLFtAw6YCquM+P3NA==}
+  '@vaadin/input-container@24.9.6':
+    resolution: {integrity: sha512-T23VRF3p88jcrc88ZwvJJtUnLOoQR+eBSqB5SwPS8PPnV0qryOIr35eRaaRcKh212da6b1mdL5QkNFmWmxvSDA==}
 
-  '@vaadin/lit-renderer@24.9.4':
-    resolution: {integrity: sha512-fXoM9XS0nWqUTO0GQVe5m2Oaa1Ae5Rhc1HwzIiX2nTiRuFlX3tfHPeaZJpcG+MuQLn3qtc6rAzHiGl1Y+Tovkw==}
+  '@vaadin/lit-renderer@24.9.6':
+    resolution: {integrity: sha512-CzSgzK0QfTwmCXuWC5RxKU+6MNwO8KYNYrdQCmQdi6z0/iuGZT7a1M1Xo9Fy3KdCG+QLHMLdTvMgEymuRKXrEg==}
 
-  '@vaadin/text-field@24.9.4':
-    resolution: {integrity: sha512-1Yr8Hn5o4r3mBA0jXgRiMiAlfIOe2H/3tkWHj8KBdxH2PfwDGjzXvf5995g6kO4/b2E2sWNtMTQYufEr1HLlWw==}
+  '@vaadin/text-field@24.9.6':
+    resolution: {integrity: sha512-LR+u22YV4yC7Zhlh/+denLI4t+k2/T6G8sIZfyn9FAr422CqJnW2+dDaiL1wugAhxyM2Pz3/L3QJXtPhyF672Q==}
 
   '@vaadin/vaadin-development-mode-detector@2.0.7':
     resolution: {integrity: sha512-9FhVhr0ynSR3X2ao+vaIEttcNU5XfzCbxtmYOV8uIRnUCtNgbvMOIcyGBvntsX9I5kvIP2dV3cFAOG9SILJzEA==}
 
-  '@vaadin/vaadin-lumo-styles@24.9.4':
-    resolution: {integrity: sha512-g6qx0Fp9VOvjKUnYyxgE42Jl5c+LdiA9T6KxPCzOF8EiaHKsCLLKecnvwmV6SelQ45AbVLg4YiROFJ27k38d/w==}
+  '@vaadin/vaadin-lumo-styles@24.9.6':
+    resolution: {integrity: sha512-cd0eIzZXGEI8zb5Kb3LX07sfOwBQcaHNvrq1dmN2YxIPRrejPIb7uhWof16gTdKMzMEHId2ACk2IGx8EH1nOkA==}
 
-  '@vaadin/vaadin-material-styles@24.9.4':
-    resolution: {integrity: sha512-edNJBBTJJ/e4jWCfQ/HvoCAkWfe5zKtNVUUmsuCzRd0CwItKnb8cToLA2rQNODMuOYZrz4TDEI+slsrcLXs/+A==}
+  '@vaadin/vaadin-material-styles@24.9.6':
+    resolution: {integrity: sha512-tth9AcivY3HBCk3SZM+2IB1QpaOXoa52vo2lLH1Ks/v5TKXZ+34+n2nfLNRdc3aDdXg8/8ZioQSlQ+ZbPllQXg==}
 
-  '@vaadin/vaadin-themable-mixin@24.9.4':
-    resolution: {integrity: sha512-XfxSq/pgVDAbGXKLJuDqR5uFT0zRac6UfY8Q+aNzv2R53PAm3vrt/S6XQ8VHDMCV/+8mVT2dZSnl22pafSEDcw==}
+  '@vaadin/vaadin-themable-mixin@24.9.6':
+    resolution: {integrity: sha512-1aT+z/yLM8ci+oFNoUopFqKJGVAPJ7dyOiZCyGK0M4hTF3i8tx2S9yZyiOOET7Z7200PFT7OuSiX+grFzcuNmQ==}
 
   '@vaadin/vaadin-usage-statistics@2.1.3':
     resolution: {integrity: sha512-8r4TNknD7OJQADe3VygeofFR7UNAXZ2/jjBFP5dgI8+2uMfnuGYgbuHivasKr9WSQ64sPej6m8rDoM1uSllXjQ==}
@@ -3015,8 +3015,8 @@ packages:
   '@zarrita/storage@0.1.3':
     resolution: {integrity: sha512-ZyCMYN3LuCNtKxro9876r/KyHyXV+ie2Bhk1qYsJR4Jp+sAjoVRRNNSJPsJxk64ZgFFezayO5S2hCu88/1Odwg==}
 
-  '@zip.js/zip.js@2.8.8':
-    resolution: {integrity: sha512-v0KutehhSAuaoFAFGLp+V4+UiZ1mIxQ8vNOYMD7k9ZJaBbtQV49MYlg568oRLiuwWDg2Di58Iw3Q0ESNWR+5JA==}
+  '@zip.js/zip.js@2.8.11':
+    resolution: {integrity: sha512-0fztsk/0ryJ+2PPr9EyXS5/Co7OK8q3zY/xOoozEWaUsL5x+C0cyZ4YyMuUffOO2Dx/rAdq4JMPqW0VUtm+vzA==}
     engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   accepts@1.3.8:
@@ -3446,23 +3446,23 @@ packages:
     resolution: {integrity: sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==}
     engines: {node: '>=7.0.0'}
 
-  color-convert@3.1.2:
-    resolution: {integrity: sha512-UNqkvCDXstVck3kdowtOTWROIJQwafjOfXSmddoDrXo4cewMKmusCeF22Q24zvjR8nwWib/3S/dfyzPItPEiJg==}
+  color-convert@3.1.3:
+    resolution: {integrity: sha512-fasDH2ont2GqF5HpyO4w0+BcewlhHEZOFn9c1ckZdHpJ56Qb7MHhH/IcJZbBGgvdtwdwNbLvxiBEdg336iA9Sg==}
     engines: {node: '>=14.6'}
 
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
 
-  color-name@2.0.2:
-    resolution: {integrity: sha512-9vEt7gE16EW7Eu7pvZnR0abW9z6ufzhXxGXZEVU9IqPdlsUiMwJeJfRtq0zePUmnbHGT9zajca7mX8zgoayo4A==}
+  color-name@2.1.0:
+    resolution: {integrity: sha512-1bPaDNFm0axzE4MEAzKPuqKWeRaT43U/hyxKPBdqTfmPF+d6n7FSoTFxLVULUJOmiLp01KjhIPPH+HrXZJN4Rg==}
     engines: {node: '>=12.20'}
 
-  color-string@2.1.2:
-    resolution: {integrity: sha512-RxmjYxbWemV9gKu4zPgiZagUxbH3RQpEIO77XoSSX0ivgABDZ+h8Zuash/EMFLTI4N9QgFPOJ6JQpPZKFxa+dA==}
+  color-string@2.1.4:
+    resolution: {integrity: sha512-Bb6Cq8oq0IjDOe8wJmi4JeNn763Xs9cfrBcaylK1tPypWzyoy2G3l90v9k64kjphl/ZJjPIShFztenRomi8WTg==}
     engines: {node: '>=18'}
 
-  color@5.0.2:
-    resolution: {integrity: sha512-e2hz5BzbUPcYlIRHo8ieAhYgoajrJr+hWoceg6E345TPsATMUKqDgzt8fSXZJJbxfpiPzkWyphz8yn8At7q3fA==}
+  color@5.0.3:
+    resolution: {integrity: sha512-ezmVcLR3xAVp8kYOm4GS45ZLLgIE6SPAFoduLr6hTDajwb3KZ2F46gulK3XpcwRFb5KKGCSezCBAY4Dw4HsyXA==}
     engines: {node: '>=18'}
 
   colorbrewer@1.5.6:
@@ -3736,8 +3736,8 @@ packages:
     resolution: {integrity: sha512-0LrrStPOdJj+SPCCrGhzryycLjwcgUSHBtxNA8aIDxf0GLsRh1cKYhB00Gd1lDOS4yGH69+SNn13+TWbVHETFQ==}
     engines: {node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0, npm: '>=7.0.0'}
 
-  csstype@3.1.3:
-    resolution: {integrity: sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw==}
+  csstype@3.2.3:
+    resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
   d3-array@2.12.1:
     resolution: {integrity: sha512-B0ErZK/66mHtEsR1TkPEEkwdy+WDesimkM5gpZr5Dsg54BiTA5RXtYW5qTLIAcekaS9xfZrzBLF/OAkB3Qn1YQ==}
@@ -4147,8 +4147,8 @@ packages:
     resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==}
     engines: {node: '>= 0.4'}
 
-  es-toolkit@1.41.0:
-    resolution: {integrity: sha512-bDd3oRmbVgqZCJS6WmeQieOrzpl3URcWBUVDXxOELlUW2FuW+0glPOz1n0KnRie+PdyvUZcXz2sOn00c6pPRIA==}
+  es-toolkit@1.42.0:
+    resolution: {integrity: sha512-SLHIyY7VfDJBM8clz4+T2oquwTQxEzu263AyhVK4jREOAwJ+8eebaa4wM3nlvnAqhDrMm2EsA6hWHaQsMPQ1nA==}
 
   esast-util-from-estree@2.0.0:
     resolution: {integrity: sha512-4CyanoAudUSBAn5K13H4JhsMH6L9ZP7XbLVe/dKybkxMO7eDyLsT8UHl9TRNrU2Gr9nz+FovfSIjuXWJ81uVwQ==}
@@ -6441,8 +6441,8 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
-  sax@1.4.1:
-    resolution: {integrity: sha512-+aWOz7yVScEGoKNd4PA10LZ8sk0A/z5+nXQG5giUO5rprX9jgYsTdov9qCchZiPIZezbZH+jRut8nPodFAX4Jg==}
+  sax@1.4.3:
+    resolution: {integrity: sha512-yqYn1JhPczigF94DMS+shiDMjDowYO6y9+wB/4WgO0Y19jWYk0lQ4tuG5KI7kj4FTp1wxPj5IFfcrz/s1c3jjQ==}
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
@@ -7062,8 +7062,8 @@ packages:
       vite:
         optional: true
 
-  vite@7.1.9:
-    resolution: {integrity: sha512-4nVGliEpxmhCL8DslSAUdxlB6+SMrhB0a1v5ijlh1xB1nEPuy1mxaHxysVucLHuWryAxLWg6a5ei+U4TLn/rFg==}
+  vite@7.2.7:
+    resolution: {integrity: sha512-ITcnkFeR3+fI8P1wMgItjGrR10170d8auB4EpMLPqmx6uxElH3a/hHGQabSHKdqd4FXWO1nFIp9rRn7JQ34ACQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -7315,9 +7315,6 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.1.12:
-    resolution: {integrity: sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ==}
-
   zod@4.1.13:
     resolution: {integrity: sha512-AvvthqfqrAhNH9dnfmrfKzX5upOdjUVJYFqNSlkmGf64gRaTzlPwz99IHYnVs28qYAybvAlBV+H7pn0saFY4Ig==}
 
@@ -7353,33 +7350,33 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/gateway@1.0.33(zod@4.1.12)':
+  '@ai-sdk/gateway@1.0.33(zod@4.1.13)':
     dependencies:
       '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.12)
+      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.13)
       '@vercel/oidc': 3.0.1
-      zod: 4.1.12
+      zod: 4.1.13
 
-  '@ai-sdk/provider-utils@3.0.10(zod@4.1.12)':
+  '@ai-sdk/provider-utils@3.0.10(zod@4.1.13)':
     dependencies:
       '@ai-sdk/provider': 2.0.0
       '@standard-schema/spec': 1.0.0
       eventsource-parser: 3.0.6
-      zod: 4.1.12
+      zod: 4.1.13
 
   '@ai-sdk/provider@2.0.0':
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/react@2.0.60(react@19.2.0)(zod@4.1.12)':
+  '@ai-sdk/react@2.0.60(react@19.2.0)(zod@4.1.13)':
     dependencies:
-      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.12)
-      ai: 5.0.60(zod@4.1.12)
+      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.13)
+      ai: 5.0.60(zod@4.1.13)
       react: 19.2.0
       swr: 2.3.6(react@19.2.0)
       throttleit: 2.1.0
     optionalDependencies:
-      zod: 4.1.12
+      zod: 4.1.13
 
   '@algolia/abtesting@1.5.0':
     dependencies:
@@ -7489,7 +7486,7 @@ snapshots:
     dependencies:
       '@algolia/client-common': 5.39.0
 
-  '@amcharts/amcharts5@5.14.3':
+  '@amcharts/amcharts5@5.14.4':
     dependencies:
       '@types/d3': 7.4.3
       '@types/d3-chord': 3.0.6
@@ -7519,26 +7516,26 @@ snapshots:
 
   '@arcgis/core@4.34.5':
     dependencies:
-      '@amcharts/amcharts5': 5.14.3
-      '@arcgis/toolkit': 4.34.5
+      '@amcharts/amcharts5': 5.14.4
+      '@arcgis/toolkit': 4.34.9
       '@esri/arcgis-html-sanitizer': 4.1.0
       '@esri/calcite-components': 3.3.3
-      '@vaadin/grid': 24.9.4
-      '@zip.js/zip.js': 2.8.8
+      '@vaadin/grid': 24.9.6
+      '@zip.js/zip.js': 2.8.11
       luxon: 3.7.2
       marked: 16.3.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - '@lit/context'
 
-  '@arcgis/lumina@4.34.5(lit@3.3.1)':
+  '@arcgis/lumina@4.34.9(lit@3.3.1)':
     dependencies:
-      '@arcgis/toolkit': 4.34.5
-      csstype: 3.1.3
+      '@arcgis/toolkit': 4.34.9
+      csstype: 3.2.3
       lit: 3.3.1
       tslib: 2.8.1
 
-  '@arcgis/toolkit@4.34.5':
+  '@arcgis/toolkit@4.34.9':
     dependencies:
       tslib: 2.8.1
 
@@ -8823,13 +8820,13 @@ snapshots:
 
   '@docsearch/react@4.1.0(@algolia/client-search@5.39.0)(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(search-insights@2.17.3)':
     dependencies:
-      '@ai-sdk/react': 2.0.60(react@19.2.0)(zod@4.1.12)
+      '@ai-sdk/react': 2.0.60(react@19.2.0)(zod@4.1.13)
       '@algolia/autocomplete-core': 1.19.2(@algolia/client-search@5.39.0)(algoliasearch@5.39.0)(search-insights@2.17.3)
       '@docsearch/css': 4.1.0
-      ai: 5.0.60(zod@4.1.12)
+      ai: 5.0.60(zod@4.1.13)
       algoliasearch: 5.39.0
       marked: 16.4.0
-      zod: 4.1.12
+      zod: 4.1.13
     optionalDependencies:
       '@types/react': 19.2.2
       react: 19.2.0
@@ -9673,15 +9670,15 @@ snapshots:
 
   '@esri/calcite-components@3.3.3':
     dependencies:
-      '@arcgis/lumina': 4.34.5(lit@3.3.1)
-      '@arcgis/toolkit': 4.34.5
+      '@arcgis/lumina': 4.34.9(lit@3.3.1)
+      '@arcgis/toolkit': 4.34.9
       '@esri/calcite-ui-icons': 4.3.0
       '@floating-ui/dom': 1.7.4
       '@floating-ui/utils': 0.2.10
       '@types/sortablejs': 1.15.9
-      color: 5.0.2
+      color: 5.0.3
       composed-offset-position: 0.0.6(@floating-ui/utils@0.2.10)
-      es-toolkit: 1.41.0
+      es-toolkit: 1.42.0
       focus-trap: 7.6.6
       interactjs: 1.10.27
       lit: 3.3.1
@@ -10911,7 +10908,7 @@ snapshots:
 
   '@types/react@19.2.2':
     dependencies:
-      csstype: 3.1.3
+      csstype: 3.2.3
 
   '@types/retry@0.12.2': {}
 
@@ -10975,26 +10972,26 @@ snapshots:
 
   '@ungap/structured-clone@1.3.0': {}
 
-  '@vaadin/a11y-base@24.9.4':
+  '@vaadin/a11y-base@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
-      '@vaadin/component-base': 24.9.4
+      '@vaadin/component-base': 24.9.6
       lit: 3.3.1
 
-  '@vaadin/checkbox@24.9.4':
+  '@vaadin/checkbox@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
-      '@vaadin/a11y-base': 24.9.4
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/field-base': 24.9.4
-      '@vaadin/vaadin-lumo-styles': 24.9.4
-      '@vaadin/vaadin-material-styles': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/a11y-base': 24.9.6
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/field-base': 24.9.6
+      '@vaadin/vaadin-lumo-styles': 24.9.6
+      '@vaadin/vaadin-material-styles': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
       lit: 3.3.1
 
-  '@vaadin/component-base@24.9.4':
+  '@vaadin/component-base@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
@@ -11002,79 +10999,79 @@ snapshots:
       '@vaadin/vaadin-usage-statistics': 2.1.3
       lit: 3.3.1
 
-  '@vaadin/field-base@24.9.4':
+  '@vaadin/field-base@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
-      '@vaadin/a11y-base': 24.9.4
-      '@vaadin/component-base': 24.9.4
+      '@vaadin/a11y-base': 24.9.6
+      '@vaadin/component-base': 24.9.6
       lit: 3.3.1
 
-  '@vaadin/grid@24.9.4':
+  '@vaadin/grid@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
-      '@vaadin/a11y-base': 24.9.4
-      '@vaadin/checkbox': 24.9.4
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/lit-renderer': 24.9.4
-      '@vaadin/text-field': 24.9.4
-      '@vaadin/vaadin-lumo-styles': 24.9.4
-      '@vaadin/vaadin-material-styles': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/a11y-base': 24.9.6
+      '@vaadin/checkbox': 24.9.6
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/lit-renderer': 24.9.6
+      '@vaadin/text-field': 24.9.6
+      '@vaadin/vaadin-lumo-styles': 24.9.6
+      '@vaadin/vaadin-material-styles': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
       lit: 3.3.1
 
-  '@vaadin/icon@24.9.4':
+  '@vaadin/icon@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/vaadin-lumo-styles': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/vaadin-lumo-styles': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
       lit: 3.3.1
 
-  '@vaadin/input-container@24.9.4':
+  '@vaadin/input-container@24.9.6':
     dependencies:
       '@polymer/polymer': 3.5.2
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/vaadin-lumo-styles': 24.9.4
-      '@vaadin/vaadin-material-styles': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/vaadin-lumo-styles': 24.9.6
+      '@vaadin/vaadin-material-styles': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
       lit: 3.3.1
 
-  '@vaadin/lit-renderer@24.9.4':
+  '@vaadin/lit-renderer@24.9.6':
     dependencies:
       lit: 3.3.1
 
-  '@vaadin/text-field@24.9.4':
+  '@vaadin/text-field@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       '@polymer/polymer': 3.5.2
-      '@vaadin/a11y-base': 24.9.4
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/field-base': 24.9.4
-      '@vaadin/input-container': 24.9.4
-      '@vaadin/vaadin-lumo-styles': 24.9.4
-      '@vaadin/vaadin-material-styles': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/a11y-base': 24.9.6
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/field-base': 24.9.6
+      '@vaadin/input-container': 24.9.6
+      '@vaadin/vaadin-lumo-styles': 24.9.6
+      '@vaadin/vaadin-material-styles': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
       lit: 3.3.1
 
   '@vaadin/vaadin-development-mode-detector@2.0.7': {}
 
-  '@vaadin/vaadin-lumo-styles@24.9.4':
+  '@vaadin/vaadin-lumo-styles@24.9.6':
     dependencies:
       '@polymer/polymer': 3.5.2
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/icon': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/icon': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
 
-  '@vaadin/vaadin-material-styles@24.9.4':
+  '@vaadin/vaadin-material-styles@24.9.6':
     dependencies:
       '@polymer/polymer': 3.5.2
-      '@vaadin/component-base': 24.9.4
-      '@vaadin/vaadin-themable-mixin': 24.9.4
+      '@vaadin/component-base': 24.9.6
+      '@vaadin/vaadin-themable-mixin': 24.9.6
 
-  '@vaadin/vaadin-themable-mixin@24.9.4':
+  '@vaadin/vaadin-themable-mixin@24.9.6':
     dependencies:
       '@open-wc/dedupe-mixin': 1.4.0
       lit: 3.3.1
@@ -11086,7 +11083,7 @@ snapshots:
 
   '@vercel/oidc@3.0.1': {}
 
-  '@vitejs/plugin-react@4.7.0(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))':
+  '@vitejs/plugin-react@4.7.0(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))':
     dependencies:
       '@babel/core': 7.28.4
       '@babel/plugin-transform-react-jsx-self': 7.27.1(@babel/core@7.28.4)
@@ -11094,7 +11091,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-beta.27
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
-      vite: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+      vite: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -11106,13 +11103,13 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.4(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))':
+  '@vitest/mocker@3.2.4(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))':
     dependencies:
       '@vitest/spy': 3.2.4
       estree-walker: 3.0.3
       magic-string: 0.30.19
     optionalDependencies:
-      vite: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+      vite: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
 
   '@vitest/pretty-format@3.2.4':
     dependencies:
@@ -11367,7 +11364,7 @@ snapshots:
       reference-spec-reader: 0.2.0
       unzipit: 1.4.3
 
-  '@zip.js/zip.js@2.8.8': {}
+  '@zip.js/zip.js@2.8.11': {}
 
   accepts@1.3.8:
     dependencies:
@@ -11395,13 +11392,13 @@ snapshots:
       clean-stack: 2.2.0
       indent-string: 4.0.0
 
-  ai@5.0.60(zod@4.1.12):
+  ai@5.0.60(zod@4.1.13):
     dependencies:
-      '@ai-sdk/gateway': 1.0.33(zod@4.1.12)
+      '@ai-sdk/gateway': 1.0.33(zod@4.1.13)
       '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.12)
+      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.13)
       '@opentelemetry/api': 1.9.0
-      zod: 4.1.12
+      zod: 4.1.13
 
   ajv-draft-04@1.0.0(ajv@8.13.0):
     optionalDependencies:
@@ -11839,22 +11836,22 @@ snapshots:
     dependencies:
       color-name: 1.1.4
 
-  color-convert@3.1.2:
+  color-convert@3.1.3:
     dependencies:
-      color-name: 2.0.2
+      color-name: 2.1.0
 
   color-name@1.1.4: {}
 
-  color-name@2.0.2: {}
+  color-name@2.1.0: {}
 
-  color-string@2.1.2:
+  color-string@2.1.4:
     dependencies:
-      color-name: 2.0.2
+      color-name: 2.1.0
 
-  color@5.0.2:
+  color@5.0.3:
     dependencies:
-      color-convert: 3.1.2
-      color-string: 2.1.2
+      color-convert: 3.1.3
+      color-string: 2.1.4
 
   colorbrewer@1.5.6: {}
 
@@ -12137,7 +12134,7 @@ snapshots:
     dependencies:
       css-tree: 2.2.1
 
-  csstype@3.1.3: {}
+  csstype@3.2.3: {}
 
   d3-array@2.12.1:
     dependencies:
@@ -12561,7 +12558,7 @@ snapshots:
     dependencies:
       es-errors: 1.3.0
 
-  es-toolkit@1.41.0: {}
+  es-toolkit@1.42.0: {}
 
   esast-util-from-estree@2.0.0:
     dependencies:
@@ -15342,7 +15339,7 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sax@1.4.1: {}
+  sax@1.4.3: {}
 
   scheduler@0.27.0: {}
 
@@ -15523,7 +15520,7 @@ snapshots:
       '@types/node': 17.0.45
       '@types/sax': 1.2.7
       arg: 5.0.2
-      sax: 1.4.1
+      sax: 1.4.3
 
   skin-tone@2.0.0:
     dependencies:
@@ -15962,7 +15959,7 @@ snapshots:
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+      vite: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -15977,7 +15974,7 @@ snapshots:
       - tsx
       - yaml
 
-  vite-plugin-dts@4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)):
+  vite-plugin-dts@4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)):
     dependencies:
       '@microsoft/api-extractor': 7.53.0(@types/node@22.18.8)
       '@rollup/pluginutils': 5.3.0(rollup@4.52.4)
@@ -15990,13 +15987,13 @@ snapshots:
       magic-string: 0.30.19
       typescript: 5.9.3
     optionalDependencies:
-      vite: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+      vite: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
     transitivePeerDependencies:
       - '@types/node'
       - rollup
       - supports-color
 
-  vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0):
+  vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0):
     dependencies:
       esbuild: 0.25.10
       fdir: 6.5.0(picomatch@4.0.3)
@@ -16014,7 +16011,7 @@ snapshots:
     dependencies:
       '@types/chai': 5.2.2
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+      '@vitest/mocker': 3.2.4(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
       '@vitest/pretty-format': 3.2.4
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
@@ -16032,7 +16029,7 @@ snapshots:
       tinyglobby: 0.2.15
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.1.9(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+      vite: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
       vite-node: 3.2.4(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
@@ -16250,13 +16247,13 @@ snapshots:
 
   xml-js@1.6.11:
     dependencies:
-      sax: 1.4.1
+      sax: 1.4.3
 
   xml-utils@1.10.2: {}
 
   xmldoc@2.0.2:
     dependencies:
-      sax: 1.4.1
+      sax: 1.4.3
 
   xss@1.0.13:
     dependencies:
@@ -16285,8 +16282,6 @@ snapshots:
       numcodecs: 0.3.2
 
   zod@3.25.76: {}
-
-  zod@4.1.12: {}
 
   zod@4.1.13: {}
 
