@@ -125,3 +125,7 @@ export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
 export type { ZarrTree, ConsolidatedStore, LazyZarrArray, ZAttrsAny } from './types';
 export { ATTRS_KEY, ZARRAY_KEY } from './types';
 
+// Re-export Result type and utilities
+export type { Result } from './result';
+export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from './result';
+
