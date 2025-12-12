@@ -202,7 +202,7 @@ const omeroSchema = z.object({
           start: z.number(),
         })
         .optional(),
-      label: z.string().optional(),
+      label: z.union([z.number(), z.string()]).optional(),
       family: z.string().optional(),
       color: z.string().optional(),
       active: z.boolean().optional(),
