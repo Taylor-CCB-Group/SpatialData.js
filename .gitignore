@@ -9,13 +9,22 @@ build/
 
 # Testing
 coverage/
+test-fixtures/
+
+# Python virtual environments (version-specific, completely separate)
+python/v0.5.0/.venv/
+python/v0.6.1/.venv/
+python/v0.5.0/uv.lock
+python/v0.6.1/uv.lock
 
 # Environment
 .env
 .env.local
 
 # IDE
-.vscode/
+# Note: .vscode/settings.json and .cursor/settings.json are committed for Python interpreter setup
+.vscode/launch.json
+.vscode/tasks.json
 .idea/
 *.swp
 *.swo

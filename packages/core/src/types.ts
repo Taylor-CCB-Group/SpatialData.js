@@ -14,7 +14,7 @@
 
 import type * as ad from 'anndata.js';
 import type * as zarr from 'zarrita';
-import type { ZarrTree } from '@spatialdata/zarrextra';
+import type { ConsolidatedStore } from '@spatialdata/zarrextra';
 
 /**
  * Element name constants and types
@@ -87,8 +87,7 @@ export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from '@spatialdata/zarrextra';
  */
 export type SDataProps = {
   url: StoreLocation;
-  parsed?: ZarrTree;
   onBadFiles?: BadFileHandler;
   selection?: ElementName[];
-  rootStore: zarr.Listable<zarr.FetchStore>;
+  rootStore: ConsolidatedStore;
 }

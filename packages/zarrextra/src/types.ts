@@ -43,9 +43,96 @@ export interface ZarrTree {
 }
 
 /**
- * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ * Zarr v2 consolidated metadata structure (.zmetadata)
+ * Has a flat metadata object with path keys like "path/.zattrs"
  */
-export type IntermediateConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
+export type ZarrV2Metadata = {
+  metadata: Record<string, unknown>;
+};
+
+/**
+ * Zarr v3 array node metadata
+ */
+export type ZarrV3ArrayNode = {
+  shape: number[];
+  data_type: string;
+  chunk_grid: {
+    name: string;
+    configuration: {
+      chunk_shape: number[];
+    };
+  };
+  chunk_key_encoding: {
+    name: string;
+    configuration: {
+      separator: string;
+    };
+  };
+  fill_value: number | string | boolean;
+  codecs: Array<{
+    name: string;
+    configuration?: Record<string, unknown>;
+  }>;
+  attributes: Record<string, unknown>;
+  dimension_names: string[];
+  zarr_format: number;
+  node_type: 'array';
+  storage_transformers: unknown[];
+};
+
+/**
+ * Zarr v3 group node metadata
+ */
+export type ZarrV3GroupNode = {
+  attributes: Record<string, unknown>;
+  zarr_format: number;
+  consolidated_metadata: {
+    kind: string;
+    must_understand: boolean;
+    metadata: Record<string, unknown>;
+  };
+  node_type: 'group';
+};
+
+/**
+ * Zarr v3 consolidated metadata structure (zarr.json)
+ * The actual structure has metadata nested under consolidated_metadata.metadata
+ * with path keys like "images/blobs_image", "labels/blobs_labels", etc.
+ * Each entry can be either a group node or an array node.
+ */
+export type ZarrV3Metadata = {
+  attributes: Record<string, unknown>;
+  zarr_format: number;
+  consolidated_metadata: {
+    kind: string;
+    must_understand: boolean;
+    metadata: Record<string, ZarrV3GroupNode | ZarrV3ArrayNode>;
+  };
+  node_type: 'group';
+};
+
+/**
+ * Union type for consolidated metadata (v2 or v3)
+ */
+export type ConsolidatedMetadata = ZarrV2Metadata | ZarrV3Metadata;
+
+/**
+ * Discriminated union to identify metadata format
+ */
+export type MetadataFormat = 
+  | { format: 'v2'; metadata: ZarrV2Metadata }
+  | { format: 'v3'; metadata: ZarrV3Metadata };
+
+/**
+ * A zarrita store with metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ * For zarr v3, metadata is in the actual structure with consolidated_metadata.metadata.
+ * For zarr v2, we normalize it to match the v3 structure internally.
+ * Uses `Store` (FetchStore) which already implements `Readable` - we work directly with metadata
+ * and don't need `contents()` from `Listable`.
+ */
+export type IntermediateConsolidatedStore = Store & { 
+  zmetadata: ZarrV3Metadata;
+};
 /**
  * This type is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`, 
  * and `tree: ZarrTree` which has the object hierarchy as described in the consolidated metadata as a mostly "Plain Old Javascript Object",
