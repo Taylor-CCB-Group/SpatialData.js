@@ -21,12 +21,17 @@ npm install @spatialdata/zarrextra
 ## Usage
 
 ```typescript
-import { parseStoreContents, tryConsolidated, serializeZarrTree } from '@spatialdata/zarrextra';
+import { openExtraConsolidated } from '@spatialdata/zarrextra';
 import * as zarr from 'zarrita';
 
-const store = new zarr.FetchStore('https://example.com/data.zarr');
-const consolidatedStore = await tryConsolidated(store);
-const tree = await parseStoreContents(consolidatedStore);
+const result = await openExtraConsolidated('https://example.com/store.zarr');
+if (result.ok) {
+  const { zarritaStore, tree } = result.value;
+  ...
+  profit();
+} else {
+  alert(result.error);
+}
 ```
 
 ## API

@@ -2,10 +2,10 @@
  * Store interface for reading SpatialData from zarr stores
  */
 
-import * as zarr from 'zarrita';
+import type * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
-import { parseStoreContents, serializeZarrTree, tryConsolidated } from '@spatialdata/zarrextra';
-import { loadElements, type ElementInstanceMap, type SpatialElement, type AnyElement } from '../models';
+import {type ConsolidatedStore, openExtraConsolidated, serializeZarrTree } from '@spatialdata/zarrextra';
+import { loadElements, type ElementInstanceMap, type SpatialElement } from '../models';
 import type { 
   ElementName, 
   StoreLocation, 
@@ -25,7 +25,6 @@ export type { SpatialElement, AnyElement } from '../models';
 
 export class SpatialData {
   readonly url: StoreLocation;
-  _ready: Promise<void>;
   rootStore: zarr.Listable<zarr.FetchStore>;
   // metadata: Record<string, unknown>; //todo: add this, with type (validated by zod)
 
@@ -40,18 +39,10 @@ export class SpatialData {
    */
   parsed?: ZarrTree;
   
-  constructor(url: StoreLocation, rootStore: zarr.Listable<zarr.FetchStore>, selection?: ElementName[], onBadFiles?: BadFileHandler) {
+  constructor(url: StoreLocation, rootStore: ConsolidatedStore, selection?: ElementName[], onBadFiles?: BadFileHandler) {
     this.url = url;
-    this.rootStore = rootStore;
-    // is it a good idea to have this kind of async side-effect in the constructor?
-    // maybe not, but for now making the init method private avoids accidentally not passing other arguments
-    // in general, we favor use of the `readZarr` function to create and await the object
-    this._ready = this._init(selection, onBadFiles);
-  }
-  private async _init(selection?: ElementName[], _onBadFiles?: BadFileHandler) {
-    // we might use some async here for getting zattrs
-    //@ts-expect-error nb adding zmetadata for typing but we may want to change that.
-    this.parsed = await parseStoreContents(this.rootStore);
+    this.rootStore = rootStore.zarritaStore;
+    this.parsed = rootStore.tree;
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
       // Load all elements of this type
@@ -128,12 +119,10 @@ export class SpatialData {
 export async function readZarr(storeUrl: StoreLocation, selection?: ElementName[], onBadFiles?: BadFileHandler) {
   // todo: this should be able to handle a store directly, not just a url
   // then there are some downstream changes required for the models/loaders etc.
-  const store = new zarr.FetchStore(storeUrl);
-  const listableStore = await tryConsolidated(store);
-  if (!('contents' in listableStore)) {
-    throw new Error("Could not list contents of the Zarr store - spatialdata stores are expected to be listable");
+  // rather than `tryConsolidated` here, lets have some `zarrextra` function instead.
+  const result = await openExtraConsolidated(storeUrl);
+  if (result.ok) {
+    return new SpatialData(storeUrl, result.value, selection, onBadFiles);
   }
-  const sdata = new SpatialData(storeUrl, listableStore, selection, onBadFiles);
-  await sdata._ready;
-  return sdata;
+  throw new Error(`${result.error}`);
 }

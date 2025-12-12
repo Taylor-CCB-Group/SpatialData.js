@@ -1,6 +1,7 @@
 import * as zarr from 'zarrita';
-import type { ZarrTree, ConsolidatedStore, ZAttrsAny } from './types';
+import type { ZarrTree, ConsolidatedStore, ZAttrsAny, IntermediateConsolidatedStore } from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
+import { Err, Ok, type Result } from './result';
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.
@@ -8,7 +9,7 @@ import { ATTRS_KEY, ZARRAY_KEY } from './types';
  * This traverses arbitrary group depth etc - handy for a generic zarr thing, but for SpatialData we can have
  * something more explicitly targetting the expected structure.
  */
-export async function parseStoreContents(store: ConsolidatedStore): Promise<ZarrTree> {
+export async function parseStoreContents(store: IntermediateConsolidatedStore): Promise<ZarrTree> {
   // this can await get metadata without too much issue given we know it's already there...
   const root = await zarr.open(store, { kind: 'group' });
   const contents = store.contents().map(v => {
@@ -52,11 +53,10 @@ export async function parseStoreContents(store: ConsolidatedStore): Promise<Zarr
 /**
  * There is a tendency for .zmetadata to be misnamed as zmetadata...
  */
-export async function tryConsolidated(store: zarr.FetchStore): Promise<ConsolidatedStore> {
+export async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateConsolidatedStore> {
   // in future, first we'll try zarr.json
   // and I'm sure we can make this implementation less ugly, kinda trivial though so cba for now.
   //!!! nb - we need to also handle local files, in which case we don't fetch(url), we need another method - this is important
-  // maybe if zarrita allows us to do something sensible then we won't need to resort to these hacks.
   try {
     const path = `${store.url}/.zmetadata`;
     // is there a zod schema we could be using here?
@@ -75,13 +75,41 @@ export async function tryConsolidated(store: zarr.FetchStore): Promise<Consolida
   }
   
   // nb for now we explicitly only support consolidated store, so if it doesn't find either key this is an error
+  // --- also note, as of writing zarrita doesn't support consolidated metadata on v3 stores 
+  // - meaning in that case we might not use its `withConsolidated` function at all (especially since it's IMO not as useful as it should be even for v2), 
+  // so we should refactor our parsing to not use `ListableStore.contents()` and probably avoid the extra fetch.
   // return zarr.withConsolidated(store).catch(() => zarr.withConsolidated(store, { metadataKey: 'zmetadata' }));
 }
 
 /**
+ * Try to open a consolidated `zarr` store and return a `Result<ConsolidatedStore>`,
+ * This return object is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`, 
+ * and `tree: ZarrTree` which has the object hierarchy as described in the consolidated metadata as a mostly "Plain Old Javascript Object",
+ * but with (weakly typed) `Symbol`-keyed `attrs` & `.zarray` properties where available, and a `get()` on leaf nodes
+ * for requesting array data.
+ * 
+ * The use of `Symbol('attrs')` is intended to make these properties easy to access, but not appear when using `Object.keys()` etc.
+ */
+export async function openExtraConsolidated(source: string): Promise<Result<ConsolidatedStore>> {
+  // could `source` also be a File or something?
+  try {
+    const store = new zarr.FetchStore(source);
+    const zarritaStore = await tryConsolidated(store);
+    if (!('contents' in zarritaStore)) {
+      return Err(new Error(`No consolidated metadata in store '${source}'`));
+    }
+    const tree = await parseStoreContents(zarritaStore);
+    return Ok({ zarritaStore, tree });
+  } catch (error) {
+    return Err(new Error(`${error}`));
+  }
+}
+
+
+/**
  * Get zarr attributes from a consolidated store's metadata
  */
-export async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, k=".zattrs"): Promise<Record<string, unknown> | undefined> {
+export async function getZattrs(path: zarr.AbsolutePath, store: IntermediateConsolidatedStore, k=".zattrs"): Promise<Record<string, unknown> | undefined> {
   const attrPath = `${path}/${k}`.slice(1);
   const attr = store.zmetadata.metadata[attrPath]; //may be undefined, that's fine.
   if (!attr) return undefined;

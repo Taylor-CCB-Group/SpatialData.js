@@ -44,5 +44,9 @@ export interface ZarrTree {
 /**
  * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
  */
-export type ConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
+export type IntermediateConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
 
+export type ConsolidatedStore = {
+  zarritaStore: IntermediateConsolidatedStore,
+  tree: ZarrTree
+}
