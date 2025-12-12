@@ -46,7 +46,14 @@ export interface ZarrTree {
  * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
  */
 export type IntermediateConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
-
+/**
+ * This type is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`, 
+ * and `tree: ZarrTree` which has the object hierarchy as described in the consolidated metadata as a mostly "Plain Old Javascript Object",
+ * but with (weakly typed) `Symbol`-keyed `attrs` & `.zarray` properties where available, and a `get()` on leaf nodes
+ * for requesting array data.
+ * 
+ * The use of `Symbol('attrs')` is intended to make these properties easy to access, but not appear when using `Object.keys()` etc.
+ */
 export type ConsolidatedStore = {
   zarritaStore: IntermediateConsolidatedStore,
   tree: ZarrTree
