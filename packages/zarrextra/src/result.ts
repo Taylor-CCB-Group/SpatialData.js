@@ -6,7 +6,7 @@
  * where errors should be handled explicitly rather than thrown as exceptions.
  * 
  * Note: This is a custom implementation for simplicity. We may review using
- * an existing Result library (such as neverthrow or ts-result) in the future,
+ * an existing Result library (such as neverthrow) in the future,
  * but for now this provides a lightweight, dependency-free solution.
  */
 

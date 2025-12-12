@@ -10,7 +10,7 @@ This package provides helper functions and types for:
 
 ## Result Type
 
-This package includes a `Result<T, E>` type inspired by Rust for explicit error handling. This is a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow` or `ts-result`) in the future, but for now this provides a lightweight solution.
+This package includes a `Result<T, E>` type inspired by Rust for explicit error handling. This is a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow`) in the future, but for now this provides a lightweight solution.
 
 ## Installation
 
