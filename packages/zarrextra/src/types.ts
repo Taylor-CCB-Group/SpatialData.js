@@ -43,9 +43,43 @@ export interface ZarrTree {
 }
 
 /**
- * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ * Zarr v2 consolidated metadata structure (.zmetadata)
+ * Has a flat metadata object with path keys like "path/.zattrs"
  */
-export type IntermediateConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
+export type ZarrV2Metadata = {
+  metadata: Record<string, unknown>;
+};
+
+/**
+ * Zarr v3 consolidated metadata structure (zarr.json)
+ * Structure may vary, but typically has nested metadata per path
+ */
+export type ZarrV3Metadata = {
+  metadata?: Record<string, { '.zattrs'?: unknown; '.zarray'?: unknown; '.zgroup'?: unknown }>;
+  // May have other fields depending on zarr v3 spec
+  [key: string]: unknown;
+};
+
+/**
+ * Union type for consolidated metadata (v2 or v3)
+ */
+export type ConsolidatedMetadata = ZarrV2Metadata | ZarrV3Metadata;
+
+/**
+ * Discriminated union to identify metadata format
+ */
+export type MetadataFormat = 
+  | { format: 'v2'; metadata: ZarrV2Metadata }
+  | { format: 'v3'; metadata: ZarrV3Metadata };
+
+/**
+ * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ * The zmetadata can be either v2 or v3 format, and we track which format it is.
+ */
+export type IntermediateConsolidatedStore = zarr.Listable<Store> & { 
+  zmetadata: ConsolidatedMetadata;
+  metadataFormat: 'v2' | 'v3';
+};
 /**
  * This type is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`, 
  * and `tree: ZarrTree` which has the object hierarchy as described in the consolidated metadata as a mostly "Plain Old Javascript Object",
