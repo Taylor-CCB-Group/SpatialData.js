@@ -12,48 +12,9 @@
  * 4. Consider whether a type belongs here vs. in a more specific module
  */
 
-// ============================================
-// Result Type
-// ============================================
-
-/**
- * A Result type for explicit error handling without exceptions.
- * Inspired by Rust's Result<T, E>.
- */
-export type Result<T, E = Error> = 
-  | { ok: true; value: T }
-  | { ok: false; error: E };
-
-/** Create a successful Result */
-export const Ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
-
-/** Create a failed Result */
-export const Err = <E>(error: E): Result<never, E> => ({ ok: false, error });
-
-/** Type guard for Ok results */
-export const isOk = <T, E>(result: Result<T, E>): result is { ok: true; value: T } => result.ok;
-
-/** Type guard for Err results */
-export const isErr = <T, E>(result: Result<T, E>): result is { ok: false; error: E } => !result.ok;
-
-/**
- * Unwrap a Result, throwing if it's an error.
- * Use when you want to convert back to exception-based error handling.
- */
-export const unwrap = <T, E>(result: Result<T, E>): T => {
-  if (result.ok) return result.value;
-  throw result.error instanceof Error ? result.error : new Error(String(result.error));
-};
-
-/**
- * Unwrap a Result with a default value for errors.
- */
-export const unwrapOr = <T, E>(result: Result<T, E>, defaultValue: T): T => {
-  return result.ok ? result.value : defaultValue;
-};
-
 import type * as ad from 'anndata.js';
 import type * as zarr from 'zarrita';
+import type { ZarrTree } from '@spatialdata/zarrextra';
 
 /**
  * Element name constants and types
@@ -106,30 +67,19 @@ export type BadFileHandler = (file: string, error: Error) => void;
 type Store = zarr.FetchStore;
 
 /**
- * Zarr tree type
- * 
- * This is a tree of zarr arrays and groups, with the leaves being lazy arrays.
- * It is used to represent the structure of the zarr store.
- * Leaf type subject to change.
+ * Zarr group type
  */
 export type ZGroup = zarr.Group<Store>;
-export const ATTRS_KEY = Symbol('attrs');
-export const ZARRAY_KEY = Symbol('.zarray')
-export type ZAttrsAny = Record<string, unknown>
-export type LazyZarrArray<T extends zarr.DataType> = {
-  [ATTRS_KEY]?: ZAttrsAny,
-  [ZARRAY_KEY]: ZAttrsAny,
-  get: () => Promise<zarr.Array<T>>
-};
-export interface ZarrTree { 
-  [ATTRS_KEY]?: ZAttrsAny,
-  [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; 
-};
 
-/**
- * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
- */
-export type ConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
+// Re-export zarr-related types from zarrextra for convenience
+// These are used in SDataProps and models, so we keep them accessible from core/types
+export type { ZarrTree, LazyZarrArray, ZAttrsAny } from '@spatialdata/zarrextra';
+export { ATTRS_KEY, ZARRAY_KEY } from '@spatialdata/zarrextra';
+
+// Re-export Result type and utilities from zarrextra for convenience
+// Result is used throughout core for explicit error handling
+export type { Result } from '@spatialdata/zarrextra';
+export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from '@spatialdata/zarrextra';
 
 
 /**

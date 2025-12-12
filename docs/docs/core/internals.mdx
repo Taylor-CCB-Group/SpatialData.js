@@ -171,9 +171,10 @@ The `zarrUtils.ts` module handles parsing zarr store contents:
 
 ## Result Type Implementation
 
-The `Result` type and utilities are in `types.ts`:
+The `Result` type and utilities are implemented in `@spatialdata/zarrextra` and re-exported from `@spatialdata/core` for convenience:
 
 ```ts
+// In @spatialdata/zarrextra
 type Result<T, E = Error> = 
   | { ok: true; value: T }
   | { ok: false; error: E };
@@ -185,4 +186,12 @@ const isErr = <T, E>(result: Result<T, E>): result is { ok: false; error: E } =>
 const unwrap = <T, E>(result: Result<T, E>): T => { ... };
 const unwrapOr = <T, E>(result: Result<T, E>, defaultValue: T): T => { ... };
 ```
+
+You can import `Result` and its utilities from either `@spatialdata/core` or `@spatialdata/zarrextra`.
+
+:::note Future considerations
+
+This is currently a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow` or `ts-result`) in the future, but for now this provides a lightweight, dependency-free solution.
+
+:::
 

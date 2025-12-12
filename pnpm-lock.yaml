@@ -141,6 +141,9 @@ importers:
       '@math.gl/core':
         specifier: 'catalog:'
         version: 4.1.0
+      '@spatialdata/zarrextra':
+        specifier: workspace:*
+        version: link:../zarrextra
       '@zarrita/storage':
         specifier: ^0.1.3
         version: 0.1.3
@@ -282,6 +285,28 @@ importers:
       '@vitejs/plugin-react':
         specifier: 'catalog:'
         version: 4.7.0(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vite:
+        specifier: 'catalog:'
+        version: 7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+      vite-plugin-dts:
+        specifier: 'catalog:'
+        version: 4.5.4(@types/node@22.18.8)(rollup@4.52.4)(typescript@5.9.3)(vite@7.2.7(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0)
+
+  packages/zarrextra:
+    dependencies:
+      zarrita:
+        specifier: 'catalog:'
+        version: 0.5.4
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.18.8
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
