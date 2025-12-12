@@ -1,5 +1,5 @@
 import * as zarr from 'zarrita';
-import type { ZarrTree, ConsolidatedStore, ZAttrsAny, IntermediateConsolidatedStore, ZarrV2Metadata, ZarrV3Metadata } from './types';
+import type { ZarrTree, ConsolidatedStore, ZAttrsAny, IntermediateConsolidatedStore, ZarrV2Metadata, ZarrV3Metadata, ZarrV3GroupNode, ZarrV3ArrayNode } from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
 import { Err, Ok, type Result } from './result';
 
@@ -13,20 +13,20 @@ import { Err, Ok, type Result } from './result';
  * relying on store.contents().
  */
 async function parseStoreContents(store: IntermediateConsolidatedStore): Promise<ZarrTree> {
-  // All metadata is normalized to v3 nested format
-  const metadata = store.zmetadata.metadata;
+  // Access metadata from consolidated_metadata.metadata
+  const metadata = store.zmetadata.consolidated_metadata?.metadata;
   
   if (!metadata || typeof metadata !== 'object') {
     return {};
   }
   
   // Extract all paths from metadata and determine their types
-  const pathInfo = new Map<string, { isArray: boolean; path: string }>();
+  const pathInfo = new Map<string, { isArray: boolean; path: string; node: ZarrV3GroupNode | ZarrV3ArrayNode }>();
   
-  for (const [path, pathMetadata] of Object.entries(metadata)) {
-    if (pathMetadata && typeof pathMetadata === 'object') {
-      const isArray = '.zarray' in pathMetadata;
-      pathInfo.set(path, { isArray, path });
+  for (const [path, node] of Object.entries(metadata)) {
+    if (node && typeof node === 'object' && 'node_type' in node) {
+      const isArray = node.node_type === 'array';
+      pathInfo.set(path, { isArray, path, node });
     }
   }
   
@@ -61,14 +61,27 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
         const isArray = isLeaf && info.isArray;
         
         // Get attributes for this path (normalizedPath already has leading /)
-        const attrs = await getZattrs(normalizedPath as zarr.AbsolutePath, store);
+        const attrs = getZattrs(normalizedPath as zarr.AbsolutePath, store);
         
         if (isArray) {
-          // Leaf array node
-          const zarray = await getZattrs(normalizedPath as zarr.AbsolutePath, store, ".zarray");
+          // Leaf array node - extract array metadata from the node
+          const arrayNode = info.node as ZarrV3ArrayNode;
+          const zarray: ZAttrsAny = {
+            shape: arrayNode.shape,
+            data_type: arrayNode.data_type,
+            chunk_grid: arrayNode.chunk_grid,
+            chunk_key_encoding: arrayNode.chunk_key_encoding,
+            fill_value: arrayNode.fill_value,
+            codecs: arrayNode.codecs,
+            dimension_names: arrayNode.dimension_names,
+            zarr_format: arrayNode.zarr_format,
+            node_type: arrayNode.node_type,
+            storage_transformers: arrayNode.storage_transformers,
+          };
+          
           currentNode[part] = {
             [ATTRS_KEY]: attrs,
-            [ZARRAY_KEY]: zarray ?? ({} as ZAttrsAny),
+            [ZARRAY_KEY]: zarray,
             get: () => zarr.open(root.resolve(normalizedPath), { kind: 'array' })
           };
         } else {
@@ -86,47 +99,52 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
 
 /**
  * Parse zarr v3 consolidated metadata from zarr.json
- * In zarr v3, consolidated metadata may have a different structure than v2.
- * This function normalizes it to a format compatible with our getZattrs function.
+ * The actual zarr v3 structure has metadata nested under consolidated_metadata.metadata
+ * We normalize it to have a top-level metadata field for internal use.
  */
 async function parseZarrJson(zarrJson: unknown): Promise<Result<ZarrV3Metadata, Error>> {
   if (!zarrJson || typeof zarrJson !== 'object') {
     return Err(new Error(`Invalid zarr.json: expected an object but got ${typeof zarrJson}`));
   }
   
-  // zarr v3 zarr.json structure can vary, but typically has metadata nested by path
   const parsed = zarrJson as ZarrV3Metadata;
   
-  // If it already has the expected structure, return as-is
-  if (parsed.metadata && typeof parsed.metadata === 'object') {
-    return Ok(parsed);
+  // Validate the structure
+  if (!parsed.consolidated_metadata || typeof parsed.consolidated_metadata !== 'object') {
+    return Err(new Error('Invalid zarr.json: consolidated_metadata field is missing or not an object'));
   }
   
-  // Otherwise, try to normalize the structure
-  // This is a fallback for different zarr v3 implementations
-  const normalized: ZarrV3Metadata = {
-    metadata: parsed.metadata || {},
-    ...parsed
-  };
-  
-  if (!normalized.metadata || typeof normalized.metadata !== 'object') {
-    return Err(new Error('Invalid zarr.json: metadata field is missing or not an object'));
+  if (!parsed.consolidated_metadata.metadata || typeof parsed.consolidated_metadata.metadata !== 'object') {
+    return Err(new Error('Invalid zarr.json: consolidated_metadata.metadata field is missing or not an object'));
   }
   
-  return Ok(normalized);
+  // Return the parsed structure as-is (it matches our type definition)
+  return Ok(parsed);
 }
 
 /**
- * Normalize zarr v2 flat metadata to nested structure like v3
- * Converts flat structure like { "path/.zattrs": {...} } 
- * to nested structure like { "path": { ".zattrs": {...} } }
+ * Normalize zarr v2 flat metadata to v3 structure
+ * Converts flat structure like { "path/.zattrs": {...}, "path/.zarray": {...} } 
+ * to v3 structure with consolidated_metadata.metadata containing nodes
  */
 function normalizeV2ToV3Metadata(v2Metadata: ZarrV2Metadata): ZarrV3Metadata {
-  const nested: ZarrV3Metadata['metadata'] = {};
+  const metadata: Record<string, ZarrV3GroupNode | ZarrV3ArrayNode> = {};
   
   if (!v2Metadata.metadata || typeof v2Metadata.metadata !== 'object') {
-    return { metadata: {} };
+    return {
+      attributes: {},
+      zarr_format: 3,
+      consolidated_metadata: {
+        kind: 'inline',
+        must_understand: false,
+        metadata: {}
+      },
+      node_type: 'group'
+    };
   }
+  
+  // Group paths by their base path (without .zattrs, .zarray, .zgroup suffix)
+  const pathGroups = new Map<string, { zattrs?: unknown; zarray?: unknown; zgroup?: unknown }>();
   
   // Iterate through flat path keys in v2 metadata
   for (const [flatPath, value] of Object.entries(v2Metadata.metadata)) {
@@ -134,14 +152,71 @@ function normalizeV2ToV3Metadata(v2Metadata: ZarrV2Metadata): ZarrV3Metadata {
     const match = flatPath.match(/^(.+?)\/(\.zattrs|\.zarray|\.zgroup)$/);
     if (match) {
       const [, path, metadataType] = match;
-      if (!nested[path]) {
-        nested[path] = {};
+      if (!pathGroups.has(path)) {
+        pathGroups.set(path, {});
       }
-      nested[path][metadataType as '.zattrs' | '.zarray' | '.zgroup'] = value;
+      const group = pathGroups.get(path);
+      if (group) {
+        if (metadataType === '.zattrs') {
+          group.zattrs = value;
+        } else if (metadataType === '.zarray') {
+          group.zarray = value;
+        } else if (metadataType === '.zgroup') {
+          group.zgroup = value;
+        }
+      }
     }
   }
   
-  return { metadata: nested };
+  // Convert grouped paths to v3 node structure
+  for (const [path, group] of pathGroups.entries()) {
+    if (group.zarray) {
+      // Array node - use zarray metadata as the base
+      const zarray = group.zarray as Record<string, unknown>;
+      metadata[path] = {
+        shape: (zarray.shape as number[]) || [],
+        data_type: (zarray.data_type as string) || 'float64',
+        chunk_grid: (zarray.chunk_grid as ZarrV3ArrayNode['chunk_grid']) || {
+          name: 'regular',
+          configuration: { chunk_shape: [] }
+        },
+        chunk_key_encoding: (zarray.chunk_key_encoding as ZarrV3ArrayNode['chunk_key_encoding']) || {
+          name: 'default',
+          configuration: { separator: '/' }
+        },
+        fill_value: (zarray.fill_value as number | string | boolean) || 0,
+        codecs: (zarray.codecs as ZarrV3ArrayNode['codecs']) || [],
+        attributes: (group.zattrs as Record<string, unknown>) || {},
+        dimension_names: (zarray.dimension_names as string[]) || [],
+        zarr_format: (zarray.zarr_format as number) || 3,
+        node_type: 'array',
+        storage_transformers: (zarray.storage_transformers as unknown[]) || []
+      };
+    } else {
+      // Group node
+      metadata[path] = {
+        attributes: (group.zattrs as Record<string, unknown>) || {},
+        zarr_format: 3,
+        consolidated_metadata: {
+          kind: 'inline',
+          must_understand: false,
+          metadata: {}
+        },
+        node_type: 'group'
+      };
+    }
+  }
+  
+  return {
+    attributes: {},
+    zarr_format: 3,
+    consolidated_metadata: {
+      kind: 'inline',
+      must_understand: false,
+      metadata
+    },
+    node_type: 'group'
+  };
 }
 
 // we might not always use the FetchStore, this is for convenience & could change
@@ -214,6 +289,8 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
 export async function openExtraConsolidated(source: string): Promise<Result<ConsolidatedStore>> {
   // could `source` also be a File or something?
   try {
+    // why does this later end up thinking it should be able to do use HTTPMethd.PUT? 
+    // seems inappropriate for a read-only store.
     const store = new zarr.FetchStore(source);
     const zarritaStore = await tryConsolidated(store);
     // Validate that we have metadata (we no longer check for contents() since we don't use it)
@@ -234,18 +311,29 @@ export async function openExtraConsolidated(source: string): Promise<Result<Cons
 
 /**
  * Get zarr attributes from a consolidated store's metadata
- * All metadata is normalized to v3 nested format internally, so we always use nested access
+ * In zarr v3, attributes are stored in the `attributes` field of each node
  */
-export async function getZattrs(path: zarr.AbsolutePath, store: IntermediateConsolidatedStore, k=".zattrs"): Promise<Record<string, unknown> | undefined> {
+function getZattrs(path: zarr.AbsolutePath, store: IntermediateConsolidatedStore, k=".zattrs"): Record<string, unknown> | undefined {
   const pathStr = path.slice(1); // Remove leading '/'
-  const pathMetadata = store.zmetadata.metadata?.[pathStr];
-  if (!pathMetadata || typeof pathMetadata !== 'object') {
+  const metadata = store.zmetadata.consolidated_metadata?.metadata;
+  if (!metadata || typeof metadata !== 'object') {
     return undefined;
   }
   
-  const attr = pathMetadata[k as '.zattrs' | '.zarray' | '.zgroup'];
-  if (!attr) return undefined;
-  return attr as Record<string, unknown>;
+  const node = metadata[pathStr];
+  if (!node || typeof node !== 'object' || !('node_type' in node)) {
+    return undefined;
+  }
+  
+  // For backward compatibility, if k is ".zattrs", return the attributes field
+  // Otherwise, this function might be called with ".zarray" but in v3 we don't need that
+  // since array metadata is in the node itself
+  if (k === '.zattrs') {
+    return node.attributes;
+  }
+  
+  // For other keys, return undefined (legacy support)
+  return undefined;
 }
 
 /**

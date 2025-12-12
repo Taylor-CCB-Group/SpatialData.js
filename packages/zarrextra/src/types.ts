@@ -51,13 +51,64 @@ export type ZarrV2Metadata = {
 };
 
 /**
+ * Zarr v3 array node metadata
+ */
+export type ZarrV3ArrayNode = {
+  shape: number[];
+  data_type: string;
+  chunk_grid: {
+    name: string;
+    configuration: {
+      chunk_shape: number[];
+    };
+  };
+  chunk_key_encoding: {
+    name: string;
+    configuration: {
+      separator: string;
+    };
+  };
+  fill_value: number | string | boolean;
+  codecs: Array<{
+    name: string;
+    configuration?: Record<string, unknown>;
+  }>;
+  attributes: Record<string, unknown>;
+  dimension_names: string[];
+  zarr_format: number;
+  node_type: 'array';
+  storage_transformers: unknown[];
+};
+
+/**
+ * Zarr v3 group node metadata
+ */
+export type ZarrV3GroupNode = {
+  attributes: Record<string, unknown>;
+  zarr_format: number;
+  consolidated_metadata: {
+    kind: string;
+    must_understand: boolean;
+    metadata: Record<string, unknown>;
+  };
+  node_type: 'group';
+};
+
+/**
  * Zarr v3 consolidated metadata structure (zarr.json)
- * Structure may vary, but typically has nested metadata per path
+ * The actual structure has metadata nested under consolidated_metadata.metadata
+ * with path keys like "images/blobs_image", "labels/blobs_labels", etc.
+ * Each entry can be either a group node or an array node.
  */
 export type ZarrV3Metadata = {
-  metadata?: Record<string, { '.zattrs'?: unknown; '.zarray'?: unknown; '.zgroup'?: unknown }>;
-  // May have other fields depending on zarr v3 spec
-  [key: string]: unknown;
+  attributes: Record<string, unknown>;
+  zarr_format: number;
+  consolidated_metadata: {
+    kind: string;
+    must_understand: boolean;
+    metadata: Record<string, ZarrV3GroupNode | ZarrV3ArrayNode>;
+  };
+  node_type: 'group';
 };
 
 /**
@@ -74,7 +125,8 @@ export type MetadataFormat =
 
 /**
  * A zarrita store with metadata appended as `zmetadata` - mostly for internal use and subject to revision.
- * All metadata is normalized to v3 nested format internally, regardless of the original format (v2 or v3).
+ * For zarr v3, metadata is in the actual structure with consolidated_metadata.metadata.
+ * For zarr v2, we normalize it to match the v3 structure internally.
  * Uses `Store` (FetchStore) which already implements `Readable` - we work directly with metadata
  * and don't need `contents()` from `Listable`.
  */
