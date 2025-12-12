@@ -1,7 +1,6 @@
 import * as zarr from 'zarrita';
-import type { ZarrTree, ConsolidatedStore } from '../types';
-import { ATTRS_KEY, ZARRAY_KEY } from '../types';
-
+import type { ZarrTree, ConsolidatedStore, ZAttrsAny } from './types';
+import { ATTRS_KEY, ZARRAY_KEY } from './types';
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.
@@ -9,7 +8,7 @@ import { ATTRS_KEY, ZARRAY_KEY } from '../types';
  * This traverses arbitrary group depth etc - handy for a generic zarr thing, but for SpatialData we can have
  * something more explicitly targetting the expected structure.
  */
-export async function parseStoreContents(store: ConsolidatedStore) {
+export async function parseStoreContents(store: ConsolidatedStore): Promise<ZarrTree> {
   // this can await get metadata without too much issue given we know it's already there...
   const root = await zarr.open(store, { kind: 'group' });
   const contents = store.contents().map(v => {
@@ -35,7 +34,7 @@ export async function parseStoreContents(store: ConsolidatedStore) {
           // I suppose this could cache itself as well, but I'm not sure this is really for actual use
           currentNode[part] = {
             [ATTRS_KEY]: attrs,
-            [ZARRAY_KEY]: zarray,
+            [ZARRAY_KEY]: zarray ?? ({} as ZAttrsAny),
             get: () => zarr.open(root.resolve(item.v.path), { kind: 'array' })
           };
         } else {
@@ -48,11 +47,11 @@ export async function parseStoreContents(store: ConsolidatedStore) {
   }
   return tree;
 }
+
 // we might not always use the FetchStore, this is for convenience & could change
 /**
  * There is a tendency for .zmetadata to be misnamed as zmetadata...
  */
-
 export async function tryConsolidated(store: zarr.FetchStore): Promise<ConsolidatedStore> {
   // in future, first we'll try zarr.json
   // and I'm sure we can make this implementation less ugly, kinda trivial though so cba for now.
@@ -79,7 +78,10 @@ export async function tryConsolidated(store: zarr.FetchStore): Promise<Consolida
   // return zarr.withConsolidated(store).catch(() => zarr.withConsolidated(store, { metadataKey: 'zmetadata' }));
 }
 
-async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, k=".zattrs") {
+/**
+ * Get zarr attributes from a consolidated store's metadata
+ */
+export async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, k=".zattrs"): Promise<Record<string, unknown> | undefined> {
   const attrPath = `${path}/${k}`.slice(1);
   const attr = store.zmetadata.metadata[attrPath]; //may be undefined, that's fine.
   if (!attr) return undefined;
@@ -89,7 +91,7 @@ async function getZattrs(path: zarr.AbsolutePath, store: ConsolidatedStore, k=".
 /**
  * Deep clone a ZarrTree, converting Symbol-keyed attrs to string keys for serialization/debugging
  */
-export function serializeZarrTree(obj: ZarrTree | unknown) {
+export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
   if (obj === null || typeof obj !== 'object') return obj;
 
   const result: Record<string, unknown> = {};
@@ -118,3 +120,8 @@ export function serializeZarrTree(obj: ZarrTree | unknown) {
 
   return result;
 }
+
+// Re-export types
+export type { ZarrTree, ConsolidatedStore, LazyZarrArray, ZAttrsAny } from './types';
+export { ATTRS_KEY, ZARRAY_KEY } from './types';
+

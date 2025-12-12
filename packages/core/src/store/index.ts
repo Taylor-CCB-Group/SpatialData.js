@@ -4,7 +4,7 @@
 
 import * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
-import { parseStoreContents, serializeZarrTree, tryConsolidated } from './zarrUtils';
+import { parseStoreContents, serializeZarrTree, tryConsolidated } from '@spatialdata/zarrextra';
 import { loadElements, type ElementInstanceMap, type SpatialElement, type AnyElement } from '../models';
 import type { 
   ElementName, 

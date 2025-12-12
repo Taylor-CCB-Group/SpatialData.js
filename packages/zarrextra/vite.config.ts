@@ -1,16 +1,24 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
+import dts from 'vite-plugin-dts';
 
 export default defineConfig({
+  plugins: [
+    dts({
+      outDir: 'dist',
+      include: ['src'],
+      exclude: ['**/*.test.ts'],
+    }),
+  ],
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'SpatialDataCore',
+      name: 'Zarrextra',
       formats: ['es', 'cjs'],
       fileName: (format) => `index.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: ['zarrita', 'zod', 'anndata.js', 'parquet-wasm', '@spatialdata/zarrextra'],
+      external: ['zarrita'],
     },
     sourcemap: true,
     target: 'es2020',
@@ -24,3 +32,4 @@ export default defineConfig({
     },
   },
 });
+

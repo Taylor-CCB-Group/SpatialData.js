@@ -1,5 +1,6 @@
 import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny, Result } from '../types';
-import { ATTRS_KEY, Ok, Err } from '../types';
+import { ATTRS_KEY } from '../types';
+import { Ok, Err } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';

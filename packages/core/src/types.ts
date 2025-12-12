@@ -54,6 +54,7 @@ export const unwrapOr = <T, E>(result: Result<T, E>, defaultValue: T): T => {
 
 import type * as ad from 'anndata.js';
 import type * as zarr from 'zarrita';
+import type { ZarrTree } from '@spatialdata/zarrextra';
 
 /**
  * Element name constants and types
@@ -106,30 +107,14 @@ export type BadFileHandler = (file: string, error: Error) => void;
 type Store = zarr.FetchStore;
 
 /**
- * Zarr tree type
- * 
- * This is a tree of zarr arrays and groups, with the leaves being lazy arrays.
- * It is used to represent the structure of the zarr store.
- * Leaf type subject to change.
+ * Zarr group type
  */
 export type ZGroup = zarr.Group<Store>;
-export const ATTRS_KEY = Symbol('attrs');
-export const ZARRAY_KEY = Symbol('.zarray')
-export type ZAttrsAny = Record<string, unknown>
-export type LazyZarrArray<T extends zarr.DataType> = {
-  [ATTRS_KEY]?: ZAttrsAny,
-  [ZARRAY_KEY]: ZAttrsAny,
-  get: () => Promise<zarr.Array<T>>
-};
-export interface ZarrTree { 
-  [ATTRS_KEY]?: ZAttrsAny,
-  [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>; 
-};
 
-/**
- * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
- */
-export type ConsolidatedStore = zarr.Listable<Store> & { zmetadata: any };
+// Re-export zarr-related types from zarrextra for convenience
+// These are used in SDataProps and models, so we keep them accessible from core/types
+export type { ZarrTree, LazyZarrArray, ZAttrsAny } from '@spatialdata/zarrextra';
+export { ATTRS_KEY, ZARRAY_KEY } from '@spatialdata/zarrextra';
 
 
 /**
