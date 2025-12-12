@@ -21,7 +21,8 @@ export const ATTRS_KEY = Symbol('attrs');
 export const ZARRAY_KEY = Symbol('.zarray');
 
 /**
- * Lazy zarr array type - represents a zarr array that hasn't been loaded yet
+ * Lazy zarr array type - represents a zarr array with a `get()` method for loading it,
+ * and `.zarray` from consolidated metadata.
  */
 export type LazyZarrArray<T extends zarr.DataType> = {
   [ATTRS_KEY]?: ZAttrsAny;
