@@ -8,37 +8,71 @@ import { Err, Ok, type Result } from './result';
  * 
  * This traverses arbitrary group depth etc - handy for a generic zarr thing, but for SpatialData we can have
  * something more explicitly targetting the expected structure.
+ * 
+ * Works directly with the normalized v3 metadata structure, extracting paths from metadata rather than
+ * relying on store.contents().
  */
-export async function parseStoreContents(store: IntermediateConsolidatedStore): Promise<ZarrTree> {
-  // this can await get metadata without too much issue given we know it's already there...
+async function parseStoreContents(store: IntermediateConsolidatedStore): Promise<ZarrTree> {
+  // All metadata is normalized to v3 nested format
+  const metadata = store.zmetadata.metadata;
+  
+  if (!metadata || typeof metadata !== 'object') {
+    return {};
+  }
+  
+  // Extract all paths from metadata and determine their types
+  const pathInfo = new Map<string, { isArray: boolean; path: string }>();
+  
+  for (const [path, pathMetadata] of Object.entries(metadata)) {
+    if (pathMetadata && typeof pathMetadata === 'object') {
+      const isArray = '.zarray' in pathMetadata;
+      pathInfo.set(path, { isArray, path });
+    }
+  }
+  
+  // Sort paths by depth (shorter paths first) to build tree top-down
+  const sortedPaths = Array.from(pathInfo.entries()).sort((a, b) => {
+    const depthA = a[0].split('/').filter(p => p).length;
+    const depthB = b[0].split('/').filter(p => p).length;
+    return depthA - depthB;
+  });
+  
+  // Open root for resolving array paths later
   const root = await zarr.open(store, { kind: 'group' });
-  const contents = store.contents().map(v => {
-    const pathParts = v.path.split('/');
-    // might do something with the top-level element name - ie, make a different kind of object for each
-      
-    const path = pathParts.slice(1);
-    return { path, kind: v.kind, v };
-  }).sort((a, b) => a.path.length - b.path.length).slice(1); // skip the root group itself
-
-
+  
   const tree: ZarrTree = {};
-  for (const item of contents) {
+  
+  for (const [fullPath, info] of sortedPaths) {
+    // Skip root path
+    if (!fullPath || fullPath === '/' || fullPath === '') continue;
+    
+    // Normalize path: ensure it starts with / and doesn't end with /
+    const normalizedPath = fullPath.startsWith('/') ? fullPath : `/${fullPath}`;
+    const pathParts = normalizedPath.split('/').filter(p => p);
+    
+    if (pathParts.length === 0) continue;
+    
     let currentNode = tree;
-    for (const [i, part] of item.path.entries()) {
+    
+    // Build tree structure
+    for (const [i, part] of pathParts.entries()) {
       if (!(part in currentNode)) {
-        const leaf = (i === (item.path.length - 1)) && item.kind === "array";
-        // get zattrs... says it's `async` but I strongly don't want it to actually be fetching unncessarily.
-        // current implementation will use the existing zmetadata and will need to be adapted to zarr.json in v3
-        const attrs = await getZattrs(item.v.path, store);
-        if (leaf) {
-          const zarray = await getZattrs(item.v.path, store, ".zarray");
-          // I suppose this could cache itself as well, but I'm not sure this is really for actual use
+        const isLeaf = i === pathParts.length - 1;
+        const isArray = isLeaf && info.isArray;
+        
+        // Get attributes for this path (normalizedPath already has leading /)
+        const attrs = await getZattrs(normalizedPath as zarr.AbsolutePath, store);
+        
+        if (isArray) {
+          // Leaf array node
+          const zarray = await getZattrs(normalizedPath as zarr.AbsolutePath, store, ".zarray");
           currentNode[part] = {
             [ATTRS_KEY]: attrs,
             [ZARRAY_KEY]: zarray ?? ({} as ZAttrsAny),
-            get: () => zarr.open(root.resolve(item.v.path), { kind: 'array' })
+            get: () => zarr.open(root.resolve(normalizedPath), { kind: 'array' })
           };
         } else {
+          // Group node
           currentNode[part] = { [ATTRS_KEY]: attrs };
         }
       }
@@ -46,6 +80,7 @@ export async function parseStoreContents(store: IntermediateConsolidatedStore): 
       currentNode = currentNode[part] as ZarrTree;
     }
   }
+  
   return tree;
 }
 
@@ -114,8 +149,11 @@ function normalizeV2ToV3Metadata(v2Metadata: ZarrV2Metadata): ZarrV3Metadata {
  * Try to open consolidated metadata from a zarr store.
  * Supports both zarr v2 (.zmetadata) and v3 (zarr.json) formats.
  * There is a tendency for .zmetadata to be misnamed as zmetadata in v2.
+ * 
+ * Since we work directly with metadata and don't use contents(), we don't need
+ * zarrita's withConsolidated() - we just fetch the metadata files and normalize them.
  */
-export async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateConsolidatedStore> {
+async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateConsolidatedStore> {
   //!!! nb - we need to also handle local files, in which case we don't fetch(url), we need another method - this is important
   
   // First, try zarr.json (v3 format)
@@ -131,38 +169,10 @@ export async function tryConsolidated(store: zarr.FetchStore): Promise<Intermedi
     
     const v3Metadata = parseResult.value;
     
-    // For v3, zarrita's withConsolidated doesn't work, so we need to implement our own contents()
-    // Extract paths from the nested metadata structure
-    const paths = new Set<string>();
-    if (v3Metadata.metadata && typeof v3Metadata.metadata === 'object') {
-      for (const path of Object.keys(v3Metadata.metadata)) {
-        paths.add(path);
-      }
-    }
-    const uniquePaths = Array.from(paths);
-    
-    // For v3, we need to create a listable store
-    // Since zarrita's withConsolidated doesn't work for v3, we create our own wrapper
-    // that implements contents() based on the metadata we parsed
-    const v3ListableStore = Object.assign(store, {
-      contents: () => {
-        // Return contents based on metadata paths
-        return uniquePaths.map(p => {
-          const fullPath = p.startsWith('/') ? p : `/${p}`;
-          const pathMetadata = v3Metadata.metadata?.[p];
-          return {
-            path: fullPath as `/${string}`,
-            kind: pathMetadata && '.zarray' in pathMetadata ? ('array' as const) : ('group' as const)
-          };
-        });
-      }
-    }) as zarr.Listable<zarr.FetchStore>;
-    
-    return { 
-      ...v3ListableStore, 
-      zmetadata: v3Metadata,
-      metadataFormat: 'v3'
-    };
+    // Return store with metadata properties
+    return Object.assign(store, {
+      zmetadata: v3Metadata
+    });
   } catch {
     // Fall through to try v2 formats
   }
@@ -171,27 +181,24 @@ export async function tryConsolidated(store: zarr.FetchStore): Promise<Intermedi
   try {
     const path = `${store.url}/.zmetadata`;
     const zmetadata = await (await fetch(path)).json() as ZarrV2Metadata;
-    const zarrita = await zarr.withConsolidated(store);
     // Normalize v2 flat metadata to v3 nested format for consistent internal use
     const v3Metadata = normalizeV2ToV3Metadata(zmetadata);
-    return { 
-      ...zarrita, 
-      zmetadata: v3Metadata,
-      metadataFormat: 'v3' // Store as v3 format after normalization
-    };
+    // Return store with metadata properties
+    return Object.assign(store, {
+      zmetadata: v3Metadata
+    });
   } catch {
     // Try zmetadata (v2 variant, misnamed)
     try {
       const path = `${store.url}/zmetadata`;
       const zmetadata = await (await fetch(path)).json() as ZarrV2Metadata;
-      const zarrita = await zarr.withConsolidated(store, { metadataKey: 'zmetadata' });
       // Normalize v2 flat metadata to v3 nested format for consistent internal use
       const v3Metadata = normalizeV2ToV3Metadata(zmetadata);
-      return { 
-        ...zarrita, 
+      // Return store with metadata properties
+      return Object.assign(store, {
         zmetadata: v3Metadata,
-        metadataFormat: 'v3' // Store as v3 format after normalization
-      };
+        metadataFormat: 'v3' as const
+      });
     } catch {
       throw new Error(
         `Couldn't open consolidated metadata for '${store.url}'. Tried: zarr.json (v3), .zmetadata (v2), and zmetadata (v2 variant). Ensure the store has consolidated metadata enabled.`
@@ -209,9 +216,7 @@ export async function openExtraConsolidated(source: string): Promise<Result<Cons
   try {
     const store = new zarr.FetchStore(source);
     const zarritaStore = await tryConsolidated(store);
-    if (!('contents' in zarritaStore)) {
-      return Err(new Error(`No consolidated metadata in store '${source}'. The store may not have consolidated metadata enabled.`));
-    }
+    // Validate that we have metadata (we no longer check for contents() since we don't use it)
     
     // Validate that we have metadata
     if (!zarritaStore.zmetadata || typeof zarritaStore.zmetadata !== 'object') {
@@ -232,10 +237,8 @@ export async function openExtraConsolidated(source: string): Promise<Result<Cons
  * All metadata is normalized to v3 nested format internally, so we always use nested access
  */
 export async function getZattrs(path: zarr.AbsolutePath, store: IntermediateConsolidatedStore, k=".zattrs"): Promise<Record<string, unknown> | undefined> {
-  // All metadata is stored in v3 nested format after normalization
-  const v3Metadata = store.zmetadata as ZarrV3Metadata;
   const pathStr = path.slice(1); // Remove leading '/'
-  const pathMetadata = v3Metadata.metadata?.[pathStr];
+  const pathMetadata = store.zmetadata.metadata?.[pathStr];
   if (!pathMetadata || typeof pathMetadata !== 'object') {
     return undefined;
   }

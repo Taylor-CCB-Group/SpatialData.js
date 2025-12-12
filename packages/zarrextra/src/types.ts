@@ -73,12 +73,13 @@ export type MetadataFormat =
   | { format: 'v3'; metadata: ZarrV3Metadata };
 
 /**
- * A zarrita store with the raw metadata appended as `zmetadata` - mostly for internal use and subject to revision.
- * The zmetadata can be either v2 or v3 format, and we track which format it is.
+ * A zarrita store with metadata appended as `zmetadata` - mostly for internal use and subject to revision.
+ * All metadata is normalized to v3 nested format internally, regardless of the original format (v2 or v3).
+ * Uses `Store` (FetchStore) which already implements `Readable` - we work directly with metadata
+ * and don't need `contents()` from `Listable`.
  */
-export type IntermediateConsolidatedStore = zarr.Listable<Store> & { 
-  zmetadata: ConsolidatedMetadata;
-  metadataFormat: 'v2' | 'v3';
+export type IntermediateConsolidatedStore = Store & { 
+  zmetadata: ZarrV3Metadata;
 };
 /**
  * This type is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`, 
