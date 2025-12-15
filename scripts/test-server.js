@@ -40,13 +40,25 @@ function getMimeType(filePath) {
 /**
  * Generate HTML directory listing
  */
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function generateDirectoryListing(files, currentPath, basePath) {
   const items = files
     .map((file) => {
       const isDir = file.isDirectory;
-      const href = `${currentPath}/${file.name}${isDir ? '/' : ''}`;
+      const safeName = escapeHtml(file.name);
+      const href = `${currentPath}/${encodeURIComponent(file.name)}${isDir ? '/' : ''}`;
       const icon = isDir ? '📁' : '📄';
-      return `<li><a href="${href}">${icon} ${file.name}</a></li>`;
+      return `<li><a href="${href}">${icon} ${safeName}</a></li>`;
     })
     .join('\n');
 
