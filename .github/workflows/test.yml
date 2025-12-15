@@ -44,6 +44,9 @@ jobs:
       # Note: Version-specific environments are set up automatically by the fixture generation script
       # No need to manually sync here unless you want to pre-warm the cache
 
+      - name: Generate test fixtures (Python spatialdata 0.5.0 and 0.6.1)
+        run: pnpm test:fixtures:generate
+
       - name: Run unit tests
         run: pnpm test:unit
 
