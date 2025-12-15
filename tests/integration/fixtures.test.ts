@@ -34,20 +34,6 @@ function ensureFixtures(version: string): string {
   return fixturePath;
 }
 
-/**
- * Get the URL for a fixture (for use with readZarr)
- * In a real scenario, this would be served by the test server
- * For now, we'll use file:// URLs if the environment supports it,
- * or we'll need to start a local server
- */
-function getFixtureUrl(fixturePath: string): string {
-  // For now, we'll use a file:// URL
-  // Note: This may not work with FetchStore, which expects HTTP URLs
-  // In a real scenario, we'd start the test server and use http://localhost:8080/...
-  // For now, we'll test with a local path that might work with future local file support
-  return `file://${fixturePath}`;
-}
-
 // Test matrix for different spatialdata versions
 const versions = ['0.5.0', '0.6.1'] as const;
 
@@ -57,16 +43,11 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
 
   beforeAll(() => {
     fixturePath = ensureFixtures(version);
-    // For now, we'll need to use a workaround since FetchStore expects HTTP URLs
-    // We'll use a local server URL pattern that the test server would serve
-    // In practice, tests should start the test server first
     fixtureUrl = `http://localhost:8080/v${version}/blobs.zarr`;
   });
 
   it('should load spatialdata store', async () => {
     // Note: This test requires the test server to be running
-    // In CI, we'd start it as part of the test setup
-    // For now, we'll skip if the server isn't available
     try {
       const sdata = await readZarr(fixtureUrl);
       expect(sdata).toBeDefined();
