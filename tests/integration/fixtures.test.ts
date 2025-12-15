@@ -76,8 +76,8 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
       // we'll skip this test with a helpful message
       if (error instanceof Error && error.message.includes('fetch')) {
         console.warn(
-          `Skipping integration test - test server not running. ` +
-          `Start it with: pnpm test:server`
+          'Skipping integration test - test server not running. ' +
+          'Start it with: pnpm test:server'
         );
         return;
       }
@@ -90,7 +90,7 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
       const sdata = await readZarr(fixtureUrl);
       
       // Check that we can access parsed structure
-      expect(sdata.parsed).toBeDefined();
+      expect(sdata.rootStore.tree).toBeDefined();
       
       // The blobs dataset should have at least images
       // We'll check what elements are available
