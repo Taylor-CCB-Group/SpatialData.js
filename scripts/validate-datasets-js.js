@@ -334,9 +334,10 @@ async function main() {
     // Simple CSV generation
     const lines = ['Dataset Name,Dataset URL,Implementation,Success,Error Type,Error Message,Elements,Coordinate Systems'];
     for (const r of results) {
-      const elements = r.elements ? JSON.stringify(r.elements) : '';
-      const cs = r.coordinateSystems ? JSON.stringify(r.coordinateSystems) : '';
-      lines.push(`"${r.datasetName}","${r.datasetUrl}","${r.implementation}",${r.success},"${r.errorType || ''}","${r.errorMessage || ''}","${elements}","${cs}"`);
+      const elements = r.elements ? JSON.stringify(r.elements).replace(/"/g, '""') : '';
+      const cs = r.coordinateSystems ? JSON.stringify(r.coordinateSystems).replace(/"/g, '""') : '';
+      const errorMsg = (r.errorMessage || '').replace(/"/g, '""');
+      lines.push(`"${r.datasetName}","${r.datasetUrl}","${r.implementation}",${r.success},"${r.errorType || ''}","${errorMsg}","${elements}","${cs}"`);
     }
     output = lines.join('\n');
   } else if (args.outputFormat === 'json') {
