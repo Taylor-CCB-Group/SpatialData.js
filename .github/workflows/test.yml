@@ -47,7 +47,25 @@ jobs:
       - name: Run unit tests
         run: pnpm test:unit
 
-      # note: these tests can be run manually for now - CI doesn't have necessary localhost:8080 server setup
-      # - name: Run integration tests
-      #   run: pnpm test:integration
+      - name: Run integration tests with local server
+        shell: bash
+        run: |
+          # Start test server in background
+          pnpm test:server &
+          SERVER_PID=$!
 
+          # Wait for server to be ready (up to ~30s)
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8080/ >/dev/null; then
+              echo "Test server is up"
+              break
+            fi
+            echo "Waiting for test server on http://localhost:8080/ ..."
+            sleep 1
+          done
+
+          # Run integration tests (will hit http://localhost:8080/…)
+          pnpm test:integration
+
+          # Clean up server
+          kill "$SERVER_PID" || true
