@@ -23,12 +23,15 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-
-      - name: Install pnpm
-        run: npm install -g pnpm
 
       - name: Install dependencies
         run: pnpm install
