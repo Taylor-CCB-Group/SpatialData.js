@@ -60,7 +60,7 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
     // For now, we'll need to use a workaround since FetchStore expects HTTP URLs
     // We'll use a local server URL pattern that the test server would serve
     // In practice, tests should start the test server first
-    fixtureUrl = `http://localhost:8080/test-fixtures/v${version}/blobs.zarr`;
+    fixtureUrl = `http://localhost:8080/v${version}/blobs.zarr`;
   });
 
   it('should load spatialdata store', async () => {
@@ -152,8 +152,8 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
 
 describe('Fixture Generation', () => {
   it('should generate fixtures for both versions', () => {
-    const v050Path = join(projectRoot, 'test-fixtures', 'v0.5.0', 'blobs.zarr');
-    const v061Path = join(projectRoot, 'test-fixtures', 'v0.6.1', 'blobs.zarr');
+    const v050Path = join(projectRoot, 'v0.5.0', 'blobs.zarr');
+    const v061Path = join(projectRoot, 'v0.6.1', 'blobs.zarr');
     
     // Try to generate if missing
     if (!existsSync(v050Path)) {
