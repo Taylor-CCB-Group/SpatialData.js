@@ -10,6 +10,7 @@ build/
 # Testing
 coverage/
 test-fixtures/
+validation-results/
 
 # Python virtual environments (version-specific, completely separate)
 python/v0.5.0/.venv/
