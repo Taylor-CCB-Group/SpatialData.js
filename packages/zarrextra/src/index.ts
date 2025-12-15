@@ -235,9 +235,13 @@ function normalizeV2ToV3Metadata(v2Metadata: ZarrV2Metadata): ZarrV3Metadata {
 async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateConsolidatedStore> {
   //!!! nb - we need to also handle local files, in which case we don't fetch(url), we need another method - this is important
   
+  // Normalize base URL to avoid double slashes when constructing metadata paths
+  const urlString = typeof store.url === 'string' ? store.url : store.url.toString();
+  const baseUrl = urlString.replace(/\/+$/, '');
+  
   // First, try zarr.json (v3 format)
   try {
-    const zarrJsonPath = `${store.url}/zarr.json`;
+    const zarrJsonPath = `${baseUrl}/zarr.json`;
     const zarrJson = await (await fetch(zarrJsonPath)).json();
     const parseResult = await parseZarrJson(zarrJson);
     
@@ -258,7 +262,7 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
   
   // Try .zmetadata (v2 format)
   try {
-    const path = `${store.url}/.zmetadata`;
+    const path = `${baseUrl}/.zmetadata`;
     const zmetadata = await (await fetch(path)).json() as ZarrV2Metadata;
     // Normalize v2 flat metadata to v3 nested format for consistent internal use
     const v3Metadata = normalizeV2ToV3Metadata(zmetadata);
@@ -269,7 +273,7 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
   } catch {
     // Try zmetadata (v2 variant, misnamed)
     try {
-      const path = `${store.url}/zmetadata`;
+      const path = `${baseUrl}/zmetadata`;
       const zmetadata = await (await fetch(path)).json() as ZarrV2Metadata;
       // Normalize v2 flat metadata to v3 nested format for consistent internal use
       const v3Metadata = normalizeV2ToV3Metadata(zmetadata);
