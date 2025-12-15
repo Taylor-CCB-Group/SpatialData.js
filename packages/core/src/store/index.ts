@@ -123,9 +123,10 @@ export async function readZarr(storeUrl: StoreLocation, selection?: ElementName[
   // todo: this should be able to handle a store directly, not just a url
   // then there are some downstream changes required for the models/loaders etc.
   // rather than `tryConsolidated` here, lets have some `zarrextra` function instead.
-  const result = await openExtraConsolidated(storeUrl);
+  const normalizedSource = storeUrl.replace(/\/+$/, ''); //it'll be normalized by zarrextra as well, but we need this version for SpatialData constructor
+  const result = await openExtraConsolidated(normalizedSource);
   if (result.ok) {
-    return new SpatialData(storeUrl, result.value, selection, onBadFiles);
+    return new SpatialData(normalizedSource, result.value, selection, onBadFiles);
   }
   throw new Error(`${result.error}`);
 }

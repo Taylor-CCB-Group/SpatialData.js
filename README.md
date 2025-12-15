@@ -180,12 +180,7 @@ pnpm test:proxy
 
 **Usage:**
 
-Proxy a remote URL by appending it as a query parameter:
-```
-http://localhost:8081/?url=https://example.com/data.zarr/.zattrs
-```
-
-Or use it as a path (for convenience):
+Proxy a remote URL by encoding it directly in the path:
 ```
 http://localhost:8081/https://example.com/data.zarr/.zattrs
 ```
@@ -200,8 +195,8 @@ import { readZarr } from '@spatialdata/core';
 // Instead of:
 // const sdata = await readZarr('https://example.com/mydata.zarr');
 
-// Use the proxy:
-const sdata = await readZarr('http://localhost:8081/?url=https://example.com/mydata.zarr');
+// Use the proxy (path-based form):
+const sdata = await readZarr('http://localhost:8081/https://example.com/mydata.zarr');
 ```
 
 **⚠️ Warning:** The CORS proxy is for local development only. It has no security restrictions and should never be exposed to the internet.
