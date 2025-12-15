@@ -48,8 +48,8 @@ async function proxyRequest(req, res, targetUrl) {
     };
     
     // Remove host header (will be set by fetch)
-    delete fetchOptions.headers.host;
-    delete fetchOptions.headers['content-length'];
+    const { host, 'content-length': contentLength, ...safeHeaders } = fetchOptions.headers;
+    fetchOptions.headers = safeHeaders;
     
     // Forward request body for POST/PUT
     let body = null;
@@ -131,7 +131,11 @@ async function handleRequest(req, res) {
   try {
     // Extract target URL from query parameter or path
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const targetUrl = url.searchParams.get('url') || url.pathname.slice(1);
+    let targetUrl = url.searchParams.get('url') || url.pathname.slice(1);
+    // Also support paths like /url=https://... by stripping the "url=" prefix
+    if (targetUrl.startsWith('url=')) {
+      targetUrl = targetUrl.slice(4);
+    }
     
     if (!targetUrl) {
       addCorsHeaders(res);
@@ -140,24 +144,12 @@ async function handleRequest(req, res) {
       return;
     }
     
-    // Validate URL
-    let target;
-    try {
-      target = new URL(targetUrl);
-    } catch (error) {
-      // If not a full URL, try to construct one
-      // For relative paths, we can't proxy them
+    // Validate URL (lightweight check without rejecting valid-but-unexpected forms)
+    if (!/^https?:\/\//i.test(targetUrl)) {
+      // console.log(`'${targetUrl}' didn't validate, but yolo...`);
       addCorsHeaders(res);
       res.writeHead(400, { 'Content-Type': 'text/plain' });
-      res.end('Invalid URL. Please provide a full URL (e.g., https://example.com/data.zarr)');
-      return;
-    }
-    
-    // Only allow http/https protocols
-    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-      addCorsHeaders(res);
-      res.writeHead(400, { 'Content-Type': 'text/plain' });
-      res.end('Only http and https protocols are supported');
+      res.end('Invalid URL. Please provide a full URL starting with http:// or https:// (e.g., https://example.com/data.zarr)');
       return;
     }
     
@@ -176,10 +168,10 @@ const server = createServer(handleRequest);
 
 server.listen(PORT, () => {
   console.log(`CORS proxy server running at http://localhost:${PORT}`);
-  console.log(`\nUsage:`);
+  console.log('\nUsage:');
   console.log(`  GET http://localhost:${PORT}/?url=<target-url>`);
   console.log(`  Example: http://localhost:${PORT}/?url=https://example.com/data.zarr/.zattrs`);
-  console.log(`\nPress Ctrl+C to stop\n`);
+  console.log('\nPress Ctrl+C to stop\n');
 });
 
 // Handle graceful shutdown

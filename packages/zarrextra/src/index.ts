@@ -102,6 +102,38 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
 }
 
 /**
+ * Build a metadata URL for a given base store URL.
+ *
+ * Handles both direct URLs (e.g. https://.../dataset.zarr) and the dev
+ * CORS proxy pattern (e.g. http://localhost:8081/?url=https://.../dataset.zarr).
+ *
+ * For the proxy pattern, we append the metadata path to the *inner* URL in the
+ * `url` search parameter, instead of to the proxy URL itself.
+ */
+function buildMetadataUrl(baseUrl: string, metadataPath: string): string {
+  try {
+    const outer = new URL(baseUrl);
+    const innerUrl = outer.searchParams.get('url');
+
+    if (innerUrl) {
+      // Dev proxy case: http://proxy/?url=https://host/store.zarr
+      const inner = new URL(innerUrl);
+      const innerBase = inner.toString().replace(/\/+$/, '');
+      const innerWithMetadata = `${innerBase}/${metadataPath}`;
+
+      outer.searchParams.set('url', innerWithMetadata);
+      return outer.toString();
+    }
+  } catch {
+    // If baseUrl isn't a valid absolute URL, fall back to simple joining below.
+  }
+
+  // Non‑proxy (or unparseable) case: just append the metadata path.
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  return `${trimmed}/${metadataPath}`;
+}
+
+/**
  * Parse zarr v3 consolidated metadata from zarr.json
  * The actual zarr v3 structure has metadata nested under consolidated_metadata.metadata
  * We normalize it to have a top-level metadata field for internal use.
@@ -237,11 +269,11 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
   
   // Normalize base URL to avoid double slashes when constructing metadata paths
   const urlString = typeof store.url === 'string' ? store.url : store.url.toString();
-  const baseUrl = urlString.replace(/\/+$/, '');
+  const baseUrl = urlString;
   
   // First, try zarr.json (v3 format)
   try {
-    const zarrJsonPath = `${baseUrl}/zarr.json`;
+    const zarrJsonPath = buildMetadataUrl(baseUrl, 'zarr.json');
     const zarrJson = await (await fetch(zarrJsonPath)).json();
     const parseResult = await parseZarrJson(zarrJson);
     
@@ -262,7 +294,7 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
   
   // Try .zmetadata (v2 format)
   try {
-    const path = `${baseUrl}/.zmetadata`;
+    const path = buildMetadataUrl(baseUrl, '.zmetadata');
     const zmetadata = await (await fetch(path)).json() as ZarrV2Metadata;
     // Normalize v2 flat metadata to v3 nested format for consistent internal use
     const v3Metadata = normalizeV2ToV3Metadata(zmetadata);
@@ -273,7 +305,7 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
   } catch {
     // Try zmetadata (v2 variant, misnamed)
     try {
-      const path = `${baseUrl}/zmetadata`;
+      const path = buildMetadataUrl(baseUrl, 'zmetadata');
       const zmetadata = await (await fetch(path)).json() as ZarrV2Metadata;
       // Normalize v2 flat metadata to v3 nested format for consistent internal use
       const v3Metadata = normalizeV2ToV3Metadata(zmetadata);
