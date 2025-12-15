@@ -133,15 +133,19 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
 
 describe('Fixture Generation', () => {
   it('should generate fixtures for both versions', () => {
-    const v050Path = join(projectRoot, 'v0.5.0', 'blobs.zarr');
-    const v061Path = join(projectRoot, 'v0.6.1', 'blobs.zarr');
+    const v050Path = join(projectRoot, 'test-fixtures', 'v0.5.0', 'blobs.zarr');
+    const v061Path = join(projectRoot, 'test-fixtures', 'v0.6.1', 'blobs.zarr');
     
     // Try to generate if missing
     if (!existsSync(v050Path)) {
       ensureFixtures('0.5.0');
+    } else {
+      console.log('using existing fixture for 0.5.0');
     }
     if (!existsSync(v061Path)) {
       ensureFixtures('0.6.1');
+    } else {
+      console.log('using existing fixture for 0.6.1');
     }
     
     // Check that directories exist (even if generation failed, we want to know)
