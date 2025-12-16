@@ -83,10 +83,12 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
             storage_transformers: arrayNode.storage_transformers,
           };
           
+          // Capture normalizedPath by value to avoid closure issues
+          const arrayPath = normalizedPath;
           currentNode[part] = {
             [ATTRS_KEY]: attrs,
             [ZARRAY_KEY]: zarray,
-            get: () => zarr.open(root.resolve(normalizedPath), { kind: 'array' })
+            get: () => zarr.open(root.resolve(arrayPath), { kind: 'array' })
           };
         } else {
           // Group node
