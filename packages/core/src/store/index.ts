@@ -25,7 +25,7 @@ export type { SpatialElement, AnyElement } from '../models';
 
 export class SpatialData {
   readonly url: StoreLocation;
-  rootStore: zarr.Listable<zarr.FetchStore>;
+  rootStore: ConsolidatedStore;
   // metadata: Record<string, unknown>; //todo: add this, with type (validated by zod)
 
   images?: Elements<'images'>;
@@ -34,15 +34,9 @@ export class SpatialData {
   shapes?: Elements<'shapes'>;
   tables?: Elements<'tables'>;
 
-  /**
-   * Keeping this for experimenting with this structure vs AnnData.js for Tables etc.
-   */
-  parsed?: ZarrTree;
-  
   constructor(url: StoreLocation, rootStore: ConsolidatedStore, selection?: ElementName[], onBadFiles?: BadFileHandler) {
     this.url = url;
-    this.rootStore = rootStore.zarritaStore;
-    this.parsed = rootStore.tree;
+    this.rootStore = rootStore;
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
       // Load all elements of this type
@@ -86,33 +80,42 @@ export class SpatialData {
    * to get more detailed info.
    */
   toString() {
-    const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);
-    if (nonEmptyElements.length === 0) {
-      return `SpatialData object, with associated Zarr store: ${this.url}\n(No elements loaded)`;
-    }
-    const elements = nonEmptyElements.map((name, i) => {
-      const element = this[name];
-      const isLast = i === nonEmptyElements.length - 1;
-      const prefix = isLast ? '└──' : '├──';
-      const childPrefix = isLast ? '    ' : '│   ';
-      if (element) {
-        const keys = Object.keys(element);
-        const children = keys.map((key, j) => {
-          const childIsLast = j === keys.length - 1;
-          const childBranch = childIsLast ? '└──' : '├──';
-          return `${childPrefix}${childBranch} ${key}`;
-        }).join('\n');
-        return `${prefix} ${name}:\n${children}`;
+    try {
+      const nonEmptyElements = ElementNames.filter((name) => this[name] !== undefined);
+      if (nonEmptyElements.length === 0) {
+        return `SpatialData object, with associated Zarr store: ${this.url}\n(No elements loaded)`;
       }
-      return `${prefix} ${name}: (empty)`;
-    }).join('\n');
-    const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
-    return `SpatialData object, with associated Zarr store: ${this.url}\nElements:\n${elements}\n${cs}`;
+      const elements = nonEmptyElements.map((name, i) => {
+        const element = this[name];
+        const isLast = i === nonEmptyElements.length - 1;
+        const prefix = isLast ? '└──' : '├──';
+        const childPrefix = isLast ? '    ' : '│   ';
+        if (element) {
+          const keys = Object.keys(element);
+          const children = keys.map((key, j) => {
+            const childIsLast = j === keys.length - 1;
+            const childBranch = childIsLast ? '└──' : '├──';
+            return `${childPrefix}${childBranch} ${key}`;
+          }).join('\n');
+          return `${prefix} ${name}:\n${children}`;
+        }
+        return `${prefix} ${name}: (empty)`;
+      }).join('\n');
+      const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
+      return `SpatialData object, with associated Zarr store: ${this.url}\nElements:\n${elements}\n${cs}`;
+    } catch (error) {
+      // this can happen if `this.coordinateSystems` trips over some invalid `attrs` where we did a bad `as Whatever` after validation fails...
+      // without the catch we get a really nasty crash.
+      // nb - we now don't allow elements to exist if the schema doesn't validate, but wouldn't be too suprised if we end up back here at some point...
+      // will inevitably have some SNAFU somewhere.
+      // sorry future code user/maintainer if that is so.
+      return `Corrupt SpatialData.toString(): '${error}'`
+    }
   }
 
   toJSON() {
-    if (!this.parsed) return this;
-    return serializeZarrTree(this.parsed);
+    if (!this.rootStore.tree) return this;
+    return serializeZarrTree(this.rootStore.tree);
   }
 }
 
@@ -120,9 +123,10 @@ export async function readZarr(storeUrl: StoreLocation, selection?: ElementName[
   // todo: this should be able to handle a store directly, not just a url
   // then there are some downstream changes required for the models/loaders etc.
   // rather than `tryConsolidated` here, lets have some `zarrextra` function instead.
-  const result = await openExtraConsolidated(storeUrl);
+  const normalizedSource = storeUrl.replace(/\/+$/, ''); //it'll be normalized by zarrextra as well, but we need this version for SpatialData constructor
+  const result = await openExtraConsolidated(normalizedSource);
   if (result.ok) {
-    return new SpatialData(storeUrl, result.value, selection, onBadFiles);
+    return new SpatialData(normalizedSource, result.value, selection, onBadFiles);
   }
   throw new Error(`${result.error}`);
 }

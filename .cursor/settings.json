@@ -1,0 +1,15 @@
+{
+  // Note: Python environments are version-specific. Choose one:
+  // For spatialdata 0.5.0: python/v0.5.0/.venv/bin/python3
+  // For spatialdata 0.6.1: python/v0.6.1/.venv/bin/python3
+  "python.defaultInterpreterPath": "${workspaceFolder}/python/v0.6.1/.venv/bin/python3",
+  "python.terminal.activateEnvironment": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  },
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/python"
+  ]
+}
+

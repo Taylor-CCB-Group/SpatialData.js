@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Cache uv environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('python/v0.5.0/pyproject.toml', 'python/v0.6.1/pyproject.toml') }}
+
+      # Note: Version-specific environments are set up automatically by the fixture generation script
+      # No need to manually sync here unless you want to pre-warm the cache
+
+      - name: Generate test fixtures (Python spatialdata 0.5.0 and 0.6.1)
+        run: pnpm test:fixtures:generate
+
+      - name: Run unit tests
+        run: pnpm test:unit
+
+      - name: Run integration tests with local server
+        shell: bash
+        run: |
+          # Start test server in background
+          pnpm test:server &
+          SERVER_PID=$!
+
+          # Wait for server to be ready (up to ~30s)
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8080/ >/dev/null; then
+              echo "Test server is up"
+              break
+            fi
+            echo "Waiting for test server on http://localhost:8080/ ..."
+            sleep 1
+          done
+
+          # Run integration tests (will hit http://localhost:8080/…)
+          pnpm test:integration
+
+          # Clean up server
+          kill "$SERVER_PID" || true
