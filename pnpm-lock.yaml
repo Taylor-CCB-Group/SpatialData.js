@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@hms-dbmi/viv':
+      specifier: ^0.19.0
+      version: 0.19.0
     '@luma.gl/core':
       specifier: ~9.1.9
       version: 9.1.10
@@ -24,9 +27,6 @@ catalogs:
     '@vitejs/plugin-react':
       specifier: ^4.3.4
       version: 4.7.0
-    '@vivjs-experimental/viv':
-      specifier: ^1.0.1
-      version: 1.0.1
     anndata.js:
       specifier: ^0.0.2
       version: 0.0.2
@@ -230,6 +230,9 @@ importers:
 
   packages/vis:
     dependencies:
+      '@hms-dbmi/viv':
+        specifier: 'catalog:'
+        version: 0.19.0(9a614091add8d9561d5b393ea4eef7a1)
       '@luma.gl/core':
         specifier: 'catalog:'
         version: 9.1.10
@@ -248,9 +251,6 @@ importers:
       '@uiw/react-json-view':
         specifier: 2.0.0-alpha.39
         version: 2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
-      '@vivjs-experimental/viv':
-        specifier: 'catalog:'
-        version: 1.0.1(9a614091add8d9561d5b393ea4eef7a1)
       anndata.js:
         specifier: 'catalog:'
         version: 0.0.2
@@ -1840,6 +1840,9 @@ packages:
   '@hapi/topo@5.1.0':
     resolution: {integrity: sha512-foQZKJig7Ob0BMAYBfcJk8d77QtOe7Wo4ox7ff1lQYoNNAb6jwcY1ncdoy2e9wQZzvNy7ODZCYJkK8kzmcAnAg==}
 
+  '@hms-dbmi/viv@0.19.0':
+    resolution: {integrity: sha512-wH/GBjti9686xwuGnZp9sMwwkE6pLGRaRW3Qc27S/3GRwq5j6C9Fd3du12F4InFfle47GV2nv0X9mWO+wiRwsQ==}
+
   '@interactjs/types@1.10.27':
     resolution: {integrity: sha512-BUdv0cvs4H5ODuwft2Xp4eL8Vmi3LcihK42z0Ft/FbVJZoRioBsxH+LlsBdK4tAie7PqlKGy+1oyOncu1nQ6eA==}
 
@@ -2913,16 +2916,16 @@ packages:
   '@vitest/utils@3.2.4':
     resolution: {integrity: sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA==}
 
-  '@vivjs-experimental/constants@1.0.1':
-    resolution: {integrity: sha512-fVsQEMPAIL87AwPsWSD2KQVX1oHBCHgKh76+Q49pZ+d22viCD2qKBA9I86py4f5wcsTWaFc0mzH/TUXhjRXzDA==}
+  '@vivjs/constants@0.19.0':
+    resolution: {integrity: sha512-1X0cKfPGlFNscEgtXBhHsZu7BixMIq2cznZ1hNuvTnCtG7SDW9nsiAa3WrOMowDwYyzMFWkoaWmVcoJSdN0wkg==}
 
-  '@vivjs-experimental/extensions@1.0.1':
-    resolution: {integrity: sha512-2/FxSjRgAXve3qT54d96tmioCgPTmuKv0Ze4qKv+N+vwpZJzjCQJ2r8CEHjop1w+fvTtHq73361VCQdYePNYgw==}
+  '@vivjs/extensions@0.19.0':
+    resolution: {integrity: sha512-EHg7Y83+uv720micAaRjBh/Edw9lOq/uAfSQCbK0H4HBv7xUGzeXbCLmN/9ye8UgHWZd1cO6xvGDwBTQ7hp3gg==}
     peerDependencies:
       '@deck.gl/core': ~9.1.11
 
-  '@vivjs-experimental/layers@1.0.1':
-    resolution: {integrity: sha512-20zykmWCaiF0AJywOflAZUaMAeGmuLBS0gJUnqnht/CKiv9NYGaP1VvwzkUdSRMl7ytqmXmkcAmMUt1Kv6lNbQ==}
+  '@vivjs/layers@0.19.0':
+    resolution: {integrity: sha512-M8zdlPsO8zEpESDevBiAnuEg9kv+H25B38XLfpPzTZS78hA6VD4PRw08xh5GjRHlaCV6CVnnKYAQDrvYNufDkg==}
     peerDependencies:
       '@deck.gl/core': ~9.1.11
       '@deck.gl/geo-layers': ~9.1.11
@@ -2933,26 +2936,23 @@ packages:
       '@luma.gl/shadertools': ~9.1.9
       '@luma.gl/webgl': ~9.1.9
 
-  '@vivjs-experimental/loaders@1.0.1':
-    resolution: {integrity: sha512-7YLuKsc2fHxGSrYN3oI9unOzHQE8bc6175EKkdTKl/IbkZQOJ+RQtHpn13yQH35vHa46Ib0VhrioU36apAm/aA==}
+  '@vivjs/loaders@0.19.0':
+    resolution: {integrity: sha512-mCE2F8dih42hmIj96qYCPfvUqyNtuYlDKJa/i0LfT3Hrb5SclqgOpUrp4KW+C5Wy68O0P9c0ZIlmvWX0sMGJ8Q==}
 
-  '@vivjs-experimental/types@1.0.1':
-    resolution: {integrity: sha512-99qHIDP6o2FwkSeV9YB0ajO89ph9pP5Us+2Ks2jeC8stzjoXwnXATxuNX7r67/nu+tCSifzjgoSSrRnl2Zw1uQ==}
+  '@vivjs/types@0.19.0':
+    resolution: {integrity: sha512-936eBNXNmgSJUsfQ+iJcrC4oTVJS9vCb6J6I+TiSn7bymO0uKia+3yvLFN6cWGrjQiWo5hSTSh6ZV+ydiE4i5g==}
 
-  '@vivjs-experimental/viewers@1.0.1':
-    resolution: {integrity: sha512-vxqvTZ6kY2uGwXGuHckHBKbJXOKgP59tiqqDJ8BrIWpWy90wkYIyKTiwSc6o2sM4SzR6dB5QjzqELWspoH5c9w==}
+  '@vivjs/viewers@0.19.0':
+    resolution: {integrity: sha512-Y58b/4F9J3RjZjPG80GciikiWZHFyIncRHFsmVqpIdE/7ubTUJTvzI0ZdrT5Y6NoP7dxjevIrhfSWQGbmjgZJQ==}
     peerDependencies:
       '@deck.gl/react': ~9.1.11
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  '@vivjs-experimental/views@1.0.1':
-    resolution: {integrity: sha512-7m0F0SFbAm7HfzJCn9ofybIcRCNkJSHVVXb3upDiDxiWOD6PXPvKEpUWMb/kzxi1waaqZ9oM+mR1NBwBda2duA==}
+  '@vivjs/views@0.19.0':
+    resolution: {integrity: sha512-2jSH6mfHaFk1ovE5oFvS3fAdUaVqZGr14gY+HlEF7V4lASgALcJoVvA8oVJflHvUZIn8jiwOqfIcoF9t7/m5eg==}
     peerDependencies:
       '@deck.gl/core': ~9.1.11
       '@deck.gl/layers': ~9.1.11
-
-  '@vivjs-experimental/viv@1.0.1':
-    resolution: {integrity: sha512-HJAhRaD1tJiHQv6JRLENaPGFy66v7uOTh+TpV7+tsjcPi1FgsFnyzxBhdaHJUXYwi0em/aZO/r1LGdTa2zs/GQ==}
 
   '@volar/language-core@2.4.23':
     resolution: {integrity: sha512-hEEd5ET/oSmBC6pi1j6NaNYRWoAiDhINbT8rmwtINugR39loROSlufGdYMF9TaKGfz+ViGs1Idi3mAhnuPcoGQ==}
@@ -4280,9 +4280,6 @@ packages:
   eventemitter3@4.0.7:
     resolution: {integrity: sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw==}
 
-  eventemitter3@5.0.1:
-    resolution: {integrity: sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==}
-
   events@3.3.0:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
@@ -4950,6 +4947,7 @@ packages:
 
   jpeg-exif@1.1.4:
     resolution: {integrity: sha512-a+bKEcCjtuW5WTdgeXFzswSrdqi0jk4XlEtZlx5A94wCoBpFjfFTbo/Tra5SpNCl/YFZPvcV1dJc+TAYeg6ROQ==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -5605,10 +5603,6 @@ packages:
     resolution: {integrity: sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ==}
     engines: {node: '>=8'}
 
-  p-queue@7.4.1:
-    resolution: {integrity: sha512-vRpMXmIkYF2/1hLBKisKeVYJZ8S2tZ0zEAmIJgdVKP2nq0nh4qCdf8bgw+ZgKrkh71AOCaqzwbJJk1WtdcF3VA==}
-    engines: {node: '>=12'}
-
   p-retry@6.2.1:
     resolution: {integrity: sha512-hEt02O4hUct5wtwg4H4KcWgDdm+l1bOaEy/hWzd8xtXB9BqxTWBBhb+2ImAtH4Cv4rPjV76xN3Zumqk3k3AhhQ==}
     engines: {node: '>=16.17'}
@@ -5616,10 +5610,6 @@ packages:
   p-timeout@3.2.0:
     resolution: {integrity: sha512-rhIwUycgwwKcP9yTOOFK/AKsAopjjCakVqLHePO3CC6Mir1Z99xT+R63jZxAT5lFZLa2inS5h+ZS2GvR99/FBg==}
     engines: {node: '>=8'}
-
-  p-timeout@5.1.0:
-    resolution: {integrity: sha512-auFDyzzzGZZZdHz3BtET9VEz0SE/uMEAx7uWfGPucfzEwwe/xH0iVeZibQmANYE/hp9T2+UUZT5m+BKyrDp3Ew==}
-    engines: {node: '>=12'}
 
   package-json@8.1.1:
     resolution: {integrity: sha512-cbH9IAIJHNj9uXi196JVsRlt7cHKak6u/e6AkL/bkRelZ7rlL3X1YKxsZwa36xipOEKAsdtmaG6aAJoM1fx2zA==}
@@ -7335,10 +7325,6 @@ packages:
   yocto-queue@1.2.1:
     resolution: {integrity: sha512-AyeEbWOu/TAXdxlV9wmGcR0+yh2j3vYPGOECcIj2S7MkrLyC7ne+oye2BKTItt0ii2PHk4cDy+95+LshzbXnGg==}
     engines: {node: '>=12.20'}
-
-  zarr@0.6.3:
-    resolution: {integrity: sha512-v7g3i/NfLEHtGtCEX8zl9b/LMY+8BY7fIYvbNX3nskAhliMCY5mA12jlc8Rbe91hSwL/4Nh2d3fUcVmnthXQkQ==}
-    engines: {node: '>=12'}
 
   zarrita@0.5.1:
     resolution: {integrity: sha512-cyujP70BOl5DiXuLtM+0j9nq/pAov4SKXRYIQQOVnk2TfBg/jopX+FXLbqkq3ULOxFLB5AwkPbSp5KvZXoJrbQ==}
@@ -9767,6 +9753,27 @@ snapshots:
     dependencies:
       '@hapi/hoek': 9.3.0
 
+  '@hms-dbmi/viv@0.19.0(9a614091add8d9561d5b393ea4eef7a1)':
+    dependencies:
+      '@vivjs/constants': 0.19.0
+      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
+      '@vivjs/layers': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/loaders': 0.19.0
+      '@vivjs/types': 0.19.0
+      '@vivjs/viewers': 0.19.0(9a614091add8d9561d5b393ea4eef7a1)
+      '@vivjs/views': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+    transitivePeerDependencies:
+      - '@deck.gl/core'
+      - '@deck.gl/geo-layers'
+      - '@deck.gl/layers'
+      - '@deck.gl/react'
+      - '@luma.gl/constants'
+      - '@luma.gl/core'
+      - '@luma.gl/engine'
+      - '@luma.gl/shadertools'
+      - '@luma.gl/webgl'
+      - react
+
   '@interactjs/types@1.10.27': {}
 
   '@isaacs/balanced-match@4.0.1': {}
@@ -11171,16 +11178,16 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
-  '@vivjs-experimental/constants@1.0.1':
+  '@vivjs/constants@0.19.0':
     dependencies:
       '@luma.gl/constants': 9.1.10
 
-  '@vivjs-experimental/extensions@1.0.1(@deck.gl/core@9.1.15)':
+  '@vivjs/extensions@0.19.0(@deck.gl/core@9.1.15)':
     dependencies:
       '@deck.gl/core': 9.1.15
-      '@vivjs-experimental/constants': 1.0.1
+      '@vivjs/constants': 0.19.0
 
-  '@vivjs-experimental/layers@1.0.1(95853861a3a9bfb6cf4e0bb4f1c1545a)':
+  '@vivjs/layers@0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)':
     dependencies:
       '@deck.gl/core': 9.1.15
       '@deck.gl/geo-layers': 9.1.15(@deck.gl/core@9.1.15)(@deck.gl/extensions@9.1.15(@deck.gl/core@9.1.15)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10))))(@deck.gl/layers@9.1.15(@deck.gl/core@9.1.15)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10))))(@deck.gl/mesh-layers@9.1.15(@deck.gl/core@9.1.15)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10))))(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10)))
@@ -11192,31 +11199,31 @@ snapshots:
       '@luma.gl/webgl': 9.1.10(@luma.gl/core@9.1.10)
       '@math.gl/core': 4.1.0
       '@math.gl/culling': 4.1.0
-      '@vivjs-experimental/constants': 1.0.1
-      '@vivjs-experimental/extensions': 1.0.1(@deck.gl/core@9.1.15)
-      '@vivjs-experimental/loaders': 1.0.1
-      '@vivjs-experimental/types': 1.0.1
+      '@vivjs/constants': 0.19.0
+      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
+      '@vivjs/loaders': 0.19.0
+      '@vivjs/types': 0.19.0
 
-  '@vivjs-experimental/loaders@1.0.1':
+  '@vivjs/loaders@0.19.0':
     dependencies:
-      '@vivjs-experimental/types': 1.0.1
+      '@vivjs/types': 0.19.0
       geotiff: 2.1.3
       lzw-tiff-decoder: 0.1.1
       quickselect: 2.0.0
-      zarr: 0.6.3
+      zarrita: 0.5.4
       zod: 3.25.76
 
-  '@vivjs-experimental/types@1.0.1':
+  '@vivjs/types@0.19.0':
     dependencies:
-      '@vivjs-experimental/constants': 1.0.1
+      '@vivjs/constants': 0.19.0
       math.gl: 4.1.0
 
-  '@vivjs-experimental/viewers@1.0.1(9a614091add8d9561d5b393ea4eef7a1)':
+  '@vivjs/viewers@0.19.0(9a614091add8d9561d5b393ea4eef7a1)':
     dependencies:
       '@deck.gl/react': 9.1.15(@deck.gl/core@9.1.15)(@deck.gl/widgets@9.1.15(@deck.gl/core@9.1.15))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
-      '@vivjs-experimental/constants': 1.0.1
-      '@vivjs-experimental/extensions': 1.0.1(@deck.gl/core@9.1.15)
-      '@vivjs-experimental/views': 1.0.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/constants': 0.19.0
+      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
+      '@vivjs/views': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
       fast-deep-equal: 3.1.3
       react: 19.2.0
     transitivePeerDependencies:
@@ -11229,13 +11236,13 @@ snapshots:
       - '@luma.gl/shadertools'
       - '@luma.gl/webgl'
 
-  '@vivjs-experimental/views@1.0.1(95853861a3a9bfb6cf4e0bb4f1c1545a)':
+  '@vivjs/views@0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)':
     dependencies:
       '@deck.gl/core': 9.1.15
       '@deck.gl/layers': 9.1.15(@deck.gl/core@9.1.15)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10)))
       '@math.gl/core': 4.1.0
-      '@vivjs-experimental/layers': 1.0.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
-      '@vivjs-experimental/loaders': 1.0.1
+      '@vivjs/layers': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/loaders': 0.19.0
       math.gl: 4.1.0
     transitivePeerDependencies:
       - '@deck.gl/geo-layers'
@@ -11244,27 +11251,6 @@ snapshots:
       - '@luma.gl/engine'
       - '@luma.gl/shadertools'
       - '@luma.gl/webgl'
-
-  '@vivjs-experimental/viv@1.0.1(9a614091add8d9561d5b393ea4eef7a1)':
-    dependencies:
-      '@vivjs-experimental/constants': 1.0.1
-      '@vivjs-experimental/extensions': 1.0.1(@deck.gl/core@9.1.15)
-      '@vivjs-experimental/layers': 1.0.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
-      '@vivjs-experimental/loaders': 1.0.1
-      '@vivjs-experimental/types': 1.0.1
-      '@vivjs-experimental/viewers': 1.0.1(9a614091add8d9561d5b393ea4eef7a1)
-      '@vivjs-experimental/views': 1.0.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
-    transitivePeerDependencies:
-      - '@deck.gl/core'
-      - '@deck.gl/geo-layers'
-      - '@deck.gl/layers'
-      - '@deck.gl/react'
-      - '@luma.gl/constants'
-      - '@luma.gl/core'
-      - '@luma.gl/engine'
-      - '@luma.gl/shadertools'
-      - '@luma.gl/webgl'
-      - react
 
   '@volar/language-core@2.4.23':
     dependencies:
@@ -12717,8 +12703,6 @@ snapshots:
       require-like: 0.1.2
 
   eventemitter3@4.0.7: {}
-
-  eventemitter3@5.0.1: {}
 
   events@3.3.0: {}
 
@@ -14370,11 +14354,6 @@ snapshots:
       eventemitter3: 4.0.7
       p-timeout: 3.2.0
 
-  p-queue@7.4.1:
-    dependencies:
-      eventemitter3: 5.0.1
-      p-timeout: 5.1.0
-
   p-retry@6.2.1:
     dependencies:
       '@types/retry': 0.12.2
@@ -14384,8 +14363,6 @@ snapshots:
   p-timeout@3.2.0:
     dependencies:
       p-finally: 1.0.0
-
-  p-timeout@5.1.0: {}
 
   package-json@8.1.1:
     dependencies:
@@ -16311,11 +16288,6 @@ snapshots:
   yallist@4.0.0: {}
 
   yocto-queue@1.2.1: {}
-
-  zarr@0.6.3:
-    dependencies:
-      numcodecs: 0.2.2
-      p-queue: 7.4.1
 
   zarrita@0.5.1:
     dependencies:
