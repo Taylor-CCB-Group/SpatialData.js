@@ -1,8 +1,5 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
-// and this for condtional version of parquet-wasm...
-/// <reference types="vite/client" />
-
 import { tableFromIPC, type Table as ArrowTable } from 'apache-arrow';
 import type { DataSourceParams } from '../Vutils';
 import AnnDataSource from './VAnnDataSource';
@@ -23,8 +20,8 @@ async function getParquetModule() {
   // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
   //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
 
-  // Check if we're in a browser/vite dev server environment
-  if (import.meta.env?.DEV) {
+  // Check if we're in a browser/vite dev server environment (but not in tests)
+  if (import.meta.env?.DEV && import.meta.env.MODE !== 'test') {
     // Use CDN version in vite dev server (workaround for module loading issues)
     // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
     console.warn(
