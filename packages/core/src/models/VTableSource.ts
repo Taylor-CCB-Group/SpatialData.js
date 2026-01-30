@@ -20,26 +20,36 @@ async function getParquetModule() {
   // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
   //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
 
-  // Check if we're in a browser/vite dev server environment (but not in tests)
-  if (import.meta.env?.DEV && import.meta.env.MODE !== 'test') {
-    // Use CDN version in vite dev server (workaround for module loading issues)
+  // Try local import first (works in Node.js, tests, and production builds)
+  try {
+    const module = await import('parquet-wasm');
+    if (typeof module.default === 'function') {
+      await module.default();
+    }
+    return { readParquet: module.readParquet, readSchema: module.readSchema };
+  } catch (error) {
+    // Local import failed, try CDN fallback (needed in vite dev server)
     // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
     console.warn(
-      '[VTableSource] Using CDN version of parquet-wasm in vite dev server. ' +
-      'This is a temporary workaround pending a better parquet module solution.'
+      '[VTableSource] Local parquet-wasm import failed, falling back to CDN version. ' +
+      'This is a temporary workaround pending a better parquet module solution.',
+      error
     );
-    // @ts-ignore - CDN import not recognized by TypeScript
-    const module = await import(/* webpackIgnore: true */ 'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
-    await module.default();
-    return { readParquet: module.readParquet, readSchema: module.readSchema };
+    
+    try {
+      // @ts-ignore - CDN import not recognized by TypeScript
+      const cdnModule = await import('https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
+      await cdnModule.default();
+      return { readParquet: cdnModule.readParquet, readSchema: cdnModule.readSchema };
+    } catch (cdnError) {
+      // Both imports failed, throw an error
+      const localErrorMsg = error instanceof Error ? error.message : String(error);
+      const cdnErrorMsg = cdnError instanceof Error ? cdnError.message : String(cdnError);
+      throw new Error(
+        `Failed to load parquet-wasm from both local package and CDN. Local error: ${localErrorMsg}. CDN error: ${cdnErrorMsg}`
+      );
+    }
   }
-
-  // Use package import in Node.js or production builds
-  const module = await import('parquet-wasm');
-  if (typeof module.default === 'function') {
-    await module.default();
-  }
-  return { readParquet: module.readParquet, readSchema: module.readSchema };
 }
 
 /**
