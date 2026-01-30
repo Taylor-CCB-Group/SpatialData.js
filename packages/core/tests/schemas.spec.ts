@@ -6,10 +6,11 @@ import {
   pointsAttrsSchema,
   tableAttrsSchema,
   spatialDataSchema,
-} from '../../packages/core/src/schemas/index.js';
+} from '../src/schemas/index.js';
 
 describe('Schema Transformations', () => {
   describe('rasterAttrsSchema - version normalization', () => {
+    //TODO: invert this type...
     it('should normalize OME-NGFF 0.5 format (nested under ome) to internal format', () => {
       // Note: spatialdata_attrs.version is library version metadata (e.g., '0.6.1', '0.7.0')
       // Format detection is STRUCTURAL (presence of 'ome' key), not based on version
@@ -121,7 +122,7 @@ describe('Schema Transformations', () => {
     it('should validate translation transformation', () => {
       const transform = [
         {
-          type: 'translation' as const,
+          type: 'translation',
           translation: [10.0, 20.0],
         },
       ];
@@ -132,7 +133,7 @@ describe('Schema Transformations', () => {
     it('should validate affine transformation', () => {
       const transform = [
         {
-          type: 'affine' as const,
+          type: 'affine',
           affine: [
             [1, 0, 0],
             [0, 1, 0],
@@ -147,7 +148,7 @@ describe('Schema Transformations', () => {
     it('should validate identity transformation', () => {
       const transform = [
         {
-          type: 'identity' as const,
+          type: 'identity',
         },
       ];
 
@@ -157,10 +158,10 @@ describe('Schema Transformations', () => {
     it('should validate sequence transformation', () => {
       const transform = [
         {
-          type: 'sequence' as const,
+          type: 'sequence',
           transformations: [
-            { type: 'scale' as const, scale: [2.0, 2.0] },
-            { type: 'translation' as const, translation: [10.0, 10.0] },
+            { type: 'scale', scale: [2.0, 2.0] },
+            { type: 'translation', translation: [10.0, 10.0] },
           ],
         },
       ];
@@ -171,13 +172,13 @@ describe('Schema Transformations', () => {
     it('should validate transformations with coordinate system references', () => {
       const transform = [
         {
-          type: 'scale' as const,
+          type: 'scale',
           scale: [1.0, 2.0],
           input: {
             name: 'input_cs',
             axes: [
-              { name: 'x', type: 'space' as const },
-              { name: 'y', type: 'space' as const },
+              { name: 'x', type: 'space' },
+              { name: 'y', type: 'space' },
             ],
           },
           output: {
@@ -197,6 +198,22 @@ describe('Schema Transformations', () => {
 
       expect(() => coordinateTransformationSchema.parse(transform)).toThrow();
     });
+
+    // Tests from packages/core/src/index.test.ts
+    it('should validate coordinate transformation (from index.test.ts)', () => {
+      // coordinateTransformationSchema expects an array of transformations
+      const validTransforms = [
+        {
+          type: 'affine',
+          affine: [
+            [1, 0, 0],
+            [0, 1, 0],
+          ],
+        },
+      ];
+
+      expect(() => coordinateTransformationSchema.parse(validTransforms)).not.toThrow();
+    });
   });
 
   describe('shapesAttrsSchema', () => {
@@ -206,7 +223,7 @@ describe('Schema Transformations', () => {
         axes: ['x', 'y'],
         coordinateTransformations: [
           {
-            type: 'scale' as const,
+            type: 'scale',
             scale: [1.0, 1.0],
           },
         ],
@@ -302,6 +319,35 @@ describe('Schema Transformations', () => {
       };
 
       expect(() => spatialDataSchema.parse(metadata)).toThrow();
+    });
+
+    // Tests from packages/core/src/index.test.ts
+    it('should validate spatial data metadata (from index.test.ts)', () => {
+      // coordinateSystems values are arrays of transformations
+      const validMetadata = {
+        version: '0.1.0',
+        coordinateSystems: {
+          global: [
+            {
+              type: 'affine',
+              affine: [
+                [1, 0, 0],
+                [0, 1, 0],
+              ],
+            },
+          ],
+        },
+      };
+
+      expect(() => spatialDataSchema.parse(validMetadata)).not.toThrow();
+    });
+
+    it('should reject invalid spatial data metadata (from index.test.ts)', () => {
+      const invalidMetadata = {
+        version: 123, // should be string
+      };
+
+      expect(() => spatialDataSchema.parse(invalidMetadata)).toThrow();
     });
   });
 });

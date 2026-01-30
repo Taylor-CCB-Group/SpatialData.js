@@ -22,3 +22,4 @@ catalog:
   vitest: ^3.1.4
   zarrita: ^0.5.4
   zod: ^4.1.13
+  jsdom: ^27.4.0
