@@ -101,7 +101,7 @@ def test_load():
     try:
         print("Loading dataset...", file=sys.stderr, flush=True)
         # Try to read the dataset
-        sdata = sd.read_zarr("{dataset['url']}")
+        sdata = sd.read_zarr("{json.dumps(dataset['url'])}")
 
         # Extract basic info
         elements = {{}}
@@ -257,7 +257,7 @@ def generate_markdown_table(results: list[ValidationResult]) -> str:
             lines.append("")
 
             if result.success:
-                lines.append(f"**Status:** ✅ Success")
+                lines.append("**Status:** ✅ Success")
                 lines.append("")
 
                 if result.elements:
@@ -273,11 +273,11 @@ def generate_markdown_table(results: list[ValidationResult]) -> str:
                     lines.append(f"**Coordinate Systems:** {', '.join(result.coordinate_systems)}")
                     lines.append("")
             else:
-                lines.append(f"**Status:** ❌ Failed")
+                lines.append("**Status:** ❌ Failed")
                 lines.append("")
                 lines.append(f"**Error Type:** `{result.error_type}`")
                 lines.append("")
-                lines.append(f"**Error Message:**")
+                lines.append("**Error Message:**")
                 lines.append("```")
                 lines.append(result.error_message or "No error message")
                 lines.append("```")
