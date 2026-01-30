@@ -40,8 +40,8 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
   // Open root for resolving array paths later
   // this is throwing when I try to open http://localhost:8081/?url=https://s3.embl.de/spatialdata/spatialdata-sandbox/xenium_rep2_io.zarr
   // it gets to `open_group_v2`, `throw new NodeNotFoundError("v2 group", ...)`
-  // ... but also, if I open that sample with python spatialdata 0.6.1 or 0.5.0, it also fails, in different ways.
-  // thinking about compiling a table of results from the examples on the website...
+  // actually, multiple errors are thrown internally as it tries both v2 & v3 open, and we end up with a somewhat arbitrary error
+  // nb, downloading that xenium_rep2_io & opening from local server is ok.
   const root = await zarr.open(store, { kind: 'group' });
   
   const tree: ZarrTree = {};
