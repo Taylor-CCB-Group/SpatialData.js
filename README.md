@@ -184,6 +184,8 @@ The server provides directory listings and serves all zarr metadata files with a
 
 The CORS proxy server allows accessing spatialdata stores that don't have CORS headers enabled. This is useful for local development when testing against remote stores.
 
+**Standalone Usage:**
+
 ```bash
 # Start the CORS proxy server (runs on http://localhost:8081)
 pnpm test:proxy
@@ -191,9 +193,9 @@ pnpm test:proxy
 
 **Usage:**
 
-Proxy a remote URL by encoding it directly in the path:
+Proxy a remote URL using query parameter:
 ```
-http://localhost:8081/https://example.com/data.zarr/.zattrs
+http://localhost:8081/?url=https://example.com/data.zarr/.zattrs
 ```
 
 **Example:**
@@ -206,53 +208,19 @@ import { readZarr } from '@spatialdata/core';
 // Instead of:
 // const sdata = await readZarr('https://example.com/mydata.zarr');
 
-// Use the proxy (path-based form):
-const sdata = await readZarr('http://localhost:8081/https://example.com/mydata.zarr');
+// Use the proxy (query parameter form):
+const sdata = await readZarr('http://localhost:8081/?url=https://example.com/mydata.zarr');
 ```
+
+**Automatic Proxy Management:**
+
+The validation script (`pnpm validate:datasets:js`) automatically manages its own proxy server. The proxy is started at the beginning of validation and stopped when complete, so you don't need to run it separately.
 
 **⚠️ Warning:** The CORS proxy is for local development only. It has no security restrictions and should never be exposed to the internet.
 
 ### Dataset Validation
 
-**⚠️ Note, the results from this may indicate a number of failures in python due to not being able to open the remote stores.**
-
-The project includes scripts to validate dataset compatibility across different versions of the spatialdata library and the JavaScript implementation.
-
-
-#### Validating with Python
-
-Test publicly available datasets with all Python versions (0.5.0, 0.6.1, and 0.7.0):
-
-```bash
-# Validate all datasets with all Python versions
-pnpm validate:datasets
-
-# Validate with a specific version only
-pnpm validate:datasets:0.5.0
-pnpm validate:datasets:0.6.1
-pnpm validate:datasets:0.7.0
-
-# Validate a specific dataset
-pnpm validate:datasets -- --dataset "Xenium"
-
-# Output to a file
-pnpm validate:datasets -- --output-file validation-results.md
-
-# Generate CSV output
-pnpm validate:datasets -- --output-format csv --output-file results.csv
-
-# Generate JSON output (useful for programmatic comparison)
-pnpm validate:datasets -- --output-format json --output-file results.json
-
-# Control parallel processing (default: 4 workers)
-pnpm validate:datasets -- --workers 8
-pnpm validate:datasets -- --no-parallel  # Sequential processing
-
-# Show detailed progress (verbose mode)
-pnpm validate:datasets -- --verbose
-```
-
-**Performance Note:** The validation uses parallel processing by default (4 workers) to speed things up. Most time is spent importing the spatialdata library rather than downloading datasets. You can adjust the number of workers with `--workers N` or disable parallelism entirely with `--no-parallel`.
+The project includes a script to validate dataset compatibility with the JavaScript implementation using publicly available spatialdata datasets.
 
 #### Validating with JavaScript
 
@@ -268,22 +236,15 @@ pnpm validate:datasets:js
 # Validate a specific dataset
 pnpm validate:datasets:js -- --dataset "Xenium"
 
-# Use the CORS proxy (make sure it's running first: pnpm test:proxy)
-pnpm validate:datasets:js -- --use-proxy
-
 # Output to a file
 pnpm validate:datasets:js -- --output-file validation-results-js.md
-
-# Compare with Python results
-pnpm validate:datasets -- --output-format json --output-file python-results.json
-pnpm validate:datasets:js -- --compare-python python-results.json --output-file comparison.md
 ```
 
-**Note:** The JavaScript validation may require the CORS proxy for datasets without CORS headers. Start it with `pnpm test:proxy` before running the validation.
+**Note:** The validation script automatically starts its own CORS proxy server, uses it for all requests, and shuts it down when validation completes. You don't need to run `pnpm test:proxy` separately.
 
 #### Understanding the Results
 
-The validation scripts generate a table showing which datasets work with each version:
+The validation script generates a table showing which datasets work with the JavaScript implementation:
 
 - ✅ Success: Dataset loaded successfully
 - ❌ Failed: Dataset could not be loaded
@@ -295,31 +256,24 @@ The detailed results include:
 - Error messages for failures
 
 This is useful for:
-- Understanding baseline compatibility before testing the JS implementation
-- Identifying version-specific issues
+- Testing compatibility of the JavaScript implementation with real-world datasets
+- Identifying issues with specific datasets
 - Tracking which datasets are known to work or fail
 
-#### Comprehensive Validation Workflow
+#### Output Formats
 
-For a complete validation of all datasets across all implementations, use the all-in-one workflow:
+The validation script supports multiple output formats:
 
 ```bash
-# Run complete validation workflow
-# This will:
-#   1. Test all datasets with Python v0.5.0, v0.6.1, and v0.7.0
-#   2. Build the packages (if needed)
-#   3. Test all datasets with JavaScript
-#   4. Generate comparison reports
-pnpm validate:all
+# Markdown (default) - Human-readable report
+pnpm validate:datasets:js -- --output-format markdown --output-file results.md
+
+# JSON - Machine-readable results
+pnpm validate:datasets:js -- --output-format json --output-file results.json
+
+# CSV - Spreadsheet-friendly format
+pnpm validate:datasets:js -- --output-format csv --output-file results.csv
 ```
-
-Results are saved in `validation-results/<timestamp>/` with:
-- `python-results.md` - Python validation results
-- `comparison-report.md` - Side-by-side comparison of Python and JS results
-- `python-results.json` - Raw Python results (for programmatic use)
-- `js-results.json` - Raw JavaScript results (for programmatic use)
-
-A symlink `validation-results/latest/` always points to the most recent run.
 
 
 ## 📝 License

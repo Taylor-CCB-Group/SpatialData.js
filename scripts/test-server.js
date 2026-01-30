@@ -161,7 +161,7 @@ server.listen(PORT, () => {
   console.log(`Test fixture server running at http://localhost:${PORT}`);
   console.log(`Serving fixtures from: ${fixturesDir}`);
   console.log(`\nAccess fixtures at: http://localhost:${PORT}/test-fixtures/`);
-  console.log(`Press Ctrl+C to stop\n`);
+  console.log('Press Ctrl+C to stop\n');
 });
 
 // Handle graceful shutdown

@@ -10,14 +10,15 @@
  */
 
 import { createServer } from 'node:http';
-import { URL } from 'node:url';
+import { URL, fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 const PORT = process.env.PORT || 8081;
 
 /**
  * Add CORS headers to a response
  */
-function addCorsHeaders(res) {
+export function addCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS, POST, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', '*');
@@ -28,7 +29,7 @@ function addCorsHeaders(res) {
 /**
  * Handle OPTIONS preflight requests
  */
-function handleOptions(req, res) {
+export function handleOptions(req, res) {
   addCorsHeaders(res);
   res.writeHead(200);
   res.end();
@@ -37,7 +38,7 @@ function handleOptions(req, res) {
 /**
  * Proxy a request to the target URL
  */
-async function proxyRequest(req, res, targetUrl) {
+export async function proxyRequest(req, res, targetUrl) {
   try {
     const url = new URL(targetUrl);
     
@@ -121,7 +122,7 @@ async function proxyRequest(req, res, targetUrl) {
 /**
  * Handle HTTP request
  */
-async function handleRequest(req, res) {
+export async function handleRequest(req, res) {
   // Handle OPTIONS preflight
   if (req.method === 'OPTIONS') {
     handleOptions(req, res);
@@ -163,23 +164,69 @@ async function handleRequest(req, res) {
   }
 }
 
-// Create and start server
-const server = createServer(handleRequest);
-
-server.listen(PORT, () => {
-  console.log(`CORS proxy server running at http://localhost:${PORT}`);
-  console.log('\nUsage:');
-  console.log(`  GET http://localhost:${PORT}/?url=<target-url>`);
-  console.log(`  Example: http://localhost:${PORT}/?url=https://example.com/data.zarr/.zattrs`);
-  console.log('\nPress Ctrl+C to stop\n');
-});
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\nShutting down proxy server...');
-  server.close(() => {
-    console.log('Proxy server stopped');
-    process.exit(0);
+/**
+ * Create a CORS proxy server
+ * @param {number} port - Port to listen on
+ * @returns {Promise<import('http').Server>} The HTTP server
+ */
+export function createProxyServer(port = 8081) {
+  const server = createServer(handleRequest);
+  
+  return new Promise((resolve, reject) => {
+    server.on('error', (err) => {
+      reject(err);
+    });
+    
+    server.listen(port, () => {
+      resolve(server);
+    });
   });
-});
+}
+
+/**
+ * Start a proxy server and return its base URL
+ * @param {number} port - Port to start on (will try next port if in use)
+ * @returns {Promise<{server: import('http').Server, baseUrl: string}>}
+ */
+export async function startProxyServer(port = 8081) {
+  try {
+    const server = await createProxyServer(port);
+    // Get the actual port (in case it was changed due to port conflict)
+    const actualPort = server.address()?.port || port;
+    const baseUrl = `http://localhost:${actualPort}`;
+    return { server, baseUrl };
+  } catch (error) {
+    // If port is in use, try next port
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Port ${port} is in use, trying ${port + 1}...`);
+      return startProxyServer(port + 1);
+    }
+    throw error;
+  }
+}
+
+// If running as a standalone script, start the server
+// Check if this file is being run directly (not imported)
+const __filename = fileURLToPath(import.meta.url);
+const isMainModule = process.argv[1] && resolve(process.argv[1]) === __filename;
+
+if (isMainModule) {
+  const server = await createProxyServer(PORT);
+  const actualPort = server.address()?.port || PORT;
+  
+  console.log(`CORS proxy server running at http://localhost:${actualPort}`);
+  console.log('\nUsage:');
+  console.log(`  GET http://localhost:${actualPort}/?url=<target-url>`);
+  console.log(`  Example: http://localhost:${actualPort}/?url=https://example.com/data.zarr/.zattrs`);
+  console.log('\nPress Ctrl+C to stop\n');
+
+  // Handle graceful shutdown
+  process.on('SIGINT', () => {
+    console.log('\nShutting down proxy server...');
+    server.close(() => {
+      console.log('Proxy server stopped');
+      process.exit(0);
+    });
+  });
+}
 

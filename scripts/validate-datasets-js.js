@@ -9,6 +9,7 @@
 import { readZarr } from '../packages/core/dist/index.js';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { startProxyServer } from './cors-proxy.js';
 
 // Dataset definitions from https://spatialdata.scverse.org/en/stable/tutorials/notebooks/datasets/README.html
 const DATASETS = [
@@ -57,7 +58,7 @@ const DATASETS = [
 /**
  * Validate a single dataset
  */
-async function validateDataset(dataset, useProxy = false) {
+async function validateDataset(dataset, proxyBaseUrl = null) {
   const result = {
     datasetName: dataset.name,
     datasetUrl: dataset.url,
@@ -70,9 +71,9 @@ async function validateDataset(dataset, useProxy = false) {
   };
 
   try {
-    // Use proxy if requested
-    const url = useProxy
-      ? `http://localhost:8081/?url=${encodeURIComponent(dataset.url)}`
+    // Use proxy if provided
+    const url = proxyBaseUrl
+      ? `${proxyBaseUrl}/?url=${encodeURIComponent(dataset.url)}`
       : dataset.url;
 
     // Try to read the dataset
@@ -116,7 +117,7 @@ async function validateDataset(dataset, useProxy = false) {
 /**
  * Generate a markdown table from validation results
  */
-function generateMarkdownTable(results, pythonResults = null) {
+function generateMarkdownTable(results) {
   const lines = [];
 
   lines.push('# SpatialData Dataset Compatibility Report (JavaScript)');
@@ -124,40 +125,13 @@ function generateMarkdownTable(results, pythonResults = null) {
   lines.push('## Summary');
   lines.push('');
 
-  // If we have Python results, show comparison
-  if (pythonResults) {
-    lines.push('| Dataset | JS | Python v0.5.0 | Python v0.6.1 | Python v0.7.0 | URL |');
-    lines.push('|---------|-------|---------------|---------------|---------------|-----|');
+  lines.push('| Dataset | Status | URL |');
+  lines.push('|---------|--------|-----|');
 
-    const pythonResultsByDataset = {};
-    for (const r of pythonResults) {
-      if (!pythonResultsByDataset[r.dataset_name]) {
-        pythonResultsByDataset[r.dataset_name] = {};
-      }
-      pythonResultsByDataset[r.dataset_name][r.spatialdata_version] = r;
-    }
-
-    for (const result of results) {
-      const jsStatus = result.success ? '✅' : '❌';
-      const py050 = pythonResultsByDataset[result.datasetName]?.['0.5.0'];
-      const py061 = pythonResultsByDataset[result.datasetName]?.['0.6.1'];
-      const py070 = pythonResultsByDataset[result.datasetName]?.['0.7.0'];
-      const py050Status = py050 ? (py050.success ? '✅' : '❌') : '⏭️';
-      const py061Status = py061 ? (py061.success ? '✅' : '❌') : '⏭️';
-      const py070Status = py070 ? (py070.success ? '✅' : '❌') : '⏭️';
-
-      const urlShort = result.datasetUrl.split('spatialdata-sandbox/')[1] || result.datasetUrl;
-      lines.push(`| ${result.datasetName} | ${jsStatus} | ${py050Status} | ${py061Status} | ${py070Status} | \`${urlShort}\` |`);
-    }
-  } else {
-    lines.push('| Dataset | Status | URL |');
-    lines.push('|---------|--------|-----|');
-
-    for (const result of results) {
-      const status = result.success ? '✅' : '❌';
-      const urlShort = result.datasetUrl.split('spatialdata-sandbox/')[1] || result.datasetUrl;
-      lines.push(`| ${result.datasetName} | ${status} | \`${urlShort}\` |`);
-    }
+  for (const result of results) {
+    const status = result.success ? '✅' : '❌';
+    const urlShort = result.datasetUrl.split('spatialdata-sandbox/')[1] || result.datasetUrl;
+    lines.push(`| ${result.datasetName} | ${status} | \`${urlShort}\` |`);
   }
 
   lines.push('');
@@ -227,8 +201,6 @@ function parseArgs() {
     dataset: null,
     outputFormat: 'markdown',
     outputFile: null,
-    useProxy: false,
-    comparePython: null,
   };
 
   for (let i = 2; i < process.argv.length; i++) {
@@ -240,10 +212,6 @@ function parseArgs() {
       args.outputFormat = process.argv[++i];
     } else if (arg === '--output-file' && i + 1 < process.argv.length) {
       args.outputFile = process.argv[++i];
-    } else if (arg === '--use-proxy') {
-      args.useProxy = true;
-    } else if (arg === '--compare-python' && i + 1 < process.argv.length) {
-      args.comparePython = process.argv[++i];
     } else if (arg === '--help') {
       console.log(`
 Usage: node validate-datasets-js.js [options]
@@ -252,9 +220,9 @@ Options:
   --dataset <name>           Test only dataset matching this name
   --output-format <format>   Output format: markdown, csv, json (default: markdown)
   --output-file <path>       Write output to file instead of stdout
-  --use-proxy                Use CORS proxy (http://localhost:8081)
-  --compare-python <file>    Compare with Python results JSON file
   --help                     Show this help message
+
+Note: The script automatically starts and manages a CORS proxy server for all requests.
       `);
       process.exit(0);
     }
@@ -286,11 +254,19 @@ async function main() {
     }
   }
 
-  // Warn if using proxy
-  if (args.useProxy) {
-    console.error('Using CORS proxy at http://localhost:8081');
-    console.error('Make sure the proxy is running: pnpm test:proxy');
+  // Start proxy server automatically
+  console.error('Starting CORS proxy server...');
+  let proxyServer = null;
+  let proxyBaseUrl = null;
+  try {
+    const proxy = await startProxyServer();
+    proxyServer = proxy.server;
+    proxyBaseUrl = proxy.baseUrl;
+    console.error(`✓ Proxy server running at ${proxyBaseUrl}`);
     console.error('');
+  } catch (error) {
+    console.error(`Failed to start proxy server: ${error.message}`);
+    process.exit(1);
   }
 
   // Run validation
@@ -303,7 +279,7 @@ async function main() {
     current++;
     console.error(`[${current}/${datasets.length}] Testing ${dataset.name}...`);
 
-    const result = await validateDataset(dataset, args.useProxy);
+    const result = await validateDataset(dataset, proxyBaseUrl);
     results.push(result);
 
     const status = result.success ? '✅' : '❌';
@@ -315,23 +291,10 @@ async function main() {
 
   console.error('\nValidation complete!\n');
 
-  // Load Python results if requested
-  let pythonResults = null;
-  if (args.comparePython) {
-    try {
-      const fs = await import('node:fs');
-      const data = fs.readFileSync(args.comparePython, 'utf-8');
-      pythonResults = JSON.parse(data);
-      console.error(`Loaded Python results from ${args.comparePython}\n`);
-    } catch (error) {
-      console.error(`Warning: Could not load Python results: ${error.message}`);
-    }
-  }
-
   // Generate output
   let output;
   if (args.outputFormat === 'markdown') {
-    output = generateMarkdownTable(results, pythonResults);
+    output = generateMarkdownTable(results);
   } else if (args.outputFormat === 'csv') {
     // Simple CSV generation
     const lines = ['Dataset Name,Dataset URL,Implementation,Success,Error Type,Error Message,Elements,Coordinate Systems'];
@@ -356,6 +319,15 @@ async function main() {
   } else {
     console.log(output);
   }
+
+  // Shutdown proxy server
+  console.error('\nShutting down proxy server...');
+  await new Promise((resolve) => {
+    proxyServer.close(() => {
+      console.error('✓ Proxy server stopped');
+      resolve();
+    });
+  });
 }
 
 main().catch(error => {
