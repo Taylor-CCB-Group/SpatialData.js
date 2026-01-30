@@ -39,12 +39,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('python/v0.5.0/pyproject.toml', 'python/v0.6.1/pyproject.toml') }}
+          # could be overkill always running all versions in CI, may review in future.
+          key: ${{ runner.os }}-uv-${{ hashFiles('python/v0.5.0/pyproject.toml', 'python/v0.6.1/pyproject.toml', 'python/v0.7.0/pyproject.toml') }}
 
       # Note: Version-specific environments are set up automatically by the fixture generation script
       # No need to manually sync here unless you want to pre-warm the cache
 
-      - name: Generate test fixtures (Python spatialdata 0.5.0 and 0.6.1)
+      - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.0)
         run: pnpm test:fixtures:generate
 
       - name: Run unit tests
@@ -53,19 +54,32 @@ jobs:
       - name: Run integration tests with local server
         shell: bash
         run: |
+          # Verify fixtures exist before starting server
+          if [ ! -d "test-fixtures/v0.5.0/blobs.zarr" ]; then
+            echo "Error: Fixtures not found at test-fixtures/v0.5.0/blobs.zarr"
+            echo "Listing test-fixtures directory:"
+            ls -la test-fixtures/ || echo "test-fixtures directory does not exist"
+            exit 1
+          fi
+          
           # Start test server in background
           pnpm test:server &
           SERVER_PID=$!
 
           # Wait for server to be ready (up to ~30s)
+          # Check both root and a fixture path to ensure server is fully ready
           for i in {1..30}; do
-            if curl -sSf http://localhost:8080/ >/dev/null; then
-              echo "Test server is up"
+            if curl -sSf http://localhost:8080/ >/dev/null && \
+               curl -sSf http://localhost:8080/v0.5.0/blobs.zarr/zmetadata >/dev/null; then
+              echo "Test server is up and serving fixtures"
               break
             fi
             echo "Waiting for test server on http://localhost:8080/ ..."
             sleep 1
           done
+
+          # Small additional delay to ensure server is fully ready
+          sleep 2
 
           # Run integration tests (will hit http://localhost:8080/…)
           pnpm test:integration
