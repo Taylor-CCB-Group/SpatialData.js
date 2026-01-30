@@ -6,7 +6,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: [
-      'tests/**/*.test.ts',        // Integration tests
+      'tests/**/*.test.ts',        // Integration tests (run via test:integration)
       'packages/**/*.spec.ts',     // Package unit tests (.spec.ts)
       'packages/**/*.spec.tsx',   // Package unit tests for React (.spec.tsx)
     ],
