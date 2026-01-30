@@ -1,5 +1,8 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
+// and this for condtional version of parquet-wasm...
+/// <reference types="vite/client" />
+
 import { tableFromIPC, type Table as ArrowTable } from 'apache-arrow';
 import type { DataSourceParams } from '../Vutils';
 import AnnDataSource from './VAnnDataSource';
@@ -15,23 +18,30 @@ async function getParquetModule() {
   // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
   // that needs to be initialized before use in browser environments.
   // In Node.js, the module loads WASM synchronously so no init is needed.
-  // (^^^ but why would it be invoked in node.js in the current version?)
-  //!!!!! broken in vite dev server, but not in build?
-  //we need an easy non-dev build to verify
-  //but we also need to fix this...
-  //- probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
-  //  think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
   // 
-  // const module = await import('parquet-wasm');
-  // if (typeof module.default === 'function') {
-  //   await module.default();
-  // }
+  // TODO: Replace with a more civilised parquet module that's built in a way we can actually consume.
+  // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
+  //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
 
-  // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
-  // TODO: host somewhere we control, like cdn.vitessce.io?
-  // @ts-ignore
-  const module = await import(/* webpackIgnore: true */ 'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
-  await module.default();
+  // Check if we're in a browser/vite dev server environment
+  if (import.meta.env?.DEV) {
+    // Use CDN version in vite dev server (workaround for module loading issues)
+    // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
+    console.warn(
+      '[VTableSource] Using CDN version of parquet-wasm in vite dev server. ' +
+      'This is a temporary workaround pending a better parquet module solution.'
+    );
+    // @ts-ignore - CDN import not recognized by TypeScript
+    const module = await import(/* webpackIgnore: true */ 'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
+    await module.default();
+    return { readParquet: module.readParquet, readSchema: module.readSchema };
+  }
+
+  // Use package import in Node.js or production builds
+  const module = await import('parquet-wasm');
+  if (typeof module.default === 'function') {
+    await module.default();
+  }
   return { readParquet: module.readParquet, readSchema: module.readSchema };
 }
 
