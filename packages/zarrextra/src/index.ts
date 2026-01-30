@@ -2,6 +2,7 @@ import * as zarr from 'zarrita';
 import type { ZarrTree, ConsolidatedStore, ZAttrsAny, IntermediateConsolidatedStore, ZarrV2Metadata, ZarrV3Metadata, ZarrV3GroupNode, ZarrV3ArrayNode } from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
 import { Err, Ok, type Result } from './result';
+import { validateAndConvertV2Zarray, validateV3Zarray } from './zarrSchema';
 
 /**
  * As of this writing, this returns a nested object, leaf nodes have async functions that return the zarr array.
@@ -107,6 +108,7 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
  * Parse zarr v3 consolidated metadata from zarr.json
  * The actual zarr v3 structure has metadata nested under consolidated_metadata.metadata
  * We normalize it to have a top-level metadata field for internal use.
+ * Validates all array nodes in the metadata.
  */
 async function parseZarrJson(zarrJson: unknown): Promise<Result<ZarrV3Metadata, Error>> {
   if (!zarrJson || typeof zarrJson !== 'object') {
@@ -124,9 +126,24 @@ async function parseZarrJson(zarrJson: unknown): Promise<Result<ZarrV3Metadata, 
     return Err(new Error('Invalid zarr.json: consolidated_metadata.metadata field is missing or not an object'));
   }
   
-  // Return the parsed structure as-is (it matches our type definition)
+  // Validate all array nodes in the metadata
+  const metadata = parsed.consolidated_metadata.metadata;
+  for (const [path, node] of Object.entries(metadata)) {
+    if (node && typeof node === 'object' && 'node_type' in node && node.node_type === 'array') {
+      try {
+        // Validate the array node and replace it with the validated version
+        const validatedNode = validateV3Zarray(node, path);
+        metadata[path] = validatedNode;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return Err(new Error(`Failed to validate v3 zarray metadata at path '${path}': ${errorMessage}`));
+      }
+    }
+  }
+  
   return Ok(parsed);
 }
+
 
 /**
  * Normalize zarr v2 flat metadata to v3 structure
@@ -177,31 +194,24 @@ function normalizeV2ToV3Metadata(v2Metadata: ZarrV2Metadata): ZarrV3Metadata {
   // Convert grouped paths to v3 node structure
   for (const [path, group] of pathGroups.entries()) {
     if (group.zarray) {
-      // Array node - use zarray metadata as the base
-      const zarray = group.zarray as Record<string, unknown>;
-      metadata[path] = {
-        shape: (zarray.shape as number[]) || [],
-        data_type: (zarray.data_type as string) || 'float64',
-        chunk_grid: (zarray.chunk_grid as ZarrV3ArrayNode['chunk_grid']) || {
-          name: 'regular',
-          configuration: { chunk_shape: [] }
-        },
-        chunk_key_encoding: (zarray.chunk_key_encoding as ZarrV3ArrayNode['chunk_key_encoding']) || {
-          name: 'default',
-          configuration: { separator: '/' }
-        },
-        fill_value: (zarray.fill_value as number | string | boolean) || 0,
-        codecs: (zarray.codecs as ZarrV3ArrayNode['codecs']) || [],
-        attributes: (group.zattrs as Record<string, unknown>) || {},
-        dimension_names: (zarray.dimension_names as string[]) || [],
-        zarr_format: (zarray.zarr_format as number) || 3,
-        node_type: 'array',
-        storage_transformers: (zarray.storage_transformers as unknown[]) || []
-      };
+      // Array node - validate and convert v2 zarray metadata
+      try {
+        const arrayNode = validateAndConvertV2Zarray(group.zarray, path);
+        // Merge attributes from zattrs if present
+        if (group.zattrs && typeof group.zattrs === 'object') {
+          arrayNode.attributes = group.zattrs as Record<string, unknown>;
+        }
+        metadata[path] = arrayNode;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to normalize v2 zarray metadata at path '${path}': ${errorMessage}`);
+      }
     } else {
       // Group node
       metadata[path] = {
-        attributes: (group.zattrs as Record<string, unknown>) || {},
+        attributes: (group.zattrs && typeof group.zattrs === 'object') 
+          ? (group.zattrs as Record<string, unknown>) 
+          : {},
         zarr_format: 3,
         consolidated_metadata: {
           kind: 'inline',
@@ -244,7 +254,9 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
   // First, try zarr.json (v3 format)
   try {
     const zarrJsonPath = `${baseUrl.replace(/\/+$/, '')}/zarr.json`;
-    const zarrJson = await (await fetch(zarrJsonPath)).json();
+    const response = await fetch(zarrJsonPath);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const zarrJson = await response.json();
     const parseResult = await parseZarrJson(zarrJson);
     
     if (!parseResult.ok) {

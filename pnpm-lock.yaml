@@ -303,6 +303,9 @@ importers:
       zarrita:
         specifier: 'catalog:'
         version: 0.5.4
+      zod:
+        specifier: 'catalog:'
+        version: 4.1.13
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
