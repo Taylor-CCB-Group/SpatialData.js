@@ -35,7 +35,7 @@ function ensureFixtures(version: string): string {
 }
 
 // Test matrix for different spatialdata versions
-const versions = ['0.5.0', '0.6.1'] as const;
+const versions = ['0.5.0', '0.6.1', '0.7.0'] as const;
 
 describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
   let fixturePath: string;
@@ -132,9 +132,10 @@ describe.each(versions)('Integration Tests - spatialdata v%s', (version) => {
 });
 
 describe('Fixture Generation', () => {
-  it('should generate fixtures for both versions', () => {
+  it('should generate fixtures for all versions', () => {
     const v050Path = join(projectRoot, 'test-fixtures', 'v0.5.0', 'blobs.zarr');
     const v061Path = join(projectRoot, 'test-fixtures', 'v0.6.1', 'blobs.zarr');
+    const v070Path = join(projectRoot, 'test-fixtures', 'v0.7.0', 'blobs.zarr');
     
     // Try to generate if missing
     if (!existsSync(v050Path)) {
@@ -147,10 +148,16 @@ describe('Fixture Generation', () => {
     } else {
       console.log('using existing fixture for 0.6.1');
     }
+    if (!existsSync(v070Path)) {
+      ensureFixtures('0.7.0');
+    } else {
+      console.log('using existing fixture for 0.7.0');
+    }
     
     // Check that directories exist (even if generation failed, we want to know)
     expect(existsSync(join(projectRoot, 'test-fixtures', 'v0.5.0'))).toBe(true);
     expect(existsSync(join(projectRoot, 'test-fixtures', 'v0.6.1'))).toBe(true);
-  }, 60000); // 60 second timeout for generating both versions
+    expect(existsSync(join(projectRoot, 'test-fixtures', 'v0.7.0'))).toBe(true);
+  }, 90000); // 90 second timeout for generating all versions
 });
 

@@ -86,7 +86,10 @@ uv sync --directory python/v0.5.0
 # Set up environment for spatialdata 0.6.1
 uv sync --directory python/v0.6.1
 
-# Or set up both at once (the fixture generation script will do this automatically)
+# Set up environment for spatialdata 0.7.0
+uv sync --directory python/v0.7.0
+
+# Or set up all at once (the fixture generation script will do this automatically)
 ```
 
 Each environment:
@@ -95,6 +98,10 @@ Each environment:
 - Is isolated from other versions (no shared base environment)
 
 **Note:** The fixture generation script automatically sets up these environments when needed. You only need to manually sync if you want to activate an environment directly or use it in your editor.
+
+**Version Mapping:**
+- **spatialdata 0.5.0** uses **OME-NGFF 0.4** format (multiscales at top level) in **zarr v2** stores (consolidated `zmetadata`)
+- **spatialdata 0.6.0+** uses **OME-NGFF 0.5** format (multiscales nested under `ome` key) in **zarr v3** stores (consolidated `zarr.json`)
 
 #### Editor Setup
 
@@ -105,11 +112,13 @@ The project includes editor configuration files (`.vscode/settings.json` and `.c
 - To switch versions: `Cmd/Ctrl+Shift+P` → "Python: Select Interpreter" → Choose:
   - `./python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `./python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
+  - `./python/v0.7.0/.venv/bin/python3` for spatialdata 0.7.0
 
 **Other editors:**
 - Choose the appropriate virtual environment:
   - `python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
+  - `python/v0.7.0/.venv/bin/python3` for spatialdata 0.7.0
 
 
 ### Running Tests
@@ -135,17 +144,18 @@ Test fixtures are generated on-demand using the Python `spatialdata` library. Ea
 Fixtures are stored in `test-fixtures/` (excluded from git).
 
 ```bash
-# Generate fixtures for both spatialdata versions (0.5.0 and 0.6.1)
+# Generate fixtures for all spatialdata versions (0.5.0, 0.6.1, and 0.7.0)
 # This will automatically set up the version-specific environments if needed
 pnpm test:fixtures:generate
 
 # Generate fixtures for a specific version
 pnpm test:fixtures:generate:0.5.0
 pnpm test:fixtures:generate:0.6.1
+pnpm test:fixtures:generate:0.7.0
 ```
 
 **How it works:**
-- The script uses separate environments: `python/v0.5.0/` and `python/v0.6.1/`
+- The script uses separate environments: `python/v0.5.0/`, `python/v0.6.1/`, and `python/v0.7.0/`
 - Each environment has its own `pyproject.toml` with the spatialdata version pinned
 - The script automatically runs `uv sync` for each environment before generating fixtures
 - This ensures fixtures are generated with the exact spatialdata version being tested
@@ -166,6 +176,7 @@ pnpm test:server
 Once running, fixtures are accessible at:
 - `http://localhost:8080/test-fixtures/v0.5.0/blobs.zarr`
 - `http://localhost:8080/test-fixtures/v0.6.1/blobs.zarr`
+- `http://localhost:8080/test-fixtures/v0.7.0/blobs.zarr`
 
 The server provides directory listings and serves all zarr metadata files with appropriate CORS headers.
 
@@ -203,19 +214,23 @@ const sdata = await readZarr('http://localhost:8081/https://example.com/mydata.z
 
 ### Dataset Validation
 
+**⚠️ Note, the results from this may indicate a number of failures in python due to not being able to open the remote stores.**
+
 The project includes scripts to validate dataset compatibility across different versions of the spatialdata library and the JavaScript implementation.
+
 
 #### Validating with Python
 
-Test publicly available datasets with both Python versions (0.5.0 and 0.6.1):
+Test publicly available datasets with all Python versions (0.5.0, 0.6.1, and 0.7.0):
 
 ```bash
-# Validate all datasets with both Python versions
+# Validate all datasets with all Python versions
 pnpm validate:datasets
 
 # Validate with a specific version only
 pnpm validate:datasets:0.5.0
 pnpm validate:datasets:0.6.1
+pnpm validate:datasets:0.7.0
 
 # Validate a specific dataset
 pnpm validate:datasets -- --dataset "Xenium"
@@ -291,7 +306,7 @@ For a complete validation of all datasets across all implementations, use the al
 ```bash
 # Run complete validation workflow
 # This will:
-#   1. Test all datasets with Python v0.5.0 and v0.6.1
+#   1. Test all datasets with Python v0.5.0, v0.6.1, and v0.7.0
 #   2. Build the packages (if needed)
 #   3. Test all datasets with JavaScript
 #   4. Generate comparison reports

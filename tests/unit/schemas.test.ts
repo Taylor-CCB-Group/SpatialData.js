@@ -10,8 +10,10 @@ import {
 
 describe('Schema Transformations', () => {
   describe('rasterAttrsSchema - version normalization', () => {
-    it('should normalize v0.6.1 format (nested under ome) to internal format', () => {
-      const v061Format = {
+    it('should normalize OME-NGFF 0.5 format (nested under ome) to internal format', () => {
+      // Note: spatialdata_attrs.version is library version metadata (e.g., '0.6.1', '0.7.0')
+      // Format detection is STRUCTURAL (presence of 'ome' key), not based on version
+      const omeNgff05Format = {
         ome: {
           multiscales: [
             {
@@ -25,11 +27,11 @@ describe('Schema Transformations', () => {
           ],
         },
         spatialdata_attrs: {
-          version: '0.6.1',
+          version: '0.6.1', // Library version metadata (doesn't control format detection)
         },
       };
 
-      const result = rasterAttrsSchema.parse(v061Format);
+      const result = rasterAttrsSchema.parse(omeNgff05Format);
 
       // Should have multiscales at top level after transformation
       expect(result.multiscales).toBeDefined();
@@ -39,8 +41,10 @@ describe('Schema Transformations', () => {
       expect('ome' in result).toBe(false);
     });
 
-    it('should accept v0.5.0 format (top-level multiscales) as-is', () => {
-      const v050Format = {
+    it('should accept OME-NGFF 0.4 format (top-level multiscales) as-is', () => {
+      // Note: Format detection is STRUCTURAL (no 'ome' key = OME-NGFF 0.4)
+      // spatialdata_attrs.version is library version metadata, not format version
+      const omeNgff04Format = {
         multiscales: [
           {
             name: 'test',
@@ -52,11 +56,11 @@ describe('Schema Transformations', () => {
           },
         ],
         spatialdata_attrs: {
-          version: '0.5.0',
+          version: '0.5.0', // Library version metadata (doesn't control format detection)
         },
       };
 
-      const result = rasterAttrsSchema.parse(v050Format);
+      const result = rasterAttrsSchema.parse(omeNgff04Format);
 
       // Should have multiscales at top level
       expect(result.multiscales).toBeDefined();
@@ -64,8 +68,9 @@ describe('Schema Transformations', () => {
       expect(result.multiscales[0].name).toBe('test');
     });
 
-    it('should preserve omero data from v0.6.1 format', () => {
-      const v061Format = {
+    it('should preserve omero data from OME-NGFF 0.5 format', () => {
+      // Format is determined by structure (presence of 'ome' key), not spatialdata_attrs.version
+      const omeNgff05Format = {
         ome: {
           multiscales: [
             {
@@ -87,11 +92,11 @@ describe('Schema Transformations', () => {
           },
         },
         spatialdata_attrs: {
-          version: '0.6.1',
+          version: '0.6.1', // Library version metadata
         },
       };
 
-      const result = rasterAttrsSchema.parse(v061Format);
+      const result = rasterAttrsSchema.parse(omeNgff05Format);
 
       expect(result.omero).toBeDefined();
       expect(result.omero?.channels).toHaveLength(1);
@@ -206,7 +211,7 @@ describe('Schema Transformations', () => {
           },
         ],
         spatialdata_attrs: {
-          version: '0.6.1',
+          version: '0.6.1', // Library version metadata (for raster elements)
         },
       };
 
@@ -235,7 +240,7 @@ describe('Schema Transformations', () => {
           },
         ],
         spatialdata_attrs: {
-          version: '0.6.1',
+          version: '0.6.1', // Library version metadata (for raster elements)
         },
       };
 

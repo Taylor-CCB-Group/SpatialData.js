@@ -245,6 +245,11 @@ export type NgffImage = z.infer<typeof imageSchema>;
  * Schema for spatialdata_attrs metadata (common to spatial elements).
  * Contains version info and other spatialdata-specific metadata.
  * Note: Transformations are stored at the top level of attrs, not inside spatialdata_attrs.
+ * 
+ * IMPORTANT: The semantic meaning of `version` varies by element type:
+ * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.0')
+ *   and does NOT control OME-NGFF format detection (which is determined by structure).
+ * - For shapes/points: `version` is the spatialdata format version (e.g., '0.1', '0.2') and IS used for format detection.
  */
 export const spatialDataAttrsSchema = z
   .object({
@@ -256,9 +261,9 @@ export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
 
 /**
  * Schema for raster element attrs in spatialdata 0.5.0 format
- * Has multiscales at the top level (older OME-NGFF format)
+ * Uses OME-NGFF 0.4 format with multiscales at the top level
  */
-const rasterAttrsV050Schema = z
+const rasterAttrs_OME_04_Schema = z
   .object({
     multiscales: z
       .array(
@@ -284,9 +289,9 @@ const rasterAttrsV050Schema = z
 
 /**
  * Schema for raster element attrs in spatialdata 0.6.1+ format
- * Has multiscales nested under 'ome' key (newer OME-NGFF format)
+ * Uses OME-NGFF 0.5 format with multiscales nested under 'ome' key
  */
-const rasterAttrsV061Schema = z
+const rasterAttrs_OME_05_Schema = z
   .object({
     ome: z
       .object({
@@ -316,13 +321,19 @@ const rasterAttrsV061Schema = z
 
 /**
  * Schema for raster element attrs (images & labels)
- * Supports both spatialdata 0.5.0 (top-level multiscales) and 0.6.1+ (nested under 'ome') formats.
+ * Supports both spatialdata 0.5.0 (OME-NGFF 0.4, top-level multiscales) and
+ * spatialdata 0.6.0+ (OME-NGFF 0.5, nested under 'ome') formats.
  * Uses zod transform to normalize both formats to a consistent internal representation.
+ * 
+ * NOTE: Format detection is STRUCTURAL (presence of 'ome' key), NOT based on
+ * spatialdata_attrs.version. The version field is metadata only and does not control
+ * which schema is applied.
  */
 export const rasterAttrsSchema = z
-  .union([rasterAttrsV050Schema, rasterAttrsV061Schema])
+  .union([rasterAttrs_OME_04_Schema, rasterAttrs_OME_05_Schema])
   .transform((data): RasterAttrs => {
-    // If it's the v0.6.1+ format (has 'ome' key), extract multiscales and omero from it
+    // Format detection is structural: if 'ome' key exists, it's OME-NGFF 0.5 format
+    // This is independent of spatialdata_attrs.version (which is library version metadata)
     if ('ome' in data && data.ome && typeof data.ome === 'object') {
       const omeData = data.ome as {
         multiscales: unknown;

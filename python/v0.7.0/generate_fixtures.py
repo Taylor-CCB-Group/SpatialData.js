@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate test fixtures using spatialdata library (version 0.6.1).
+Generate test fixtures using spatialdata library (version 0.7.0).
 
-This script generates spatialdata zarr stores for testing with spatialdata 0.6.1.
-It runs in the python/v0.6.1/ environment which has spatialdata==0.6.1 pinned.
+This script generates spatialdata zarr stores for testing with spatialdata 0.7.0.
+It runs in the python/v0.7.0/ environment which has spatialdata==0.7.0 pinned.
 """
 
 import sys
@@ -18,15 +18,15 @@ import spatialdata as sd
 
 
 def generate_fixtures(output_dir: Path):
-    """Generate test fixtures for spatialdata version 0.6.1."""
-    version = "0.6.1"
+    """Generate test fixtures for spatialdata version 0.7.0."""
+    version = "0.7.0"
     print(f"Generating fixtures for spatialdata version {version}...")
     
     # Verify we're using the correct version
     actual_version = sd.__version__
     if actual_version != version:
         print(f"⚠️  Warning: Expected version {version} but got {actual_version}")
-        print(f"   This may indicate the wrong environment is active.")
+        print("   This may indicate the wrong environment is active.")
     
     # Create output directory
     version_dir = output_dir / f"v{version}"
@@ -102,7 +102,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Generate test fixtures for SpatialData.ts using spatialdata 0.6.1"
+        description="Generate test fixtures for SpatialData.ts using spatialdata 0.7.0"
     )
     parser.add_argument(
         "--output-dir",

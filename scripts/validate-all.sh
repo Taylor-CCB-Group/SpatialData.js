@@ -27,9 +27,9 @@ mkdir -p "$RUN_DIR"
 echo -e "${GREEN}Output directory: $RUN_DIR${NC}"
 echo ""
 
-# Step 1: Validate with Python (both versions)
-echo -e "${YELLOW}Step 1/3: Validating with Python (v0.5.0 and v0.6.1)${NC}"
-echo "This will test 10 datasets x 2 versions = 20 tests"
+# Step 1: Validate with Python (all versions)
+echo -e "${YELLOW}Step 1/3: Validating with Python (v0.5.0, v0.6.1, and v0.7.0)${NC}"
+echo "This will test 10 datasets x 3 versions = 30 tests"
 echo "Note: Most time is spent importing spatialdata, not downloading"
 echo "Using parallel processing to speed things up..."
 echo ""
@@ -98,7 +98,7 @@ PYTHON_TOTAL=$(jq 'length' "$RUN_DIR/python-results.json")
 JS_SUCCESS=$(jq '[.[] | select(.success == true)] | length' "$RUN_DIR/js-results.json")
 JS_TOTAL=$(jq 'length' "$RUN_DIR/js-results.json")
 
-echo -e "Python (both versions): ${GREEN}${PYTHON_SUCCESS}/${PYTHON_TOTAL}${NC} successful"
+echo -e "Python (all versions):   ${GREEN}${PYTHON_SUCCESS}/${PYTHON_TOTAL}${NC} successful"
 echo -e "JavaScript:             ${GREEN}${JS_SUCCESS}/${JS_TOTAL}${NC} successful"
 echo ""
 

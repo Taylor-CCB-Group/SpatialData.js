@@ -126,8 +126,8 @@ function generateMarkdownTable(results, pythonResults = null) {
 
   // If we have Python results, show comparison
   if (pythonResults) {
-    lines.push('| Dataset | JS | Python v0.5.0 | Python v0.6.1 | URL |');
-    lines.push('|---------|-------|---------------|---------------|-----|');
+    lines.push('| Dataset | JS | Python v0.5.0 | Python v0.6.1 | Python v0.7.0 | URL |');
+    lines.push('|---------|-------|---------------|---------------|---------------|-----|');
 
     const pythonResultsByDataset = {};
     for (const r of pythonResults) {
@@ -141,11 +141,13 @@ function generateMarkdownTable(results, pythonResults = null) {
       const jsStatus = result.success ? '✅' : '❌';
       const py050 = pythonResultsByDataset[result.datasetName]?.['0.5.0'];
       const py061 = pythonResultsByDataset[result.datasetName]?.['0.6.1'];
+      const py070 = pythonResultsByDataset[result.datasetName]?.['0.7.0'];
       const py050Status = py050 ? (py050.success ? '✅' : '❌') : '⏭️';
       const py061Status = py061 ? (py061.success ? '✅' : '❌') : '⏭️';
+      const py070Status = py070 ? (py070.success ? '✅' : '❌') : '⏭️';
 
       const urlShort = result.datasetUrl.split('spatialdata-sandbox/')[1] || result.datasetUrl;
-      lines.push(`| ${result.datasetName} | ${jsStatus} | ${py050Status} | ${py061Status} | \`${urlShort}\` |`);
+      lines.push(`| ${result.datasetName} | ${jsStatus} | ${py050Status} | ${py061Status} | ${py070Status} | \`${urlShort}\` |`);
     }
   } else {
     lines.push('| Dataset | Status | URL |');
