@@ -202,7 +202,8 @@ const omeroSchema = z.object({
           start: z.number(),
         })
         .optional(),
-      label: z.union([z.number(), z.string()]).optional(),
+      // note - I think the schema says string but I encountered number in the wild.
+      label: z.coerce.string().optional(),
       family: z.string().optional(),
       color: z.string().optional(),
       active: z.boolean().optional(),
