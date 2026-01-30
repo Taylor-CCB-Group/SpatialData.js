@@ -16,10 +16,22 @@ async function getParquetModule() {
   // that needs to be initialized before use in browser environments.
   // In Node.js, the module loads WASM synchronously so no init is needed.
   // (^^^ but why would it be invoked in node.js in the current version?)
-  const module = await import('parquet-wasm');
-  if (typeof module.default === 'function') {
-    await module.default();
-  }
+  //!!!!! broken in vite dev server, but not in build?
+  //we need an easy non-dev build to verify
+  //but we also need to fix this...
+  //- probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
+  //  think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
+  // 
+  // const module = await import('parquet-wasm');
+  // if (typeof module.default === 'function') {
+  //   await module.default();
+  // }
+
+  // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
+  // TODO: host somewhere we control, like cdn.vitessce.io?
+  // @ts-ignore
+  const module = await import(/* webpackIgnore: true */ 'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
+  await module.default();
   return { readParquet: module.readParquet, readSchema: module.readSchema };
 }
 
