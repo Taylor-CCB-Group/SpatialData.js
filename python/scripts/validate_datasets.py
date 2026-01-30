@@ -101,7 +101,7 @@ def test_load():
     try:
         print("Loading dataset...", file=sys.stderr, flush=True)
         # Try to read the dataset
-        sdata = sd.read_zarr("{json.dumps(dataset['url'])}")
+        sdata = sd.read_zarr({json.dumps(dataset['url'])})
 
         # Extract basic info
         elements = {{}}
