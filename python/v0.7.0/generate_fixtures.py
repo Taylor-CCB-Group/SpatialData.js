@@ -13,12 +13,11 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 sys.path.insert(0, str(script_dir.parent / "scripts"))
 
-from spatialdata.datasets import blobs
-import spatialdata as sd
-
 
 def generate_fixtures(output_dir: Path):
     """Generate test fixtures for spatialdata version 0.7.0."""
+    from spatialdata.datasets import blobs
+    import spatialdata as sd
     version = "0.7.0"
     print(f"Generating fixtures for spatialdata version {version}...")
     

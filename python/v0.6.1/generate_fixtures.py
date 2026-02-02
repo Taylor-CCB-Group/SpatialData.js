@@ -13,12 +13,11 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 sys.path.insert(0, str(script_dir.parent / "scripts"))
 
-from spatialdata.datasets import blobs
-import spatialdata as sd
-
 
 def generate_fixtures(output_dir: Path):
     """Generate test fixtures for spatialdata version 0.6.1."""
+    from spatialdata.datasets import blobs
+    import spatialdata as sd
     version = "0.6.1"
     print(f"Generating fixtures for spatialdata version {version}...")
     
@@ -26,7 +25,7 @@ def generate_fixtures(output_dir: Path):
     actual_version = sd.__version__
     if actual_version != version:
         print(f"⚠️  Warning: Expected version {version} but got {actual_version}")
-        print(f"   This may indicate the wrong environment is active.")
+        print("   This may indicate the wrong environment is active.")
     
     # Create output directory
     version_dir = output_dir / f"v{version}"

@@ -13,12 +13,12 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 sys.path.insert(0, str(script_dir.parent / "scripts"))
 
-from spatialdata.datasets import blobs
-import spatialdata as sd
 
 
 def generate_fixtures(output_dir: Path):
     """Generate test fixtures for spatialdata version 0.5.0."""
+    from spatialdata.datasets import blobs
+    import spatialdata as sd
     version = "0.5.0"
     print(f"Generating fixtures for spatialdata version {version}...")
     
@@ -26,7 +26,7 @@ def generate_fixtures(output_dir: Path):
     actual_version = sd.__version__
     if actual_version != version:
         print(f"⚠️  Warning: Expected version {version} but got {actual_version}")
-        print(f"   This may indicate the wrong environment is active.")
+        print("   This may indicate the wrong environment is active.")
     
     # Create output directory
     version_dir = output_dir / f"v{version}"
@@ -49,7 +49,7 @@ def generate_fixtures(output_dir: Path):
             # Try to delete the attribute
             try:
                 delattr(sdata, "points")
-            except:
+            except:  # noqa: E722
                 # If that fails, set to empty dict
                 sdata.points = {}
     
@@ -75,7 +75,7 @@ def generate_fixtures(output_dir: Path):
         # Force remove
         try:
             shutil.rmtree(store_path, ignore_errors=True)
-        except:
+        except:  # noqa: E722
             pass
     
     print(f"Saving to {store_path}...")
@@ -98,7 +98,7 @@ def generate_fixtures(output_dir: Path):
                     shutil.rmtree(store_path)
                 else:
                     os.remove(store_path)
-            except:
+            except:  # noqa: E722
                 pass
         
         error_msg = str(e)
