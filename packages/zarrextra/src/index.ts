@@ -103,27 +103,27 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
   
   return tree;
 }
-
+class ZarrSchemaError extends Error {}
 /**
  * Parse zarr v3 consolidated metadata from zarr.json
  * The actual zarr v3 structure has metadata nested under consolidated_metadata.metadata
  * We normalize it to have a top-level metadata field for internal use.
  * Validates all array nodes in the metadata.
  */
-async function parseZarrJson(zarrJson: unknown): Promise<Result<ZarrV3Metadata, Error>> {
+async function parseZarrJson(zarrJson: unknown): Promise<Result<ZarrV3Metadata, ZarrSchemaError>> {
   if (!zarrJson || typeof zarrJson !== 'object') {
-    return Err(new Error(`Invalid zarr.json: expected an object but got ${typeof zarrJson}`));
+    return Err(new ZarrSchemaError(`Invalid zarr.json: expected an object but got ${typeof zarrJson}`));
   }
   
   const parsed = zarrJson as ZarrV3Metadata;
   
   // Validate the structure
   if (!parsed.consolidated_metadata || typeof parsed.consolidated_metadata !== 'object') {
-    return Err(new Error('Invalid zarr.json: consolidated_metadata field is missing or not an object'));
+    return Err(new ZarrSchemaError('Invalid zarr.json: consolidated_metadata field is missing or not an object'));
   }
   
   if (!parsed.consolidated_metadata.metadata || typeof parsed.consolidated_metadata.metadata !== 'object') {
-    return Err(new Error('Invalid zarr.json: consolidated_metadata.metadata field is missing or not an object'));
+    return Err(new ZarrSchemaError('Invalid zarr.json: consolidated_metadata.metadata field is missing or not an object'));
   }
   
   // Validate all array nodes in the metadata
@@ -136,7 +136,7 @@ async function parseZarrJson(zarrJson: unknown): Promise<Result<ZarrV3Metadata, 
         metadata[path] = validatedNode;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        return Err(new Error(`Failed to validate v3 zarray metadata at path '${path}': ${errorMessage}`));
+        return Err(new ZarrSchemaError(`Failed to validate v3 zarray metadata at path '${path}': ${errorMessage}`));
       }
     }
   }
@@ -270,8 +270,11 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
     return Object.assign(store, {
       zmetadata: v3Metadata
     });
-  } catch {
-    // Fall through to try v2 formats
+  } catch (e) {
+    // Fall through to try v2 formats for HTTP error. If it was a ZarrSchemaError, re-throw
+    if (e instanceof ZarrSchemaError) {
+      throw e;
+    }
   }
   
   // Try .zmetadata (v2 format)
@@ -296,9 +299,9 @@ async function tryConsolidated(store: zarr.FetchStore): Promise<IntermediateCons
         zmetadata: v3Metadata,
         metadataFormat: 'v3' as const
       });
-    } catch {
+    } catch (e) {
       throw new Error(
-        `Couldn't open consolidated metadata for '${store.url}'. Tried: zarr.json (v3), .zmetadata (v2), and zmetadata (v2 variant). Ensure the store has consolidated metadata enabled.`
+        `Couldn't open consolidated metadata for '${store.url}'. Tried: zarr.json (v3), .zmetadata (v2), and zmetadata (v2 variant). Ensure the store has valid consolidated metadata. ${e}`
       );
     }
   }

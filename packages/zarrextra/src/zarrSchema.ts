@@ -61,9 +61,44 @@ const v3ChunkGridSchema = z.object({
 const v3ChunkKeyEncodingSchema = z.object({
   name: z.string(),
   configuration: z.object({
-    separator: z.string()
+    separator: z.union([z.literal("/"), z.literal(".")]).default("/")
   })
 });
+
+/** v3 datatypes - note
+ * the listing at https://zarr-specs.readthedocs.io/en/latest/v3/data-types/index.html misses 'string'
+ * making this fail on the first real object I tried it on.
+ * We may just allow it to pass more things if errors keep appearing here.
+ */
+const v3dtypeSchema = z.union([
+  z.literal("bool"),
+  z.literal("int8"),
+  z.literal("int16"),
+  z.literal("int32"),
+  z.literal("int64"),
+  z.literal("uint8"),
+  z.literal("uint16"),
+  z.literal("uint32"),
+  z.literal("uint64"),
+  z.literal("float16"),
+  z.literal("float32"),
+  z.literal("float64"),
+  z.literal("complex64"),
+  z.literal("complex128"),
+  // "string" not listed in https://zarr-specs.readthedocs.io/en/latest/v3/data-types/index.html
+  // but appears in some table data, e.g. 'tables/table/obs/_index' in v0.7.0/blobs.zarr, proably also others.
+  z.literal("string"),
+  // Raw bits format: "r*" where * is a variable size (multiple of 8)
+  z.string().regex(/^r\d+$/).superRefine((val, ctx) => {
+    const size = Number.parseInt(val.slice(1), 10);
+    if (size <= 0 || size % 8 !== 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: `'${val}' Raw bits size must be a positive multiple of 8`
+      });
+    }
+  }),
+]);
 
 /**
  * Base v2 zarray schema (before refines)
@@ -120,7 +155,7 @@ export const v2ZarraySchema = v2ZarrayBaseSchema.refine(
  */
 const v3ZarrayBaseSchema = z.object({
   shape: z.array(nonNegativeInteger), // Empty array allowed for scalars
-  data_type: z.string().min(1),
+  data_type: v3dtypeSchema, //z.string().min(1),
   chunk_grid: v3ChunkGridSchema,
   chunk_key_encoding: v3ChunkKeyEncodingSchema.optional(),
   fill_value: z.union([z.number(), z.string(), z.boolean()]).optional(),
@@ -247,7 +282,7 @@ export function validateV3Zarray(
 ): ZarrV3ArrayNode {
   const parseResult = v3ZarraySchema.safeParse(zarray);
   if (!parseResult.success) {
-    const errors = parseResult.error.issues.map((e: z.ZodIssue) => {
+    const errors = parseResult.error.issues.map((e: z.core.$ZodIssue) => {
       const pathStr = e.path.length > 0 ? `'${e.path.join('.')}'` : '';
       return `${pathStr}${pathStr ? ': ' : ''}${e.message}`;
     }).join('; ');
