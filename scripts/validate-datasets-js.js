@@ -231,6 +231,9 @@ Note: The script automatically starts and manages a CORS proxy server for all re
   return args;
 }
 
+// Module-level variable to track proxy server for cleanup
+let proxyServer = null;
+
 /**
  * Main function
  */
@@ -256,7 +259,6 @@ async function main() {
 
   // Start proxy server automatically
   console.error('Starting CORS proxy server...');
-  let proxyServer = null;
   let proxyBaseUrl = null;
   try {
     const proxy = await startProxyServer();
@@ -330,7 +332,19 @@ async function main() {
   });
 }
 
-main().catch(error => {
+main().catch(async error => {
   console.error('Fatal error:', error);
+  
+  // Clean up proxy server if it was started
+  if (proxyServer) {
+    console.error('\nShutting down proxy server...');
+    await new Promise((resolve) => {
+      proxyServer.close(() => {
+        console.error('✓ Proxy server stopped');
+        resolve();
+      });
+    });
+  }
+  
   process.exit(1);
 });
