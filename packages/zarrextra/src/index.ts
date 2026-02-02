@@ -66,7 +66,8 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
         const isArray = isLeaf && info.isArray;
         
         // Get attributes for this path (normalizedPath already has leading /)
-        const attrs = getZattrs(normalizedPath as zarr.AbsolutePath, store);
+        const currentPath = `/${pathParts.slice(0, i + 1).join('/')}` as zarr.AbsolutePath;
+        const attrs = getZattrs(currentPath, store);
         
         if (isArray) {
           // Leaf array node - extract array metadata from the node
@@ -84,8 +85,8 @@ async function parseStoreContents(store: IntermediateConsolidatedStore): Promise
             storage_transformers: arrayNode.storage_transformers,
           };
           
-          // Capture normalizedPath by value to avoid closure issues
-          const arrayPath = normalizedPath;
+          // Capture currentPath by value to avoid closure issues
+          const arrayPath = currentPath;
           currentNode[part] = {
             [ATTRS_KEY]: attrs,
             [ZARRAY_KEY]: zarray,
