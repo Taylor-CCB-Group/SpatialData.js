@@ -1,5 +1,11 @@
 import { defineConfig } from 'vitest/config';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+// not strictly necessary as vite will provide this in config context
+// but now I'm looking at it, adding this so there's less hidden magic.
+const __dirname = dirname(__filename);
 
 export default defineConfig({
   test: {
