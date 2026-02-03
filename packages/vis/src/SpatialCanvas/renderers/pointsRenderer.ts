@@ -74,7 +74,8 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     // probably more important will be having proper spatial data-structure (quad/oct-tree)
     // with ways of querying within view.
     // also allow accessors for other props
-    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], d[2]?.[index]],
+    // XXX: 3d transcripts not always terribly useful, but we should have more coherent strategy
+    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], 0],//d[2]?.[index]],
     getRadius: pointSize,
     radiusUnits: 'pixels',
     getFillColor: color,
