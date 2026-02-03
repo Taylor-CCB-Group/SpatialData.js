@@ -173,9 +173,10 @@ function normalizeV2ToV3Metadata(v2Metadata: ZarrV2Metadata): ZarrV3Metadata {
   // Iterate through flat path keys in v2 metadata
   for (const [flatPath, value] of Object.entries(v2Metadata.metadata)) {
     // Match patterns like "path/.zattrs", "path/.zarray", "path/.zgroup"
-    const match = flatPath.match(/^(.+?)\/(\.zattrs|\.zarray|\.zgroup)$/);
+    const match = flatPath.match(/^(?:(.+?)\/)?(\.zattrs|\.zarray|\.zgroup)$/);
     if (match) {
-      const [, path, metadataType] = match;
+      const path = match[1] ?? '';
+      const metadataType = match[2];
       if (!pathGroups.has(path)) {
         pathGroups.set(path, {});
       }
