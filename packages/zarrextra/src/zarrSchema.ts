@@ -3,6 +3,7 @@ import type { ZarrV3ArrayNode } from './types';
 
 //-------- LLM generated schemas for generic zarr metadata --------//
 //       low - mid confidence in validity, need more testing
+// (since writing the above, has been subject to at least some more human scrutiny)
 
 
 /**
@@ -112,7 +113,7 @@ const v2ZarrayBaseSchema = z.object({
   dtype: z.string().min(1),
   filters: z.array(v2FilterSchema).optional().nullable(),
   compressor: v2CompressorSchema.optional().nullable(),
-  fill_value: z.union([z.number(), z.string(), z.boolean()]).optional(),
+  fill_value: z.union([z.number(), z.string(), z.boolean(), z.null()]).optional(),
   dimension_names: z.array(z.string()).optional().nullable(),
   zarr_format: z.number().optional()
 });
@@ -130,24 +131,16 @@ export const v2ZarraySchema = v2ZarrayBaseSchema.refine(
     path: ['chunks']
   }
 ).refine(
-  (data: V2ZarrayInput) => {
-    // For scalar arrays (empty shape/chunks), this check passes trivially
-    if (data.shape.length === 0) return true;
-    // For non-scalar arrays, each chunk must not exceed corresponding shape dimension
-    return data.chunks.every((chunk: number, i: number) => chunk <= data.shape[i]);
-  },
-  {
-    message: 'each chunk dimension must not exceed corresponding shape dimension',
-    path: ['chunks']
-  }
-).refine(
   (data: V2ZarrayInput) => !data.dimension_names || data.dimension_names.length === data.shape.length,
   {
     message: 'dimension_names length must match shape length',
     path: ['dimension_names']
   }
 );
-
+const storageTransformerSchema = z.object({
+  name: z.string(),
+  configuration: z.unknown().optional()
+})
 /**
  * Base v3 zarray schema (before refines)
  * Note: shape and chunk_shape can be empty arrays for scalar arrays (0-dimensional).
@@ -161,9 +154,10 @@ const v3ZarrayBaseSchema = z.object({
   fill_value: z.union([z.number(), z.string(), z.boolean()]).optional(),
   codecs: z.array(v3CodecSchema).optional().nullable(),
   dimension_names: z.array(z.string()).optional().nullable(),
-  storage_transformers: z.array(z.unknown()).optional().nullable(),
+  storage_transformers: z.array(storageTransformerSchema).optional().nullable(),
   zarr_format: z.number().optional(),
-  node_type: z.literal('array').optional()
+  node_type: z.literal('array').optional(),
+  attributes: z.record(z.string(), z.json()).optional()
 });
 
 type V3ZarrayInput = z.infer<typeof v3ZarrayBaseSchema>;
@@ -176,17 +170,6 @@ export const v3ZarraySchema = v3ZarrayBaseSchema.refine(
   (data: V3ZarrayInput) => data.chunk_grid.configuration.chunk_shape.length === data.shape.length,
   {
     message: 'chunk_shape length must match shape length',
-    path: ['chunk_grid', 'configuration', 'chunk_shape']
-  }
-).refine(
-  (data: V3ZarrayInput) => {
-    // For scalar arrays (empty shape/chunk_shape), this check passes trivially
-    if (data.shape.length === 0) return true;
-    // For non-scalar arrays, each chunk must not exceed corresponding shape dimension
-    return data.chunk_grid.configuration.chunk_shape.every((chunk: number, i: number) => chunk <= data.shape[i]);
-  },
-  {
-    message: 'each chunk dimension must not exceed corresponding shape dimension',
     path: ['chunk_grid', 'configuration', 'chunk_shape']
   }
 ).refine(
@@ -206,6 +189,9 @@ export function validateAndConvertV2Zarray(
   zarray: unknown,
   path: string
 ): ZarrV3ArrayNode {
+  if (!zarray || typeof zarray !== 'object') {
+    throw new Error(`Invalid .zarray metadata at path '${path}': expected an object`);
+  }
   const obj = zarray as Record<string, unknown>;
 
   // Check if this already has v3 fields (hybrid/partially converted format)
