@@ -1,10 +1,19 @@
 import { fileURLToPath } from 'node:url';
 import { defineViteConfig } from '../../vite.config.base';
+import { mergeConfig } from 'vite';
 
 const pkgRoot = fileURLToPath(new URL('.', import.meta.url));
 
-export default defineViteConfig({
+const baseConfig = defineViteConfig({
   pkgRoot,
   libName: 'SpatialDataReact',
   external: ['@spatialdata/core'],
+});
+
+export default mergeConfig(baseConfig, {
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    include: ['tests/**/*.spec.ts*'],
+  },
 });

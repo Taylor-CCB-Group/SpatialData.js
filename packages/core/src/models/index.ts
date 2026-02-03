@@ -54,14 +54,14 @@ abstract class AbstractElement<T extends ElementName> {
     this.key = key;
     this.url = `${sdata.url}/${name}/${key}`;
     
-    const { parsed } = sdata;
-    if (!parsed) {
-      throw new Error("Parsed store contents not available");
+    const { tree } = sdata.rootStore;
+    if (!tree) {
+      throw new Error("Tree store contents not available");
     }
-    if (!(name in parsed)) {
+    if (!(name in tree)) {
       throw new Error(`Unknown element type: ${name}`);
     }
-    const p1 = parsed[name] as ZarrTree;
+    const p1 = tree[name] as ZarrTree;
     if (!(key in p1)) {
       throw new Error(`Unknown element key: ${key}`);
     }
@@ -205,11 +205,9 @@ export class TableElement extends AbstractElement<'tables'> {
     // parse attrs through schema
     const result = tableAttrsSchema.safeParse(this.rawAttrs);
     if (!result.success) {
-      console.warn(`Schema validation failed for ${params.name}/${params.key}:`, result.error.issues);
-      this.attrs = this.rawAttrs as TableAttrs;
-    } else {
-      this.attrs = result.data;
-    }
+      throw result.error;
+    } 
+    this.attrs = result.data;
   }
   
   /**
@@ -237,12 +235,9 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
     // Parse attrs through schema
     const result = rasterAttrsSchema.safeParse(this.rawAttrs);
     if (!result.success) {
-      console.warn(`Schema validation failed for ${params.name}/${params.key}:`, result.error.issues);
-      // Fall back to raw attrs cast - allows working with non-conformant data
-      this.attrs = this.rawAttrs as RasterAttrs;
-    } else {
-      this.attrs = result.data;
+      throw result.error;
     }
+    this.attrs = result.data;
   }
   
   /**
@@ -338,15 +333,13 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
     // Parse attrs through schema
     const result = shapesAttrsSchema.safeParse(this.rawAttrs);
     if (!result.success) {
-      console.warn(`Schema validation failed for shapes/${params.key}:`, result.error.issues);
-      this.attrs = this.rawAttrs as ShapesAttrs;
-    } else {
-      this.attrs = result.data;
-    }
+      throw result.error;
+    } 
+    this.attrs = result.data;
     
     // Initialize the Vitessce-derived shapes source for loading geometry
     this.vShapes = new SpatialDataShapesSource({ 
-      store: params.sdata.rootStore,
+      store: params.sdata.rootStore.zarritaStore,
       fileType: '.zarr' 
     });
   }
@@ -396,13 +389,11 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     // Parse attrs through schema
     const result = pointsAttrsSchema.safeParse(this.rawAttrs);
     if (!result.success) {
-      console.warn(`Schema validation failed for points/${params.key}:`, result.error.issues);
-      this.attrs = this.rawAttrs as PointsAttrs;
-    } else {
-      this.attrs = result.data;
+      throw result.error;
     }
+    this.attrs = result.data;
     this.vPoints = new SpatialDataPointsSource({
-      store: params.sdata.rootStore,
+      store: params.sdata.rootStore.zarritaStore,
       fileType: '.zarr' 
     });
   }
@@ -486,22 +477,29 @@ export function loadElements<T extends ElementName>(
   sdata: SDataProps,
   name: T
 ): Record<string, ElementInstanceMap[T]> | undefined {
-  const { parsed } = sdata;
-  if (!parsed) {
-    throw new Error("Parsed store contents not available");
+  const { tree } = sdata.rootStore;
+  if (!tree) {
+    throw new Error("Tree store contents not available");
   }
-  if (!(name in parsed)) {
+  if (!(name in tree)) {
     return undefined;
   }
   
-  const keys = Object.keys(parsed[name] as object);
+  const keys = Object.keys(tree[name] as object);
   if (keys.length === 0) {
     return undefined;
   }
   
   const result: Record<string, ElementInstanceMap[T]> = {};
   for (const key of keys) {
-    result[key] = createElement(name, sdata, key);
+    try {
+      result[key] = createElement(name, sdata, key);
+    } catch (error) {
+      // we might want to take this more seriously - but this should prevent any crash
+      // and not have any worse symptom than the element not being there as a result(?)
+      // might be slightly confusing to get {} rather than undefined in that case
+      console.error(error);
+    }
   }
   return result;
 }

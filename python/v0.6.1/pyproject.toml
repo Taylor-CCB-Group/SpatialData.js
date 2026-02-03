@@ -1,0 +1,9 @@
+[project]
+name = "spatialdata-test-fixtures-v0.6.1"
+version = "0.1.0"
+description = "Test fixture generation for SpatialData.ts using spatialdata 0.6.1"
+requires-python = ">=3.12"
+dependencies = [
+    "spatialdata==0.6.1",
+]
+

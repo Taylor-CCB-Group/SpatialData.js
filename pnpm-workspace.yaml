@@ -9,7 +9,7 @@ catalog:
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^4.3.4
-  '@vivjs-experimental/viv': ^1.0.1
+  '@hms-dbmi/viv': ^0.19.0
   anndata.js: ^0.0.2
   apache-arrow: ^17.0.0
   deck.gl: ~9.1.11
@@ -22,3 +22,4 @@ catalog:
   vitest: ^3.1.4
   zarrita: ^0.5.4
   zod: ^4.1.13
+  jsdom: ^27.4.0

@@ -11,7 +11,7 @@ import {
   useChannelsStoreApi,
   DEFAULT_CHANNEL_STATE,
 } from './avivatorish/state';
-import { DetailView, VivViewer, getDefaultInitialViewState } from '@vivjs-experimental/viv';
+import { DetailView, VivViewer, getDefaultInitialViewState } from '@hms-dbmi/viv';
 import { useImage } from './avivatorish/hooks';
 
 /**

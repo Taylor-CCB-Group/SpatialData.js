@@ -3,15 +3,12 @@ import { fromBlob, fromUrl } from "geotiff";
 import { Matrix4 } from "@math.gl/core";
 
 import {
-    loadOmeTiff,
-    loadBioformatsZarr,
     loadOmeZarr,
-    loadMultiTiff,
     getChannelStats,
     RENDERING_MODES,
     ColorPalette3DExtensions,
     AdditiveColormap3DExtensions,
-} from "@vivjs-experimental/viv";
+} from "@hms-dbmi/viv";
 
 import { GLOBAL_SLIDER_DIMENSION_FIELDS } from "./constants";
 import type { OME_TIFF, PixelSource } from "./state";

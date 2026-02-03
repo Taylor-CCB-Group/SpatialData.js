@@ -202,7 +202,8 @@ const omeroSchema = z.object({
           start: z.number(),
         })
         .optional(),
-      label: z.string().optional(),
+      // note - I think the schema says string but I encountered number in the wild.
+      label: z.coerce.string().optional(),
       family: z.string().optional(),
       color: z.string().optional(),
       active: z.boolean().optional(),
@@ -245,6 +246,11 @@ export type NgffImage = z.infer<typeof imageSchema>;
  * Schema for spatialdata_attrs metadata (common to spatial elements).
  * Contains version info and other spatialdata-specific metadata.
  * Note: Transformations are stored at the top level of attrs, not inside spatialdata_attrs.
+ * 
+ * IMPORTANT: The semantic meaning of `version` varies by element type:
+ * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.0')
+ *   and does NOT control OME-NGFF format detection (which is determined by structure).
+ * - For shapes/points: `version` is the spatialdata format version (e.g., '0.1', '0.2') and IS used for format detection.
  */
 export const spatialDataAttrsSchema = z
   .object({
@@ -255,10 +261,10 @@ export const spatialDataAttrsSchema = z
 export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
 
 /**
- * Schema for raster element attrs (images & labels)
- * Combines OME-NGFF multiscales with spatialdata_attrs
+ * Schema for raster element attrs in spatialdata 0.5.0 format
+ * Uses OME-NGFF 0.4 format with multiscales at the top level
  */
-export const rasterAttrsSchema = z
+const rasterAttrs_OME_04_Schema = z
   .object({
     multiscales: z
       .array(
@@ -282,7 +288,92 @@ export const rasterAttrsSchema = z
   })
   .passthrough();
 
-export type RasterAttrs = z.infer<typeof rasterAttrsSchema>;
+/**
+ * Schema for raster element attrs in spatialdata 0.6.1+ format
+ * Uses OME-NGFF 0.5 format with multiscales nested under 'ome' key
+ */
+const rasterAttrs_OME_05_Schema = z
+  .object({
+    ome: z
+      .object({
+        multiscales: z
+          .array(
+            z.object({
+              name: z.string().optional(),
+              datasets: z
+                .array(
+                  z.object({
+                    path: z.string(),
+                    coordinateTransformations: coordinateTransformationSchema.optional(),
+                  })
+                )
+                .min(1),
+              axes: axesSchema,
+              coordinateTransformations: coordinateTransformationSchema.optional(),
+            })
+          )
+          .min(1),
+        omero: omeroSchema.optional(),
+      })
+      .passthrough(),
+    spatialdata_attrs: spatialDataAttrsSchema.optional(),
+  })
+  .passthrough();
+
+/**
+ * Schema for raster element attrs (images & labels)
+ * Supports both spatialdata 0.5.0 (OME-NGFF 0.4, top-level multiscales) and
+ * spatialdata 0.6.0+ (OME-NGFF 0.5, nested under 'ome') formats.
+ * Uses zod transform to normalize both formats to a consistent internal representation.
+ * 
+ * NOTE: Format detection is STRUCTURAL (presence of 'ome' key), NOT based on
+ * spatialdata_attrs.version. The version field is metadata only and does not control
+ * which schema is applied.
+ */
+export const rasterAttrsSchema = z
+  .union([rasterAttrs_OME_04_Schema, rasterAttrs_OME_05_Schema])
+  .transform((data): RasterAttrs => {
+    // Format detection is structural: if 'ome' key exists, it's OME-NGFF 0.5 format
+    // This is independent of spatialdata_attrs.version (which is library version metadata)
+    if ('ome' in data && data.ome && typeof data.ome === 'object') {
+      const omeData = data.ome as {
+        multiscales: unknown;
+        omero?: unknown;
+        [key: string]: unknown;
+      };
+      return {
+        multiscales: omeData.multiscales as RasterAttrs['multiscales'],
+        omero: omeData.omero as RasterAttrs['omero'],
+        spatialdata_attrs: 'spatialdata_attrs' in data ? data.spatialdata_attrs : undefined,
+        // Preserve any other top-level fields
+        ...Object.fromEntries(
+          Object.entries(data).filter(([key]) => key !== 'ome' && key !== 'spatialdata_attrs')
+        ),
+      } as RasterAttrs;
+    }
+    
+    // Otherwise, it's already in the v0.5.0 format (top-level multiscales), return as-is
+    return data as RasterAttrs;
+  });
+
+/**
+ * Internal type for the normalized raster attrs structure
+ * This is what we use internally after transformation
+ */
+export type RasterAttrs = {
+  multiscales: Array<{
+    name?: string;
+    datasets: Array<{
+      path: string;
+      coordinateTransformations?: z.infer<typeof coordinateTransformationSchema>;
+    }>;
+    axes: z.infer<typeof axesSchema>;
+    coordinateTransformations?: z.infer<typeof coordinateTransformationSchema>;
+  }>;
+  omero?: z.infer<typeof omeroSchema>;
+  spatialdata_attrs?: z.infer<typeof spatialDataAttrsSchema>;
+  [key: string]: unknown;
+};
 
 /**
  * Schema for shapes element attrs.

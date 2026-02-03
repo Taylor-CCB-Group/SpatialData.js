@@ -15,12 +15,41 @@ async function getParquetModule() {
   // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
   // that needs to be initialized before use in browser environments.
   // In Node.js, the module loads WASM synchronously so no init is needed.
-  // (^^^ but why would it be invoked in node.js in the current version?)
-  const module = await import('parquet-wasm');
-  if (typeof module.default === 'function') {
-    await module.default();
+  // 
+  // TODO: Replace with a more civilised parquet module that's built in a way we can actually consume.
+  // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
+  //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
+
+  // Try local import first (works in Node.js, tests, and production builds)
+  try {
+    const module = await import('parquet-wasm');
+    if (typeof module.default === 'function') {
+      await module.default();
+    }
+    return { readParquet: module.readParquet, readSchema: module.readSchema };
+  } catch (error) {
+    // Local import failed, try CDN fallback (needed in vite dev server)
+    // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
+    console.warn(
+      '[VTableSource] Local parquet-wasm import failed, falling back to CDN version. ' +
+      'This is a temporary workaround pending a better parquet module solution.',
+      error
+    );
+    
+    try {
+      // @ts-ignore - CDN import not recognized by TypeScript
+      const cdnModule = await import('https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
+      await cdnModule.default();
+      return { readParquet: cdnModule.readParquet, readSchema: cdnModule.readSchema };
+    } catch (cdnError) {
+      // Both imports failed, throw an error
+      const localErrorMsg = error instanceof Error ? error.message : String(error);
+      const cdnErrorMsg = cdnError instanceof Error ? cdnError.message : String(cdnError);
+      throw new Error(
+        `Failed to load parquet-wasm from both local package and CDN. Local error: ${localErrorMsg}. CDN error: ${cdnErrorMsg}`
+      );
+    }
   }
-  return { readParquet: module.readParquet, readSchema: module.readSchema };
 }
 
 /**
