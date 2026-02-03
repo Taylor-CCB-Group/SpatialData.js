@@ -14,7 +14,6 @@ import {
   SpatialCanvasProvider, 
   useSpatialCanvasStore, 
   useSpatialCanvasActions,
-  useSpatialCanvasStoreApi,
 } from './context';
 import { 
   getAvailableElements, 
@@ -42,6 +41,8 @@ export { createSpatialCanvasStore } from './stores';
 export type { SpatialCanvasStoreApi } from './stores';
 export type * from './types';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
+export { VivSpatialViewer } from './VivSpatialViewer';
+export type { ImageLayerConfig } from './useLayerData';
 
 // ============================================
 // Styles
@@ -348,8 +349,8 @@ function SpatialCanvasViewer({
   viewState,
   onViewStateChange,
 }: SpatialCanvasViewerProps) {
-  // Load layer data and get deck.gl layers
-  const { getLayers, isLoading } = useLayerData(
+  // Load layer data and get deck.gl layers + Viv layer props
+  const { getLayers, getVivLayerProps, isLoading } = useLayerData(
     layers, 
     layerOrder, 
     availableElements,
@@ -357,11 +358,14 @@ function SpatialCanvasViewer({
   );
 
   const deckLayers = getLayers();
+  const vivLayerProps = getVivLayerProps();
 
   // Handle view state change, converting null to default
   const handleViewStateChange = useCallback((vs: ViewState) => {
     onViewStateChange(vs);
   }, [onViewStateChange]);
+
+  const hasLayers = deckLayers.length > 0 || vivLayerProps.length > 0;
 
   return (
     <div style={{ width, height, position: 'relative' }}>
@@ -371,6 +375,7 @@ function SpatialCanvasViewer({
         viewState={viewState}
         onViewStateChange={handleViewStateChange}
         layers={deckLayers}
+        vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
       />
       {isLoading && (
         <div style={{
@@ -386,7 +391,7 @@ function SpatialCanvasViewer({
           Loading...
         </div>
       )}
-      {deckLayers.length === 0 && !isLoading && (
+      {!hasLayers && !isLoading && (
         <div style={{
           position: 'absolute',
           top: '50%',
@@ -421,6 +426,7 @@ export interface SpatialCanvasProps {
  * - Select a coordinate system
  * - Toggle visibility of elements that can be displayed in that coordinate system
  * - Pan and zoom the view
+ * - View images, shapes, points, and labels(tbd) together
  * 
  * @example Basic usage
  * ```tsx
@@ -439,6 +445,26 @@ export interface SpatialCanvasProps {
  * 
  * // Store can also be accessed externally
  * store.getState().setCoordinateSystem('global');
+ * ```
+ * 
+ * @example With image layer channel controls (advanced API)
+ * ```tsx
+ * const store = createSpatialCanvasStore();
+ * 
+ * // Add image layer with custom channel configuration
+ * store.getState().addLayer({
+ *   id: 'image:my_image',
+ *   type: 'image',
+ *   elementKey: 'my_image',
+ *   visible: true,
+ *   opacity: 1,
+ *   channels: {
+ *     colors: [[255, 0, 0], [0, 255, 0]],
+ *     contrastLimits: [[0, 1000], [0, 2000]],
+ *     channelsVisible: [true, true],
+ *     selections: [{ z: 0, c: 0, t: 0 }],
+ *   },
+ * });
  * ```
  */
 export default function SpatialCanvas({ store }: SpatialCanvasProps) {

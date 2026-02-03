@@ -20,16 +20,48 @@ import {
   type PointsLayerRenderConfig,
   type PointData,
 } from './renderers/pointsRenderer';
+import { 
+  createImageLoader,
+  extractChannelConfig,
+} from './renderers/imageRenderer';
+import { 
+  buildDefaultSelection, 
+  getMultiSelectionStats,
+  guessRgb,
+  isInterleaved,
+} from '../ImageView/avivatorish/utils';
+import { COLOR_PALLETE } from '../ImageView/avivatorish/constants';
+
+interface ImageLoaderData {
+  loader: unknown;
+  colors?: [number, number, number][];
+  contrastLimits?: [number, number][];
+  channelsVisible?: boolean[];
+  selections?: Array<{ z?: number; c?: number; t?: number }>;
+}
 
 interface LoadedData {
   shapes: Map<string, Array<Array<Array<[number, number]>>>>;
   points: Map<string, PointData>;
-  images: Map<string, unknown>; // Viv loaders - to be implemented
+  images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
+}
+
+export interface ImageLayerConfig {
+  loader: unknown; // Viv PixelSource
+  colors: [number, number, number][];
+  contrastLimits: [number, number][];
+  channelsVisible: boolean[];
+  selections: Array<{ z?: number; c?: number; t?: number }>;
+  modelMatrix?: Matrix4; // Transformation matrix for coordinate system alignment
+  opacity?: number; // Layer opacity (0-1)
+  visible?: boolean; // Whether layer is visible
 }
 
 interface UseLayerDataResult {
-  /** Get deck.gl layers ready for rendering */
+  /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
   getLayers: () => Layer[];
+  /** Get Viv layer props for image layers */
+  getVivLayerProps: () => ImageLayerConfig[];
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Trigger a reload of data for a specific element */
@@ -92,8 +124,9 @@ export function useLayerData(
           toLoad.push({ layerId, element: elem });
         } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
           toLoad.push({ layerId, element: elem });
+        } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
+          toLoad.push({ layerId, element: elem });
         }
-        // Images handled separately (Viv loader)
       }
       
       if (toLoad.length === 0) return;
@@ -116,6 +149,85 @@ export function useLayerData(
             const e = element.element as PointsElement;
             const data = await e.loadPoints();
             loadedDataRef.current.points.set(element.key, data);
+          } else if (element.type === 'image') {
+            const loader = await createImageLoader(element.element as ImageElement);
+            // Compute channel defaults from loader metadata
+            const imageElement = element.element as ImageElement;
+            const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+            
+            const imageData: ImageLoaderData = { loader };
+            
+            try {
+              if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
+                const loaderObj = loaderToCheck as { labels: string[]; shape: number[] };
+                
+                // Build selections
+                const selections = buildDefaultSelection({
+                  labels: loaderObj.labels,
+                  shape: loaderObj.shape,
+                });
+                
+                // Get metadata from image element
+                const metadata = imageElement.attrs.omero;
+                
+                if (metadata?.channels) {
+                  const Channels = metadata.channels;
+                  const isRgb = guessRgb({ Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) } } as any);
+                  
+                  if (isRgb) {
+                    if (isInterleaved(loaderObj.shape)) {
+                      imageData.contrastLimits = [[0, 255]];
+                      imageData.colors = [[255, 0, 0]];
+                    } else {
+                      imageData.contrastLimits = [[0, 255], [0, 255], [0, 255]];
+                      imageData.colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
+                    }
+                    imageData.channelsVisible = imageData.colors.map(() => true);
+                  } else {
+                    // Compute stats for non-RGB images
+                    const stats = await getMultiSelectionStats({
+                      loader: loader as any,
+                      selections: selections as any,
+                      use3d: false,
+                    });
+                    imageData.contrastLimits = stats.contrastLimits;
+                    // Use channel colors from metadata or palette
+                    imageData.colors = stats.contrastLimits.length === 1
+                      ? [[255, 255, 255] as [number, number, number]]
+                      : stats.contrastLimits.map((_, i): [number, number, number] => {
+                          const channelColor = Channels[i]?.color;
+                          if (Array.isArray(channelColor) && channelColor.length >= 3) {
+                            return [channelColor[0], channelColor[1], channelColor[2]] as [number, number, number];
+                          }
+                          return COLOR_PALLETE[i % COLOR_PALLETE.length] as [number, number, number];
+                        });
+                    imageData.channelsVisible = imageData.colors.map(() => true);
+                  }
+                  imageData.selections = selections;
+                } else {
+                  // Fallback defaults
+                  imageData.contrastLimits = [[0, 65535]];
+                  imageData.colors = [[255, 255, 255]];
+                  imageData.channelsVisible = [true];
+                  imageData.selections = [{}];
+                }
+              } else {
+                // Fallback defaults
+                imageData.contrastLimits = [[0, 65535]];
+                imageData.colors = [[255, 255, 255]];
+                imageData.channelsVisible = [true];
+                imageData.selections = [{}];
+              }
+            } catch (error) {
+              console.warn(`Failed to compute channel defaults for ${element.key}:`, error);
+              // Fallback defaults
+              imageData.contrastLimits = [[0, 65535]];
+              imageData.colors = [[255, 255, 255]];
+              imageData.channelsVisible = [true];
+              imageData.selections = [{}];
+            }
+            
+            loadedDataRef.current.images.set(element.key, imageData);
           }
         } catch (error) {
           console.error(`Failed to load data for ${layerId}:`, error);
@@ -187,14 +299,61 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       }
-      // Image layers need Viv integration - skip for now
+      // Image layers are handled separately via getVivLayerProps()
     }
     
     return deckLayers;
   }, [layers, layerOrder]);
 
+  const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
+    const vivProps: ImageLayerConfig[] = [];
+    const loaded = loadedDataRef.current;
+    
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible || config.type !== 'image') continue;
+      
+      const elem = elementMap.current.get(layerId);
+      if (!elem || elem.type !== 'image') continue;
+      
+      const imageData = loaded.images.get(elem.key);
+      if (!imageData) continue; // Skip if loader not ready yet
+      
+      // Extract channel config (user-provided overrides)
+      const channelConfig = extractChannelConfig(config);
+      
+      // Use user-provided config if available, otherwise use computed defaults
+      const colors: [number, number, number][] = channelConfig.colors.length > 0 && channelConfig.colors[0][0] !== 255 
+        ? channelConfig.colors 
+        : (imageData.colors || [[255, 255, 255] as [number, number, number]]);
+      const contrastLimits: [number, number][] = channelConfig.contrastLimits.length > 0 && channelConfig.contrastLimits[0][1] !== 65535
+        ? channelConfig.contrastLimits
+        : (imageData.contrastLimits || [[0, 65535] as [number, number]]);
+      const channelsVisible: boolean[] = channelConfig.channelsVisible.length > 0
+        ? channelConfig.channelsVisible
+        : (imageData.channelsVisible || [true]);
+      const selections: Array<{ z?: number; c?: number; t?: number }> = channelConfig.selections.length > 0
+        ? channelConfig.selections
+        : (imageData.selections || [{}]);
+      
+      vivProps.push({
+        loader: imageData.loader,
+        colors,
+        contrastLimits,
+        channelsVisible,
+        selections,
+        modelMatrix: elem.transform, // Apply coordinate transformation
+        opacity: config.opacity,
+        visible: config.visible,
+      });
+    }
+    
+    return vivProps;
+  }, [layers, layerOrder]);
+
   return {
     getLayers,
+    getVivLayerProps,
     isLoading: loadingKeys.size > 0,
     reloadElement,
   };

@@ -30,10 +30,22 @@ export interface BaseLayerConfig {
   opacity: number;
 }
 
+export interface ChannelConfig {
+  /** Channel colors as RGB tuples */
+  colors?: [number, number, number][];
+  /** Contrast limits for each channel [min, max] */
+  contrastLimits?: [number, number][];
+  /** Visibility for each channel */
+  channelsVisible?: boolean[];
+  /** Selections for z, c, t dimensions */
+  selections?: { z: number; c: number; t: number }[];
+}
+
 export interface ImageLayerConfig extends BaseLayerConfig {
   type: 'image';
   elementKey: string;
-  // Image-specific settings can go here (channels, contrast, etc.)
+  /** Optional: Advanced channel configuration (for full Viv controls) */
+  channels?: ChannelConfig;
 }
 
 export interface ShapesLayerConfig extends BaseLayerConfig {

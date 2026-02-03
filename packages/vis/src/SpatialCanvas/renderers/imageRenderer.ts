@@ -5,6 +5,7 @@
  * OME-Zarr and other multiscale image formats.
  */
 
+import { loadOmeZarr } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
 import type { ImageElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
@@ -34,44 +35,67 @@ export interface ImageLayerRenderConfig {
 /**
  * Create a Viv image layer for rendering.
  * 
- * Note: Full Viv integration requires async loader creation and channel state.
- * This is a placeholder that returns null until the loader infrastructure is integrated.
- * 
- * TODO: 
- * - Integrate with Viv's loader creation (loadOmeZarr, etc.)
- * - Apply modelMatrix transformation
- * - Handle channel state
+ * Note: Actual layer creation happens in the viewer via Viv's view system.
+ * This function is kept for API consistency but returns null - layers are
+ * created by calling view.getLayers() in the viewer component.
  */
 export function renderImageLayer(config: ImageLayerRenderConfig): Layer | null {
-  const { element, id, modelMatrix, opacity, visible, loader, channels } = config;
-
-  if (!visible) return null;
-  
-  // Full implementation would create MultiscaleImageLayer here
-  // For now, we return null and log the intent
-  console.debug(`[ImageRenderer] Would render image layer "${id}" from ${element.url}`, {
-    hasLoader: !!loader,
-    hasChannels: !!channels,
-    opacity,
-    transform: modelMatrix.toArray(),
-  });
-
-  // Placeholder - actual implementation needs:
-  // 1. Create/use Viv loader
-  // 2. Get channel state from Viv stores or config
-  // 3. Return MultiscaleImageLayer with modelMatrix
-  
+  // Image layers are handled via Viv's view.getLayers() system in the viewer
+  // This function exists for API consistency but doesn't create layers directly
   return null;
+}
+
+/**
+ * Extract channel configuration from layer config, providing defaults if needed.
+ */
+export function extractChannelConfig(config: {
+  channels?: {
+    colors?: [number, number, number][];
+    contrastLimits?: [number, number][];
+    channelsVisible?: boolean[];
+    selections?: { z: number; c: number; t: number }[];
+  };
+}): {
+  colors: [number, number, number][];
+  contrastLimits: [number, number][];
+  channelsVisible: boolean[];
+  selections: { z: number; c: number; t: number }[];
+} {
+  const defaults = {
+    colors: [[255, 255, 255]] as [number, number, number][],
+    contrastLimits: [[0, 65535]] as [number, number][],
+    channelsVisible: [true],
+    // Don't provide default selections - they should be built from loader dimensions
+    selections: [] as { z?: number; c?: number; t?: number }[],
+  };
+
+  if (!config.channels) {
+    return defaults;
+  }
+
+  return {
+    colors: config.channels.colors ?? defaults.colors,
+    contrastLimits: config.channels.contrastLimits ?? defaults.contrastLimits,
+    channelsVisible: config.channels.channelsVisible ?? defaults.channelsVisible,
+    selections: config.channels.selections ?? defaults.selections,
+  };
 }
 
 /**
  * Create a Viv loader for an image element.
  * This is async and should be called during component setup.
+ * 
+ * SpatialData only supports OME-Zarr format, so we use loadOmeZarr.
  */
 export async function createImageLoader(element: ImageElement): Promise<unknown> {
-  // TODO: Use Viv's loadOmeZarr or similar based on element.url
-  // This requires dynamic import of Viv loader utilities
-  console.debug(`[ImageRenderer] Would create loader for ${element.url}`);
-  return null;
+  try {
+    // Use loadOmeZarr for OME-NGFF format (SpatialData standard)
+    // @ts-expect-error - loadOmeZarr types may need adjustment
+    const loader = await loadOmeZarr(element.url, { type: 'multiscales' });
+    return loader.data; // Return just the data part (PixelSource)
+  } catch (error) {
+    console.error(`[ImageRenderer] Failed to create loader for ${element.url}:`, error);
+    throw error;
+  }
 }
 
