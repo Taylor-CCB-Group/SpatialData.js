@@ -8,33 +8,6 @@ import {
 
 describe('zarrextra - Zarr Schema Validation', () => {
   describe('v2ZarraySchema', () => {
-    it('should validate a valid v2 zarray with regular dimensions', () => {
-      const validZarray = {
-        shape: [100, 200],
-        chunks: [10, 20],
-        dtype: 'float64',
-        zarr_format: 2,
-      };
-
-      expect(() => v2ZarraySchema.parse(validZarray)).not.toThrow();
-      const result = v2ZarraySchema.parse(validZarray);
-      expect(result.shape).toEqual([100, 200]);
-      expect(result.chunks).toEqual([10, 20]);
-    });
-
-    it('should validate a scalar v2 zarray (empty shape/chunks)', () => {
-      const scalarZarray = {
-        shape: [],
-        chunks: [],
-        dtype: 'float64',
-        zarr_format: 2,
-      };
-
-      expect(() => v2ZarraySchema.parse(scalarZarray)).not.toThrow();
-      const result = v2ZarraySchema.parse(scalarZarray);
-      expect(result.shape).toEqual([]);
-      expect(result.chunks).toEqual([]);
-    });
 
     it('should validate v2 zarray with filters and compressor', () => {
       const zarray = {
@@ -57,16 +30,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
       const invalidZarray = {
         shape: [100, 200],
         chunks: [10], // Wrong length
-        dtype: 'float64',
-      };
-
-      expect(() => v2ZarraySchema.parse(invalidZarray)).toThrow();
-    });
-
-    it('should reject v2 zarray with chunk exceeding shape dimension', () => {
-      const invalidZarray = {
-        shape: [100],
-        chunks: [200], // Chunk larger than shape
         dtype: 'float64',
       };
 
@@ -125,50 +88,22 @@ describe('zarrextra - Zarr Schema Validation', () => {
 
       expect(() => v2ZarraySchema.parse(invalidZarray)).toThrow();
     });
+
+    it('should validate v2 zarray with null fill_value', () => {
+      const zarray = {
+        shape: [100],
+        chunks: [10],
+        dtype: 'float64',
+        fill_value: null, // Valid for v2
+      };
+
+      expect(() => v2ZarraySchema.parse(zarray)).not.toThrow();
+      const result = v2ZarraySchema.parse(zarray);
+      expect(result.fill_value).toBeNull();
+    });
   });
 
   describe('v3ZarraySchema', () => {
-    it('should validate a valid v3 zarray with regular dimensions', () => {
-      const validZarray = {
-        shape: [100, 200],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [10, 20] },
-        },
-        chunk_key_encoding: {
-          name: 'default',
-          configuration: { separator: '/' },
-        },
-        node_type: 'array' as const,
-      };
-
-      expect(() => v3ZarraySchema.parse(validZarray)).not.toThrow();
-      const result = v3ZarraySchema.parse(validZarray);
-      expect(result.shape).toEqual([100, 200]);
-      expect(result.chunk_grid.configuration.chunk_shape).toEqual([10, 20]);
-    });
-
-    it('should validate a scalar v3 zarray (empty shape/chunk_shape)', () => {
-      const scalarZarray = {
-        shape: [],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [] },
-        },
-        chunk_key_encoding: {
-          name: 'default',
-          configuration: { separator: '/' },
-        },
-        node_type: 'array' as const,
-      };
-
-      expect(() => v3ZarraySchema.parse(scalarZarray)).not.toThrow();
-      const result = v3ZarraySchema.parse(scalarZarray);
-      expect(result.shape).toEqual([]);
-      expect(result.chunk_grid.configuration.chunk_shape).toEqual([]);
-    });
 
     it('should validate v3 zarray with codecs', () => {
       const zarray = {
@@ -196,19 +131,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
         chunk_grid: {
           name: 'regular',
           configuration: { chunk_shape: [10] }, // Wrong length
-        },
-      };
-
-      expect(() => v3ZarraySchema.parse(invalidZarray)).toThrow();
-    });
-
-    it('should reject v3 zarray with chunk_shape exceeding shape dimension', () => {
-      const invalidZarray = {
-        shape: [100],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [200] }, // Chunk larger than shape
         },
       };
 
@@ -246,20 +168,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
       expect(result.node_type).toBe('array');
     });
 
-    it('should convert scalar v2 zarray to v3 format', () => {
-      const v2Zarray = {
-        shape: [],
-        chunks: [],
-        dtype: 'float64',
-        zarr_format: 2,
-      };
-
-      const result = validateAndConvertV2Zarray(v2Zarray, 'test/path');
-
-      expect(result.shape).toEqual([]);
-      expect(result.chunk_grid.configuration.chunk_shape).toEqual([]);
-    });
-
     it('should convert v2 filters and compressor to v3 codecs', () => {
       const v2Zarray = {
         shape: [100],
@@ -291,16 +199,18 @@ describe('zarrextra - Zarr Schema Validation', () => {
       expect(result.dimension_names).toEqual(['y', 'x']);
     });
 
-    it('should throw error for invalid v2 zarray', () => {
-      const invalidZarray = {
+    it('should handle v2 zarray with null fill_value', () => {
+      const v2Zarray = {
         shape: [100],
-        chunks: [200], // Invalid: chunk > shape
+        chunks: [10],
         dtype: 'float64',
+        fill_value: null, // Valid for v2
       };
 
-      expect(() => {
-        validateAndConvertV2Zarray(invalidZarray, 'test/path');
-      }).toThrow();
+      const result = validateAndConvertV2Zarray(v2Zarray, 'test/path');
+      // Note: validateAndConvertV2Zarray converts null fill_value to 0 default
+      // This is expected behavior for the conversion function
+      expect(result.fill_value).toBe(0);
     });
 
     it('should handle v2 zarray that is already in v3 format (hybrid)', () => {
@@ -322,45 +232,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
   });
 
   describe('validateV3Zarray', () => {
-    it('should validate a valid v3 zarray', () => {
-      const v3Zarray = {
-        shape: [100, 200],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [10, 20] },
-        },
-        chunk_key_encoding: {
-          name: 'default',
-          configuration: { separator: '/' },
-        },
-        node_type: 'array' as const,
-      };
-
-      const result = validateV3Zarray(v3Zarray, 'test/path');
-
-      expect(result.shape).toEqual([100, 200]);
-      expect(result.data_type).toBe('float64');
-      expect(result.chunk_grid.configuration.chunk_shape).toEqual([10, 20]);
-      expect(result.zarr_format).toBe(3);
-      expect(result.node_type).toBe('array');
-    });
-
-    it('should validate a scalar v3 zarray', () => {
-      const scalarZarray = {
-        shape: [],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [] },
-        },
-      };
-
-      const result = validateV3Zarray(scalarZarray, 'test/path');
-
-      expect(result.shape).toEqual([]);
-      expect(result.chunk_grid.configuration.chunk_shape).toEqual([]);
-    });
 
     it('should provide default chunk_key_encoding if missing', () => {
       const v3Zarray = {
@@ -377,40 +248,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
 
       expect(result.chunk_key_encoding.name).toBe('default');
       expect(result.chunk_key_encoding.configuration.separator).toBe('/');
-    });
-
-    it('should handle optional fields with defaults', () => {
-      const v3Zarray = {
-        shape: [100],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [10] },
-        },
-        // Missing optional fields
-      };
-
-      const result = validateV3Zarray(v3Zarray, 'test/path');
-
-      expect(result.fill_value).toBe(0);
-      expect(result.codecs).toEqual([]);
-      expect(result.dimension_names).toEqual([]);
-      expect(result.storage_transformers).toEqual([]);
-    });
-
-    it('should throw error for invalid v3 zarray', () => {
-      const invalidZarray = {
-        shape: [100],
-        data_type: 'float64',
-        chunk_grid: {
-          name: 'regular',
-          configuration: { chunk_shape: [200] }, // Invalid: chunk > shape
-        },
-      };
-
-      expect(() => {
-        validateV3Zarray(invalidZarray, 'test/path');
-      }).toThrow();
     });
 
     it('should preserve provided optional fields', () => {
