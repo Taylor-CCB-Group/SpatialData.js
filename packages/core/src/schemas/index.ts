@@ -106,7 +106,12 @@ const transformationSchema: z.ZodType<Transformation> = z.lazy(() =>
 
 export const coordinateTransformationSchema = z.array(transformationSchema).min(1);
 
-const spaceUnitSchema = z.enum([
+/**
+ * Spatial units from OME-NGFF specification.
+ * Valid UDUNITS-2 spatial units.
+ * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L131
+ */
+export const spaceUnitSchema = z.enum([
   'angstrom',
   'attometer',
   'centimeter',
@@ -135,7 +140,13 @@ const spaceUnitSchema = z.enum([
   'zeptometer',
   'zettameter',
 ]);
-const timeUnitSchema = z.enum([
+
+/**
+ * Time units from OME-NGFF specification.
+ * Valid UDUNITS-2 time units.
+ * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L132
+ */
+export const timeUnitSchema = z.enum([
   'attosecond',
   'centisecond',
   'day',
@@ -160,14 +171,37 @@ const timeUnitSchema = z.enum([
   'zeptosecond',
   'zettasecond',
 ]);
+
 /**
- * SHOULD contain the field “unit” to specify the physical unit of this dimension.
+ * Extract enum values from a zod enum schema as a Set of strings.
+ * Accesses the internal _def.values array from zod enum schemas.
+ */
+function getEnumValues(schema: z.ZodEnum<Record<string, string>>): Set<string> {
+  // zod enum schemas have an internal _def.values array
+  const values = (schema as unknown as { _def: { values: readonly string[] } })._def.values;
+  return new Set(values);
+}
+
+/**
+ * Set of all valid spatial unit strings from OME-NGFF specification.
+ * Derived from spaceUnitSchema to ensure consistency.
+ * @see spaceUnitSchema
+ */
+export const SPATIAL_UNITS: Set<string> = getEnumValues(spaceUnitSchema);
+
+/**
+ * Set of all valid time unit strings from OME-NGFF specification.
+ * Derived from timeUnitSchema to ensure consistency.
+ * @see timeUnitSchema
+ */
+export const TIME_UNITS: Set<string> = getEnumValues(timeUnitSchema);
+/**
+ * SHOULD contain the field "unit" to specify the physical unit of this dimension.
  * The value SHOULD be one of the following strings, which are valid units according to UDUNITS-2.
- * https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L130
- * -- we could try to be better about distinguishing time/space units etc,
- * formally expressing that relationship.
- * For now, this whole type basically resolves to string, because other arbitrary values are also allowed
- * but we'll certainly care about units more in future.
+ * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L130
+ * 
+ * Note: This schema is relaxed to allow arbitrary string values (e.g., generic "unit" placeholder)
+ * for backward compatibility, but prefers validated spatial and time units when available.
  */
 const axisUnitSchema = z.union([spaceUnitSchema, timeUnitSchema, z.string()]);
 const axisSchema = z.union([
