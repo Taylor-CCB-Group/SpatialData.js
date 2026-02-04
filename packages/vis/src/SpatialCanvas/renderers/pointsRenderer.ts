@@ -78,7 +78,7 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     // spatial data-structure (quad/oct-tree) vs pushing raw attributes.
     // with ways of querying within view.
     // also allow accessors for other props
-    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], use3d ? d[2]?.[index] : 0],
+    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], use3d ? (d[2]?.[index] || 0) : 0],
     getRadius: pointSize,
     radiusUnits: 'pixels',
     getFillColor: color,

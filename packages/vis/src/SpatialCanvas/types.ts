@@ -51,7 +51,6 @@ export interface ChannelConfig {
 
 export interface ImageLayerConfig extends BaseLayerConfig {
   type: 'image';
-  elementKey: string;
   /** Optional: Advanced channel configuration (for full Viv controls) */
   channels?: ChannelConfig;
 }
