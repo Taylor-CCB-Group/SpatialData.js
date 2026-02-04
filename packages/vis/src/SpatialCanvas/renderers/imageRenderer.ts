@@ -66,7 +66,8 @@ export function extractChannelConfig(config: {
     contrastLimits: [[0, 65535]] as [number, number][],
     channelsVisible: [true],
     // Don't provide default selections - they should be built from loader dimensions
-    selections: [] as { z?: number; c?: number; t?: number }[],
+    // TODO - fix types wrt optional entries
+    selections: [] as { z: number; c: number; t: number }[],
   };
 
   if (!config.channels) {
@@ -90,7 +91,6 @@ export function extractChannelConfig(config: {
 export async function createImageLoader(element: ImageElement): Promise<unknown> {
   try {
     // Use loadOmeZarr for OME-NGFF format (SpatialData standard)
-    // @ts-expect-error - loadOmeZarr types may need adjustment
     const loader = await loadOmeZarr(element.url, { type: 'multiscales' });
     return loader.data; // Return just the data part (PixelSource)
   } catch (error) {

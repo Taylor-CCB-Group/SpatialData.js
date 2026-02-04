@@ -64,7 +64,7 @@ export interface VivSpatialViewerProps {
 
 interface VivSpatialViewerState {
   viewStates: Record<string, VivViewState>;
-  deckRef?: React.MutableRefObject<DeckGL>;
+  // deckRef?: React.MutableRefObject<DeckGL>;
 }
 
 /**
@@ -114,7 +114,7 @@ function composeLayers(
 }
 
 /**
- * Filter layers by viewport ID (for multi-view support)
+ * Filter layers by viewport ID (for multi-view support within a canvas)
  * MDV pattern: layers must include the Viv ID in their ID to be rendered
  */
 function createLayerFilter(viewId: string) {
@@ -147,6 +147,7 @@ function fromVivViewState(vivViewState: VivViewState): ViewState {
   const target = vivViewState.target as [number, number, number];
   return {
     target: [target[0], target[1]],
+    //@ts-expect-error need to sort out how we represent types - probably 2d only temporarily while we do
     zoom: vivViewState.zoom,
   };
 }
@@ -176,7 +177,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       viewStates: {
         [this.viewId]: initialViewState,
       },
-      deckRef: React.createRef(),
+      // deckRef: React.createRef(),
     };
 
     this._onViewStateChange = this._onViewStateChange.bind(this);
@@ -342,7 +343,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
     return (
       <DeckGL
-        ref={this.state.deckRef}
+        // ref={this.state.deckRef}
         {...(deckProps ?? {})}
         layerFilter={this.layerFilter}
         layers={layers}

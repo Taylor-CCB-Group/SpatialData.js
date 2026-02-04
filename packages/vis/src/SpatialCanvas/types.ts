@@ -9,11 +9,17 @@ import type { SpatialElement, AnyElement } from '@spatialdata/core';
 // View State Types
 // ============================================
 
-export interface ViewState {
-  target: [number, number] | [number, number, number];
+export type ViewState2D = {
+  target: [number, number],
   zoom: number;
-  // Future: rotation, bearing, pitch for 3D
 }
+export type ViewState3D = {
+  target: [number, number, number],
+  zoom: number,
+  // TODO pitch, bearing for 3d.
+  // do we really want this type to be different to OrbitViewState from deck?
+}
+export type ViewState = ViewState2D | ViewState3D;
 
 // ============================================
 // Layer Configuration Types
@@ -28,6 +34,7 @@ export interface BaseLayerConfig {
   visible: boolean;
   /** Layer opacity (0-1) */
   opacity: number;
+  elementKey: string;
 }
 
 export interface ChannelConfig {
@@ -39,6 +46,7 @@ export interface ChannelConfig {
   channelsVisible?: boolean[];
   /** Selections for z, c, t dimensions */
   selections?: { z: number; c: number; t: number }[];
+  //TODO: how do we pass channel-related extension props?
 }
 
 export interface ImageLayerConfig extends BaseLayerConfig {
@@ -50,8 +58,8 @@ export interface ImageLayerConfig extends BaseLayerConfig {
 
 export interface ShapesLayerConfig extends BaseLayerConfig {
   type: 'shapes';
-  elementKey: string;
   // Shapes-specific settings
+  // TODO: these should be accessors for getFillColor etc based on EntityID
   fillColor?: [number, number, number, number];
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
@@ -59,16 +67,18 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
 
 export interface PointsLayerConfig extends BaseLayerConfig {
   type: 'points';
-  elementKey: string;
   // Points-specific settings
+  // TODO: these should be accessors for getColor etc based on e.g. transcript type
+  // should be able to filter etc. Some kind of LOD...
   pointSize?: number;
   color?: [number, number, number, number];
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {
   type: 'labels';
-  elementKey: string;
   // Labels-specific settings (colormap, etc.)
+  // should also be able to associate with EntityID 
+  // - so we'll need some kind of buffer lookup for color/filter/etc
 }
 
 export type LayerConfig = ImageLayerConfig | ShapesLayerConfig | PointsLayerConfig | LabelsLayerConfig;
