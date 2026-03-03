@@ -86,8 +86,8 @@ uv sync --directory python/v0.5.0
 # Set up environment for spatialdata 0.6.1
 uv sync --directory python/v0.6.1
 
-# Set up environment for spatialdata 0.7.0
-uv sync --directory python/v0.7.0
+# Set up environment for spatialdata 0.7.2
+uv sync --directory python/v0.7.2
 
 # Or set up all at once (the fixture generation script will do this automatically)
 ```
@@ -112,13 +112,13 @@ The project includes editor configuration files (`.vscode/settings.json` and `.c
 - To switch versions: `Cmd/Ctrl+Shift+P` → "Python: Select Interpreter" → Choose:
   - `./python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `./python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
-  - `./python/v0.7.0/.venv/bin/python3` for spatialdata 0.7.0
+  - `./python/v0.7.2/.venv/bin/python3` for spatialdata 0.7.2
 
 **Other editors:**
 - Choose the appropriate virtual environment:
   - `python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
-  - `python/v0.7.0/.venv/bin/python3` for spatialdata 0.7.0
+  - `python/v0.7.2/.venv/bin/python3` for spatialdata 0.7.2
 
 
 ### Running Tests
@@ -144,18 +144,18 @@ Test fixtures are generated on-demand using the Python `spatialdata` library. Ea
 Fixtures are stored in `test-fixtures/` (excluded from git).
 
 ```bash
-# Generate fixtures for all spatialdata versions (0.5.0, 0.6.1, and 0.7.0)
+# Generate fixtures for all spatialdata versions (0.5.0, 0.6.1, and 0.7.2)
 # This will automatically set up the version-specific environments if needed
 pnpm test:fixtures:generate
 
 # Generate fixtures for a specific version
 pnpm test:fixtures:generate:0.5.0
 pnpm test:fixtures:generate:0.6.1
-pnpm test:fixtures:generate:0.7.0
+pnpm test:fixtures:generate:0.7.2
 ```
 
 **How it works:**
-- The script uses separate environments: `python/v0.5.0/`, `python/v0.6.1/`, and `python/v0.7.0/`
+- The script uses separate environments: `python/v0.5.0/`, `python/v0.6.1/`, and `python/v0.7.2/`
 - Each environment has its own `pyproject.toml` with the spatialdata version pinned
 - The script automatically runs `uv sync` for each environment before generating fixtures
 - This ensures fixtures are generated with the exact spatialdata version being tested
@@ -176,7 +176,7 @@ pnpm test:server
 Once running, fixtures are accessible at:
 - `http://localhost:8080/test-fixtures/v0.5.0/blobs.zarr`
 - `http://localhost:8080/test-fixtures/v0.6.1/blobs.zarr`
-- `http://localhost:8080/test-fixtures/v0.7.0/blobs.zarr`
+- `http://localhost:8080/test-fixtures/v0.7.2/blobs.zarr`
 
 The server provides directory listings and serves all zarr metadata files with appropriate CORS headers.
 

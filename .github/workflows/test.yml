@@ -44,12 +44,12 @@ jobs:
         with:
           path: ~/.cache/uv
           # could be overkill always running all versions in CI, may review in future.
-          key: ${{ runner.os }}-uv-${{ hashFiles('python/v0.5.0/pyproject.toml', 'python/v0.6.1/pyproject.toml', 'python/v0.7.0/pyproject.toml') }}
+          key: ${{ runner.os }}-uv-${{ hashFiles('python/v0.5.0/pyproject.toml', 'python/v0.6.1/pyproject.toml', 'python/v0.7.2/pyproject.toml') }}
 
       # Note: Version-specific environments are set up automatically by the fixture generation script
       # No need to manually sync here unless you want to pre-warm the cache
 
-      - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.0)
+      - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.2)
         run: pnpm test:fixtures:generate
 
       - name: Run unit tests

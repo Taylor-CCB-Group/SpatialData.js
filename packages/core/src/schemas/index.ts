@@ -279,7 +279,7 @@ export type NgffImage = z.infer<typeof imageSchema>;
  * Note: Transformations are stored at the top level of attrs, not inside spatialdata_attrs.
  * 
  * IMPORTANT: The semantic meaning of `version` varies by element type:
- * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.0')
+ * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.2')
  *   and does NOT control OME-NGFF format detection (which is determined by structure).
  * - For shapes/points: `version` is the spatialdata format version (e.g., '0.1', '0.2') and IS used for format detection.
  */

@@ -15,8 +15,10 @@ validation-results/
 # Python virtual environments (version-specific, completely separate)
 python/v0.5.0/.venv/
 python/v0.6.1/.venv/
+python/v0.7.2/.venv/
 python/v0.5.0/uv.lock
 python/v0.6.1/uv.lock
+python/v0.7.2/uv.lock
 
 # Environment
 .env

@@ -3,7 +3,7 @@
 Wrapper script to generate test fixtures for all spatialdata versions.
 
 This script coordinates running the version-specific fixture generation scripts
-located in python/v0.5.0/, python/v0.6.1/, and python/v0.7.0/.
+located in python/v0.5.0/, python/v0.6.1/, and python/v0.7.2/.
 """
 
 import argparse
@@ -19,7 +19,7 @@ def main():
     parser.add_argument(
         "--version",
         type=str,
-        choices=["0.5.0", "0.6.1", "0.7.0"],
+        choices=["0.5.0", "0.6.1", "0.7.2"],
         default=None,
         help="SpatialData version to generate fixtures for (default: all)",
     )
@@ -37,7 +37,7 @@ def main():
     project_root = script_path.parent.parent.parent
     output_dir = project_root / args.output_dir
     
-    versions = [args.version] if args.version else ["0.5.0", "0.6.1", "0.7.0"]
+    versions = [args.version] if args.version else ["0.5.0", "0.6.1", "0.7.2"]
     
     success = True
     for version in versions:
