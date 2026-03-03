@@ -79,7 +79,6 @@ function mapSpatialValuesToXYZ(
   // Fallback: if we have unmapped spatial axes, map them in order
   // This handles cases where axis names don't match x/y/z exactly
   // but preserves the spatial ordering (first → x, second → y, third → z)
-  let fallbackIndex = 0;
   for (const { value } of spatialAxesInOrder) {
     if (!xSet) {
       xSet = true;
@@ -91,7 +90,6 @@ function mapSpatialValuesToXYZ(
       zSet = true;
       zValue = value;
     }
-    fallbackIndex++;
   }
   
   return [xValue, yValue, zValue];
