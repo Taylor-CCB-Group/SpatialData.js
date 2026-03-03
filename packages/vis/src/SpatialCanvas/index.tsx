@@ -42,7 +42,7 @@ export type { SpatialCanvasStoreApi } from './stores';
 export type * from './types';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
 export { VivSpatialViewer } from './VivSpatialViewer';
-export type { ImageLayerConfig } from './useLayerData';
+export type { ImageLayerConfig as VivImageLayerConfig } from './useLayerData';
 
 // ============================================
 // Styles
