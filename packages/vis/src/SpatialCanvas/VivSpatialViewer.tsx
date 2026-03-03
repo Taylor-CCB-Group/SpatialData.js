@@ -16,7 +16,7 @@ import * as React from 'react';
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import { ScaleBarLayer, DetailView, getDefaultInitialViewState } from '@hms-dbmi/viv';
-import type { OrthographicViewState, OrbitViewState, DeckGLProps, Layer, PickingInfo } from 'deck.gl';
+import type { OrthographicViewState, OrbitViewState, DeckGLProps, Layer, LayersList, PickingInfo } from 'deck.gl';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -76,10 +76,10 @@ interface VivSpatialViewerState {
  * - When deckProps.layers is undefined: [vivLayers (all), scaleBar]
  */
 function composeLayers(
-  vivLayers: Layer[],
-  extraLayers: Layer[] = [],
-  deckPropsLayers?: Layer[]
-): Layer[] {
+  vivLayers: LayersList,
+  extraLayers: LayersList = [],
+  deckPropsLayers?: LayersList
+): LayersList {
   // Separate scale bar from other Viv layers
   const scaleBarLayer = vivLayers.find((layer) => layer instanceof ScaleBarLayer);
   const otherVivLayers = vivLayers.filter((layer) => layer !== scaleBarLayer);
@@ -87,7 +87,7 @@ function composeLayers(
   // Follow MDV pattern: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
   // In our case, extraLayers = shapes/points (equivalent to deckProps.layers in MDV)
   // Always compose: [image layers, ...extraLayers, ...deckPropsLayers, scaleBar]
-  const layers: Layer[] = [];
+  const layers: LayersList = [];
   
   // Add image layers (without scale bar) first - these render at the bottom
   if (otherVivLayers.length > 0) {
@@ -262,14 +262,13 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     return viewState;
   }
 
-  _renderLayers(): Layer[] {
+  _renderLayers(): LayersList {
     const { vivLayerProps, extraLayers, deckProps, onHover } = this.props;
     const { viewStates } = this.state;
 
     // Viv typically handles one loader per view
     // For now, use the first image layer (can be extended later for multiple images per view)
     if (vivLayerProps.length === 0) {
-      //@ts-expect-error deckProps.layers LayersList type
       return composeLayers([], extraLayers, deckProps?.layers);
     }
 
@@ -330,7 +329,6 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
     // Compose with extra layers - following MDV pattern exactly
     // MDV does: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
-    //@ts-expect-error deckProps.layers LayersList type
     return composeLayers(vivLayers, extraLayersWithVivId, deckProps?.layers);
   }
 
