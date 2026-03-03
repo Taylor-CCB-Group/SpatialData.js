@@ -174,12 +174,9 @@ export const timeUnitSchema = z.enum([
 
 /**
  * Extract enum values from a zod enum schema as a Set of strings.
- * Accesses the internal _def.values array from zod enum schemas.
  */
 function getEnumValues(schema: z.ZodEnum<Record<string, string>>): Set<string> {
-  // zod enum schemas have an internal _def.values array
-  const values = (schema as unknown as { _def: { values: readonly string[] } })._def.values;
-  return new Set(values);
+  return new Set(schema.options);
 }
 
 /**
