@@ -7,6 +7,7 @@ located in python/v0.5.0/, python/v0.6.1/, and python/v0.7.2/.
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,9 +55,12 @@ def main():
         print(f"\n{'='*60}")
         print(f"Setting up environment for spatialdata {version}...")
         print(f"{'='*60}")
+        env = os.environ.copy()
+        env.pop("VIRTUAL_ENV", None)
         sync_result = subprocess.run(
             ["uv", "sync", "--directory", str(env_dir)],
             cwd=project_root,
+            env=env,
             capture_output=True,
             text=True,
         )
@@ -79,6 +83,7 @@ def main():
                 "--output-dir", str(output_dir),
             ],
             cwd=project_root,
+            env=env,
         )
         
         if result.returncode != 0:

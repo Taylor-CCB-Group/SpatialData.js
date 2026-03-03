@@ -19,7 +19,7 @@ function ensureFixtures(version: string): string {
   if (!existsSync(fixturePath)) {
     console.log(`Fixtures not found for version ${version}, generating...`);
     try {
-      execSync(`python3 python/scripts/generate_fixtures.py --version ${version}`, {
+      execSync(`uv run python/scripts/generate_fixtures.py --version ${version}`, {
         cwd: projectRoot,
         stdio: 'inherit',
       });
