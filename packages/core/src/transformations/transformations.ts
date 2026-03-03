@@ -46,6 +46,9 @@ function mapSpatialValuesToXYZ(
   let xValue = defaultValue;
   let yValue = defaultValue;
   let zValue = defaultValue;
+  let xSet = false;
+  let ySet = false;
+  let zSet = false;
   
   // Track spatial axes in order for fallback mapping
   const spatialAxesInOrder: Array<{ name: string; value: number }> = [];
@@ -57,11 +60,14 @@ function mapSpatialValuesToXYZ(
       const value = values[i] ?? defaultValue;
       
       // Map by exact axis name match (most common case: "x", "y", "z")
-      if (axisName === 'x' && xValue === defaultValue) {
+      if (axisName === 'x' && !xSet) {
+        xSet = true;
         xValue = value;
-      } else if (axisName === 'y' && yValue === defaultValue) {
+      } else if (axisName === 'y' && !ySet) {
+        ySet = true;
         yValue = value;
-      } else if (axisName === 'z' && zValue === defaultValue) {
+      } else if (axisName === 'z' && !zSet) {
+        zSet = true;
         zValue = value;
       } else {
         // Store for fallback mapping if name doesn't match exactly
@@ -75,11 +81,14 @@ function mapSpatialValuesToXYZ(
   // but preserves the spatial ordering (first → x, second → y, third → z)
   let fallbackIndex = 0;
   for (const { value } of spatialAxesInOrder) {
-    if (fallbackIndex === 0 && xValue === defaultValue) {
+    if (!xSet) {
+      xSet = true;
       xValue = value;
-    } else if (fallbackIndex === 1 && yValue === defaultValue) {
+    } else if (!ySet) {
+      ySet = true;
       yValue = value;
-    } else if (fallbackIndex === 2 && zValue === defaultValue) {
+    } else if (!zSet) {
+      zSet = true;
       zValue = value;
     }
     fallbackIndex++;
