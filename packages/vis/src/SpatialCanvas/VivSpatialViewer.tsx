@@ -145,10 +145,14 @@ function toVivViewState(viewState: ViewState, viewId: string, width: number, hei
  */
 function fromVivViewState(vivViewState: VivViewState): ViewState {
   const target = vivViewState.target as [number, number, number];
+  // still not exactly happy with this, and pending 3d etc
+  // do we need our own ViewState types that don't match deck?
+  const zoom = Array.isArray(vivViewState.zoom)
+    ? vivViewState.zoom[0]
+    : (vivViewState.zoom ?? 0);
   return {
     target: [target[0], target[1]],
-    //@ts-expect-error need to sort out how we represent types - probably 2d only temporarily while we do
-    zoom: vivViewState.zoom,
+    zoom,
   };
 }
 
