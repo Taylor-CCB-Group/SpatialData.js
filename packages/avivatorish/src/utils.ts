@@ -298,6 +298,53 @@ export function buildDefaultSelection({ labels, shape }: { labels: string[], sha
     return selection;
 }
 
+const VIV_SELECTION_AXES = /** @type {const} */ (["z", "c", "t"]);
+export type VivSelectionAxis = (typeof VIV_SELECTION_AXES)[number];
+
+/**
+ * Axis sizes (length of each dimension) for `z` / `c` / `t` from a Viv pixel source
+ * `labels` + `shape`. Axes not present in the array must not appear in `selection`
+ * passed to `getRaster` / tiling.
+ */
+export function getVivSelectionAxisSizes(
+    labels: string[],
+    shape: number[],
+): Partial<Record<VivSelectionAxis, number>> {
+    const out: Partial<Record<VivSelectionAxis, number>> = {};
+    const n = Math.min(labels.length, shape.length);
+    for (let i = 0; i < n; i += 1) {
+        const name = labels[i]?.toLowerCase();
+        if (name === "z" || name === "c" || name === "t") {
+            const size = shape[i];
+            if (typeof size === "number" && size > 0) {
+                out[name] = size;
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Keep only axes that exist on the loader and clamp indices to `[0, size - 1]`.
+ */
+export function clampVivSelectionsToAxes(
+    selections: ReadonlyArray<Partial<Record<VivSelectionAxis, number>>>,
+    axisSizes: Partial<Record<VivSelectionAxis, number>>,
+): Array<Partial<Record<VivSelectionAxis, number>>> {
+    return selections.map((sel) => {
+        const next: Partial<Record<VivSelectionAxis, number>> = {};
+        for (const dim of VIV_SELECTION_AXES) {
+            const size = axisSizes[dim];
+            if (size === undefined) continue;
+            const maxIdx = Math.max(0, size - 1);
+            const raw = sel[dim];
+            const v = typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : 0;
+            next[dim] = Math.min(maxIdx, Math.max(0, v));
+        }
+        return next;
+    });
+}
+
 export function hexToRgb(hex: string) {
     // https://stackoverflow.com/questions/5623838/rgb-to-hex-and-hex-to-rgb
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);

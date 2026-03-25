@@ -28,7 +28,7 @@ export interface ImageLayerRenderConfig {
     colors: [number, number, number][];
     contrastLimits: [number, number][];
     channelsVisible: boolean[];
-    selections: { z: number; c: number; t: number }[];
+    selections: Partial<{ z: number; c: number; t: number }>[];
   };
 }
 
@@ -53,13 +53,13 @@ export function extractChannelConfig(config: {
     colors?: [number, number, number][];
     contrastLimits?: [number, number][];
     channelsVisible?: boolean[];
-    selections?: { z: number; c: number; t: number }[];
+    selections?: Partial<{ z: number; c: number; t: number }>[];
   };
 }): {
   colors: [number, number, number][];
   contrastLimits: [number, number][];
   channelsVisible: boolean[];
-  selections: { z: number; c: number; t: number }[];
+  selections: Partial<{ z: number; c: number; t: number }>[];
 } {
   const defaults = {
     colors: [[255, 255, 255]] as [number, number, number][],
@@ -67,7 +67,7 @@ export function extractChannelConfig(config: {
     channelsVisible: [true],
     // Don't provide default selections - they should be built from loader dimensions
     // TODO - fix types wrt optional entries
-    selections: [] as { z: number; c: number; t: number }[],
+    selections: [] as Partial<{ z: number; c: number; t: number }>[],
   };
 
   if (!config.channels) {

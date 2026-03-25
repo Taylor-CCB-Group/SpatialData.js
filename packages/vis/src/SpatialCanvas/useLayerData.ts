@@ -11,7 +11,9 @@ import type { Layer } from 'deck.gl';
 import type { ShapesElement, PointsElement, ImageElement } from '@spatialdata/core';
 import {
   buildDefaultSelection,
+  clampVivSelectionsToAxes,
   getMultiSelectionStats,
+  getVivSelectionAxisSizes,
   guessRgb,
   isInterleaved,
   COLOR_PALLETE,
@@ -35,7 +37,9 @@ export interface ImageLoaderData {
   colors?: [number, number, number][];
   contrastLimits?: [number, number][];
   channelsVisible?: boolean[];
-  selections?: Array<{ z?: number; c?: number; t?: number }>;
+  selections?: Array<Partial<{ z: number; c: number; t: number }>>;
+  /** Present when loader exposes `labels` / `shape`: dimension lengths for z, c, t (omit axes that do not exist). */
+  selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
 interface LoadedData {
@@ -49,7 +53,7 @@ export interface ImageLayerConfig {
   colors: [number, number, number][];
   contrastLimits: [number, number][];
   channelsVisible: boolean[];
-  selections: Array<{ z?: number; c?: number; t?: number }>;
+  selections: Array<Partial<{ z: number; c: number; t: number }>>;
   modelMatrix?: Matrix4; // Transformation matrix for coordinate system alignment
   opacity?: number; // Layer opacity (0-1)
   visible?: boolean; // Whether layer is visible
@@ -165,6 +169,7 @@ export function useLayerData(
             try {
               if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
                 const loaderObj = loaderToCheck as { labels: string[]; shape: number[] };
+                imageData.selectionAxisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
                 
                 // Build selections
                 const selections = buildDefaultSelection({
@@ -343,10 +348,15 @@ export function useLayerData(
         ch?.channelsVisible && ch.channelsVisible.length > 0
           ? ch.channelsVisible
           : (imageData.channelsVisible || [true]);
-      const selections: Array<{ z?: number; c?: number; t?: number }> =
+      const rawSelections: Array<Partial<{ z: number; c: number; t: number }>> =
         ch?.selections && ch.selections.length > 0
           ? ch.selections
           : (imageData.selections || [{}]);
+      const axisSizes = imageData.selectionAxisSizes;
+      const selections =
+        axisSizes !== undefined
+          ? clampVivSelectionsToAxes(rawSelections as Parameters<typeof clampVivSelectionsToAxes>[0], axisSizes)
+          : rawSelections;
       
       vivProps.push({
         loader: imageData.loader,

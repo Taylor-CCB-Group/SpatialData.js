@@ -44,8 +44,8 @@ export interface ChannelConfig {
   contrastLimits?: [number, number][];
   /** Visibility for each channel */
   channelsVisible?: boolean[];
-  /** Selections for z, c, t dimensions */
-  selections?: { z: number; c: number; t: number }[];
+  /** Selections for z, c, t dimensions (omit keys for axes that do not exist on the image). */
+  selections?: Partial<{ z: number; c: number; t: number }>[];
   //TODO: how do we pass channel-related extension props?
 }
 
