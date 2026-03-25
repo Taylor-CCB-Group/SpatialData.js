@@ -1,0 +1,27 @@
+---
+sidebar_position: 3
+---
+
+# MDV integration (roadmap)
+
+This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Group/MDV)** so Oxford tooling can depend on published packages instead of vendored copies of Viv state and loaders.
+
+## Checklist (not yet complete)
+
+- [ ] Replace local `src/react/components/avivatorish/` with **`@spatialdata/avivatorish`**.
+- [ ] Replace **`viv_loader_cache.ts`** with **`getOrCreateVivLoader`** (or equivalent) from this repo — **no MobX** in the shared cache module.
+- [ ] **`SpatialLayer` naming:** MDV today uses `@/webgl/SpatialLayer`; our plan is a **`SpatialLayer` `CompositeLayer`** in **`@spatialdata/layers`**. Converge names or use a temporary alias (e.g. `SpatialDataCompositeLayer`) during migration.
+- [ ] **`VivScatterComponent` / `scatter_state`:** Keep view-id conventions (`getVivId`) and metadata hooks compatible; long term, scatter props should accept **table-backed** descriptions aligned with **`@spatialdata/core`** `TableElement`.
+- [ ] **`contour_state`:** Phase 1 — extract **pure** functions (columnar data + view params → contour / deck extension props) into **`@spatialdata/layers`**; leave MobX + MDV GUI in MDV. Phase 2 — optional MobX-free hooks in **`vis`**.
+
+## Principles
+
+- **MobX** stays at the MDV app boundary if needed; **shared packages** use Zustand or plain functions.
+- MDV keeps thin **adapters** from chart config → **`SpatialLayerProps`** (or equivalent).
+
+## References (upstream)
+
+- [`VivScatterComponent.tsx`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/components/VivScatterComponent.tsx)
+- [`scatter_state.ts`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/scatter_state.ts)
+- [`contour_state.ts`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/contour_state.ts)
+- [`viv_loader_cache.ts`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/viv_loader_cache.ts)

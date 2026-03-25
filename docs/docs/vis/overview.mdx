@@ -1,0 +1,47 @@
+---
+sidebar_position: 2
+---
+
+# Visualization packages
+
+This document describes how **`@spatialdata/vis`** fits into the wider visualization story and how we plan to split responsibilities across packages.
+
+## Today: `@spatialdata/vis`
+
+- **SpatialCanvas** — Main React surface: coordinate system, layer toggles, pan/zoom, OME-Zarr images (Viv) with shapes/points (deck.gl).
+- **ImageView** — Smaller demo-oriented viewer; long-term we expect **SpatialCanvas with a single image layer** to cover the same use case.
+- **Sketch / demo app** — Prototyping and docs examples.
+
+Dependencies include **`@hms-dbmi/viv`**, **deck.gl**, **`@spatialdata/avivatorish`**, **`@spatialdata/layers`**, and **`@spatialdata/core`** / **`@spatialdata/react`**.
+
+See [SpatialCanvas + images — status and roadmap](./spatial-canvas-status).
+
+## `@spatialdata/layers`
+
+- **`SpatialLayer`** `CompositeLayer` and versioned **`SpatialLayerProps`** (Zod + `schemaVersion` + **`migrateSpatialLayerProps`**).
+- The deck-native place for **sub**layers: image, scatter, shapes, points, contours — including future **GeoArrow / Parquet** paths for vectors. (Sublayer factories are still being wired; the schema and class are scaffolded.)
+- **No MobX**; plain TypeScript and deck APIs.
+
+Details: [Layers package overview](../layers/overview).
+
+## `@spatialdata/avivatorish`
+
+- **Viv-centric** loaders, **`vivLoaderCache`** (`getOrCreateVivLoader`, **`getOrCreateOmeZarrMultiscalesLoader`**), channel statistics, and **Zustand** stores (Avivator lineage).
+- Intended for **MDV** and others to replace duplicated `avivatorish` code.
+- **Deck composition** stays in **`@spatialdata/layers`** / **`@spatialdata/vis`**; this package focuses on loaders + channel state.
+
+## `@spatialdata/core`
+
+- **Semantic** SpatialData-on-Zarr: elements, transforms, tables, metadata.
+- Not responsible for every GPU buffer layout; **`layers`** (and bridges from **core**) deliver columnar / Arrow views when needed.
+
+## API tiers (summary)
+
+| Tier | Typical use |
+|------|-------------|
+| **Deck / SpatialLayer** | Non-React or custom `DeckGL` apps; versioned props |
+| **Headless avivatorish** | Loaders, cache, `getSingleSelectionStats` |
+| **Zustand + VivProvider** | MDV-style embeds |
+| **SpatialCanvas** | Batteries-included SpatialData React UI |
+
+For MDV-specific migration notes, see [MDV integration](./mdv-integration).
