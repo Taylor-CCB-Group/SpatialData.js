@@ -19,6 +19,7 @@ const initialState: SpatialCanvasState = {
   viewState: null,
   layers: {},
   layerOrder: [],
+  selectedLayerId: null,
   isLoading: false,
 };
 
@@ -38,15 +39,18 @@ export function createSpatialCanvasStore() {
       set((state) => ({
         layers: { ...state.layers, [config.id]: config },
         layerOrder: [...state.layerOrder, config.id],
+        selectedLayerId: config.id,
       }));
     },
 
     removeLayer: (id) => {
       set((state) => {
         const { [id]: _removed, ...remainingLayers } = state.layers;
+        const nextOrder = state.layerOrder.filter((layerId) => layerId !== id);
         return {
           layers: remainingLayers,
-          layerOrder: state.layerOrder.filter((layerId) => layerId !== id),
+          layerOrder: nextOrder,
+          selectedLayerId: state.selectedLayerId === id ? nextOrder[nextOrder.length - 1] ?? null : state.selectedLayerId,
         };
       });
     },
@@ -77,6 +81,10 @@ export function createSpatialCanvasStore() {
 
     reorderLayers: (newOrder) => {
       set({ layerOrder: newOrder });
+    },
+
+    setSelectedLayerId: (id) => {
+      set({ selectedLayerId: id });
     },
 
     setLoading: (loading) => {

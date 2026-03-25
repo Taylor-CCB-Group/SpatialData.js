@@ -15,7 +15,6 @@ import {
     // type PixelSource,
 } from "./state";
 import {
-    createLoader,
     buildDefaultSelection,
     guessRgb,
     getMultiSelectionStats,
@@ -23,6 +22,7 @@ import {
     isInterleaved,
 } from "./utils";
 import { COLOR_PALLETE, FILL_PIXEL_VALUE } from "./constants";
+import { getOrCreateVivLoader } from "./vivLoaderCache";
 
 
 
@@ -57,7 +57,7 @@ export const useImage = (
             if (use3d) toggleUse3d();
             if (!source) throw "this should never happen - this is a type-guard";
             const { urlOrFile } = source;
-            const newLoader = await createLoader(
+            const newLoader = await getOrCreateVivLoader(
                 urlOrFile,
                 toggleIsOffsetsSnackbarOn,
                 (message) =>
@@ -70,16 +70,18 @@ export const useImage = (
             //@ts-ignore flagging so we can get back to this
             let nextLoader: any;//PixelSource | PixelSource[] | null = null;
             if (Array.isArray(newLoader)) {
-                if (newLoader.length > 1) {
-                    nextMeta = newLoader.map((l) => l.metadata);
-                    nextLoader = newLoader.map((l) => l.data);
+                const arr = newLoader as Array<{ metadata?: unknown; data?: unknown }>;
+                if (arr.length > 1) {
+                    nextMeta = arr.map((l) => l.metadata);
+                    nextLoader = arr.map((l) => l.data);
                 } else {
-                    nextMeta = newLoader[0].metadata;
-                    nextLoader = newLoader[0].data;
+                    nextMeta = arr[0]?.metadata;
+                    nextLoader = arr[0]?.data;
                 }
             } else {
-                nextMeta = newLoader.metadata;
-                nextLoader = newLoader.data;
+                const single = newLoader as { metadata?: unknown; data?: unknown };
+                nextMeta = single.metadata;
+                nextLoader = single.data;
             }
             if (nextLoader) {
                 console.info(

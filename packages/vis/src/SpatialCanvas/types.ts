@@ -118,6 +118,9 @@ export interface SpatialCanvasState {
   /** Order of layers (bottom to top) */
   layerOrder: string[];
   
+  /** Selected layer for properties / channel UI */
+  selectedLayerId: string | null;
+
   /** Loading state */
   isLoading: boolean;
 }
@@ -140,6 +143,8 @@ export interface SpatialCanvasActions {
   
   /** Reorder layers */
   reorderLayers: (newOrder: string[]) => void;
+
+  setSelectedLayerId: (id: string | null) => void;
   
   /** Set loading state */
   setLoading: (loading: boolean) => void;

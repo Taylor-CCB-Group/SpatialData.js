@@ -5,7 +5,7 @@
  * OME-Zarr and other multiscale image formats.
  */
 
-import { loadOmeZarr } from '@hms-dbmi/viv';
+import { getOrCreateOmeZarrMultiscalesLoader } from '@spatialdata/avivatorish';
 import type { Matrix4 } from '@math.gl/core';
 import type { ImageElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
@@ -88,11 +88,12 @@ export function extractChannelConfig(config: {
  * 
  * SpatialData only supports OME-Zarr format, so we use loadOmeZarr.
  */
-export async function createImageLoader(element: ImageElement): Promise<unknown> {
+export async function createImageLoader(
+  element: ImageElement,
+  fetchMultiscales: (url: string) => Promise<unknown> = getOrCreateOmeZarrMultiscalesLoader,
+): Promise<unknown> {
   try {
-    // Use loadOmeZarr for OME-NGFF format (SpatialData standard)
-    const loader = await loadOmeZarr(element.url, { type: 'multiscales' });
-    return loader.data; // Return just the data part (PixelSource)
+    return await fetchMultiscales(element.url);
   } catch (error) {
     console.error(`[ImageRenderer] Failed to create loader for ${element.url}:`, error);
     throw error;

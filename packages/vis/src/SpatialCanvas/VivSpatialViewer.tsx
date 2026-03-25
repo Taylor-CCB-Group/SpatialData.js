@@ -275,7 +275,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const firstLayerProps = vivLayerProps[0];
     
     // Get Viv layers from view
-    const layerProps: any = {
+    const layerProps: Record<string, unknown> = {
       loader: firstLayerProps.loader,
       colors: firstLayerProps.colors,
       contrastLimits: firstLayerProps.contrastLimits,
@@ -283,34 +283,32 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       selections: firstLayerProps.selections,
       onHover,
     };
-    
+
+    // Let Viv/deck merge these with layer defaultProps (including `extensions`).
+    // Do not patch `layer.props` afterward with `{ ...layer.props, opacity }` — that spread
+    // drops non-enumerable props like `extensions` and breaks MultiscaleImageLayer._update.
+    if (firstLayerProps.opacity !== undefined) {
+      layerProps.opacity = firstLayerProps.opacity;
+    }
+    if (firstLayerProps.visible !== undefined) {
+      layerProps.visible = firstLayerProps.visible;
+    }
+
     // Apply modelMatrix transformation if provided
     if (firstLayerProps.modelMatrix) {
       layerProps.modelMatrix = firstLayerProps.modelMatrix;
     }
-    
+
     const vivLayersResult = this.detailView.getLayers({
       viewStates,
       props: layerProps,
     });
-    
+
     // getLayers returns an array of arrays (one per view)
     // For a single view, take the first element (like MDVivViewer does at line 385)
     const vivLayers = Array.isArray(vivLayersResult) && vivLayersResult.length > 0
       ? (Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[]
       : [];
-
-    // Apply opacity and visibility to image layers if specified
-    if (firstLayerProps.opacity !== undefined || firstLayerProps.visible !== undefined) {
-      for (const layer of vivLayers) {
-        if (firstLayerProps.opacity !== undefined && layer.props.opacity !== firstLayerProps.opacity) {
-          layer.props = { ...layer.props, opacity: firstLayerProps.opacity };
-        }
-        if (firstLayerProps.visible !== undefined && layer.props.visible !== firstLayerProps.visible) {
-          layer.props = { ...layer.props, visible: firstLayerProps.visible };
-        }
-      }
-    }
 
     // Add Viv ID to extra layers (shapes/points) so they pass the layerFilter
     // MDV pattern: layer IDs must include the Viv ID to be rendered

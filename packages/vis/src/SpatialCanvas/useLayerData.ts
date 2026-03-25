@@ -9,6 +9,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Matrix4 } from '@math.gl/core';
 import type { Layer } from 'deck.gl';
 import type { ShapesElement, PointsElement, ImageElement } from '@spatialdata/core';
+import {
+  buildDefaultSelection,
+  getMultiSelectionStats,
+  guessRgb,
+  isInterleaved,
+  COLOR_PALLETE,
+} from '@spatialdata/avivatorish';
 import type { LayerConfig, ElementsByType, AvailableElement } from './types';
 import { 
   renderShapesLayer, 
@@ -20,19 +27,10 @@ import {
   type PointsLayerRenderConfig,
   type PointData,
 } from './renderers/pointsRenderer';
-import { 
-  createImageLoader,
-  extractChannelConfig,
-} from './renderers/imageRenderer';
-import { 
-  buildDefaultSelection, 
-  getMultiSelectionStats,
-  guessRgb,
-  isInterleaved,
-} from '../ImageView/avivatorish/utils';
-import { COLOR_PALLETE } from '../ImageView/avivatorish/constants';
+import { createImageLoader } from './renderers/imageRenderer';
+import { useVivLoaderRegistry } from './VivLoaderRegistry';
 
-interface ImageLoaderData {
+export interface ImageLoaderData {
   loader: unknown;
   colors?: [number, number, number][];
   contrastLimits?: [number, number][];
@@ -62,6 +60,8 @@ interface UseLayerDataResult {
   getLayers: () => Layer[];
   /** Get Viv layer props for image layers */
   getVivLayerProps: () => ImageLayerConfig[];
+  /** Raw loaded image pipeline data (defaults) for the properties UI */
+  getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Trigger a reload of data for a specific element */
@@ -83,6 +83,8 @@ export function useLayerData(
   availableElements: ElementsByType,
   coordinateSystem: string | null,
 ): UseLayerDataResult {
+  const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
+
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
     shapes: new Map(),
@@ -150,7 +152,10 @@ export function useLayerData(
             const data = await e.loadPoints();
             loadedDataRef.current.points.set(element.key, data);
           } else if (element.type === 'image') {
-            const loader = await createImageLoader(element.element as ImageElement);
+            const loader = await createImageLoader(
+              element.element as ImageElement,
+              getOmeZarrMultiscalesData,
+            );
             // Compute channel defaults from loader metadata
             const imageElement = element.element as ImageElement;
             const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
@@ -242,7 +247,7 @@ export function useLayerData(
     };
     
     loadData();
-  }, [layers, layerOrder]);
+  }, [layers, layerOrder, getOmeZarrMultiscalesData]);
 
   const reloadElement = useCallback((type: string, key: string) => {
     const loaded = loadedDataRef.current;
@@ -305,6 +310,12 @@ export function useLayerData(
     return deckLayers;
   }, [layers, layerOrder]);
 
+  const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem || elem.type !== 'image') return undefined;
+    return loadedDataRef.current.images.get(elem.key);
+  }, []);
+
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
     const vivProps: ImageLayerConfig[] = [];
     const loaded = loadedDataRef.current;
@@ -319,22 +330,23 @@ export function useLayerData(
       const imageData = loaded.images.get(elem.key);
       if (!imageData) continue; // Skip if loader not ready yet
       
-      // Extract channel config (user-provided overrides)
-      const channelConfig = extractChannelConfig(config);
-      
-      // Use user-provided config if available, otherwise use computed defaults
-      const colors: [number, number, number][] = channelConfig.colors.length > 0 && channelConfig.colors[0][0] !== 255 
-        ? channelConfig.colors 
-        : (imageData.colors || [[255, 255, 255] as [number, number, number]]);
-      const contrastLimits: [number, number][] = channelConfig.contrastLimits.length > 0 && channelConfig.contrastLimits[0][1] !== 65535
-        ? channelConfig.contrastLimits
-        : (imageData.contrastLimits || [[0, 65535] as [number, number]]);
-      const channelsVisible: boolean[] = channelConfig.channelsVisible.length > 0
-        ? channelConfig.channelsVisible
-        : (imageData.channelsVisible || [true]);
-      const selections: Array<{ z?: number; c?: number; t?: number }> = channelConfig.selections.length > 0
-        ? channelConfig.selections
-        : (imageData.selections || [{}]);
+      const ch = config.channels;
+      const colors: [number, number, number][] =
+        ch?.colors && ch.colors.length > 0
+          ? ch.colors
+          : (imageData.colors || [[255, 255, 255] as [number, number, number]]);
+      const contrastLimits: [number, number][] =
+        ch?.contrastLimits && ch.contrastLimits.length > 0
+          ? ch.contrastLimits
+          : (imageData.contrastLimits || [[0, 65535] as [number, number]]);
+      const channelsVisible: boolean[] =
+        ch?.channelsVisible && ch.channelsVisible.length > 0
+          ? ch.channelsVisible
+          : (imageData.channelsVisible || [true]);
+      const selections: Array<{ z?: number; c?: number; t?: number }> =
+        ch?.selections && ch.selections.length > 0
+          ? ch.selections
+          : (imageData.selections || [{}]);
       
       vivProps.push({
         loader: imageData.loader,
@@ -354,6 +366,7 @@ export function useLayerData(
   return {
     getLayers,
     getVivLayerProps,
+    getImageLayerLoadedData,
     isLoading: loadingKeys.size > 0,
     reloadElement,
   };

@@ -1,3 +1,1 @@
-This is not ideal in the current form...
-
-`avivatorish` adapted from butchered MDV versions of Avivator state hooks etc.
+`ImageView` is a narrow demo component: **Viv + zustand** state now lives in **`@spatialdata/avivatorish`**. Prefer **`SpatialCanvas`** with an image-only layer configuration for new work; see the docs site *SpatialCanvas + images — status and roadmap*.

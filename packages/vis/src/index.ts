@@ -1,3 +1,6 @@
+export { SpatialLayer, migrateSpatialLayerProps, spatialLayerPropsSchema } from '@spatialdata/layers';
+export type { SpatialLayerProps } from '@spatialdata/layers';
+
 export { default as Sketch } from './Sketch';
 export { default as SpatialDataTree } from './Tree';
 export { default as Transforms } from './Transforms';
