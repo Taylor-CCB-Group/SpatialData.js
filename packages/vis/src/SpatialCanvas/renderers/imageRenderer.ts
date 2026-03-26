@@ -5,7 +5,7 @@
  * OME-Zarr and other multiscale image formats.
  */
 
-import { getOrCreateOmeZarrMultiscalesLoader } from '@spatialdata/avivatorish';
+import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
 import type { Matrix4 } from '@math.gl/core';
 import type { ImageElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
@@ -90,7 +90,7 @@ export function extractChannelConfig(config: {
  */
 export async function createImageLoader(
   element: ImageElement,
-  fetchMultiscales: (url: string) => Promise<unknown> = getOrCreateOmeZarrMultiscalesLoader,
+  fetchMultiscales: (url: string) => Promise<unknown> = loadOmeZarrMultiscalesData,
 ): Promise<unknown> {
   try {
     return await fetchMultiscales(element.url);

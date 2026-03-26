@@ -22,7 +22,7 @@ import {
     isInterleaved,
 } from "./utils";
 import { COLOR_PALLETE, FILL_PIXEL_VALUE } from "./constants";
-import { getOrCreateVivLoader } from "./vivLoaderCache";
+import { createLoader } from "./utils";
 
 
 
@@ -57,7 +57,7 @@ export const useImage = (
             if (use3d) toggleUse3d();
             if (!source) throw "this should never happen - this is a type-guard";
             const { urlOrFile } = source;
-            const newLoader = await getOrCreateVivLoader(
+            const newLoader = await createLoader(
                 urlOrFile,
                 toggleIsOffsetsSnackbarOn,
                 (message) =>

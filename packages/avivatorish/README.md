@@ -4,9 +4,8 @@ Reusable, publishable extraction of **Viv** loaders, **channel / viewer zustand 
 
 ## Scope
 
-- **Headless:** `createLoader`, `getOrCreateVivLoader`, `getOrCreateOmeZarrMultiscalesLoader`, stats helpers (`getMultiSelectionStats`, …), constants.
+- **Headless:** `createLoader`, `loadOmeZarrMultiscalesData`, stats helpers (`getMultiSelectionStats`, …), constants.
 - **React / Zustand:** `VivProvider`, `createVivStores`, `useImage`, channel and viewer store hooks.
-- **Caches:** `vivLoaderCache` — in-flight loader coalescing, subscriber fan-out for offset/error callbacks, optional tile proxy + LRU telemetry (`getVivLoaderCacheTelemetry`).
 
 ## Non-goals
 

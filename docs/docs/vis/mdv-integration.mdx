@@ -9,7 +9,7 @@ This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Gro
 ## Checklist (not yet complete)
 
 - [ ] Replace local `src/react/components/avivatorish/` with **`@spatialdata/avivatorish`**.
-- [ ] Replace **`viv_loader_cache.ts`** with **`getOrCreateVivLoader`** (or equivalent) from this repo — **no MobX** in the shared cache module.
+- [ ] Replace **`viv_loader_cache.ts`** with **`createLoader`** / **`loadOmeZarrMultiscalesData`** from this repo (optional shared caching can be reintroduced later) — **no MobX** in shared loader code.
 - [ ] **`SpatialLayer` naming:** MDV today uses `@/webgl/SpatialLayer`; our plan is a **`SpatialLayer` `CompositeLayer`** in **`@spatialdata/layers`**. Converge names or use a temporary alias (e.g. `SpatialDataCompositeLayer`) during migration.
 - [ ] **`VivScatterComponent` / `scatter_state`:** Keep view-id conventions (`getVivId`) and metadata hooks compatible; long term, scatter props should accept **table-backed** descriptions aligned with **`@spatialdata/core`** `TableElement`.
 - [ ] **`contour_state`:** Phase 1 — extract **pure** functions (columnar data + view params → contour / deck extension props) into **`@spatialdata/layers`**; leave MobX + MDV GUI in MDV. Phase 2 — optional MobX-free hooks in **`vis`**.
