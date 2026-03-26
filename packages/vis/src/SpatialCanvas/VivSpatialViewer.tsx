@@ -13,6 +13,7 @@
  */
 
 import * as React from 'react';
+import { _flatten } from '@deck.gl/core';
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import { ScaleBarLayer, DetailView, getDefaultInitialViewState } from '@hms-dbmi/viv';
@@ -111,18 +112,6 @@ function composeLayers(
   }
   
   return layers;
-}
-
-/**
- * Filter layers by viewport ID (for multi-view support within a canvas)
- * MDV pattern: layers must include the Viv ID in their ID to be rendered
- */
-function createLayerFilter(viewId: string) {
-  return ({ layer, viewport }: { layer: Layer; viewport: any }): boolean => {
-    const vivId = getVivId(viewport.id);
-    // All layers (Viv and extra) must include the Viv ID to be rendered
-    return layer.id.includes(vivId);
-  };
 }
 
 /**
@@ -266,14 +255,24 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const { vivLayerProps, extraLayers, deckProps, onHover } = this.props;
     const { viewStates } = this.state;
 
+    // Shared by all paths: layerFilter requires layer IDs to include the Viv viewport token
+    const vivId = getVivId(this.viewId);
+    const withVivId = (layer: Layer) =>
+      layer.id.includes(vivId) ? layer : layer.clone({ id: `${layer.id}${vivId}` });
+
+    const extraLayersWithVivId = (extraLayers || []).map(withVivId);
+    // `deckProps.layers` is LayersList (nested arrays, falsy slots); LayerManager normalizes with the same flatten + Boolean filter.
+    const deckLayersFlat = _flatten(deckProps?.layers ?? [], Boolean) as Layer[];
+    const deckPropsLayersWithVivId = deckLayersFlat.map(withVivId);
+
     // Viv typically handles one loader per view
     // For now, use the first image layer (can be extended later for multiple images per view)
     if (vivLayerProps.length === 0) {
-      return composeLayers([], extraLayers, deckProps?.layers);
+      return composeLayers([], extraLayersWithVivId, deckPropsLayersWithVivId);
     }
 
     const firstLayerProps = vivLayerProps[0];
-    
+
     // Get Viv layers from view
     const layerProps: Record<string, unknown> = {
       loader: firstLayerProps.loader,
@@ -293,8 +292,6 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     if (firstLayerProps.visible !== undefined) {
       layerProps.visible = firstLayerProps.visible;
     }
-
-    // Apply modelMatrix transformation if provided
     if (firstLayerProps.modelMatrix) {
       layerProps.modelMatrix = firstLayerProps.modelMatrix;
     }
@@ -310,24 +307,9 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       ? (Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[]
       : [];
 
-    // Add Viv ID to extra layers (shapes/points) so they pass the layerFilter
-    // MDV pattern: layer IDs must include the Viv ID to be rendered
-    const vivId = getVivId(this.viewId);
-    const extraLayersWithVivId = (extraLayers || []).map((layer) => {
-      // If layer ID doesn't already include the Viv ID, add it
-      if (!layer.id.includes(vivId)) {
-        // Clone the layer with updated ID
-        const newLayer = layer.clone({
-          id: `${layer.id}${vivId}`,
-        });
-        return newLayer;
-      }
-      return layer;
-    });
-
     // Compose with extra layers - following MDV pattern exactly
     // MDV does: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
-    return composeLayers(vivLayers, extraLayersWithVivId, deckProps?.layers);
+    return composeLayers(vivLayers, extraLayersWithVivId, deckPropsLayersWithVivId);
   }
 
   render() {

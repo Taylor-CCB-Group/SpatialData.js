@@ -37,6 +37,7 @@
     "@spatialdata/react": "workspace:*",
     "@uidotdev/usehooks": "^2.4.1",
     "@uiw/react-json-view": "2.0.0-alpha.39",
+    "@deck.gl/core": "catalog:",
     "@hms-dbmi/viv": "catalog:",
     "deck.gl": "catalog:",
     "fast-deep-equal": "^3.1.3",

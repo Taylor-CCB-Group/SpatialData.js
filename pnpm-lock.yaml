@@ -319,6 +319,9 @@ importers:
 
   packages/vis:
     dependencies:
+      '@deck.gl/core':
+        specifier: 'catalog:'
+        version: 9.1.15
       '@hms-dbmi/viv':
         specifier: 'catalog:'
         version: 0.19.0(9a614091add8d9561d5b393ea4eef7a1)
