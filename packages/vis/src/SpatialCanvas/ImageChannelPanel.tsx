@@ -60,13 +60,18 @@ function mergeSelectionRow(
 
 type MergedChannelDisplay = {
   channelCount: number;
+  channelIds: string[];
   colors: [number, number, number][];
   contrastLimits: [number, number][];
   channelsVisible: boolean[];
   selections: SelectionRow[];
 };
 
-function mergeForDisplay(config: ImageLayerConfig, defaults?: ImageLoaderData): MergedChannelDisplay {
+function mergeForDisplay(
+  config: ImageLayerConfig,
+  defaults: ImageLoaderData | undefined,
+  layerId: string,
+): MergedChannelDisplay {
   const axisSizes = defaults?.selectionAxisSizes;
   const ch = config.channels;
 
@@ -111,8 +116,14 @@ function mergeForDisplay(config: ImageLayerConfig, defaults?: ImageLoaderData): 
 
   const fillSel = emptySelectionRow(axisSizes);
 
+  const channelIds: string[] = [];
+  for (let i = 0; i < channelCount; i++) {
+    channelIds.push(ch?.channelIds?.[i] ?? `${layerId}:ch:${i}`);
+  }
+
   return {
     channelCount,
+    channelIds,
     colors: pad(colors, channelCount, [255, 255, 255] as [number, number, number]),
     contrastLimits: pad(contrastLimits, channelCount, [0, 65535] as [number, number]),
     channelsVisible: pad(channelsVisible, channelCount, true),
@@ -133,7 +144,7 @@ export function ImageChannelPanel({
   defaults,
   updateLayer,
 }: ImageChannelPanelProps) {
-  const m = mergeForDisplay(config, defaults);
+  const m = mergeForDisplay(config, defaults, layerId);
   const axisSizes = defaults?.selectionAxisSizes;
 
   const setChannels = (next: ChannelConfig) => {
@@ -152,16 +163,9 @@ export function ImageChannelPanel({
         Channels (max {MAX_CHANNELS})
       </div>
       {Array.from({ length: m.channelCount }, (_, i) => {
-        const fingerprint = [
-          layerId,
-          ...(m.colors[i] ?? []),
-          ...(m.contrastLimits[i] ?? []),
-          m.channelsVisible[i] ? '1' : '0',
-          JSON.stringify(m.selections[i] ?? {}),
-        ].join(':');
         return (
           <div
-            key={fingerprint}
+            key={m.channelIds[i] ?? `${layerId}:ch:${i}`}
             style={{
               border: '1px solid #333',
               borderRadius: 6,

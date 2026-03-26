@@ -38,6 +38,11 @@ export interface BaseLayerConfig {
 }
 
 export interface ChannelConfig {
+  /**
+   * Stable id per channel (e.g. for list keys). When omitted, the UI derives
+   * ids from the layer id and channel index (pending review if they can be reordered etc).
+   */
+  channelIds?: string[];
   /** Channel colors as RGB tuples */
   colors?: [number, number, number][];
   /** Contrast limits for each channel [min, max] */
