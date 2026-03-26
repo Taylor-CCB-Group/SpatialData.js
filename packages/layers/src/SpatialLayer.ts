@@ -1,4 +1,4 @@
-import { CompositeLayer, type Layer } from 'deck.gl';
+import { CompositeLayer, type LayersList, type Layer } from 'deck.gl';
 import type { SpatialLayerProps } from './spatialLayerProps';
 import { spatialLayerPropsSchema } from './spatialLayerProps';
 
@@ -18,12 +18,12 @@ export class SpatialLayer extends CompositeLayer<SpatialLayerProps> {
   static layerName = 'SpatialLayer';
   static defaultProps = defaultProps;
 
-  renderLayers(): Layer[] | null {
+  renderLayers(): Layer | null | LayersList {
     const validated = spatialLayerPropsSchema.parse(this.props);
     if (!validated.sublayers?.length) {
       return [];
     }
     // Future: map validated.sublayers to Viv / Scatterplot / GeoJsonLayer instances via @spatialdata/avivatorish + core adapters.
-    return [];
+    throw new Error('received sublayers, but sublayer factories not implemented yet');
   }
 }

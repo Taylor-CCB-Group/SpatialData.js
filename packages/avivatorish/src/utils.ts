@@ -298,7 +298,7 @@ export function buildDefaultSelection({ labels, shape }: { labels: string[], sha
     return selection;
 }
 
-const VIV_SELECTION_AXES = /** @type {const} */ (["z", "c", "t"]);
+const VIV_SELECTION_AXES = ["z", "c", "t"] as const;
 export type VivSelectionAxis = (typeof VIV_SELECTION_AXES)[number];
 
 /**
