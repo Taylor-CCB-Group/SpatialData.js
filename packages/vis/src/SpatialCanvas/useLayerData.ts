@@ -31,6 +31,7 @@ import {
 } from './renderers/pointsRenderer';
 import { createImageLoader } from './renderers/imageRenderer';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
+import { applyPerChannelFallbackWithoutOmero, type VivLoaderMetadata } from './imageLoaderChannelDefaults';
 
 export interface ImageLoaderData {
   loader: unknown;
@@ -168,7 +169,7 @@ export function useLayerData(
             
             try {
               if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
-                const loaderObj = loaderToCheck as { labels: string[]; shape: number[] };
+                const loaderObj = loaderToCheck as VivLoaderMetadata;
                 imageData.selectionAxisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
                 
                 // Build selections
@@ -215,14 +216,9 @@ export function useLayerData(
                   }
                   imageData.selections = selections;
                 } else {
-                  // Fallback defaults
-                  imageData.contrastLimits = [[0, 65535]];
-                  imageData.colors = [[255, 255, 255]];
-                  imageData.channelsVisible = [true];
-                  imageData.selections = [{}];
+                  applyPerChannelFallbackWithoutOmero(imageData, loaderObj, selections);
                 }
               } else {
-                // Fallback defaults
                 imageData.contrastLimits = [[0, 65535]];
                 imageData.colors = [[255, 255, 255]];
                 imageData.channelsVisible = [true];
@@ -230,11 +226,32 @@ export function useLayerData(
               }
             } catch (error) {
               console.warn(`Failed to compute channel defaults for ${element.key}:`, error);
-              // Fallback defaults
-              imageData.contrastLimits = [[0, 65535]];
-              imageData.colors = [[255, 255, 255]];
-              imageData.channelsVisible = [true];
-              imageData.selections = [{}];
+              const fallbackLoader =
+                loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck
+                  ? (loaderToCheck as VivLoaderMetadata)
+                  : undefined;
+              if (fallbackLoader) {
+                try {
+                  imageData.selectionAxisSizes =
+                    imageData.selectionAxisSizes ??
+                    getVivSelectionAxisSizes(fallbackLoader.labels, fallbackLoader.shape);
+                  const fallbackSelections = buildDefaultSelection({
+                    labels: fallbackLoader.labels,
+                    shape: fallbackLoader.shape,
+                  });
+                  applyPerChannelFallbackWithoutOmero(imageData, fallbackLoader, fallbackSelections);
+                } catch {
+                  imageData.contrastLimits = [[0, 65535]];
+                  imageData.colors = [[255, 255, 255]];
+                  imageData.channelsVisible = [true];
+                  imageData.selections = [{}];
+                }
+              } else {
+                imageData.contrastLimits = [[0, 65535]];
+                imageData.colors = [[255, 255, 255]];
+                imageData.channelsVisible = [true];
+                imageData.selections = [{}];
+              }
             }
             
             loadedDataRef.current.images.set(element.key, imageData);
