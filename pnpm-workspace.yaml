@@ -3,6 +3,7 @@ packages:
   - docs
 
 catalog:
+  '@deck.gl/core': ~9.1.11
   '@luma.gl/core': ~9.1.9
   '@math.gl/core': ^4.1.0
   '@types/node': ^22.10.5

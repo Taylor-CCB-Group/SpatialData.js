@@ -18,14 +18,14 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "deck.gl": "~9.1.11"
+    "deck.gl": "catalog:"
   },
   "dependencies": {
     "@math.gl/core": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@deck.gl/core": "~9.1.11",
+    "@deck.gl/core": "catalog:",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",

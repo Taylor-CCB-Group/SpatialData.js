@@ -26,7 +26,7 @@ export default defineConfig({
       formats: ['es'],
     },
     rollupOptions: {
-      external: ['deck.gl', '@deck.gl/core', '@deck.gl/layers', '@deck.gl/geo-layers', 'zod', '@math.gl/core'],
+      external: ['deck.gl', 'zod'],
     },
   },
   test: {
