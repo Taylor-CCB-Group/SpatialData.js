@@ -15,7 +15,8 @@ export const COLORMAP_OPTIONS = [
     "summer",
     "density",
     "inferno",
-];
+] as const;
+/** Default per-channel RGBs when Omero has no usable color (tuple literals for typing). */
 export const COLOR_PALLETE = [
     [0, 0, 255],
     [0, 255, 0],
@@ -25,7 +26,7 @@ export const COLOR_PALLETE = [
     [0, 255, 255],
     [255, 255, 255],
     [255, 0, 0],
-];
-export const GLOBAL_SLIDER_DIMENSION_FIELDS = /** @type {const} */ (["z", "t"]);
+] as const;
+export const GLOBAL_SLIDER_DIMENSION_FIELDS = ["z", "t"];
 export const INITIAL_SLIDER_VALUE = [1500, 20000];
 export const FILL_PIXEL_VALUE = "----";

@@ -17,6 +17,7 @@ import {
   guessRgb,
   isInterleaved,
   COLOR_PALLETE,
+  tryParseOmeroHexColor,
 } from '@spatialdata/avivatorish';
 import type { LayerConfig, ElementsByType, AvailableElement } from './types';
 import { 
@@ -203,16 +204,16 @@ export function useLayerData(
                     });
                     imageData.contrastLimits = stats.contrastLimits;
                     // Use channel colors from metadata or palette
-                    imageData.colors = stats.contrastLimits.length === 1
-                      ? [[255, 255, 255] as [number, number, number]]
-                      : stats.contrastLimits.map((_, i): [number, number, number] => {
-                          const channelColor = Channels[i]?.color;
-                          if (Array.isArray(channelColor) && channelColor.length >= 3) {
-                            return [channelColor[0], channelColor[1], channelColor[2]] as [number, number, number];
-                          }
-                          return COLOR_PALLETE[i % COLOR_PALLETE.length] as [number, number, number];
-                        });
-                    imageData.channelsVisible = imageData.colors.map(() => true);
+                    const computedColors: [number, number, number][] =
+                      stats.contrastLimits.length === 1
+                        ? [[255, 255, 255]]
+                        : stats.contrastLimits.map((_, i): [number, number, number] => {
+                            const rgb = tryParseOmeroHexColor(Channels[i]?.color);
+                            const p = COLOR_PALLETE[i % COLOR_PALLETE.length];
+                            return rgb ?? [p[0], p[1], p[2]];
+                          });
+                    imageData.colors = computedColors;
+                    imageData.channelsVisible = computedColors.map(() => true);
                   }
                   imageData.selections = selections;
                 } else {
@@ -353,26 +354,26 @@ export function useLayerData(
       if (!imageData) continue; // Skip if loader not ready yet
       
       const ch = config.channels;
-      const colors: [number, number, number][] =
+      const colors =
         ch?.colors && ch.colors.length > 0
           ? ch.colors
-          : (imageData.colors || [[255, 255, 255] as [number, number, number]]);
-      const contrastLimits: [number, number][] =
+          : (imageData.colors || [[255, 255, 255]]);
+      const contrastLimits =
         ch?.contrastLimits && ch.contrastLimits.length > 0
           ? ch.contrastLimits
-          : (imageData.contrastLimits || [[0, 65535] as [number, number]]);
-      const channelsVisible: boolean[] =
+          : (imageData.contrastLimits || [[0, 65535]]);
+      const channelsVisible =
         ch?.channelsVisible && ch.channelsVisible.length > 0
           ? ch.channelsVisible
           : (imageData.channelsVisible || [true]);
-      const rawSelections: Array<Partial<{ z: number; c: number; t: number }>> =
+      const rawSelections =
         ch?.selections && ch.selections.length > 0
           ? ch.selections
           : (imageData.selections || [{}]);
       const axisSizes = imageData.selectionAxisSizes;
       const selections =
         axisSizes !== undefined
-          ? clampVivSelectionsToAxes(rawSelections as Parameters<typeof clampVivSelectionsToAxes>[0], axisSizes)
+          ? clampVivSelectionsToAxes(rawSelections, axisSizes)
           : rawSelections;
       
       vivProps.push({

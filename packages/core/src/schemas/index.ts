@@ -222,6 +222,11 @@ const axisSchema = z.union([
 export type Axis = z.infer<typeof axisSchema>;
 const axesSchema = z.array(axisSchema).min(2).max(5);
 
+/**
+ * OME-NGFF `omero` block (see spec). Stricter than raw JSON in the wild.
+ * To support extra field shapes, widen the relevant `z` fields and update
+ * `tryParseOmeroHexColor` in `@spatialdata/avivatorish` in the same change.
+ */
 const omeroSchema = z.object({
   channels: z.array(
     z.object({
@@ -236,6 +241,7 @@ const omeroSchema = z.object({
       // note - I think the schema says string but I encountered number in the wild.
       label: z.coerce.string().optional(),
       family: z.string().optional(),
+      /** OME-NGFF: hex string (e.g. `0000FF`), same as OMERO /json. */
       color: z.string().optional(),
       active: z.boolean().optional(),
     })

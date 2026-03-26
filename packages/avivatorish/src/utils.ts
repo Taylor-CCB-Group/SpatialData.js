@@ -355,6 +355,25 @@ export function hexToRgb(hex: string) {
     return result.map((d) => Number.parseInt(d, 16)).slice(1);
 }
 
+/**
+ * Parse OME-NGFF `omero.channels[].color`: hex with optional `#` (e.g. `0000FF`).
+ * Returns undefined if missing or not parseable; callers typically fall back to a palette.
+ *
+ * **Leniency:** This matches `omeroSchema` in `@spatialdata/core` (`color` is an optional string).
+ * To accept other shapes (e.g. RGB arrays from non-conformant files), widen that Zod field
+ * and add parsing branches here—keep the schema and this function in sync.
+ */
+export function tryParseOmeroHexColor(hex: string | undefined): [number, number, number] | undefined {
+    if (hex === undefined) return undefined;
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
+    if (!result) return undefined;
+    return [
+        Number.parseInt(result[1], 16),
+        Number.parseInt(result[2], 16),
+        Number.parseInt(result[3], 16),
+    ];
+}
+
 export function range(length: number) {
     return [...Array(length).keys()];
 }
