@@ -1,0 +1,47 @@
+{
+  "name": "@spatialdata/avivatorish",
+  "version": "0.0.1",
+  "description": "Viv loaders, channel stats, and Zustand state (Avivator/MDV lineage) for spatial images",
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20"
+  },
+  "dependencies": {
+    "@hms-dbmi/viv": "catalog:",
+    "@math.gl/core": "catalog:",
+    "geotiff": "2.1.4-beta.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "jsdom": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-dts": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git",
+    "directory": "packages/avivatorish"
+  }
+}

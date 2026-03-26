@@ -19,6 +19,7 @@ export interface PointDataX {
 // not that we wouldn't also want to be able to have other data & accessors
 export interface PointData {
   shape: number[];
+  // this should most definitely be TypedArray...
   data: number[][];
 }
 
@@ -39,6 +40,7 @@ export interface PointsLayerRenderConfig {
   color?: [number, number, number, number];
   /** ndarray - if we want other data for properties like color/radius etc they will be handled differently */
   pointData?: PointData;
+  use3d?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     pointSize = 1,
     color = [255, 100, 100, 200],
     pointData,
+    use3d,
   } = config;
 
   if (!visible) return null;
@@ -71,10 +74,11 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     id,
     data: d[0], //just for index really
     // todo: more robust ndarray handling, be more efficient with target
-    // probably more important will be having proper spatial data-structure (quad/oct-tree)
+    // see https://deck.gl/docs/developer-guide/performance#supply-attributes-directly
+    // spatial data-structure (quad/oct-tree) vs pushing raw attributes.
     // with ways of querying within view.
     // also allow accessors for other props
-    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], d[2]?.[index]],
+    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], use3d ? (d[2]?.[index] || 0) : 0],
     getRadius: pointSize,
     radiusUnits: 'pixels',
     getFillColor: color,

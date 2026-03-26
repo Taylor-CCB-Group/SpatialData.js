@@ -17,7 +17,7 @@
     "test:fixtures:generate": "uv run python/scripts/generate_fixtures.py",
     "test:fixtures:generate:0.5.0": "uv run python/scripts/generate_fixtures.py --version 0.5.0",
     "test:fixtures:generate:0.6.1": "uv run python/scripts/generate_fixtures.py --version 0.6.1",
-    "test:fixtures:generate:0.7.0": "uv run python/scripts/generate_fixtures.py --version 0.7.0",
+    "test:fixtures:generate:0.7.2": "uv run python/scripts/generate_fixtures.py --version 0.7.2",
     "test:server": "node scripts/test-server.js",
     "test:proxy": "node scripts/cors-proxy.js",
     "validate:datasets:js": "node scripts/validate-datasets-js.js",

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import SpatialDataTree from '../Tree';
 import Table from '../Table';
@@ -10,18 +10,29 @@ import SpatialCanvas from '../SpatialCanvas';
 const defaultUrl =
   'https://storage.googleapis.com/vitessce-demo-data/spatialdata-august-2025/visium_hd_3.0.0.spatialdata.zarr';
 
+const dataSourceBarStyle: CSSProperties = {
+  flexShrink: 0,
+  padding: '8px 12px',
+  borderBottom: '1px solid #333',
+  background: '#1e1e1e',
+};
+
 function DataSource({ children }: React.PropsWithChildren) {
   const [url, setUrl] = useState(defaultUrl);
   return (
-    <div>
-      <h3>SpatialData URL:</h3>
-      <input
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        style={{ width: '100%' }}
-      />
-      <SpatialDataProvider storeUrl={url}>{children}</SpatialDataProvider>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <div style={dataSourceBarStyle}>
+        <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>SpatialData URL</div>
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px' }}
+        />
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <SpatialDataProvider storeUrl={url}>{children}</SpatialDataProvider>
+      </div>
     </div>
   );
 }
@@ -36,21 +47,23 @@ function Repr() {
 }
 
 export default function Sketch() {
-  // const { spatialData, loading, error } = useSpatialData();
-
   return (
     <DataSource>
-      <Repr />
-      
-      <h3>SpatialCanvas</h3>
-      <div style={{ height: '500px', marginBottom: '20px' }}>
-        <SpatialCanvas />
-      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 12, minHeight: '100%' }}>
+        <Repr />
 
-      <SpatialDataTree />
-      <Table />
-      <Transforms />
-      <ImageView />
+        <section style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 360 }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>SpatialCanvas</h3>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <SpatialCanvas />
+          </div>
+        </section>
+
+        <SpatialDataTree />
+        <Table />
+        <Transforms />
+        <ImageView />
+      </div>
     </DataSource>
   );
 }

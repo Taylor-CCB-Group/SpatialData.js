@@ -216,24 +216,24 @@ def generate_markdown_table(results: list[ValidationResult]) -> str:
     lines.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     lines.append("## Summary")
     lines.append("")
-    lines.append("| Dataset | v0.5.0 | v0.6.1 | v0.7.0 | URL |")
+    lines.append("| Dataset | v0.5.0 | v0.6.1 | v0.7.2 | URL |")
     lines.append("|---------|--------|--------|--------|-----|")
 
     for dataset_name in sorted(datasets.keys()):
         versions = datasets[dataset_name]
         v050 = versions.get("0.5.0")
         v061 = versions.get("0.6.1")
-        v070 = versions.get("0.7.0")
+        v072 = versions.get("0.7.2")
 
         v050_status = "✅" if v050 and v050.success else "❌" if v050 else "⏭️"
         v061_status = "✅" if v061 and v061.success else "❌" if v061 else "⏭️"
-        v070_status = "✅" if v070 and v070.success else "❌" if v070 else "⏭️"
+        v072_status = "✅" if v072 and v072.success else "❌" if v072 else "⏭️"
 
         # Get URL from first available result
-        url = (v050 or v061 or v070).dataset_url if (v050 or v061 or v070) else ""
+        url = (v050 or v061 or v072).dataset_url if (v050 or v061 or v072) else ""
         url_short = url.split("spatialdata-sandbox/")[-1] if "spatialdata-sandbox/" in url else url
 
-        lines.append(f"| {dataset_name} | {v050_status} | {v061_status} | {v070_status} | `{url_short}` |")
+        lines.append(f"| {dataset_name} | {v050_status} | {v061_status} | {v072_status} | `{url_short}` |")
 
     lines.append("")
     lines.append("Legend: ✅ Success | ❌ Failed | ⏭️ Not tested")
@@ -248,7 +248,7 @@ def generate_markdown_table(results: list[ValidationResult]) -> str:
         lines.append(f"### {dataset_name}")
         lines.append("")
 
-        for version in ["0.5.0", "0.6.1", "0.7.0"]:
+        for version in ["0.5.0", "0.6.1", "0.7.2"]:
             result = versions.get(version)
             if not result:
                 continue
@@ -341,7 +341,7 @@ def main():
     parser.add_argument(
         "--version",
         type=str,
-        choices=["0.5.0", "0.6.1", "0.7.0"],
+        choices=["0.5.0", "0.6.1", "0.7.2"],
         default=None,
         help="SpatialData version to test (default: all)",
     )
@@ -398,7 +398,7 @@ def main():
             sys.exit(1)
 
     # Determine versions to test
-    versions = [args.version] if args.version else ["0.5.0", "0.6.1", "0.7.0"]
+    versions = [args.version] if args.version else ["0.5.0", "0.6.1", "0.7.2"]
 
     # Ensure environments are set up
     for version in versions:

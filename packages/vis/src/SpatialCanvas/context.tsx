@@ -119,6 +119,7 @@ export function useSpatialCanvasActions() {
     updateLayer: store.getState().updateLayer,
     toggleLayerVisibility: store.getState().toggleLayerVisibility,
     reorderLayers: store.getState().reorderLayers,
+    setSelectedLayerId: store.getState().setSelectedLayerId,
     setLoading: store.getState().setLoading,
     reset: store.getState().reset,
   }), [store]);

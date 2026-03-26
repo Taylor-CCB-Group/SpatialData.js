@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate test fixtures using spatialdata library (version 0.7.0).
+Generate test fixtures using spatialdata library (version 0.7.2).
 
-This script generates spatialdata zarr stores for testing with spatialdata 0.7.0.
-It runs in the python/v0.7.0/ environment which has spatialdata==0.7.0 pinned.
+This script generates spatialdata zarr stores for testing with spatialdata 0.7.2.
+It runs in the python/v0.7.2/ environment which has spatialdata==0.7.2 pinned.
 """
 
 import sys
@@ -15,10 +15,10 @@ sys.path.insert(0, str(script_dir.parent / "scripts"))
 
 
 def generate_fixtures(output_dir: Path):
-    """Generate test fixtures for spatialdata version 0.7.0."""
+    """Generate test fixtures for spatialdata version 0.7.2."""
     from spatialdata.datasets import blobs
     import spatialdata as sd
-    version = "0.7.0"
+    version = "0.7.2"
     print(f"Generating fixtures for spatialdata version {version}...")
     
     # Verify we're using the correct version
@@ -101,7 +101,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Generate test fixtures for SpatialData.ts using spatialdata 0.7.0"
+        description="Generate test fixtures for SpatialData.ts using spatialdata 0.7.2"
     )
     parser.add_argument(
         "--output-dir",
@@ -122,4 +122,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

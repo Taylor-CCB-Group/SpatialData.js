@@ -106,7 +106,12 @@ const transformationSchema: z.ZodType<Transformation> = z.lazy(() =>
 
 export const coordinateTransformationSchema = z.array(transformationSchema).min(1);
 
-const spaceUnitSchema = z.enum([
+/**
+ * Spatial units from OME-NGFF specification.
+ * Valid UDUNITS-2 spatial units.
+ * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L131
+ */
+export const spaceUnitSchema = z.enum([
   'angstrom',
   'attometer',
   'centimeter',
@@ -135,7 +140,13 @@ const spaceUnitSchema = z.enum([
   'zeptometer',
   'zettameter',
 ]);
-const timeUnitSchema = z.enum([
+
+/**
+ * Time units from OME-NGFF specification.
+ * Valid UDUNITS-2 time units.
+ * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L132
+ */
+export const timeUnitSchema = z.enum([
   'attosecond',
   'centisecond',
   'day',
@@ -160,14 +171,34 @@ const timeUnitSchema = z.enum([
   'zeptosecond',
   'zettasecond',
 ]);
+
 /**
- * SHOULD contain the field “unit” to specify the physical unit of this dimension.
+ * Extract enum values from a zod enum schema as a Set of strings.
+ */
+function getEnumValues(schema: z.ZodEnum<Record<string, string>>): Set<string> {
+  return new Set(schema.options);
+}
+
+/**
+ * Set of all valid spatial unit strings from OME-NGFF specification.
+ * Derived from spaceUnitSchema to ensure consistency.
+ * @see spaceUnitSchema
+ */
+export const SPATIAL_UNITS: Set<string> = getEnumValues(spaceUnitSchema);
+
+/**
+ * Set of all valid time unit strings from OME-NGFF specification.
+ * Derived from timeUnitSchema to ensure consistency.
+ * @see timeUnitSchema
+ */
+export const TIME_UNITS: Set<string> = getEnumValues(timeUnitSchema);
+/**
+ * SHOULD contain the field "unit" to specify the physical unit of this dimension.
  * The value SHOULD be one of the following strings, which are valid units according to UDUNITS-2.
- * https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L130
- * -- we could try to be better about distinguishing time/space units etc,
- * formally expressing that relationship.
- * For now, this whole type basically resolves to string, because other arbitrary values are also allowed
- * but we'll certainly care about units more in future.
+ * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L130
+ * 
+ * Note: This schema is relaxed to allow arbitrary string values (e.g., generic "unit" placeholder)
+ * for backward compatibility, but prefers validated spatial and time units when available.
  */
 const axisUnitSchema = z.union([spaceUnitSchema, timeUnitSchema, z.string()]);
 const axisSchema = z.union([
@@ -191,6 +222,11 @@ const axisSchema = z.union([
 export type Axis = z.infer<typeof axisSchema>;
 const axesSchema = z.array(axisSchema).min(2).max(5);
 
+/**
+ * OME-NGFF `omero` block (see spec). Stricter than raw JSON in the wild.
+ * To support extra field shapes, widen the relevant `z` fields and update
+ * `tryParseOmeroHexColor` in `@spatialdata/avivatorish` in the same change.
+ */
 const omeroSchema = z.object({
   channels: z.array(
     z.object({
@@ -205,6 +241,7 @@ const omeroSchema = z.object({
       // note - I think the schema says string but I encountered number in the wild.
       label: z.coerce.string().optional(),
       family: z.string().optional(),
+      /** OME-NGFF: hex string (e.g. `0000FF`), same as OMERO /json. */
       color: z.string().optional(),
       active: z.boolean().optional(),
     })
@@ -248,7 +285,7 @@ export type NgffImage = z.infer<typeof imageSchema>;
  * Note: Transformations are stored at the top level of attrs, not inside spatialdata_attrs.
  * 
  * IMPORTANT: The semantic meaning of `version` varies by element type:
- * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.0')
+ * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.2')
  *   and does NOT control OME-NGFF format detection (which is determined by structure).
  * - For shapes/points: `version` is the spatialdata format version (e.g., '0.1', '0.2') and IS used for format detection.
  */

@@ -1,1 +1,3 @@
-export { Sketch as default } from '@spatialdata/vis';
+import { Sketch } from '@spatialdata/vis';
+
+export default Sketch;

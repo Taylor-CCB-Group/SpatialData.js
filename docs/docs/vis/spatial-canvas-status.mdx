@@ -1,0 +1,52 @@
+---
+sidebar_position: 1
+---
+
+# SpatialCanvas and images — status and roadmap
+
+`@spatialdata/vis` includes **SpatialCanvas**, a React UI for picking a coordinate system, toggling layers, and panning/zooming. It can render **OME-Zarr images** together with **shapes** and **points** in one deck.gl + Viv view.
+
+## What works
+
+- **Combined canvas:** Image layers (via Viv `DetailView` and `loadOmeZarr`) draw under vector layers; composition follows the same pattern as MDV’s Viv + deck stacking.
+- **Coordinate system** selection and **layer visibility** toggles from the SpatialData store.
+- **Advanced API:** You can pass per-image channel settings on the spatial canvas store using `LayerConfig.channels` (colors, contrast limits, channel visibility, `z`/`c`/`t` selections). See the `SpatialCanvas` JSDoc example in the source package.
+
+## Known limitations
+
+- **Channel UI is basic:** the properties pane exposes per-channel RGB (0–255), contrast min/max, `z`/`c`/`t`, and visibility (up to six channels). There is **no histogram** or brush yet; defaults from automatic stats can still look wrong until you tune values.
+- **Single primary image** path in the Viv viewer composition (first enabled image layer drives `DetailView.getLayers`).
+- **View state** conversion between SpatialCanvas and Viv is still **2D-oriented**; full 3D orbit state is not fully round-tripped.
+- **`useLayerData`** prefers explicit `LayerConfig.channels` when arrays are non-empty; further **override flags** may still be useful for edge cases.
+
+## Related code
+
+- [`packages/vis/src/SpatialCanvas/index.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/index.tsx) — `SpatialCanvas` UI and store wiring
+- [`packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx) — Viv + deck layer composition
+- [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts) — Loaders and Viv layer props
+- [`packages/vis/src/SpatialCanvas/types.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/types.ts) — `LayerConfig`, `ChannelConfig`
+
+## Recently landed (check repo for details)
+
+- **`@spatialdata/avivatorish`** — shared loaders and Zustand stores; SpatialCanvas / ImageView import from the package.
+- **`@spatialdata/layers`** — **`SpatialLayer`** + Zod **`SpatialLayerProps`** + **`migrateSpatialLayerProps`** (sublayer wiring still to grow).
+- **SpatialCanvas** — loader registry context (**`VivLoaderRegistryProvider`** / **`useVivLoaderRegistry`**), **layers / properties** sidebars, **DnD** layer order, **fullscreen** toggle, **channel** controls for image layers.
+- **Demo / Sketch** — full-height shell for the vis demo.
+
+## Near-term roadmap
+
+- **Histogram** (optional) and richer channel UX (MDV parity).
+- **Fold or replace `ImageView`** once SpatialCanvas covers the single-image case well.
+
+## Medium-term roadmap
+
+- Flesh out **`SpatialLayer`** sublayers (image, scatter, shapes, …) and keep **`SpatialLayerProps`** migrations honest as kinds grow.
+- Harden **`@spatialdata/avivatorish`** for MDV adoption (telemetry hooks, docs).
+- **MDV integration** checklist: replace vendored avivatorish, adopt shared layers, scatter/table-backed props, phased contour extraction.
+- **GeoArrow / Parquet** paths for shapes and points; clarify **`@spatialdata/core`** vs deck-facing buffers.
+- **3D view mode** and **time (`t`)** in the public scene contract.
+
+## Core and fixtures
+
+- Test fixtures and docs track **spatialdata 0.7.2** alongside older versions.
+- **NGFF unit schemas** and **axis-aware** translation/scale transforms live in `@spatialdata/core` (see [Transformations](../core/transformations)).

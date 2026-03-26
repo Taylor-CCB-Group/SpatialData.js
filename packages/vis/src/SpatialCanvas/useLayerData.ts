@@ -9,6 +9,16 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Matrix4 } from '@math.gl/core';
 import type { Layer } from 'deck.gl';
 import type { ShapesElement, PointsElement, ImageElement } from '@spatialdata/core';
+import {
+  buildDefaultSelection,
+  clampVivSelectionsToAxes,
+  getMultiSelectionStats,
+  getVivSelectionAxisSizes,
+  guessRgb,
+  isInterleaved,
+  COLOR_PALLETE,
+  tryParseOmeroHexColor,
+} from '@spatialdata/avivatorish';
 import type { LayerConfig, ElementsByType, AvailableElement } from './types';
 import { 
   renderShapesLayer, 
@@ -20,16 +30,44 @@ import {
   type PointsLayerRenderConfig,
   type PointData,
 } from './renderers/pointsRenderer';
+import { createImageLoader } from './renderers/imageRenderer';
+import { useVivLoaderRegistry } from './VivLoaderRegistry';
+import { applyPerChannelFallbackWithoutOmero, type VivLoaderMetadata } from './imageLoaderChannelDefaults';
+
+export interface ImageLoaderData {
+  loader: unknown;
+  colors?: [number, number, number][];
+  contrastLimits?: [number, number][];
+  channelsVisible?: boolean[];
+  selections?: Array<Partial<{ z: number; c: number; t: number }>>;
+  /** Present when loader exposes `labels` / `shape`: dimension lengths for z, c, t (omit axes that do not exist). */
+  selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
+}
 
 interface LoadedData {
   shapes: Map<string, Array<Array<Array<[number, number]>>>>;
   points: Map<string, PointData>;
-  images: Map<string, unknown>; // Viv loaders - to be implemented
+  images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
+}
+
+export interface ImageLayerConfig {
+  loader: unknown; // Viv PixelSource
+  colors: [number, number, number][];
+  contrastLimits: [number, number][];
+  channelsVisible: boolean[];
+  selections: Array<Partial<{ z: number; c: number; t: number }>>;
+  modelMatrix?: Matrix4; // Transformation matrix for coordinate system alignment
+  opacity?: number; // Layer opacity (0-1)
+  visible?: boolean; // Whether layer is visible
 }
 
 interface UseLayerDataResult {
-  /** Get deck.gl layers ready for rendering */
+  /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
   getLayers: () => Layer[];
+  /** Get Viv layer props for image layers */
+  getVivLayerProps: () => ImageLayerConfig[];
+  /** Raw loaded image pipeline data (defaults) for the properties UI */
+  getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Trigger a reload of data for a specific element */
@@ -51,6 +89,8 @@ export function useLayerData(
   availableElements: ElementsByType,
   coordinateSystem: string | null,
 ): UseLayerDataResult {
+  const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
+
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
     shapes: new Map(),
@@ -92,8 +132,9 @@ export function useLayerData(
           toLoad.push({ layerId, element: elem });
         } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
           toLoad.push({ layerId, element: elem });
+        } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
+          toLoad.push({ layerId, element: elem });
         }
-        // Images handled separately (Viv loader)
       }
       
       if (toLoad.length === 0) return;
@@ -116,6 +157,105 @@ export function useLayerData(
             const e = element.element as PointsElement;
             const data = await e.loadPoints();
             loadedDataRef.current.points.set(element.key, data);
+          } else if (element.type === 'image') {
+            const loader = await createImageLoader(
+              element.element as ImageElement,
+              getOmeZarrMultiscalesData,
+            );
+            // Compute channel defaults from loader metadata
+            const imageElement = element.element as ImageElement;
+            const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+            
+            const imageData: ImageLoaderData = { loader };
+            
+            try {
+              if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
+                const loaderObj = loaderToCheck as VivLoaderMetadata;
+                imageData.selectionAxisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
+                
+                // Build selections
+                const selections = buildDefaultSelection({
+                  labels: loaderObj.labels,
+                  shape: loaderObj.shape,
+                });
+                
+                // Get metadata from image element
+                const metadata = imageElement.attrs.omero;
+                
+                if (metadata?.channels) {
+                  const Channels = metadata.channels;
+                  const isRgb = guessRgb({ Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) } } as any);
+                  
+                  if (isRgb) {
+                    if (isInterleaved(loaderObj.shape)) {
+                      imageData.contrastLimits = [[0, 255]];
+                      imageData.colors = [[255, 0, 0]];
+                    } else {
+                      imageData.contrastLimits = [[0, 255], [0, 255], [0, 255]];
+                      imageData.colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
+                    }
+                    imageData.channelsVisible = imageData.colors.map(() => true);
+                  } else {
+                    // Compute stats for non-RGB images
+                    const stats = await getMultiSelectionStats({
+                      loader: loader as any,
+                      selections: selections as any,
+                      use3d: false,
+                    });
+                    imageData.contrastLimits = stats.contrastLimits;
+                    // Use channel colors from metadata or palette
+                    const computedColors: [number, number, number][] =
+                      stats.contrastLimits.length === 1
+                        ? [[255, 255, 255]]
+                        : stats.contrastLimits.map((_, i): [number, number, number] => {
+                            const rgb = tryParseOmeroHexColor(Channels[i]?.color);
+                            const p = COLOR_PALLETE[i % COLOR_PALLETE.length];
+                            return rgb ?? [p[0], p[1], p[2]];
+                          });
+                    imageData.colors = computedColors;
+                    imageData.channelsVisible = computedColors.map(() => true);
+                  }
+                  imageData.selections = selections;
+                } else {
+                  applyPerChannelFallbackWithoutOmero(imageData, loaderObj, selections);
+                }
+              } else {
+                imageData.contrastLimits = [[0, 65535]];
+                imageData.colors = [[255, 255, 255]];
+                imageData.channelsVisible = [true];
+                imageData.selections = [{}];
+              }
+            } catch (error) {
+              console.warn(`Failed to compute channel defaults for ${element.key}:`, error);
+              const fallbackLoader =
+                loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck
+                  ? (loaderToCheck as VivLoaderMetadata)
+                  : undefined;
+              if (fallbackLoader) {
+                try {
+                  imageData.selectionAxisSizes =
+                    imageData.selectionAxisSizes ??
+                    getVivSelectionAxisSizes(fallbackLoader.labels, fallbackLoader.shape);
+                  const fallbackSelections = buildDefaultSelection({
+                    labels: fallbackLoader.labels,
+                    shape: fallbackLoader.shape,
+                  });
+                  applyPerChannelFallbackWithoutOmero(imageData, fallbackLoader, fallbackSelections);
+                } catch {
+                  imageData.contrastLimits = [[0, 65535]];
+                  imageData.colors = [[255, 255, 255]];
+                  imageData.channelsVisible = [true];
+                  imageData.selections = [{}];
+                }
+              } else {
+                imageData.contrastLimits = [[0, 65535]];
+                imageData.colors = [[255, 255, 255]];
+                imageData.channelsVisible = [true];
+                imageData.selections = [{}];
+              }
+            }
+            
+            loadedDataRef.current.images.set(element.key, imageData);
           }
         } catch (error) {
           console.error(`Failed to load data for ${layerId}:`, error);
@@ -130,7 +270,7 @@ export function useLayerData(
     };
     
     loadData();
-  }, [layers, layerOrder]);
+  }, [layers, layerOrder, getOmeZarrMultiscalesData]);
 
   const reloadElement = useCallback((type: string, key: string) => {
     const loaded = loadedDataRef.current;
@@ -187,14 +327,74 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       }
-      // Image layers need Viv integration - skip for now
+      // Image layers are handled separately via getVivLayerProps()
     }
     
     return deckLayers;
   }, [layers, layerOrder]);
 
+  const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem || elem.type !== 'image') return undefined;
+    return loadedDataRef.current.images.get(elem.key);
+  }, []);
+
+  const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
+    const vivProps: ImageLayerConfig[] = [];
+    const loaded = loadedDataRef.current;
+    
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible || config.type !== 'image') continue;
+      
+      const elem = elementMap.current.get(layerId);
+      if (!elem || elem.type !== 'image') continue;
+      
+      const imageData = loaded.images.get(elem.key);
+      if (!imageData) continue; // Skip if loader not ready yet
+      
+      const ch = config.channels;
+      const colors =
+        ch?.colors && ch.colors.length > 0
+          ? ch.colors
+          : (imageData.colors || [[255, 255, 255]]);
+      const contrastLimits =
+        ch?.contrastLimits && ch.contrastLimits.length > 0
+          ? ch.contrastLimits
+          : (imageData.contrastLimits || [[0, 65535]]);
+      const channelsVisible =
+        ch?.channelsVisible && ch.channelsVisible.length > 0
+          ? ch.channelsVisible
+          : (imageData.channelsVisible || [true]);
+      const rawSelections =
+        ch?.selections && ch.selections.length > 0
+          ? ch.selections
+          : (imageData.selections || [{}]);
+      const axisSizes = imageData.selectionAxisSizes;
+      const selections =
+        axisSizes !== undefined
+          ? clampVivSelectionsToAxes(rawSelections, axisSizes)
+          : rawSelections;
+      
+      vivProps.push({
+        loader: imageData.loader,
+        colors,
+        contrastLimits,
+        channelsVisible,
+        selections,
+        modelMatrix: elem.transform, // Apply coordinate transformation
+        opacity: config.opacity,
+        visible: config.visible,
+      });
+    }
+    
+    return vivProps;
+  }, [layers, layerOrder]);
+
   return {
     getLayers,
+    getVivLayerProps,
+    getImageLayerLoadedData,
     isLoading: loadingKeys.size > 0,
     reloadElement,
   };

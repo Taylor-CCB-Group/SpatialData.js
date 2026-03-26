@@ -10,9 +10,9 @@ import {
   VivProvider,
   useChannelsStoreApi,
   DEFAULT_CHANNEL_STATE,
-} from './avivatorish/state';
+} from '@spatialdata/avivatorish';
 import { DetailView, VivViewer, getDefaultInitialViewState } from '@hms-dbmi/viv';
-import { useImage } from './avivatorish/hooks';
+import { useImage } from '@spatialdata/avivatorish';
 
 /**
  * when trying to getDefaultInitialViewState, it'll do something a bit like this internally...

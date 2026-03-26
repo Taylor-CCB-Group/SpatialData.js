@@ -1,0 +1,42 @@
+{
+  "name": "@spatialdata/layers",
+  "version": "0.0.1",
+  "description": "deck.gl CompositeLayer and versioned SpatialLayerProps for SpatialData rendering",
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "deck.gl": "catalog:"
+  },
+  "dependencies": {
+    "@math.gl/core": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@deck.gl/core": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-dts": "catalog:",
+    "vitest": "catalog:",
+    "deck.gl": "catalog:"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git",
+    "directory": "packages/layers"
+  }
+}

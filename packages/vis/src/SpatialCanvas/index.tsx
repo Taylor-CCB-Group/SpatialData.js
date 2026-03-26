@@ -7,15 +7,17 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
-import { useEffect, useMemo, useCallback, type CSSProperties } from 'react';
+import { useEffect, useMemo, useCallback, useState, type CSSProperties } from 'react';
 import { useMeasure } from '@uidotdev/usehooks';
 import { useSpatialData } from '@spatialdata/react';
 import { 
   SpatialCanvasProvider, 
   useSpatialCanvasStore, 
   useSpatialCanvasActions,
-  useSpatialCanvasStoreApi,
 } from './context';
+import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
+import { LayerOrderList } from './LayerOrderList';
+import { ImageChannelPanel } from './ImageChannelPanel';
 import { 
   getAvailableElements, 
   getAllCoordinateSystems,
@@ -42,6 +44,8 @@ export { createSpatialCanvasStore } from './stores';
 export type { SpatialCanvasStoreApi } from './stores';
 export type * from './types';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
+export { VivSpatialViewer } from './VivSpatialViewer';
+export type { ImageLayerConfig as VivImageLayerConfig } from './useLayerData';
 
 // ============================================
 // Styles
@@ -109,6 +113,29 @@ const viewerContainerStyle: CSSProperties = {
   flex: 1,
   position: 'relative',
   overflow: 'hidden',
+  minWidth: 0,
+  minHeight: 0,
+};
+
+const mainRowStyle: CSSProperties = {
+  flex: 1,
+  display: 'flex',
+  flexDirection: 'row',
+  minHeight: 0,
+};
+
+const sidebarStyle: CSSProperties = {
+  flexShrink: 0,
+  overflow: 'auto',
+  padding: 10,
+  backgroundColor: '#1e1e1e',
+};
+
+const fullscreenOverlayStyle: CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 10000,
+  backgroundColor: '#1a1a1a',
 };
 
 const placeholderStyle: CSSProperties = {
@@ -177,18 +204,17 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
 
 function SpatialCanvasInner() {
   const { spatialData, loading: sdLoading } = useSpatialData();
-  const [ref, { width, height }] = useMeasure();
-  
-  // Store state
-  const coordinateSystem = useSpatialCanvasStore(s => s.coordinateSystem);
-  const layers = useSpatialCanvasStore(s => s.layers);
-  const layerOrder = useSpatialCanvasStore(s => s.layerOrder);
-  const viewState = useSpatialCanvasStore(s => s.viewState);
-  
-  // Actions
+  const [viewerRef, { width, height }] = useMeasure();
+  const [fullscreen, setFullscreen] = useState(false);
+
+  const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
+  const layers = useSpatialCanvasStore((s) => s.layers);
+  const layerOrder = useSpatialCanvasStore((s) => s.layerOrder);
+  const viewState = useSpatialCanvasStore((s) => s.viewState);
+  const selectedLayerId = useSpatialCanvasStore((s) => s.selectedLayerId);
+
   const actions = useSpatialCanvasActions();
 
-  // Derived state
   const coordinateSystems = useMemo(() => {
     if (!spatialData) return [];
     return getAllCoordinateSystems(spatialData);
@@ -196,23 +222,37 @@ function SpatialCanvasInner() {
 
   const availableElements = useMemo(() => {
     if (!spatialData || !coordinateSystem) {
-      return { images: [], shapes: [], points: [], labels: [] };
+      return { images: [], shapes: [], points: [], labels: [] } satisfies ElementsByType;
     }
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
+  const { getLayers, getVivLayerProps, getImageLayerLoadedData, isLoading } = useLayerData(
+    layers,
+    layerOrder,
+    availableElements,
+    coordinateSystem,
+  );
+
+  const deckLayers = getLayers();
+  const vivLayerProps = getVivLayerProps();
+  const handleViewStateChange = useCallback(
+    (vs: ViewState) => {
+      actions.setViewState(vs);
+    },
+    [actions],
+  );
+
   const enabledLayerIds = useMemo(() => {
-    return new Set(layerOrder.filter(id => layers[id]?.visible));
+    return new Set(layerOrder.filter((id) => layers[id]?.visible));
   }, [layers, layerOrder]);
 
-  // Auto-select first coordinate system
   useEffect(() => {
     if (coordinateSystems.length > 0 && !coordinateSystem) {
       actions.setCoordinateSystem(coordinateSystems[0]);
     }
   }, [coordinateSystems, coordinateSystem, actions]);
 
-  // Clear layers when coordinate system changes
   useEffect(() => {
     actions.reset();
     if (coordinateSystem && coordinateSystems.includes(coordinateSystem)) {
@@ -220,32 +260,45 @@ function SpatialCanvasInner() {
     }
   }, [coordinateSystem, coordinateSystems, actions]);
 
-  // Handlers
-  const handleCSChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    actions.setCoordinateSystem(e.target.value || null);
-  }, [actions]);
-
-  const handleToggleLayer = useCallback((element: AvailableElement) => {
-    const layerId = generateLayerId(element.type, element.key);
-    const existing = layers[layerId];
-    
-    if (existing) {
-      // Toggle visibility
-      actions.toggleLayerVisibility(layerId);
-    } else {
-      // Add new layer
-      const config: LayerConfig = {
-        id: layerId,
-        type: element.type,
-        elementKey: element.key,
-        visible: true,
-        opacity: 1,
-      };
-      actions.addLayer(config);
+  useEffect(() => {
+    if (selectedLayerId && !layerOrder.includes(selectedLayerId)) {
+      actions.setSelectedLayerId(layerOrder[layerOrder.length - 1] ?? null);
     }
-  }, [layers, actions]);
+  }, [layerOrder, selectedLayerId, actions]);
 
-  // Loading state
+  const handleCSChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      actions.setCoordinateSystem(e.target.value || null);
+    },
+    [actions],
+  );
+
+  const handleToggleLayer = useCallback(
+    (element: AvailableElement) => {
+      const layerId = generateLayerId(element.type, element.key);
+      const existing = layers[layerId];
+
+      if (existing) {
+        actions.toggleLayerVisibility(layerId);
+      } else {
+        const config: LayerConfig = {
+          id: layerId,
+          type: element.type,
+          elementKey: element.key,
+          visible: true,
+          opacity: 1,
+        };
+        actions.addLayer(config);
+      }
+    },
+    [layers, actions],
+  );
+
+  const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
+  const selectedConfig = selectedLayerId ? layers[selectedLayerId] : undefined;
+  const vw = width ?? 0;
+  const vh = height ?? 0;
+
   if (sdLoading) {
     return (
       <div style={containerStyle}>
@@ -262,25 +315,33 @@ function SpatialCanvasInner() {
     );
   }
 
-  const hasElements = Object.values(availableElements).some(arr => arr.length > 0);
+  const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
   const hasEnabledLayers = enabledLayerIds.size > 0;
 
+  const shellStyle: CSSProperties = fullscreen
+    ? { ...containerStyle, ...fullscreenOverlayStyle }
+    : containerStyle;
+
   return (
-    <div style={containerStyle}>
-      {/* Controls */}
+    <div style={shellStyle}>
       <div style={controlsStyle}>
-        <div style={rowStyle}>
+        <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           <span style={labelStyle}>Coordinate System:</span>
-          <select 
-            style={selectStyle}
-            value={coordinateSystem || ''}
-            onChange={handleCSChange}
-          >
+          <select style={selectStyle} value={coordinateSystem || ''} onChange={handleCSChange}>
             <option value="">Select...</option>
-            {coordinateSystems.map(cs => (
-              <option key={cs} value={cs}>{cs}</option>
+            {coordinateSystems.map((cs) => (
+              <option key={cs} value={cs}>
+                {cs}
+              </option>
             ))}
           </select>
+          <button
+            type="button"
+            style={{ ...selectStyle, marginLeft: 'auto', cursor: 'pointer' }}
+            onClick={() => setFullscreen((f) => !f)}
+          >
+            {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          </button>
         </div>
 
         {coordinateSystem && hasElements && (
@@ -298,106 +359,112 @@ function SpatialCanvasInner() {
         )}
       </div>
 
-      {/* Viewer */}
-      <div ref={ref} style={viewerContainerStyle}>
-        {hasEnabledLayers ? (
-          <SpatialCanvasViewer
-            width={width || 0}
-            height={height || 0}
-            layers={layers}
+      <div style={mainRowStyle}>
+        <aside style={{ ...sidebarStyle, width: 220, borderRight: '1px solid #333' }}>
+          <div style={{ color: '#aaa', fontSize: '12px', marginBottom: 8, fontWeight: 600 }}>Layers</div>
+          <LayerOrderList
             layerOrder={layerOrder}
-            availableElements={availableElements}
-            coordinateSystem={coordinateSystem}
-            viewState={viewState}
-            onViewStateChange={actions.setViewState}
+            layers={layers}
+            selectedLayerId={selectedLayerId}
+            onSelect={actions.setSelectedLayerId}
+            reorderLayers={actions.reorderLayers}
           />
-        ) : (
-          <div style={placeholderStyle}>
-            {coordinateSystem 
-              ? 'Select layers to display' 
-              : 'Select a coordinate system'}
-          </div>
-        )}
+        </aside>
+
+        <div ref={viewerRef} style={viewerContainerStyle}>
+          {hasEnabledLayers ? (
+            <div style={{ width: vw, height: vh, position: 'relative' }}>
+              <SpatialViewer
+                width={vw}
+                height={vh}
+                viewState={viewState}
+                onViewStateChange={handleViewStateChange}
+                layers={deckLayers}
+                vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
+              />
+              {isLoading && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    padding: '4px 8px',
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    color: '#fff',
+                    fontSize: '11px',
+                    borderRadius: 4,
+                  }}
+                >
+                  Loading...
+                </div>
+              )}
+              {!hasLayersDrawn && !isLoading && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    color: '#666',
+                    fontSize: '13px',
+                  }}
+                >
+                  No layers to display
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={placeholderStyle}>
+              {coordinateSystem ? 'Select layers to display' : 'Select a coordinate system'}
+            </div>
+          )}
+        </div>
+
+        <aside style={{ ...sidebarStyle, width: 300, borderLeft: '1px solid #333' }}>
+          <div style={{ color: '#aaa', fontSize: '12px', marginBottom: 8, fontWeight: 600 }}>Properties</div>
+          {!selectedConfig && (
+            <div style={{ color: '#666', fontSize: '12px' }}>Select a layer in the list</div>
+          )}
+          {selectedConfig && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <span style={labelStyle}>Element</span>
+                <div style={{ color: '#ddd', fontSize: '13px' }}>{selectedConfig.elementKey}</div>
+                <div style={{ color: '#888', fontSize: '11px' }}>{selectedConfig.type}</div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ccc', fontSize: '12px' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedConfig.visible}
+                  onChange={() => actions.toggleLayerVisibility(selectedConfig.id)}
+                />
+                Visible
+              </label>
+              <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                Opacity
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={selectedConfig.opacity}
+                  onChange={(e) =>
+                    actions.updateLayer(selectedConfig.id, { opacity: Number(e.target.value) })
+                  }
+                />
+              </label>
+              {selectedConfig.type === 'image' && (
+                <ImageChannelPanel
+                  layerId={selectedConfig.id}
+                  config={selectedConfig}
+                  defaults={getImageLayerLoadedData(selectedConfig.id)}
+                  updateLayer={actions.updateLayer}
+                />
+              )}
+            </div>
+          )}
+        </aside>
       </div>
-    </div>
-  );
-}
-
-// ============================================
-// Viewer Component (renders deck.gl layers)
-// ============================================
-
-interface SpatialCanvasViewerProps {
-  width: number;
-  height: number;
-  layers: Record<string, LayerConfig>;
-  layerOrder: string[];
-  availableElements: ElementsByType;
-  coordinateSystem: string | null;
-  viewState: ViewState | null;
-  onViewStateChange: (vs: ViewState | null) => void;
-}
-
-function SpatialCanvasViewer({ 
-  width, 
-  height, 
-  layers, 
-  layerOrder,
-  availableElements,
-  coordinateSystem,
-  viewState,
-  onViewStateChange,
-}: SpatialCanvasViewerProps) {
-  // Load layer data and get deck.gl layers
-  const { getLayers, isLoading } = useLayerData(
-    layers, 
-    layerOrder, 
-    availableElements,
-    coordinateSystem,
-  );
-
-  const deckLayers = getLayers();
-
-  // Handle view state change, converting null to default
-  const handleViewStateChange = useCallback((vs: ViewState) => {
-    onViewStateChange(vs);
-  }, [onViewStateChange]);
-
-  return (
-    <div style={{ width, height, position: 'relative' }}>
-      <SpatialViewer
-        width={width}
-        height={height}
-        viewState={viewState}
-        onViewStateChange={handleViewStateChange}
-        layers={deckLayers}
-      />
-      {isLoading && (
-        <div style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          padding: '4px 8px',
-          backgroundColor: 'rgba(0,0,0,0.7)',
-          color: '#fff',
-          fontSize: '11px',
-          borderRadius: 4,
-        }}>
-          Loading...
-        </div>
-      )}
-      {deckLayers.length === 0 && !isLoading && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          color: '#666',
-          fontSize: '13px',
-        }}>
-          No layers to display
-        </div>
-      )}
     </div>
   );
 }
@@ -421,6 +488,7 @@ export interface SpatialCanvasProps {
  * - Select a coordinate system
  * - Toggle visibility of elements that can be displayed in that coordinate system
  * - Pan and zoom the view
+ * - View images, shapes, points, and labels(tbd) together
  * 
  * @example Basic usage
  * ```tsx
@@ -440,12 +508,34 @@ export interface SpatialCanvasProps {
  * // Store can also be accessed externally
  * store.getState().setCoordinateSystem('global');
  * ```
+ * 
+ * @example With image layer channel controls (advanced API)
+ * ```tsx
+ * const store = createSpatialCanvasStore();
+ * 
+ * // Add image layer with custom channel configuration
+ * store.getState().addLayer({
+ *   id: 'image:my_image',
+ *   type: 'image',
+ *   elementKey: 'my_image',
+ *   visible: true,
+ *   opacity: 1,
+ *   channels: {
+ *     colors: [[255, 0, 0], [0, 255, 0]],
+ *     contrastLimits: [[0, 1000], [0, 2000]],
+ *     channelsVisible: [true, true],
+ *     selections: [{ z: 0, c: 0, t: 0 }],
+ *   },
+ * });
+ * ```
  */
 export default function SpatialCanvas({ store }: SpatialCanvasProps) {
   return (
-    <SpatialCanvasProvider store={store}>
-      <SpatialCanvasInner />
-    </SpatialCanvasProvider>
+    <VivLoaderRegistryProvider>
+      <SpatialCanvasProvider store={store}>
+        <SpatialCanvasInner />
+      </SpatialCanvasProvider>
+    </VivLoaderRegistryProvider>
   );
 }
 

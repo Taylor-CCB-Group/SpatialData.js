@@ -1,0 +1,29 @@
+---
+sidebar_position: 1
+---
+
+# `@spatialdata/layers`
+
+The **deck.gl–native** package for composable spatial rendering: a top-level **`SpatialLayer`** `CompositeLayer` and a versioned, JSON-serializable **`SpatialLayerProps`** contract.
+
+## Role
+
+- **`SpatialLayer`** — validates props and will orchestrate Viv / scatter / shapes sublayers as they are ported from `@spatialdata/vis` and MDV-style stacks.
+- **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — runtime validation and migrations for saved views, URL state, and integrators (e.g. MDV chart config).
+
+## Relationships
+
+| Package | Responsibility |
+|--------|-----------------|
+| `@spatialdata/core` | SpatialData on Zarr: elements, transforms, read APIs |
+| `@spatialdata/avivatorish` | OME loaders, tile cache, channel stats, Zustand image state |
+| `@spatialdata/layers` | How data enters **deck** via `SpatialLayer` + props |
+| `@spatialdata/vis` | **SpatialCanvas** React shell: UI ↔ props |
+
+## API tiers
+
+See also the [visualization overview](../vis/overview): deck-only integrators can use **`@spatialdata/layers`** without React; headless loader usage is **`@spatialdata/avivatorish`**; full UI is **`@spatialdata/vis`**.
+
+## Status
+
+`SpatialLayer` currently validates **`SpatialLayerProps`** and returns an empty sublayer stack until image/scatter/shapes factories are wired through this package.
