@@ -72,16 +72,7 @@ export function LayerOrderList({
         return (
           <div
             key={id}
-            role="button"
-            tabIndex={0}
             style={rowStyle(selectedLayerId === id)}
-            onClick={() => onSelect(id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onSelect(id);
-              }
-            }}
             onDragOver={onDragOver}
             onDrop={(e) => onDrop(e, id)}
           >
@@ -93,9 +84,25 @@ export function LayerOrderList({
             >
               ⣿
             </span>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {layer.elementKey} ({layer.type})
-            </span>
+            <input
+              type="button"
+              value={`${layer.elementKey} (${layer.type})`}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                background: 'transparent',
+                border: 'none',
+                padding: 0,
+                font: 'inherit',
+                color: 'inherit',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+              onClick={() => onSelect(id)}
+            />
             <span style={{ color: layer.visible ? '#6a9' : '#666' }}>{layer.visible ? 'on' : 'off'}</span>
           </div>
         );
