@@ -7,7 +7,7 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
-import { useEffect, useMemo, useCallback, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useCallback, useState, useRef, type CSSProperties } from 'react';
 import { useMeasure } from '@uidotdev/usehooks';
 import { useSpatialData } from '@spatialdata/react';
 import type { PickingInfo } from 'deck.gl';
@@ -206,7 +206,9 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
 
 function SpatialCanvasInner() {
   const { spatialData, loading: sdLoading } = useSpatialData();
-  const [viewerRef, { width, height }] = useMeasure();
+  const [measureRef, { width, height }] = useMeasure();
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [hoverTooltip, setHoverTooltip] = useState<{
     x: number;
@@ -235,7 +237,16 @@ function SpatialCanvasInner() {
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
-  const { getLayers, getVivLayerProps, getImageLayerLoadedData, getShapeTooltip, isLoading } = useLayerData(
+  const {
+    getLayers,
+    getVivLayerProps,
+    getImageLayerLoadedData,
+    getLayerLoadState,
+    hasRenderableLayerData,
+    getShapeTooltip,
+    isLoading,
+    isBlocking,
+  } = useLayerData(
     layers,
     layerOrder,
     availableElements,
@@ -309,6 +320,8 @@ function SpatialCanvasInner() {
     selectedConfig?.type === 'shapes'
       ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
       : undefined;
+  const selectedLayerLoadState =
+    selectedConfig ? getLayerLoadState(selectedConfig.id) : undefined;
   const availableTooltipFields =
     associatedTable?.getObsColumnNames().filter((columnName) => {
       const tableKeys = associatedTable.getTableKeys();
@@ -340,6 +353,11 @@ function SpatialCanvasInner() {
     });
   }, [getShapeTooltip]);
 
+  const handleViewerRef = useCallback((node: HTMLDivElement | null) => {
+    viewerContainerRef.current = node;
+    measureRef(node);
+  }, [measureRef]);
+  
   if (sdLoading) {
     return (
       <div style={containerStyle}>
@@ -358,13 +376,23 @@ function SpatialCanvasInner() {
 
   const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
   const hasEnabledLayers = enabledLayerIds.size > 0;
+  const shellRect = shellRef.current?.getBoundingClientRect();
+  const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
+  const tooltipPosition =
+    hoverTooltip && shellRect && viewerRect
+      ? {
+          x: viewerRect.left - shellRect.left + hoverTooltip.x,
+          y: viewerRect.top - shellRect.top + hoverTooltip.y,
+        }
+      : null;
 
   const shellStyle: CSSProperties = fullscreen
-    ? { ...containerStyle, ...fullscreenOverlayStyle }
-    : containerStyle;
+    ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
+    : { ...containerStyle, position: 'relative' };
+
 
   return (
-    <div style={shellStyle}>
+    <div ref={shellRef} style={shellStyle}>
       <div style={controlsStyle}>
         <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           <span style={labelStyle}>Coordinate System:</span>
@@ -412,7 +440,7 @@ function SpatialCanvasInner() {
           />
         </aside>
 
-        <div ref={viewerRef} style={viewerContainerStyle}>
+        <div ref={handleViewerRef} style={viewerContainerStyle}>
           {hasEnabledLayers ? (
             <div style={{ width: vw, height: vh, position: 'relative' }}>
               <SpatialViewer
@@ -424,17 +452,7 @@ function SpatialCanvasInner() {
                 vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
                 onHover={handleHover}
               />
-              {hoverTooltip && (
-                <ShapesTooltip
-                  x={hoverTooltip.x}
-                  y={hoverTooltip.y}
-                  tooltip={{
-                    title: hoverTooltip.title,
-                    items: hoverTooltip.items,
-                  }}
-                />
-              )}
-              {isLoading && (
+              {isBlocking && (
                 <div
                   style={{
                     position: 'absolute',
@@ -447,10 +465,26 @@ function SpatialCanvasInner() {
                     borderRadius: 4,
                   }}
                 >
-                  Loading...
+                  Loading layer data...
                 </div>
               )}
-              {!hasLayersDrawn && !isLoading && (
+              {isLoading && !isBlocking && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    padding: '4px 8px',
+                    backgroundColor: 'rgba(20,20,20,0.78)',
+                    color: '#d5d5d5',
+                    fontSize: '11px',
+                    borderRadius: 4,
+                  }}
+                >
+                  Refreshing layer metadata...
+                </div>
+              )}
+              {!hasLayersDrawn && !isBlocking && (
                 <div
                   style={{
                     position: 'absolute',
@@ -505,6 +539,29 @@ function SpatialCanvasInner() {
                   }
                 />
               </label>
+              {selectedLayerLoadState && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, color: '#888', fontSize: '11px' }}>
+                  {selectedConfig.type !== 'image' && selectedLayerLoadState.geometry && (
+                    <div>
+                      Geometry: {selectedLayerLoadState.geometry}
+                      {!hasRenderableLayerData(selectedConfig.id) && selectedLayerLoadState.geometry === 'loading'
+                        ? ' (blocking)'
+                        : ''}
+                    </div>
+                  )}
+                  {selectedConfig.type === 'image' && selectedLayerLoadState.image && (
+                    <div>
+                      Image: {selectedLayerLoadState.image}
+                      {!hasRenderableLayerData(selectedConfig.id) && selectedLayerLoadState.image === 'loading'
+                        ? ' (blocking)'
+                        : ''}
+                    </div>
+                  )}
+                  {selectedConfig.type === 'shapes' && selectedLayerLoadState.tooltip && (
+                    <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
+                  )}
+                </div>
+              )}
               {selectedConfig.type === 'image' && (
                 <ImageChannelPanel
                   layerId={selectedConfig.id}
@@ -569,6 +626,16 @@ function SpatialCanvasInner() {
           )}
         </aside>
       </div>
+      {hoverTooltip && tooltipPosition && (
+        <ShapesTooltip
+          x={tooltipPosition.x}
+          y={tooltipPosition.y}
+          tooltip={{
+            title: hoverTooltip.title,
+            items: hoverTooltip.items,
+          }}
+        />
+      )}
     </div>
   );
 }
