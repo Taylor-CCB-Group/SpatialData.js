@@ -257,6 +257,9 @@ export function useLayerData(
     images: new Map(),
   });
 
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
+
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
 
   // Build a map of element key -> AvailableElement for quick lookup
@@ -369,10 +372,12 @@ export function useLayerData(
             }
 
             if (loadTooltip) {
-              const tooltipFields =
-                layers[layerId]?.type === 'shapes'
-                  ? layers[layerId].tooltipFields ?? []
-                  : [];
+              const shapeLayerConfig =
+                layersRef.current[layerId]?.type === 'shapes'
+                  ? layersRef.current[layerId]
+                  : undefined;
+              const tooltipFields = shapeLayerConfig?.tooltipFields ?? [];
+              const requestedSignature = getTooltipSignature(shapeLayerConfig);
               if (tooltipFields.length > 0) {
                 setLayerResourceStatus(layerId, 'tooltip', 'loading');
                 const current = loadedDataRef.current.shapes.get(element.key);
@@ -381,6 +386,14 @@ export function useLayerData(
                   element.element as ShapesElement,
                   tooltipFields,
                 );
+                const latestDesired = getTooltipSignature(
+                  layersRef.current[layerId]?.type === 'shapes'
+                    ? layersRef.current[layerId]
+                    : undefined,
+                );
+                if (latestDesired !== requestedSignature) {
+                  return;
+                }
                 loadedDataRef.current.shapes.set(element.key, {
                   ...current,
                   ...tooltipData,
@@ -623,6 +636,11 @@ export function useLayerData(
 
     const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
     if (!loadedShapeData?.featureIds || !loadedShapeData.tooltipFields || !loadedShapeData.tooltipColumns) {
+      return undefined;
+    }
+
+    const config = layersRef.current[layerId];
+    if (getTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
       return undefined;
     }
 
