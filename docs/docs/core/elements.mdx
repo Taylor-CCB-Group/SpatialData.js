@@ -134,6 +134,12 @@ shapes.attrs.coordinateTransformations;
 `loadFeatureIds()` is the method to use when you want to associate picked
 shapes with table rows.
 
+Implementation note:
+`ShapesElement.loadFeatureIds()` currently relies on a lightly adapted
+Vitessce-derived loader under the hood. We intentionally allow newer
+`ngff:shapes` metadata revisions to use the same parquet-backed feature-id path
+rather than keying support to one exact version string.
+
 ### Attributes Schema
 
 ```ts
@@ -168,11 +174,27 @@ const table = sdata.tables?.['annotations'];
 // Get as AnnData.js object for full access
 const adata = await table.getAnnDataJS();
 
+// Load row ids / selected obs columns through SpatialData.js loaders
+const rowIds = await table.loadObsIndex();
+const regionColumns = await table.loadObsColumns(['region']);
+
 // Access region annotation metadata
 table.attrs.instance_key;   // Column name for feature IDs / instance IDs
 table.attrs.region;         // Element(s) this table annotates
 table.attrs.region_key;     // Column name linking to region
 ```
+
+Implementation note:
+`loadObsIndex()` and `loadObsColumns()` are used by the feature-association
+helpers and currently stay on the direct zarr/parquet loader path rather than
+depending on `anndata.js`. `getAnnDataJS()` remains available for higher-level
+AnnData access.
+
+Planned API evolution:
+the current `loadObsColumns()` helper is optimized for association / tooltip
+lookups and should be treated as a convenience API. We expect to add a more
+explicit typed dataframe-column API later, rather than baking string-normalized
+column reads into every table workflow.
 
 ### Attributes Schema
 

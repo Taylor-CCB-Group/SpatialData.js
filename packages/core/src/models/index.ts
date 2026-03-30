@@ -4,6 +4,7 @@ import { Ok, Err } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';
+import SpatialDataTableSource from './VTableSource';
 import { 
   rasterAttrsSchema, 
   shapesAttrsSchema, 
@@ -227,6 +228,7 @@ export function getTableKeys(input: TableKeysInput): TableKeys {
 export class TableElement extends AbstractElement<'tables'> {
   readonly attrs: TableAttrs;
   private anndataPromise?: Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>>;
+  private readonly tableSource: SpatialDataTableSource;
   
   constructor(params: ElementParams<'tables'>) {
     super(params);
@@ -236,6 +238,10 @@ export class TableElement extends AbstractElement<'tables'> {
       throw result.error;
     } 
     this.attrs = result.data;
+    this.tableSource = new SpatialDataTableSource({
+      store: params.sdata.rootStore.zarritaStore,
+      fileType: '.zarr',
+    });
   }
   
   /**
@@ -269,38 +275,26 @@ export class TableElement extends AbstractElement<'tables'> {
 
   /**
    * Load the effective row ids for this table, respecting `instance_key`.
+   *
+   * This stays on our zarr-backed loader path rather than depending on
+   * `anndata.js`, since tooltip/association reads should work even when the
+   * AnnData wrapper lags behind newer string dtype support.
    */
   async loadObsIndex(): Promise<string[]> {
-    const adata = await this.getAnnDataJS();
-    const { instanceKey } = this.getTableKeys();
-    if (await adata.obs.has(instanceKey)) {
-      const instanceColumn = await adata.obs.get(instanceKey);
-      return backedArrayToStrings(instanceColumn);
-    }
-    return backedArrayToStrings(await adata.obsNames());
+    return this.tableSource.loadObsIndex(`tables/${this.key}`);
   }
 
   /**
    * Load specific obs columns by column name.
+   *
+   * Column-level reads use the same direct zarr/parquet path as `loadObsIndex`
+   * so feature-association helpers are not blocked on `anndata.js`.
    */
   async loadObsColumns(columnNames: string[]): Promise<Array<string[] | undefined>> {
-    const adata = await this.getAnnDataJS();
-    return Promise.all(columnNames.map(async (columnName) => {
-      if (!(await adata.obs.has(columnName))) {
-        return undefined;
-      }
-      const column = await adata.obs.get(columnName);
-      return backedArrayToStrings(column);
-    }));
+    return this.tableSource.loadObsColumns(
+      columnNames.map((columnName) => `tables/${this.key}/obs/${columnName}`),
+    ) as Promise<Array<string[] | undefined>>;
   }
-}
-
-async function backedArrayToStrings(array: unknown): Promise<string[]> {
-  const chunk = await ad.get(array as never, [null]);
-  if (chunk instanceof Object && 'data' in chunk) {
-    return Array.from(chunk.data as Iterable<unknown>, (value) => String(value));
-  }
-  return [String(chunk)];
 }
 
 // ============================================
