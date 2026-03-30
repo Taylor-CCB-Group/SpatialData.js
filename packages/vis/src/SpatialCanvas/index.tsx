@@ -35,18 +35,18 @@ import type { SpatialCanvasStoreApi } from './stores';
 import { useLayerData } from './useLayerData';
 import { SpatialViewer } from './SpatialViewer';
 import {
-  ShapesTooltip,
-  type ShapesTooltipData,
+  SpatialFeatureTooltip,
+  type SpatialFeatureTooltipData,
   type SpatialCanvasTooltipRenderProps,
-} from './ShapesTooltip';
+} from './SpatialFeatureTooltip';
 
 export {
-  ShapesTooltip,
-  type ShapesTooltipData,
-  type ShapesTooltipItem,
+  SpatialFeatureTooltip,
+  type SpatialFeatureTooltipData,
+  type SpatialFeatureTooltipItem,
   type SpatialCanvasTooltipRenderProps,
-  type ShapesTooltipProps,
-} from './ShapesTooltip';
+  type SpatialFeatureTooltipProps,
+} from './SpatialFeatureTooltip';
 
 // Re-export for external use
 export { 
@@ -218,7 +218,7 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
 // ============================================
 
 interface SpatialCanvasInnerProps {
-  /** Portal mount node for hover tooltips; defaults to `document.body`. */
+  /** Portal mount node for picked-feature hover tooltips; defaults to `document.body`. */
   tooltipContainer?: HTMLElement | null;
   /** Override default tooltip UI; receives pick position in viewport coordinates. */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
@@ -263,7 +263,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     getImageLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
-    getShapeTooltip,
+    getFeatureTooltip,
     isLoading,
     isBlocking,
   } = useLayerData(
@@ -361,7 +361,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       setHoverTooltip(null);
       return;
     }
-    const tooltip = getShapeTooltip(normalizedLayerId, info.index);
+    const tooltip = getFeatureTooltip(normalizedLayerId, info.index);
     if (!tooltip) {
       setHoverTooltip(null);
       return;
@@ -371,7 +371,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       y: info.y,
       ...tooltip,
     });
-  }, [getShapeTooltip]);
+  }, [getFeatureTooltip]);
 
   const handleViewerRef = useCallback((node: HTMLDivElement | null) => {
     viewerContainerRef.current = node;
@@ -410,7 +410,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
     : { ...containerStyle, position: 'relative' };
 
-  const tooltipPayload: ShapesTooltipData | null =
+  const tooltipPayload: SpatialFeatureTooltipData | null =
     hoverTooltip && tooltipClientPosition
       ? {
           title: hoverTooltip.title,
@@ -433,7 +433,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
           tooltip: tooltipPayload,
         })
       ) : (
-        <ShapesTooltip
+        <SpatialFeatureTooltip
           x={tooltipClientPosition.x}
           y={tooltipClientPosition.y}
           tooltip={tooltipPayload}
@@ -696,13 +696,14 @@ export interface SpatialCanvasProps {
    */
   store?: SpatialCanvasStoreApi;
   /**
-   * DOM node to mount shape hover tooltips (React portal target).
+   * DOM node to mount picked-feature hover tooltips (React portal target).
    * Defaults to `document.body` when omitted.
    */
   tooltipContainer?: HTMLElement | null;
   /**
-   * Custom tooltip UI for shape hovers. Receives viewport coordinates and the
-   * library-built payload; omit to use the default `ShapesTooltip` styling.
+   * Custom tooltip UI for picked-feature hovers. Receives viewport coordinates
+   * and the library-built payload; omit to use the default `SpatialFeatureTooltip`
+   * styling.
    */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
 }

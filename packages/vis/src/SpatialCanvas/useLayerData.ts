@@ -46,14 +46,14 @@ export interface ImageLoaderData {
 
 interface LoadedShapesData {
   polygons: Array<Array<Array<[number, number]>>>;
-  shapeIds?: string[];
+  featureIds?: string[];
   tooltipSignature?: string;
   tooltipFields?: string[];
   tooltipColumns?: Array<string[] | undefined>;
   /**
-   * Optional row-index lookup aligned to polygon order.
-   * When omitted, polygon index and tooltip row index are assumed to be identical.
-   * A value of -1 indicates no matching tooltip row for that shape.
+   * Optional row-index lookup aligned to picked feature order.
+   * When omitted, picked feature index and tooltip row index are assumed to be identical.
+   * A value of -1 indicates no matching tooltip row for that feature.
    */
   tooltipRowIndices?: Int32Array;
 }
@@ -94,8 +94,8 @@ interface UseLayerDataResult {
   getLayerLoadState: (layerId: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
-  /** Resolve a shapes tooltip lazily from the picked row index. */
-  getShapeTooltip: (layerId: string, objectIndex: number) => ShapeTooltipDatum | undefined;
+  /** Resolve a feature tooltip lazily from the picked row index. */
+  getFeatureTooltip: (layerId: string, objectIndex: number) => ShapeTooltipDatum | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
@@ -128,20 +128,20 @@ async function loadShapeTooltipData(
 ): Promise<
   Pick<
     LoadedShapesData,
-    'shapeIds' | 'tooltipSignature' | 'tooltipFields' | 'tooltipColumns' | 'tooltipRowIndices'
+    'featureIds' | 'tooltipSignature' | 'tooltipFields' | 'tooltipColumns' | 'tooltipRowIndices'
   >
 > {
   const tooltipSignature = tooltipFields.join('\u0001');
-  const shapeIdsRaw = await element.loadShapesIndex();
-  const shapeIds = shapeIdsRaw ? Array.from(shapeIdsRaw, (value: unknown) => String(value)) : undefined;
+  const featureIdsRaw = await element.loadFeatureIds();
+  const featureIds = featureIdsRaw ? Array.from(featureIdsRaw, (value: unknown) => String(value)) : undefined;
 
-  if (!shapeIds || !spatialData || tooltipFields.length === 0) {
-    return { shapeIds, tooltipSignature, tooltipFields };
+  if (!featureIds || !spatialData || tooltipFields.length === 0) {
+    return { featureIds, tooltipSignature, tooltipFields };
   }
 
   const associated = spatialData.getAssociatedTable('shapes', element.key);
   if (!associated) {
-    return { shapeIds, tooltipSignature };
+    return { featureIds, tooltipSignature };
   }
 
   const [, table] = associated;
@@ -165,27 +165,27 @@ async function loadShapeTooltipData(
 
   let tooltipRowIndices: Int32Array | undefined;
   const isDirectlyAligned =
-    filteredRowIds.length === shapeIds.length
-    && filteredRowIds.every((rowId, index) => rowId === shapeIds[index]);
+    filteredRowIds.length === featureIds.length
+    && filteredRowIds.every((rowId, index) => rowId === featureIds[index]);
 
   if (!isDirectlyAligned) {
-    const rowIndexByShapeId = new Map<string, number>();
+    const rowIndexByFeatureId = new Map<string, number>();
     for (const [index, rowId] of filteredRowIds.entries()) {
-      rowIndexByShapeId.set(rowId, filteredRowIndices[index]);
+      rowIndexByFeatureId.set(rowId, filteredRowIndices[index]);
     }
 
-    tooltipRowIndices = new Int32Array(shapeIds.length);
+    tooltipRowIndices = new Int32Array(featureIds.length);
     tooltipRowIndices.fill(-1);
-    for (const [shapeIndex, shapeId] of shapeIds.entries()) {
-      const matchedRowIndex = rowIndexByShapeId.get(shapeId);
+    for (const [featureIndex, featureId] of featureIds.entries()) {
+      const matchedRowIndex = rowIndexByFeatureId.get(featureId);
       if (matchedRowIndex !== undefined) {
-        tooltipRowIndices[shapeIndex] = matchedRowIndex;
+        tooltipRowIndices[featureIndex] = matchedRowIndex;
       }
     }
   }
 
   return {
-    shapeIds,
+    featureIds,
     tooltipSignature,
     tooltipFields,
     tooltipColumns,
@@ -579,19 +579,19 @@ export function useLayerData(
     return layerLoadStates[layerId];
   }, [layerLoadStates]);
 
-  const getShapeTooltip = useCallback((layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
+  const getFeatureTooltip = useCallback((layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
     const elem = elementMap.current.get(layerId);
     if (!elem || elem.type !== 'shapes') {
       return undefined;
     }
 
     const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
-    if (!loadedShapeData?.shapeIds || !loadedShapeData.tooltipFields || !loadedShapeData.tooltipColumns) {
+    if (!loadedShapeData?.featureIds || !loadedShapeData.tooltipFields || !loadedShapeData.tooltipColumns) {
       return undefined;
     }
 
-    const shapeId = loadedShapeData.shapeIds[objectIndex];
-    if (!shapeId) {
+    const featureId = loadedShapeData.featureIds[objectIndex];
+    if (!featureId) {
       return undefined;
     }
 
@@ -614,7 +614,7 @@ export function useLayerData(
     }
 
     return {
-      title: shapeId,
+      title: featureId,
       items,
     };
   }, []);
@@ -701,7 +701,7 @@ export function useLayerData(
     getImageLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
-    getShapeTooltip,
+    getFeatureTooltip,
     isLoading,
     isBlocking,
     reloadElement,

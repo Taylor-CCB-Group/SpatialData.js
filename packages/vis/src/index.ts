@@ -30,9 +30,9 @@ export type {
   AvailableElement,
   ElementsByType,
   SpatialCanvasProps,
-  ShapesTooltipData,
-  ShapesTooltipItem,
+  SpatialFeatureTooltipData,
+  SpatialFeatureTooltipItem,
   SpatialCanvasTooltipRenderProps,
-  ShapesTooltipProps,
+  SpatialFeatureTooltipProps,
 } from './SpatialCanvas';
-export { ShapesTooltip } from './SpatialCanvas';
+export { SpatialFeatureTooltip } from './SpatialCanvas';

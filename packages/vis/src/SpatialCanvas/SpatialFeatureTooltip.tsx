@@ -1,21 +1,21 @@
 import type { CSSProperties } from 'react';
 
-export type ShapesTooltipItem = {
+export type SpatialFeatureTooltipItem = {
   label: string;
   value: string;
 };
 
-/** Serializable payload for shape hover tooltips (library-owned contract). */
-export type ShapesTooltipData = {
+/** Serializable payload for picked spatial feature hover tooltips (library-owned contract). */
+export type SpatialFeatureTooltipData = {
   title?: string;
-  items: ShapesTooltipItem[];
+  items: SpatialFeatureTooltipItem[];
 };
 
 /** Props for optional `renderTooltip` on SpatialCanvas (client = viewport coordinates). */
 export type SpatialCanvasTooltipRenderProps = {
   clientX: number;
   clientY: number;
-  tooltip: ShapesTooltipData;
+  tooltip: SpatialFeatureTooltipData;
 };
 
 const tooltipBaseStyle: CSSProperties = {
@@ -59,12 +59,12 @@ const itemValueStyle: CSSProperties = {
 
 const TOOLTIP_OFFSET = 12;
 
-export interface ShapesTooltipProps {
-  /** Viewport X of the pick point (deck.gl `info.x` + viewer origin). */
+export interface SpatialFeatureTooltipProps {
+  /** Viewport X of the picked feature (deck.gl `info.x` + viewer origin). */
   x: number;
-  /** Viewport Y of the pick point (deck.gl `info.y` + viewer origin). */
+  /** Viewport Y of the picked feature (deck.gl `info.y` + viewer origin). */
   y: number;
-  tooltip: ShapesTooltipData;
+  tooltip: SpatialFeatureTooltipData;
   /**
    * `fixed` — viewport coordinates (use with a portal). Default.
    * `absolute` — coordinates relative to the offset parent.
@@ -74,13 +74,13 @@ export interface ShapesTooltipProps {
   zIndex?: number;
 }
 
-export function ShapesTooltip({
+export function SpatialFeatureTooltip({
   x,
   y,
   tooltip,
   position = 'fixed',
   zIndex = 10001,
-}: ShapesTooltipProps) {
+}: SpatialFeatureTooltipProps) {
   const tooltipStyle: CSSProperties = {
     ...tooltipBaseStyle,
     position,

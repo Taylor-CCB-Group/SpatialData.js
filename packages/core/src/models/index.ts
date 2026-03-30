@@ -395,10 +395,15 @@ export class ImageElement extends RasterElement<'images'> {
 
 /**
  * Labels element - raster data representing segmentation labels.
+ *
+ * Conceptually, labels and shapes both expose spatial "features" that can be
+ * associated with table rows. For labels this will eventually come from picked
+ * raster values (for example ObjectID-style segment ids), whereas shapes expose
+ * feature identity via their row/index arrays.
  */
 export class LabelsElement extends RasterElement<'labels'> {
   // Labels-specific methods can be added here
-  // e.g., colormap, associated table lookup, etc.
+  // e.g., colormap, picked-feature identity / table association helpers, etc.
 }
 
 // ============================================
@@ -451,9 +456,13 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
   }
   
   /**
-   * Load the shapes index.
+   * Load stable feature ids for this shapes element.
+   *
+   * This is the preferred high-level API when the caller wants to associate a
+   * picked shape with table rows. It corresponds to the same conceptual role
+   * that picked label values will play for segmentation rasters.
    */
-  async loadShapesIndex() {
+  async loadFeatureIds() {
     return this.vShapes.loadShapesIndex(`shapes/${this.key}`);
   }
 }
