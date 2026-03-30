@@ -131,19 +131,51 @@ async function loadShapeTooltipData(
     'featureIds' | 'tooltipSignature' | 'tooltipFields' | 'tooltipColumns' | 'tooltipRowIndices'
   >
 > {
-  const tooltipSignature = tooltipFields.join('\u0001');
   const featureIdsRaw = await element.loadFeatureIds();
   const featureIds = featureIdsRaw ? Array.from(featureIdsRaw, (value: unknown) => String(value)) : undefined;
 
-  if (!featureIds || !spatialData || tooltipFields.length === 0) {
-    return { featureIds, tooltipSignature, tooltipFields };
+  if (tooltipFields.length === 0) {
+    return {
+      featureIds,
+      tooltipSignature: '',
+      tooltipFields: [],
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
+  }
+
+  if (!featureIds) {
+    return {
+      featureIds,
+      tooltipSignature: undefined,
+      tooltipFields,
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
+  }
+
+  if (!spatialData) {
+    return {
+      featureIds,
+      tooltipSignature: undefined,
+      tooltipFields,
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
   }
 
   const associated = spatialData.getAssociatedTable('shapes', element.key);
   if (!associated) {
-    return { featureIds, tooltipSignature };
+    return {
+      featureIds,
+      tooltipSignature: undefined,
+      tooltipFields,
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
   }
 
+  const tooltipSignature = tooltipFields.join('\u0001');
   const [, table] = associated;
   const { regionKey } = table.getTableKeys();
   const requestedColumns = Array.from(new Set([regionKey, ...tooltipFields]));
@@ -353,7 +385,11 @@ export function useLayerData(
                   ...current,
                   ...tooltipData,
                 } as LoadedShapesData);
-                setLayerResourceStatus(layerId, 'tooltip', 'ready');
+                setLayerResourceStatus(
+                  layerId,
+                  'tooltip',
+                  tooltipData.tooltipSignature === undefined ? 'idle' : 'ready',
+                );
               } else {
                 const current = loadedDataRef.current.shapes.get(element.key);
                 loadedDataRef.current.shapes.set(element.key, {
