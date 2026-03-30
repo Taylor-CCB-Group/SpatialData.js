@@ -67,6 +67,8 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
   fillColor?: [number, number, number, number];
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
+  /** Table obs columns to display in hover tooltips for this shapes layer. */
+  tooltipFields?: string[];
 }
 
 export interface PointsLayerConfig extends BaseLayerConfig {
@@ -159,4 +161,3 @@ export interface SpatialCanvasActions {
 }
 
 export type SpatialCanvasStore = SpatialCanvasState & SpatialCanvasActions;
-

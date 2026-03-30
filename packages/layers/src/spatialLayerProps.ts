@@ -20,6 +20,7 @@ export const spatialScatterSublayerSchema = sublayerBase.extend({
 
 export const spatialShapesSublayerSchema = sublayerBase.extend({
   kind: z.literal('shapes'),
+  tooltipFields: z.array(z.string()).optional(),
 });
 
 export const spatialSublayerSchema = z.discriminatedUnion('kind', [

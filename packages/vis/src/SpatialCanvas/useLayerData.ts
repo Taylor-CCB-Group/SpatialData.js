@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Matrix4 } from '@math.gl/core';
 import type { Layer } from 'deck.gl';
-import type { ShapesElement, PointsElement, ImageElement } from '@spatialdata/core';
+import type { ShapesElement, PointsElement, ImageElement, SpatialData } from '@spatialdata/core';
 import {
   buildDefaultSelection,
   clampVivSelectionsToAxes,
@@ -23,7 +23,7 @@ import type { LayerConfig, ElementsByType, AvailableElement } from './types';
 import { 
   renderShapesLayer, 
   loadShapesData,
-  type ShapesLayerRenderConfig,
+  type ShapeTooltipDatum,
 } from './renderers/shapesRenderer';
 import { 
   renderPointsLayer, 
@@ -44,8 +44,22 @@ export interface ImageLoaderData {
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
+interface LoadedShapesData {
+  polygons: Array<Array<Array<[number, number]>>>;
+  shapeIds?: string[];
+  tooltipSignature?: string;
+  tooltipFields?: string[];
+  tooltipColumns?: Array<string[] | undefined>;
+  /**
+   * Optional row-index lookup aligned to polygon order.
+   * When omitted, polygon index and tooltip row index are assumed to be identical.
+   * A value of -1 indicates no matching tooltip row for that shape.
+   */
+  tooltipRowIndices?: Int32Array;
+}
+
 interface LoadedData {
-  shapes: Map<string, Array<Array<Array<[number, number]>>>>;
+  shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
 }
@@ -68,10 +82,118 @@ interface UseLayerDataResult {
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
+  /** Resolve a shapes tooltip lazily from the picked row index. */
+  getShapeTooltip: (layerId: string, objectIndex: number) => ShapeTooltipDatum | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Trigger a reload of data for a specific element */
   reloadElement: (type: string, key: string) => void;
+}
+
+function getTooltipSignature(config: LayerConfig | undefined): string {
+  if (!config || config.type !== 'shapes') {
+    return '';
+  }
+  return (config.tooltipFields ?? []).join('\u0001');
+}
+
+function normalizeTooltipValue(value: string[] | undefined, rowIndex: number): string {
+  if (!value) return '';
+  const row = value[rowIndex];
+  return row ?? '';
+}
+
+function tableRegionMatches(regionValue: string, shapeKey: string) {
+  return regionValue === shapeKey || regionValue === `shapes/${shapeKey}`;
+}
+
+async function loadShapeTooltipData(
+  spatialData: SpatialData | undefined,
+  element: ShapesElement,
+  tooltipFields: string[],
+): Promise<
+  Pick<
+    LoadedShapesData,
+    'shapeIds' | 'tooltipSignature' | 'tooltipFields' | 'tooltipColumns' | 'tooltipRowIndices'
+  >
+> {
+  const tooltipSignature = tooltipFields.join('\u0001');
+  const shapeIdsRaw = await element.loadShapesIndex();
+  const shapeIds = shapeIdsRaw ? Array.from(shapeIdsRaw, (value: unknown) => String(value)) : undefined;
+
+  if (!shapeIds || !spatialData || tooltipFields.length === 0) {
+    return { shapeIds, tooltipSignature, tooltipFields };
+  }
+
+  const associated = spatialData.getAssociatedTable('shapes', element.key);
+  if (!associated) {
+    return { shapeIds, tooltipSignature };
+  }
+
+  const [, table] = associated;
+  const { regionKey } = table.getTableKeys();
+  const requestedColumns = Array.from(new Set([regionKey, ...tooltipFields]));
+  const rowIds = await table.loadObsIndex();
+  const columns = await table.loadObsColumns(requestedColumns);
+  const regionColumn = columns[0];
+  const tooltipColumns = columns.slice(1);
+  const filteredRowIds: string[] = [];
+  const filteredRowIndices: number[] = [];
+
+  for (const [rowIndex, rowId] of rowIds.entries()) {
+    const regionValue = normalizeTooltipValue(regionColumn, rowIndex);
+    if (regionValue && !tableRegionMatches(regionValue, element.key)) {
+      continue;
+    }
+    filteredRowIds.push(String(rowId));
+    filteredRowIndices.push(rowIndex);
+  }
+
+  let tooltipRowIndices: Int32Array | undefined;
+  const isDirectlyAligned =
+    filteredRowIds.length === shapeIds.length
+    && filteredRowIds.every((rowId, index) => rowId === shapeIds[index]);
+
+  if (!isDirectlyAligned) {
+    const rowIndexByShapeId = new Map<string, number>();
+    for (const [index, rowId] of filteredRowIds.entries()) {
+      rowIndexByShapeId.set(rowId, filteredRowIndices[index]);
+    }
+
+    tooltipRowIndices = new Int32Array(shapeIds.length);
+    tooltipRowIndices.fill(-1);
+    for (const [shapeIndex, shapeId] of shapeIds.entries()) {
+      const matchedRowIndex = rowIndexByShapeId.get(shapeId);
+      if (matchedRowIndex !== undefined) {
+        tooltipRowIndices[shapeIndex] = matchedRowIndex;
+      }
+    }
+  }
+
+  return {
+    shapeIds,
+    tooltipSignature,
+    tooltipFields,
+    tooltipColumns,
+    tooltipRowIndices,
+  };
+}
+
+async function loadShapesLayerData(
+  spatialData: SpatialData | undefined,
+  element: ShapesElement,
+  config: LayerConfig | undefined,
+): Promise<LoadedShapesData> {
+  const polygons = await loadShapesData(element);
+  const tooltipFields =
+    config?.type === 'shapes'
+      ? config.tooltipFields ?? []
+      : [];
+  const tooltipData = await loadShapeTooltipData(spatialData, element, tooltipFields);
+  return {
+    polygons,
+    ...tooltipData,
+  };
 }
 
 /**
@@ -88,6 +210,7 @@ export function useLayerData(
   layerOrder: string[],
   availableElements: ElementsByType,
   coordinateSystem: string | null,
+  spatialData?: SpatialData,
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -128,8 +251,12 @@ export function useLayerData(
         
         // Check if we need to load data
         const loaded = loadedDataRef.current;
-        if (config.type === 'shapes' && !loaded.shapes.has(elem.key)) {
-          toLoad.push({ layerId, element: elem });
+        if (config.type === 'shapes') {
+          const loadedShapes = loaded.shapes.get(elem.key);
+          const tooltipSignature = getTooltipSignature(config);
+          if (!loadedShapes || loadedShapes.tooltipSignature !== tooltipSignature) {
+            toLoad.push({ layerId, element: elem });
+          }
         } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
           toLoad.push({ layerId, element: elem });
         } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
@@ -150,7 +277,11 @@ export function useLayerData(
       await Promise.all(toLoad.map(async ({ layerId, element }) => {
         try {
           if (element.type === 'shapes') {
-            const data = await loadShapesData(element.element as ShapesElement);
+            const data = await loadShapesLayerData(
+              spatialData,
+              element.element as ShapesElement,
+              layers[layerId],
+            );
             loadedDataRef.current.shapes.set(element.key, data);
           } else if (element.type === 'points') {
             // todo better type-guards etc here.
@@ -270,7 +401,7 @@ export function useLayerData(
     };
     
     loadData();
-  }, [layers, layerOrder, getOmeZarrMultiscalesData]);
+  }, [layers, layerOrder, getOmeZarrMultiscalesData, spatialData]);
 
   const reloadElement = useCallback((type: string, key: string) => {
     const loaded = loadedDataRef.current;
@@ -296,8 +427,8 @@ export function useLayerData(
       if (!elem) continue;
       
       if (config.type === 'shapes') {
-        const polygonData = loaded.shapes.get(elem.key);
-        if (polygonData) {
+        const shapeData = loaded.shapes.get(elem.key);
+        if (shapeData) {
           const layer = renderShapesLayer({
             element: elem.element as ShapesElement,
             id: layerId,
@@ -307,7 +438,7 @@ export function useLayerData(
             fillColor: config.fillColor,
             strokeColor: config.strokeColor,
             strokeWidth: config.strokeWidth,
-            polygonData,
+            polygonData: shapeData.polygons,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -337,6 +468,46 @@ export function useLayerData(
     const elem = elementMap.current.get(layerId);
     if (!elem || elem.type !== 'image') return undefined;
     return loadedDataRef.current.images.get(elem.key);
+  }, []);
+
+  const getShapeTooltip = useCallback((layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem || elem.type !== 'shapes') {
+      return undefined;
+    }
+
+    const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
+    if (!loadedShapeData?.shapeIds || !loadedShapeData.tooltipFields || !loadedShapeData.tooltipColumns) {
+      return undefined;
+    }
+
+    const shapeId = loadedShapeData.shapeIds[objectIndex];
+    if (!shapeId) {
+      return undefined;
+    }
+
+    const rowIndex = loadedShapeData.tooltipRowIndices
+      ? loadedShapeData.tooltipRowIndices[objectIndex]
+      : objectIndex;
+    if (rowIndex === undefined || rowIndex < 0) {
+      return undefined;
+    }
+
+    const items = loadedShapeData.tooltipFields
+      .map((field, fieldIndex) => ({
+        label: field,
+        value: normalizeTooltipValue(loadedShapeData.tooltipColumns?.[fieldIndex], rowIndex),
+      }))
+      .filter((item) => item.value !== '');
+
+    if (items.length === 0) {
+      return undefined;
+    }
+
+    return {
+      title: shapeId,
+      items,
+    };
   }, []);
 
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
@@ -395,8 +566,8 @@ export function useLayerData(
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
+    getShapeTooltip,
     isLoading: loadingKeys.size > 0,
     reloadElement,
   };
 }
-

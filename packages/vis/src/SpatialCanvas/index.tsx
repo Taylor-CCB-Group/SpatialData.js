@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useCallback, useState, type CSSProperties } from 'react';
 import { useMeasure } from '@uidotdev/usehooks';
 import { useSpatialData } from '@spatialdata/react';
+import type { PickingInfo } from 'deck.gl';
 import { 
   SpatialCanvasProvider, 
   useSpatialCanvasStore, 
@@ -32,6 +33,7 @@ import type {
 import type { SpatialCanvasStoreApi } from './stores';
 import { useLayerData } from './useLayerData';
 import { SpatialViewer } from './SpatialViewer';
+import { ShapesTooltip } from './ShapesTooltip';
 
 // Re-export for external use
 export { 
@@ -206,6 +208,12 @@ function SpatialCanvasInner() {
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [viewerRef, { width, height }] = useMeasure();
   const [fullscreen, setFullscreen] = useState(false);
+  const [hoverTooltip, setHoverTooltip] = useState<{
+    x: number;
+    y: number;
+    title?: string;
+    items: Array<{ label: string; value: string }>;
+  } | null>(null);
 
   const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
   const layers = useSpatialCanvasStore((s) => s.layers);
@@ -227,11 +235,12 @@ function SpatialCanvasInner() {
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
-  const { getLayers, getVivLayerProps, getImageLayerLoadedData, isLoading } = useLayerData(
+  const { getLayers, getVivLayerProps, getImageLayerLoadedData, getShapeTooltip, isLoading } = useLayerData(
     layers,
     layerOrder,
     availableElements,
     coordinateSystem,
+    spatialData ?? undefined,
   );
 
   const deckLayers = getLayers();
@@ -296,8 +305,40 @@ function SpatialCanvasInner() {
 
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
   const selectedConfig = selectedLayerId ? layers[selectedLayerId] : undefined;
+  const associatedTable =
+    selectedConfig?.type === 'shapes'
+      ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
+      : undefined;
+  const availableTooltipFields =
+    associatedTable?.getObsColumnNames().filter((columnName) => {
+      const tableKeys = associatedTable.getTableKeys();
+      return columnName !== tableKeys.instanceKey && columnName !== tableKeys.regionKey;
+    }) ?? [];
   const vw = width ?? 0;
   const vh = height ?? 0;
+
+  const handleHover = useCallback((info: PickingInfo) => {
+    if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
+      setHoverTooltip(null);
+      return;
+    }
+    const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+    const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+    if (typeof info.index !== 'number' || info.index < 0) {
+      setHoverTooltip(null);
+      return;
+    }
+    const tooltip = getShapeTooltip(normalizedLayerId, info.index);
+    if (!tooltip) {
+      setHoverTooltip(null);
+      return;
+    }
+    setHoverTooltip({
+      x: info.x,
+      y: info.y,
+      ...tooltip,
+    });
+  }, [getShapeTooltip]);
 
   if (sdLoading) {
     return (
@@ -381,7 +422,18 @@ function SpatialCanvasInner() {
                 onViewStateChange={handleViewStateChange}
                 layers={deckLayers}
                 vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
+                onHover={handleHover}
               />
+              {hoverTooltip && (
+                <ShapesTooltip
+                  x={hoverTooltip.x}
+                  y={hoverTooltip.y}
+                  tooltip={{
+                    title: hoverTooltip.title,
+                    items: hoverTooltip.items,
+                  }}
+                />
+              )}
               {isLoading && (
                 <div
                   style={{
@@ -461,6 +513,58 @@ function SpatialCanvasInner() {
                   updateLayer={actions.updateLayer}
                 />
               )}
+              {selectedConfig.type === 'shapes' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div>
+                    <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>Tooltip fields</div>
+                    {associatedTable ? (
+                      <>
+                        <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>
+                          Table: {associatedTable.key}
+                        </div>
+                        {availableTooltipFields.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {availableTooltipFields.map((field) => {
+                              const checked = selectedConfig.tooltipFields?.includes(field) ?? false;
+                              return (
+                                <label
+                                  key={field}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ccc', fontSize: '12px' }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const current = new Set(selectedConfig.tooltipFields ?? []);
+                                      if (checked) {
+                                        current.delete(field);
+                                      } else {
+                                        current.add(field);
+                                      }
+                                      actions.updateLayer(selectedConfig.id, {
+                                        tooltipFields: Array.from(current),
+                                      });
+                                    }}
+                                  />
+                                  {field}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{ color: '#666', fontSize: '12px' }}>
+                            No eligible obs columns found on the associated table
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={{ color: '#666', fontSize: '12px' }}>
+                        No associated table found for this shapes layer
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </aside>
@@ -538,4 +642,3 @@ export default function SpatialCanvas({ store }: SpatialCanvasProps) {
     </VivLoaderRegistryProvider>
   );
 }
-

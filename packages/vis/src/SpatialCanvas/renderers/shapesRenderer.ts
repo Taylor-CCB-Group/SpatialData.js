@@ -9,6 +9,11 @@ import type { Matrix4 } from '@math.gl/core';
 import type { ShapesElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
 
+export interface ShapeTooltipDatum {
+  title?: string;
+  items: Array<{ label: string; value: string }>;
+}
+
 export interface ShapesLayerRenderConfig {
   /** The shapes element to render */
   element: ShapesElement;
@@ -60,7 +65,6 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
   return new PolygonLayer({
     id,
     data: polygonData,
-    // Each item in polygonData is a polygon (array of rings, each ring is array of [x, y])
     getPolygon: (d: Array<Array<[number, number]>>) => d,
     getFillColor: fillColor,
     getLineColor: strokeColor,
@@ -94,4 +98,3 @@ export async function loadShapesData(
     return [];
   }
 }
-

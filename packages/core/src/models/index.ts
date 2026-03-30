@@ -226,6 +226,7 @@ export function getTableKeys(input: TableKeysInput): TableKeys {
  */
 export class TableElement extends AbstractElement<'tables'> {
   readonly attrs: TableAttrs;
+  private anndataPromise?: Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>>;
   
   constructor(params: ElementParams<'tables'>) {
     super(params);
@@ -241,7 +242,10 @@ export class TableElement extends AbstractElement<'tables'> {
    * Load the table as an AnnData.js object.
    */
   async getAnnDataJS(): Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>> {
-    return await ad.readZarr(new zarr.FetchStore(this.url));
+    if (!this.anndataPromise) {
+      this.anndataPromise = ad.readZarr(new zarr.FetchStore(this.url));
+    }
+    return await this.anndataPromise;
   }
 
   /**
@@ -250,6 +254,53 @@ export class TableElement extends AbstractElement<'tables'> {
   getTableKeys(): TableKeys {
     return getTableKeys(this);
   }
+
+  /**
+   * Get available obs column names from the parsed tree.
+   */
+  getObsColumnNames(): string[] {
+    const node = this.parsed as ZarrTree;
+    const obsNode = node.obs as ZarrTree | undefined;
+    if (!obsNode || typeof obsNode !== 'object') {
+      return [];
+    }
+    return Object.keys(obsNode);
+  }
+
+  /**
+   * Load the effective row ids for this table, respecting `instance_key`.
+   */
+  async loadObsIndex(): Promise<string[]> {
+    const adata = await this.getAnnDataJS();
+    const { instanceKey } = this.getTableKeys();
+    if (await adata.obs.has(instanceKey)) {
+      const instanceColumn = await adata.obs.get(instanceKey);
+      return backedArrayToStrings(instanceColumn);
+    }
+    return backedArrayToStrings(await adata.obsNames());
+  }
+
+  /**
+   * Load specific obs columns by column name.
+   */
+  async loadObsColumns(columnNames: string[]): Promise<Array<string[] | undefined>> {
+    const adata = await this.getAnnDataJS();
+    return Promise.all(columnNames.map(async (columnName) => {
+      if (!(await adata.obs.has(columnName))) {
+        return undefined;
+      }
+      const column = await adata.obs.get(columnName);
+      return backedArrayToStrings(column);
+    }));
+  }
+}
+
+async function backedArrayToStrings(array: unknown): Promise<string[]> {
+  const chunk = await ad.get(array as never, [null]);
+  if (chunk instanceof Object && 'data' in chunk) {
+    return Array.from(chunk.data as Iterable<unknown>, (value) => String(value));
+  }
+  return [String(chunk)];
 }
 
 // ============================================
