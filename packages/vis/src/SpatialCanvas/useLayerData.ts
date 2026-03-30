@@ -356,10 +356,10 @@ export function useLayerData(
 
       // Load in parallel
       await Promise.all(toLoad.map(async ({ layerId, element, loadGeometry, loadTooltip, loadImage, loadPoints }) => {
-        try {
-          if (element.type === 'shapes') {
-            const existing = loadedDataRef.current.shapes.get(element.key);
-            if (loadGeometry) {
+        if (element.type === 'shapes') {
+          const existing = loadedDataRef.current.shapes.get(element.key);
+          if (loadGeometry) {
+            try {
               setLayerResourceStatus(layerId, 'geometry', 'loading');
               const geometryData = await loadShapesLayerData(element.element as ShapesElement);
               loadedDataRef.current.shapes.set(element.key, {
@@ -367,11 +367,17 @@ export function useLayerData(
                 ...geometryData,
               });
               setLayerResourceStatus(layerId, 'geometry', 'ready');
-            } else {
-              setLayerResourceStatus(layerId, 'geometry', existing ? 'ready' : 'idle');
+            } catch (error) {
+              setLayerResourceStatus(layerId, 'geometry', 'error');
+              console.error(`Failed to load shapes geometry for ${layerId}:`, error);
+              return;
             }
+          } else {
+            setLayerResourceStatus(layerId, 'geometry', existing ? 'ready' : 'idle');
+          }
 
-            if (loadTooltip) {
+          if (loadTooltip) {
+            try {
               const shapeLayerConfig =
                 layersRef.current[layerId]?.type === 'shapes'
                   ? layersRef.current[layerId]
@@ -414,15 +420,25 @@ export function useLayerData(
                 } as LoadedShapesData);
                 setLayerResourceStatus(layerId, 'tooltip', 'idle');
               }
+            } catch (error) {
+              setLayerResourceStatus(layerId, 'tooltip', 'error');
+              console.error(`Failed to load shapes tooltip for ${layerId}:`, error);
             }
-          } else if (element.type === 'points' && loadPoints) {
+          }
+        } else if (element.type === 'points' && loadPoints) {
+          try {
             setLayerResourceStatus(layerId, 'geometry', 'loading');
             // todo better type-guards etc here.
             const e = element.element as PointsElement;
             const data = await e.loadPoints();
             loadedDataRef.current.points.set(element.key, data);
             setLayerResourceStatus(layerId, 'geometry', 'ready');
-          } else if (element.type === 'image' && loadImage) {
+          } catch (error) {
+            setLayerResourceStatus(layerId, 'geometry', 'error');
+            console.error(`Failed to load points for ${layerId}:`, error);
+          }
+        } else if (element.type === 'image' && loadImage) {
+          try {
             setLayerResourceStatus(layerId, 'image', 'loading');
             const loader = await createImageLoader(
               element.element as ImageElement,
@@ -431,9 +447,9 @@ export function useLayerData(
             // Compute channel defaults from loader metadata
             const imageElement = element.element as ImageElement;
             const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
-            
+
             const imageData: ImageLoaderData = { loader };
-            
+
             try {
               if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
                 const loaderObj = loaderToCheck as VivLoaderMetadata;
@@ -520,21 +536,13 @@ export function useLayerData(
                 imageData.selections = [{}];
               }
             }
-            
+
             loadedDataRef.current.images.set(element.key, imageData);
             setLayerResourceStatus(layerId, 'image', 'ready');
-          }
-        } catch (error) {
-          if (loadGeometry || loadPoints) {
-            setLayerResourceStatus(layerId, 'geometry', 'error');
-          }
-          if (loadTooltip) {
-            setLayerResourceStatus(layerId, 'tooltip', 'error');
-          }
-          if (loadImage) {
+          } catch (error) {
             setLayerResourceStatus(layerId, 'image', 'error');
+            console.error(`Failed to load image for ${layerId}:`, error);
           }
-          console.error(`Failed to load data for ${layerId}:`, error);
         }
       }));
     };
