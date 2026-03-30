@@ -7,7 +7,8 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
-import { useEffect, useMemo, useCallback, useState, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useCallback, useState, useRef, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useMeasure } from '@uidotdev/usehooks';
 import { useSpatialData } from '@spatialdata/react';
 import type { PickingInfo } from 'deck.gl';
@@ -33,7 +34,19 @@ import type {
 import type { SpatialCanvasStoreApi } from './stores';
 import { useLayerData } from './useLayerData';
 import { SpatialViewer } from './SpatialViewer';
-import { ShapesTooltip } from './ShapesTooltip';
+import {
+  ShapesTooltip,
+  type ShapesTooltipData,
+  type SpatialCanvasTooltipRenderProps,
+} from './ShapesTooltip';
+
+export {
+  ShapesTooltip,
+  type ShapesTooltipData,
+  type ShapesTooltipItem,
+  type SpatialCanvasTooltipRenderProps,
+  type ShapesTooltipProps,
+} from './ShapesTooltip';
 
 // Re-export for external use
 export { 
@@ -204,7 +217,14 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
 // Inner Canvas (connected to store)
 // ============================================
 
-function SpatialCanvasInner() {
+interface SpatialCanvasInnerProps {
+  /** Portal mount node for hover tooltips; defaults to `document.body`. */
+  tooltipContainer?: HTMLElement | null;
+  /** Override default tooltip UI; receives pick position in viewport coordinates. */
+  renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
+}
+
+function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [measureRef, { width, height }] = useMeasure();
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -376,13 +396,13 @@ function SpatialCanvasInner() {
 
   const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
   const hasEnabledLayers = enabledLayerIds.size > 0;
-  const shellRect = shellRef.current?.getBoundingClientRect();
   const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
-  const tooltipPosition =
-    hoverTooltip && shellRect && viewerRect
+  /** Viewport coordinates of the deck.gl pick (for portaled `position: fixed` tooltip). */
+  const tooltipClientPosition =
+    hoverTooltip && viewerRect
       ? {
-          x: viewerRect.left - shellRect.left + hoverTooltip.x,
-          y: viewerRect.top - shellRect.top + hoverTooltip.y,
+          x: viewerRect.left + hoverTooltip.x,
+          y: viewerRect.top + hoverTooltip.y,
         }
       : null;
 
@@ -390,9 +410,42 @@ function SpatialCanvasInner() {
     ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
     : { ...containerStyle, position: 'relative' };
 
+  const tooltipPayload: ShapesTooltipData | null =
+    hoverTooltip && tooltipClientPosition
+      ? {
+          title: hoverTooltip.title,
+          items: hoverTooltip.items,
+        }
+      : null;
+
+  const portalTarget =
+    typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
+
+  const tooltipPortal =
+    tooltipPayload &&
+    tooltipClientPosition &&
+    portalTarget &&
+    createPortal(
+      renderTooltip ? (
+        renderTooltip({
+          clientX: tooltipClientPosition.x,
+          clientY: tooltipClientPosition.y,
+          tooltip: tooltipPayload,
+        })
+      ) : (
+        <ShapesTooltip
+          x={tooltipClientPosition.x}
+          y={tooltipClientPosition.y}
+          tooltip={tooltipPayload}
+          position="fixed"
+        />
+      ),
+      portalTarget,
+    );
 
   return (
-    <div ref={shellRef} style={shellStyle}>
+    <>
+      <div ref={shellRef} style={shellStyle}>
       <div style={controlsStyle}>
         <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           <span style={labelStyle}>Coordinate System:</span>
@@ -626,17 +679,9 @@ function SpatialCanvasInner() {
           )}
         </aside>
       </div>
-      {hoverTooltip && tooltipPosition && (
-        <ShapesTooltip
-          x={tooltipPosition.x}
-          y={tooltipPosition.y}
-          tooltip={{
-            title: hoverTooltip.title,
-            items: hoverTooltip.items,
-          }}
-        />
-      )}
-    </div>
+      </div>
+      {tooltipPortal}
+    </>
   );
 }
 
@@ -650,6 +695,16 @@ export interface SpatialCanvasProps {
    * If not provided, an internal store will be created.
    */
   store?: SpatialCanvasStoreApi;
+  /**
+   * DOM node to mount shape hover tooltips (React portal target).
+   * Defaults to `document.body` when omitted.
+   */
+  tooltipContainer?: HTMLElement | null;
+  /**
+   * Custom tooltip UI for shape hovers. Receives viewport coordinates and the
+   * library-built payload; omit to use the default `ShapesTooltip` styling.
+   */
+  renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
 }
 
 /**
@@ -700,11 +755,18 @@ export interface SpatialCanvasProps {
  * });
  * ```
  */
-export default function SpatialCanvas({ store }: SpatialCanvasProps) {
+export default function SpatialCanvas({
+  store,
+  tooltipContainer,
+  renderTooltip,
+}: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
       <SpatialCanvasProvider store={store}>
-        <SpatialCanvasInner />
+        <SpatialCanvasInner
+          tooltipContainer={tooltipContainer}
+          renderTooltip={renderTooltip}
+        />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>
   );

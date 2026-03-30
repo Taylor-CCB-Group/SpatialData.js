@@ -29,4 +29,10 @@ export type {
   LayerType,
   AvailableElement,
   ElementsByType,
+  SpatialCanvasProps,
+  ShapesTooltipData,
+  ShapesTooltipItem,
+  SpatialCanvasTooltipRenderProps,
+  ShapesTooltipProps,
 } from './SpatialCanvas';
+export { ShapesTooltip } from './SpatialCanvas';
