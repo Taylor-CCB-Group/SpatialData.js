@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { Matrix4 } from '@math.gl/core';
 import type { Layer } from 'deck.gl';
-import type { ShapesElement, PointsElement, ImageElement, SpatialData } from '@spatialdata/core';
+import type { ShapesElement, PointsElement, ImageElement, SpatialData, TableColumnData } from '@spatialdata/core';
 import {
   buildDefaultSelection,
   clampVivSelectionsToAxes,
@@ -49,7 +49,7 @@ interface LoadedShapesData {
   featureIds?: string[];
   tooltipSignature?: string;
   tooltipFields?: string[];
-  tooltipColumns?: Array<string[] | undefined>;
+  tooltipColumns?: Array<TableColumnData | undefined>;
   /**
    * Optional row-index lookup aligned to picked feature order.
    * When omitted, picked feature index and tooltip row index are assumed to be identical.
@@ -111,10 +111,11 @@ function getTooltipSignature(config: LayerConfig | undefined): string {
   return (config.tooltipFields ?? []).join('\u0001');
 }
 
-function normalizeTooltipValue(value: string[] | undefined, rowIndex: number): string {
+function normalizeTooltipValue(value: TableColumnData | undefined, rowIndex: number): string {
   if (!value) return '';
   const row = value[rowIndex];
-  return row ?? '';
+  if (row === null || row === undefined) return '';
+  return String(row);
 }
 
 function tableRegionMatches(regionValue: string, shapeKey: string) {
@@ -186,7 +187,8 @@ async function loadShapeTooltipData(
   const filteredRowIds: string[] = [];
   const filteredRowIndices: number[] = [];
 
-  for (const [rowIndex, rowId] of rowIds.entries()) {
+  for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex++) {
+    const rowId = rowIds[rowIndex];
     const regionValue = normalizeTooltipValue(regionColumn, rowIndex);
     if (regionValue && !tableRegionMatches(regionValue, element.key)) {
       continue;

@@ -61,4 +61,17 @@ describe('TableElement direct table reads', () => {
     expect(loadObsColumns).toHaveBeenCalledWith(['tables/cells_table/obs/region']);
     expect(getAnnDataSpy).not.toHaveBeenCalled();
   });
+
+  it('preserves non-string obs column values until the consumer formats them', async () => {
+    const sdata = createMockSpatialData();
+    assert(sdata.tables, "sdata.tables on mock object should be truthy");
+    const table = sdata.tables.cells_table;
+
+    const loadObsColumns = vi.fn().mockResolvedValue([[1, 2, 3]]);
+    (table as any).tableSource = {
+      loadObsColumns,
+    };
+
+    await expect(table.loadObsColumns(['score'])).resolves.toEqual([[1, 2, 3]]);
+  });
 });

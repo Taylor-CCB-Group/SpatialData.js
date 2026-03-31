@@ -2,6 +2,7 @@
 
 import { tableFromIPC, type Table as ArrowTable } from 'apache-arrow';
 import type { DataSourceParams } from '../Vutils';
+import type { TableColumnData } from '../types';
 import AnnDataSource from './VAnnDataSource';
 
 // Note: This file also serves as the parent for
@@ -128,8 +129,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
   parquetTableBytes: Record<string, Uint8Array>;
-  obsIndices: Record<string, Promise<string[]>>;
-  varIndices: Record<string, Promise<string[]>>;
+  obsIndices: Record<string, Promise<TableColumnData>>;
+  varIndices: Record<string, Promise<TableColumnData>>;
   varAliases: Record<string, string[]>;
   constructor(params: DataSourceParams) {
     super(params);
@@ -469,11 +470,22 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (varPath in this.varAliases) {
       return this.varAliases[varPath];
     }
-    const [varAliasData] = await this.loadVarColumns([varPath]);
-    this.varAliases[varPath] = varAliasData as string[];
+    const [varAliasData] = await this.loadVarColumns([varPath]) as [TableColumnData | undefined];
+    if (!varAliasData) {
+      throw new Error(`Failed to load var alias at ${varPath}`);
+    }
+    this.varAliases[varPath] = Array.from(
+      varAliasData,
+      (value) => (value === null || value === undefined ? '' : String(value)),
+    );
     const index = await this.loadVarIndex(matrixPath);
-    this.varAliases[varPath] = this.varAliases[varPath].map(
-      (val, ind) => (val ? val.concat(` (${index[ind]})`) : index[ind]),
+    this.varAliases[varPath] = Array.from(
+      this.varAliases[varPath],
+      (val, ind) => {
+        const indexValue = index[ind];
+        const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
+        return val ? val.concat(` (${suffix})`) : suffix;
+      },
     );
     return this.varAliases[varPath];
   }

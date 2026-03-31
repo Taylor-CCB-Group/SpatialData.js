@@ -1,4 +1,4 @@
-import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny, Result } from '../types';
+import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny, Result, TableColumnData } from '../types';
 import { ATTRS_KEY } from '../types';
 import { Ok, Err } from '../types';
 import * as ad from 'anndata.js'
@@ -280,7 +280,7 @@ export class TableElement extends AbstractElement<'tables'> {
    * `anndata.js`, since tooltip/association reads should work even when the
    * AnnData wrapper lags behind newer string dtype support.
    */
-  async loadObsIndex(): Promise<string[]> {
+  async loadObsIndex(): Promise<TableColumnData> {
     return this.tableSource.loadObsIndex(`tables/${this.key}`);
   }
 
@@ -290,10 +290,10 @@ export class TableElement extends AbstractElement<'tables'> {
    * Column-level reads use the same direct zarr/parquet path as `loadObsIndex`
    * so feature-association helpers are not blocked on `anndata.js`.
    */
-  async loadObsColumns(columnNames: string[]): Promise<Array<string[] | undefined>> {
+  async loadObsColumns(columnNames: string[]): Promise<Array<TableColumnData | undefined>> {
     return this.tableSource.loadObsColumns(
       columnNames.map((columnName) => `tables/${this.key}/obs/${columnName}`),
-    ) as Promise<Array<string[] | undefined>>;
+    ) as Promise<Array<TableColumnData | undefined>>;
   }
 }
 

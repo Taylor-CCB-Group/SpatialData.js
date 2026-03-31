@@ -36,6 +36,8 @@ export type ElementName = typeof ElementNames[number];
  * loader implementations in models/index.ts.
  */
 export type Table = ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>;
+export type TableValue = string | number | boolean | bigint | null | undefined;
+export type TableColumnData = ArrayLike<TableValue> & Iterable<TableValue>;
 // export type Shapes = {
 //   attrs: Record<string, unknown>;
 //   loadPolygonShapes: () => Promise<Array<Array<Array<[number, number]>>>>;

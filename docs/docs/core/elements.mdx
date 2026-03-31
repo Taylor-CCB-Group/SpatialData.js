@@ -193,8 +193,8 @@ AnnData access.
 Planned API evolution:
 the current `loadObsColumns()` helper is optimized for association / tooltip
 lookups and should be treated as a convenience API. We expect to add a more
-explicit typed dataframe-column API later, rather than baking string-normalized
-column reads into every table workflow.
+explicit typed dataframe-column API later, while keeping value-to-string
+formatting at the rendering boundary rather than in the query layer.
 
 ### Attributes Schema
 
