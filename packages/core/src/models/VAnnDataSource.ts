@@ -2,7 +2,7 @@ import { open as zarrOpen, get as zarrGet } from 'zarrita';
 import { dirname } from '../Vutils';
 import ZarrDataSource from './VZarrDataSource';
 import type { DataSourceParams } from '../Vutils';
-
+import type { TableColumnData } from '../types';
 
 
 function prependSlash(path: string) {
@@ -21,7 +21,7 @@ function prependSlash(path: string) {
  * like loading cell names and ids. It inherits from AbstractLoader.
  */
 export default class AnnDataSource extends ZarrDataSource {
-  promises: Map<string, Promise<string[] | string[][] | undefined>>;
+  promises: Map<string, Promise<TableColumnData | TableColumnData[] | undefined>>;
   obsIndex?: Promise<string[]>;
   varIndex?: Promise<string[]>;
   varAlias?: string[];
@@ -32,9 +32,9 @@ export default class AnnDataSource extends ZarrDataSource {
 
   /**
    *
-   * @param paths Paths to multiple string-valued columns
+   * @param paths Paths to multiple dataframe columns
    * within the obs dataframe.
-   * @returns each column as an array of strings, ordered the same as the paths.
+   * @returns each column as an array of primitive values, ordered the same as the paths.
    */
   loadObsColumns(paths: string[] | string[][]) {
     return this._loadColumns(paths);
@@ -42,9 +42,9 @@ export default class AnnDataSource extends ZarrDataSource {
 
   /**
    *
-   * @param paths Paths to multiple string-valued columns
+   * @param paths Paths to multiple dataframe columns
    * within the var dataframe.
-   * @returns each column as an array of strings, ordered the same as the paths.
+   * @returns each column as an array of primitive values, ordered the same as the paths.
    */
   loadVarColumns(paths: string[] | string[][]) {
     return this._loadColumns(paths);
@@ -56,12 +56,12 @@ export default class AnnDataSource extends ZarrDataSource {
    * which have different ways of specifying location.
    * @param {string[] | string[][]} paths An array of strings like
    * "obs/leiden" or "obs/bulk_labels."
-   * @returns {Promise<(undefined | string[] | string[][])[]>} A promise
+   * @returns {Promise<(undefined | TableColumnData | TableColumnData[])[]>} A promise
    * for an array of ids with one per cell.
    */
   _loadColumns(paths: string[] | string[][]) {
     const promises = paths.map((path) => {
-      const getCol = (col: string): Promise<string[]> => {
+      const getCol = (col: string): Promise<TableColumnData> => {
         if (!this.promises.has(col)) {
           const obsPromise = this._loadColumn(col).catch((err) => {
             // clear from cache if promise rejects
@@ -71,7 +71,7 @@ export default class AnnDataSource extends ZarrDataSource {
           });
           this.promises.set(col, obsPromise);
         }
-        return this.promises.get(col) as Promise<string[]>;
+        return this.promises.get(col) as Promise<TableColumnData>;
       };
       if (!path) {
         return Promise.resolve(undefined);
@@ -131,10 +131,10 @@ export default class AnnDataSource extends ZarrDataSource {
     );
     const values = await zarrGet(arr, [null]);
     const { data } = values;
-    const mappedValues = Array.from(data).map(
-      i => (!categoriesValues ? String(i) : categoriesValues[i as number]),
-    );
-    return mappedValues;
+    if (!categoriesValues) {
+      return data as TableColumnData;
+    }
+    return Array.from(data, (i) => categoriesValues[i as number]);
   }
 
   /**
@@ -207,7 +207,8 @@ export default class AnnDataSource extends ZarrDataSource {
       return this.obsIndex;
     }
     this.obsIndex = this.getJson('obs/.zattrs')
-      .then(({ _index }) => this._loadColumn(`/obs/${_index}`));
+      .then(({ _index }) => this._loadColumn(`/obs/${_index}`))
+      .then(normalizeIndexData);
     return this.obsIndex;
   }
 
@@ -223,7 +224,8 @@ export default class AnnDataSource extends ZarrDataSource {
   ) {
     const dfPath = path ? dirname(path) : '';
     return this.getJson(`${dfPath}/.zattrs`)
-      .then(({ _index }) => this._loadColumn(`${dfPath.length > 0 ? '/' : ''}${dfPath}/${_index}`));
+      .then(({ _index }) => this._loadColumn(`${dfPath.length > 0 ? '/' : ''}${dfPath}/${_index}`))
+      .then(normalizeIndexData);
   }
 
   /**
@@ -239,7 +241,8 @@ export default class AnnDataSource extends ZarrDataSource {
       return this.varIndex;
     }
     this.varIndex = this.getJson('var/.zattrs')
-      .then(({ _index }) => this._loadColumn(`/var/${_index}`));
+      .then(({ _index }) => this._loadColumn(`/var/${_index}`))
+      .then(normalizeIndexData);
     return this.varIndex;
   }
 
@@ -256,14 +259,22 @@ export default class AnnDataSource extends ZarrDataSource {
     if (this.varAlias) {
       return this.varAlias;
     }
-    //@ts-expect-error what is this??
-    [this.varAlias] = await this.loadVarColumns([varPath]);
-    if (!this.varAlias) {
+    const [varAliasData] = await this.loadVarColumns([varPath]) as [TableColumnData | undefined];
+    if (!varAliasData) {
       throw new Error('Failed to load var alias');
     }
+    this.varAlias = Array.from(
+      varAliasData,
+      (value) => (value === null || value === undefined ? '' : String(value)),
+    );
     const index = await this.loadVarIndex();
-    this.varAlias = this.varAlias.map(
-      (val, ind) => (val ? val.concat(` (${index[ind]})`) : index[ind]),
+    this.varAlias = Array.from(
+      this.varAlias,
+      (val, ind) => {
+        const indexValue = index[ind];
+        const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
+        return val ? val.concat(` (${suffix})`) : suffix;
+      },
     );
     return this.varAlias;
   }
@@ -370,4 +381,11 @@ export default class AnnDataSource extends ZarrDataSource {
     }
     throw new Error('Keys for encoding-type or encoding-version not found in AnnDataSource._loadString');
   }
+}
+
+function normalizeIndexData(column: TableColumnData): string[] {
+  return Array.from(
+    column,
+    (value) => (value === null || value === undefined ? '' : String(value)),
+  );
 }

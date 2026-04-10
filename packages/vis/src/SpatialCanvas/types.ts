@@ -63,10 +63,12 @@ export interface ImageLayerConfig extends BaseLayerConfig {
 export interface ShapesLayerConfig extends BaseLayerConfig {
   type: 'shapes';
   // Shapes-specific settings
-  // TODO: these should be accessors for getFillColor etc based on EntityID
+  // TODO: these should be accessors for getFillColor etc based on picked feature identity
   fillColor?: [number, number, number, number];
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
+  /** Table obs columns to display for a picked feature in this shapes layer. */
+  tooltipFields?: string[];
 }
 
 export interface PointsLayerConfig extends BaseLayerConfig {
@@ -81,8 +83,9 @@ export interface PointsLayerConfig extends BaseLayerConfig {
 export interface LabelsLayerConfig extends BaseLayerConfig {
   type: 'labels';
   // Labels-specific settings (colormap, etc.)
-  // should also be able to associate with EntityID 
-  // - so we'll need some kind of buffer lookup for color/filter/etc
+  // should also be able to associate with picked feature identity
+  // (for example ObjectID-style raster values), so we'll need some kind of
+  // buffer lookup for color/filter/etc
 }
 
 export type LayerConfig = ImageLayerConfig | ShapesLayerConfig | PointsLayerConfig | LabelsLayerConfig;
@@ -159,4 +162,3 @@ export interface SpatialCanvasActions {
 }
 
 export type SpatialCanvasStore = SpatialCanvasState & SpatialCanvasActions;
-

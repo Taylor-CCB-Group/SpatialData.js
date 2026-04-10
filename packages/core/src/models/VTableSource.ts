@@ -2,6 +2,7 @@
 
 import { tableFromIPC, type Table as ArrowTable } from 'apache-arrow';
 import type { DataSourceParams } from '../Vutils';
+import type { TableColumnData } from '../types';
 import AnnDataSource from './VAnnDataSource';
 
 // Note: This file also serves as the parent for
@@ -439,7 +440,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (!indexPath) {
       throw new Error(`No index path found for obs index at ${path}`);
     }
-    this.obsIndices[indexPath] = this._loadColumn(indexPath);
+    this.obsIndices[indexPath] = this._loadColumn(indexPath).then((values) => (
+      // not clear this extra pass is useful... does it exist just to satisfy types?
+      Array.from(values, (value) => (value === null || value === undefined ? '' : String(value)))
+    ));
     return this.obsIndices[indexPath];
   }
 
@@ -455,7 +459,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
       return this.varIndices[varPath];
     }
     this.varIndices[varPath] = this.getJson(`${varPath}/.zattrs`)
-      .then(({ _index }) => this.getFlatArrDecompressed(`${varPath}/${_index}`));
+      .then(({ _index }) => this.getFlatArrDecompressed(`${varPath}/${_index}`))
+      .then((values) => Array.from(values, (value) => (value === null || value === undefined ? '' : String(value))));
     return this.varIndices[varPath];
   }
 
@@ -469,11 +474,22 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (varPath in this.varAliases) {
       return this.varAliases[varPath];
     }
-    const [varAliasData] = await this.loadVarColumns([varPath]);
-    this.varAliases[varPath] = varAliasData as string[];
+    const [varAliasData] = await this.loadVarColumns([varPath]) as [TableColumnData | undefined];
+    if (!varAliasData) {
+      throw new Error(`Failed to load var alias at ${varPath}`);
+    }
+    this.varAliases[varPath] = Array.from(
+      varAliasData,
+      (value) => (value === null || value === undefined ? '' : String(value)),
+    );
     const index = await this.loadVarIndex(matrixPath);
-    this.varAliases[varPath] = this.varAliases[varPath].map(
-      (val, ind) => (val ? val.concat(` (${index[ind]})`) : index[ind]),
+    this.varAliases[varPath] = Array.from(
+      this.varAliases[varPath],
+      (val, ind) => {
+        const indexValue = index[ind];
+        const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
+        return val ? val.concat(` (${suffix})`) : suffix;
+      },
     );
     return this.varAliases[varPath];
   }

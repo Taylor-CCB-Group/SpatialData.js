@@ -99,6 +99,11 @@ type RasterAttrs = {
 
 Labels are segmentation masks stored as OME-NGFF multiscale rasters, identical in structure to images.
 
+Conceptually, labels and shapes are both ways of encoding spatial features. For
+labels, the picked feature identity will come from raster values such as
+`ObjectID`-style segment ids. For shapes, feature identity comes from the
+element's index / instance ids.
+
 ```ts
 const labels = sdata.labels?.['my_segmentation'];
 
@@ -118,13 +123,22 @@ const shapes = sdata.shapes?.['cell_boundaries'];
 // Load geometry data
 const polygons = await shapes.loadPolygonShapes();  // For polygon geometries
 const circles = await shapes.loadCircleShapes();    // For circle/point geometries
-const indices = await shapes.loadShapesIndex();
+const featureIds = await shapes.loadFeatureIds();
 
 // Access metadata
 shapes.attrs.axes;                    // e.g., ['x', 'y']
 shapes.attrs['encoding-type'];        // e.g., 'ngff:shapes'
 shapes.attrs.coordinateTransformations;
 ```
+
+`loadFeatureIds()` is the method to use when you want to associate picked
+shapes with table rows.
+
+Implementation note:
+`ShapesElement.loadFeatureIds()` currently relies on a lightly adapted
+Vitessce-derived loader under the hood. We intentionally allow newer
+`ngff:shapes` metadata revisions to use the same parquet-backed feature-id path
+rather than keying support to one exact version string.
 
 ### Attributes Schema
 
@@ -160,11 +174,27 @@ const table = sdata.tables?.['annotations'];
 // Get as AnnData.js object for full access
 const adata = await table.getAnnDataJS();
 
+// Load row ids / selected obs columns through SpatialData.js loaders
+const rowIds = await table.loadObsIndex();
+const regionColumns = await table.loadObsColumns(['region']);
+
 // Access region annotation metadata
-table.attrs.instance_key;   // Column name for instance IDs
+table.attrs.instance_key;   // Column name for feature IDs / instance IDs
 table.attrs.region;         // Element(s) this table annotates
 table.attrs.region_key;     // Column name linking to region
 ```
+
+Implementation note:
+`loadObsIndex()` and `loadObsColumns()` are used by the feature-association
+helpers and currently stay on the direct zarr/parquet loader path rather than
+depending on `anndata.js`. `getAnnDataJS()` remains available for higher-level
+AnnData access.
+
+Planned API evolution:
+the current `loadObsColumns()` helper is optimized for association / tooltip
+lookups and should be treated as a convenience API. We expect to add a more
+explicit typed dataframe-column API later, while keeping value-to-string
+formatting at the rendering boundary rather than in the query layer.
 
 ### Attributes Schema
 
@@ -208,4 +238,3 @@ for (const [csName, transform] of allTransforms) {
   console.log(`${csName}:`, transform.toMatrix());
 }
 ```
-

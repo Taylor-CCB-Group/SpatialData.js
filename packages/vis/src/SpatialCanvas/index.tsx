@@ -7,9 +7,11 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
-import { useEffect, useMemo, useCallback, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useCallback, useState, useRef, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useMeasure } from '@uidotdev/usehooks';
 import { useSpatialData } from '@spatialdata/react';
+import type { PickingInfo } from 'deck.gl';
 import { 
   SpatialCanvasProvider, 
   useSpatialCanvasStore, 
@@ -32,6 +34,19 @@ import type {
 import type { SpatialCanvasStoreApi } from './stores';
 import { useLayerData } from './useLayerData';
 import { SpatialViewer } from './SpatialViewer';
+import {
+  SpatialFeatureTooltip,
+  type SpatialFeatureTooltipData,
+  type SpatialCanvasTooltipRenderProps,
+} from './SpatialFeatureTooltip';
+
+export {
+  SpatialFeatureTooltip,
+  type SpatialFeatureTooltipData,
+  type SpatialFeatureTooltipItem,
+  type SpatialCanvasTooltipRenderProps,
+  type SpatialFeatureTooltipProps,
+} from './SpatialFeatureTooltip';
 
 // Re-export for external use
 export { 
@@ -202,10 +217,25 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
 // Inner Canvas (connected to store)
 // ============================================
 
-function SpatialCanvasInner() {
+interface SpatialCanvasInnerProps {
+  /** Portal mount node for picked-feature hover tooltips; defaults to `document.body`. */
+  tooltipContainer?: HTMLElement | null;
+  /** Override default tooltip UI; receives pick position in viewport coordinates. */
+  renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
+}
+
+function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
-  const [viewerRef, { width, height }] = useMeasure();
+  const [measureRef, { width, height }] = useMeasure();
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [hoverTooltip, setHoverTooltip] = useState<{
+    x: number;
+    y: number;
+    title?: string;
+    items: Array<{ label: string; value: string }>;
+  } | null>(null);
 
   const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
   const layers = useSpatialCanvasStore((s) => s.layers);
@@ -227,11 +257,21 @@ function SpatialCanvasInner() {
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
-  const { getLayers, getVivLayerProps, getImageLayerLoadedData, isLoading } = useLayerData(
+  const {
+    getLayers,
+    getVivLayerProps,
+    getImageLayerLoadedData,
+    getLayerLoadState,
+    hasRenderableLayerData,
+    getFeatureTooltip,
+    isLoading,
+    isBlocking,
+  } = useLayerData(
     layers,
     layerOrder,
     availableElements,
     coordinateSystem,
+    spatialData ?? undefined,
   );
 
   const deckLayers = getLayers();
@@ -296,9 +336,49 @@ function SpatialCanvasInner() {
 
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
   const selectedConfig = selectedLayerId ? layers[selectedLayerId] : undefined;
+  const associatedTable =
+    selectedConfig?.type === 'shapes'
+      ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
+      : undefined;
+  const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
+  // we probably want to see more than obs columns here... but I also don't understand what subset of those we end up with.
+  // why not allow instanceKey & regionKey...
+  const availableTooltipFields =
+    associatedTable?.getObsColumnNames().filter((columnName) => {
+      const tableKeys = associatedTable.getTableKeys();
+      return columnName !== tableKeys.instanceKey && columnName !== tableKeys.regionKey;
+    }) ?? [];
   const vw = width ?? 0;
   const vh = height ?? 0;
 
+  const handleHover = useCallback((info: PickingInfo) => {
+    if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
+      setHoverTooltip(null);
+      return;
+    }
+    const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+    const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+    if (typeof info.index !== 'number' || info.index < 0) {
+      setHoverTooltip(null);
+      return;
+    }
+    const tooltip = getFeatureTooltip(normalizedLayerId, info.index);
+    if (!tooltip) {
+      setHoverTooltip(null);
+      return;
+    }
+    setHoverTooltip({
+      x: info.x,
+      y: info.y,
+      ...tooltip,
+    });
+  }, [getFeatureTooltip]);
+
+  const handleViewerRef = useCallback((node: HTMLDivElement | null) => {
+    viewerContainerRef.current = node;
+    measureRef(node);
+  }, [measureRef]);
+  
   if (sdLoading) {
     return (
       <div style={containerStyle}>
@@ -317,13 +397,56 @@ function SpatialCanvasInner() {
 
   const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
   const hasEnabledLayers = enabledLayerIds.size > 0;
+  const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
+  /** Viewport coordinates of the deck.gl pick (for portaled `position: fixed` tooltip). */
+  const tooltipClientPosition =
+    hoverTooltip && viewerRect
+      ? {
+          x: viewerRect.left + hoverTooltip.x,
+          y: viewerRect.top + hoverTooltip.y,
+        }
+      : null;
 
   const shellStyle: CSSProperties = fullscreen
-    ? { ...containerStyle, ...fullscreenOverlayStyle }
-    : containerStyle;
+    ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
+    : { ...containerStyle, position: 'relative' };
+
+  const tooltipPayload: SpatialFeatureTooltipData | null =
+    hoverTooltip && tooltipClientPosition
+      ? {
+          title: hoverTooltip.title,
+          items: hoverTooltip.items,
+        }
+      : null;
+
+  const portalTarget =
+    typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
+
+  const tooltipPortal =
+    tooltipPayload &&
+    tooltipClientPosition &&
+    portalTarget &&
+    createPortal(
+      renderTooltip ? (
+        renderTooltip({
+          clientX: tooltipClientPosition.x,
+          clientY: tooltipClientPosition.y,
+          tooltip: tooltipPayload,
+        })
+      ) : (
+        <SpatialFeatureTooltip
+          x={tooltipClientPosition.x}
+          y={tooltipClientPosition.y}
+          tooltip={tooltipPayload}
+          position="fixed"
+        />
+      ),
+      portalTarget,
+    );
 
   return (
-    <div style={shellStyle}>
+    <>
+      <div ref={shellRef} style={shellStyle}>
       <div style={controlsStyle}>
         <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           <span style={labelStyle}>Coordinate System:</span>
@@ -371,7 +494,7 @@ function SpatialCanvasInner() {
           />
         </aside>
 
-        <div ref={viewerRef} style={viewerContainerStyle}>
+        <div ref={handleViewerRef} style={viewerContainerStyle}>
           {hasEnabledLayers ? (
             <div style={{ width: vw, height: vh, position: 'relative' }}>
               <SpatialViewer
@@ -381,8 +504,9 @@ function SpatialCanvasInner() {
                 onViewStateChange={handleViewStateChange}
                 layers={deckLayers}
                 vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
+                onHover={handleHover}
               />
-              {isLoading && (
+              {isBlocking && (
                 <div
                   style={{
                     position: 'absolute',
@@ -395,10 +519,26 @@ function SpatialCanvasInner() {
                     borderRadius: 4,
                   }}
                 >
-                  Loading...
+                  Loading layer data...
                 </div>
               )}
-              {!hasLayersDrawn && !isLoading && (
+              {isLoading && !isBlocking && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    padding: '4px 8px',
+                    backgroundColor: 'rgba(20,20,20,0.78)',
+                    color: '#d5d5d5',
+                    fontSize: '11px',
+                    borderRadius: 4,
+                  }}
+                >
+                  Refreshing layer metadata...
+                </div>
+              )}
+              {!hasLayersDrawn && !isBlocking && (
                 <div
                   style={{
                     position: 'absolute',
@@ -453,6 +593,29 @@ function SpatialCanvasInner() {
                   }
                 />
               </label>
+              {selectedLayerLoadState && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, color: '#888', fontSize: '11px' }}>
+                  {selectedConfig.type !== 'image' && selectedLayerLoadState.geometry && (
+                    <div>
+                      Geometry: {selectedLayerLoadState.geometry}
+                      {!hasRenderableLayerData(selectedConfig.id) && selectedLayerLoadState.geometry === 'loading'
+                        ? ' (blocking)'
+                        : ''}
+                    </div>
+                  )}
+                  {selectedConfig.type === 'image' && selectedLayerLoadState.image && (
+                    <div>
+                      Image: {selectedLayerLoadState.image}
+                      {!hasRenderableLayerData(selectedConfig.id) && selectedLayerLoadState.image === 'loading'
+                        ? ' (blocking)'
+                        : ''}
+                    </div>
+                  )}
+                  {selectedConfig.type === 'shapes' && selectedLayerLoadState.tooltip && (
+                    <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
+                  )}
+                </div>
+              )}
               {selectedConfig.type === 'image' && (
                 <ImageChannelPanel
                   layerId={selectedConfig.id}
@@ -461,11 +624,65 @@ function SpatialCanvasInner() {
                   updateLayer={actions.updateLayer}
                 />
               )}
+              {selectedConfig.type === 'shapes' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div>
+                    <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>Tooltip fields</div>
+                    {associatedTable ? (
+                      <>
+                        <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>
+                          Table: {associatedTable.key}
+                        </div>
+                        {availableTooltipFields.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {availableTooltipFields.map((field) => {
+                              const checked = selectedConfig.tooltipFields?.includes(field) ?? false;
+                              return (
+                                <label
+                                  key={field}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ccc', fontSize: '12px' }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const current = new Set(selectedConfig.tooltipFields ?? []);
+                                      if (checked) {
+                                        current.delete(field);
+                                      } else {
+                                        current.add(field);
+                                      }
+                                      actions.updateLayer(selectedConfig.id, {
+                                        tooltipFields: Array.from(current),
+                                      });
+                                    }}
+                                  />
+                                  {field}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{ color: '#666', fontSize: '12px' }}>
+                            No eligible obs columns found on the associated table
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={{ color: '#666', fontSize: '12px' }}>
+                        No associated table found for this shapes layer
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </aside>
       </div>
-    </div>
+      </div>
+      {tooltipPortal}
+    </>
   );
 }
 
@@ -479,6 +696,17 @@ export interface SpatialCanvasProps {
    * If not provided, an internal store will be created.
    */
   store?: SpatialCanvasStoreApi;
+  /**
+   * DOM node to mount picked-feature hover tooltips (React portal target).
+   * Defaults to `document.body` when omitted.
+   */
+  tooltipContainer?: HTMLElement | null;
+  /**
+   * Custom tooltip UI for picked-feature hovers. Receives viewport coordinates
+   * and the library-built payload; omit to use the default `SpatialFeatureTooltip`
+   * styling.
+   */
+  renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
 }
 
 /**
@@ -529,13 +757,19 @@ export interface SpatialCanvasProps {
  * });
  * ```
  */
-export default function SpatialCanvas({ store }: SpatialCanvasProps) {
+export default function SpatialCanvas({
+  store,
+  tooltipContainer,
+  renderTooltip,
+}: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
       <SpatialCanvasProvider store={store}>
-        <SpatialCanvasInner />
+        <SpatialCanvasInner
+          tooltipContainer={tooltipContainer}
+          renderTooltip={renderTooltip}
+        />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>
   );
 }
-

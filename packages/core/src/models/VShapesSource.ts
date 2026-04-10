@@ -1,5 +1,20 @@
-// This is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
+// This started as a direct copy of the Vitessce implementation, with changes
+// mostly to make it more normal TypeScript.
 // ref: https://github.com/vitessce/vitessce/blob/main/packages/file-types/spatial-zarr/src/SpatialDataShapesSource.js
+//
+// Divergences from upstream are intentional and should stay easy to audit:
+// - TypeScript normalization / typing cleanup throughout.
+// - `getShapesFormatVersion()` treats modern `ngff:shapes` metadata revisions
+//   as compatible with the parquet-backed code path rather than hard-coding a
+//   single post-0.1 version string. This is currently needed so high-level
+//   feature-id loading (`ShapesElement.loadFeatureIds()`) works for newer
+//   SpatialData stores.
+//
+// Planned evolution:
+// - keep this file narrowly focused on geometry / feature-id loading
+// - avoid growing more app-facing policy here
+// - if we continue diverging from Vitessce, document each change explicitly in
+//   `docs/docs/core/internals.mdx`
 
 import WKB from 'ol/format/WKB.js';
 import { basename } from '../Vutils';
@@ -83,22 +98,37 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
   /**
    *
    * @param path A path to within shapes.
-   * @returns The format version.
+   * @returns The format version / compatibility mode used for this shapes element.
    */
   async getShapesFormatVersion(path: string): Promise<'0.1' | '0.2'> {
     const zattrs = await this.loadSpatialDataElementAttrs(path);
     const formatVersion = zattrs.spatialdata_attrs?.version;
     const geos = zattrs.spatialdata_attrs.geos || {}; // Used only by v0.1
     const encodingType = zattrs['encoding-type'];
-    if (encodingType !== 'ngff:shapes' || !(
-      (formatVersion === '0.1' && (geos.name === 'POINT' && geos.type === 0))
-      || formatVersion === '0.2'
-    )) {
+    if (encodingType !== 'ngff:shapes') {
       throw new Error(
         `Unexpected encoding type or version for shapes spatialdata_attrs: ${encodingType} ${formatVersion}`,
       );
     }
-    return formatVersion;
+
+    if (formatVersion === '0.1') {
+      if (geos.name === 'POINT' && geos.type === 0) {
+        return '0.1';
+      }
+      throw new Error(
+        `Unexpected encoding type or version for shapes spatialdata_attrs: ${encodingType} ${formatVersion}`,
+      );
+    }
+
+    // Modern shapes elements are parquet-backed. Historically we only matched
+    // one specific version string here, but tooltip/feature-id lookup should
+    // work across newer ngff:shapes metadata revisions as long as the parquet
+    // layout is present. Route them through the same code path as 0.2.
+    //
+    // This is a deliberate divergence from the original Vitessce helper. The
+    // high-level API contract we care about is "can we load stable feature
+    // ids?", not "does the metadata version string equal one exact value?".
+    return '0.2';
   }
 
   /**

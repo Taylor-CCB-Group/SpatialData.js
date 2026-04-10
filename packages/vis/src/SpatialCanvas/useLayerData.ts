@@ -5,10 +5,10 @@
  * loading state for each layer.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { Matrix4 } from '@math.gl/core';
 import type { Layer } from 'deck.gl';
-import type { ShapesElement, PointsElement, ImageElement } from '@spatialdata/core';
+import type { ShapesElement, PointsElement, ImageElement, SpatialData, TableColumnData } from '@spatialdata/core';
 import {
   buildDefaultSelection,
   clampVivSelectionsToAxes,
@@ -23,7 +23,7 @@ import type { LayerConfig, ElementsByType, AvailableElement } from './types';
 import { 
   renderShapesLayer, 
   loadShapesData,
-  type ShapesLayerRenderConfig,
+  type ShapeTooltipDatum,
 } from './renderers/shapesRenderer';
 import { 
   renderPointsLayer, 
@@ -44,10 +44,32 @@ export interface ImageLoaderData {
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
+interface LoadedShapesData {
+  polygons: Array<Array<Array<[number, number]>>>;
+  featureIds?: string[];
+  tooltipSignature?: string;
+  tooltipFields?: string[];
+  tooltipColumns?: Array<TableColumnData | undefined>;
+  /**
+   * Optional row-index lookup aligned to picked feature order.
+   * When omitted, picked feature index and tooltip row index are assumed to be identical.
+   * A value of -1 indicates no matching tooltip row for that feature.
+   */
+  tooltipRowIndices?: Int32Array;
+}
+
 interface LoadedData {
-  shapes: Map<string, Array<Array<Array<[number, number]>>>>;
+  shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
+}
+
+type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface LayerLoadState {
+  geometry?: ResourceLoadStatus;
+  image?: ResourceLoadStatus;
+  tooltip?: ResourceLoadStatus;
 }
 
 export interface ImageLayerConfig {
@@ -68,10 +90,149 @@ interface UseLayerDataResult {
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
+  /** Current load state for a given layer. */
+  getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
+  /** Whether a layer already has enough data to render. */
+  hasRenderableLayerData: (layerId: string) => boolean;
+  /** Resolve a feature tooltip lazily from the picked row index. */
+  getFeatureTooltip: (layerId: string, objectIndex: number) => ShapeTooltipDatum | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
+  /** Whether any visible layer is still waiting on its first renderable resource. */
+  isBlocking: boolean;
   /** Trigger a reload of data for a specific element */
   reloadElement: (type: string, key: string) => void;
+}
+
+function getTooltipSignature(config: LayerConfig | undefined): string {
+  if (!config || config.type !== 'shapes') {
+    return '';
+  }
+  return (config.tooltipFields ?? []).join('\u0001');
+}
+
+function normalizeTooltipValue(value: TableColumnData | undefined, rowIndex: number): string {
+  if (!value) return '';
+  const row = value[rowIndex];
+  if (row === null || row === undefined) return '';
+  return String(row);
+}
+
+function tableRegionMatches(regionValue: string, shapeKey: string) {
+  return regionValue === shapeKey || regionValue === `shapes/${shapeKey}`;
+}
+
+async function loadShapeTooltipData(
+  spatialData: SpatialData | undefined,
+  element: ShapesElement,
+  tooltipFields: string[],
+): Promise<
+  Pick<
+    LoadedShapesData,
+    'featureIds' | 'tooltipSignature' | 'tooltipFields' | 'tooltipColumns' | 'tooltipRowIndices'
+  >
+> {
+  const featureIdsRaw = await element.loadFeatureIds();
+  const featureIds = featureIdsRaw ? Array.from(featureIdsRaw, (value: unknown) => String(value)) : undefined;
+
+  if (tooltipFields.length === 0) {
+    return {
+      featureIds,
+      tooltipSignature: '',
+      tooltipFields: [],
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
+  }
+
+  if (!featureIds) {
+    return {
+      featureIds,
+      tooltipSignature: undefined,
+      tooltipFields,
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
+  }
+
+  if (!spatialData) {
+    return {
+      featureIds,
+      tooltipSignature: undefined,
+      tooltipFields,
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
+  }
+
+  const associated = spatialData.getAssociatedTable('shapes', element.key);
+  if (!associated) {
+    return {
+      featureIds,
+      tooltipSignature: undefined,
+      tooltipFields,
+      tooltipColumns: undefined,
+      tooltipRowIndices: undefined,
+    };
+  }
+
+  const tooltipSignature = tooltipFields.join('\u0001');
+  const [, table] = associated;
+  const { regionKey } = table.getTableKeys();
+  const requestedColumns = Array.from(new Set([regionKey, ...tooltipFields]));
+  const rowIds = await table.loadObsIndex();
+  const columns = await table.loadObsColumns(requestedColumns);
+  const regionColumn = columns[0];
+  const tooltipColumns = columns.slice(1);
+  // I don't like the look of this... creating 0-length arrays then pushing data...
+  const filteredRowIds: string[] = [];
+  const filteredRowIndices: number[] = [];
+
+  for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex++) {
+    const rowId = rowIds[rowIndex];
+    const regionValue = normalizeTooltipValue(regionColumn, rowIndex);
+    if (regionValue && !tableRegionMatches(regionValue, element.key)) {
+      continue;
+    }
+    filteredRowIds.push(String(rowId));
+    filteredRowIndices.push(rowIndex);
+  }
+  let tooltipRowIndices: Int32Array | undefined;
+  // this looks costly?
+  const isDirectlyAligned =
+    filteredRowIds.length === featureIds.length
+    && filteredRowIds.every((rowId, index) => rowId === featureIds[index]);
+
+  if (!isDirectlyAligned) {
+    const rowIndexByFeatureId = new Map<string, number>();
+    for (const [index, rowId] of filteredRowIds.entries()) {
+      rowIndexByFeatureId.set(rowId, filteredRowIndices[index]);
+    }
+
+    tooltipRowIndices = new Int32Array(featureIds.length);
+    tooltipRowIndices.fill(-1);
+    for (const [featureIndex, featureId] of featureIds.entries()) {
+      const matchedRowIndex = rowIndexByFeatureId.get(featureId);
+      if (matchedRowIndex !== undefined) {
+        tooltipRowIndices[featureIndex] = matchedRowIndex;
+      }
+    }
+  }
+
+  return {
+    featureIds,
+    tooltipSignature,
+    tooltipFields,
+    tooltipColumns,
+    tooltipRowIndices,
+  };
+}
+
+async function loadShapesLayerData(
+  element: ShapesElement,
+): Promise<Pick<LoadedShapesData, 'polygons'>> {
+  const polygons = await loadShapesData(element);
+  return { polygons };
 }
 
 /**
@@ -88,6 +249,7 @@ export function useLayerData(
   layerOrder: string[],
   availableElements: ElementsByType,
   coordinateSystem: string | null,
+  spatialData?: SpatialData,
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -98,8 +260,10 @@ export function useLayerData(
     images: new Map(),
   });
 
-  // Track which elements are currently loading
-  const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
+
+  const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
 
   // Build a map of element key -> AvailableElement for quick lookup
   const elementMap = useRef<Map<string, AvailableElement>>(new Map());
@@ -114,10 +278,37 @@ export function useLayerData(
     elementMap.current = map;
   }, [availableElements]);
 
+  const setLayerResourceStatus = useCallback((
+    layerId: string,
+    resource: keyof LayerLoadState,
+    status: ResourceLoadStatus,
+  ) => {
+    setLayerLoadStates((prev) => {
+      const existing = prev[layerId] ?? {};
+      if (existing[resource] === status) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [layerId]: {
+          ...existing,
+          [resource]: status,
+        },
+      };
+    });
+  }, []);
+
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
     const loadData = async () => {
-      const toLoad: Array<{ layerId: string; element: AvailableElement }> = [];
+      const toLoad: Array<{
+        layerId: string;
+        element: AvailableElement;
+        loadGeometry: boolean;
+        loadTooltip: boolean;
+        loadImage: boolean;
+        loadPoints: boolean;
+      }> = [];
       
       for (const layerId of layerOrder) {
         const config = layers[layerId];
@@ -128,36 +319,130 @@ export function useLayerData(
         
         // Check if we need to load data
         const loaded = loadedDataRef.current;
-        if (config.type === 'shapes' && !loaded.shapes.has(elem.key)) {
-          toLoad.push({ layerId, element: elem });
+        if (config.type === 'shapes') {
+          const loadedShapes = loaded.shapes.get(elem.key);
+          const tooltipSignature = getTooltipSignature(config);
+          const loadGeometry = !loadedShapes;
+          const loadTooltip = !loadedShapes || loadedShapes.tooltipSignature !== tooltipSignature;
+          if (loadGeometry || loadTooltip) {
+            toLoad.push({
+              layerId,
+              element: elem,
+              loadGeometry,
+              loadTooltip,
+              loadImage: false,
+              loadPoints: false,
+            });
+          }
         } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
-          toLoad.push({ layerId, element: elem });
+          toLoad.push({
+            layerId,
+            element: elem,
+            loadGeometry: false,
+            loadTooltip: false,
+            loadImage: false,
+            loadPoints: true,
+          });
         } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
-          toLoad.push({ layerId, element: elem });
+          toLoad.push({
+            layerId,
+            element: elem,
+            loadGeometry: false,
+            loadTooltip: false,
+            loadImage: true,
+            loadPoints: false,
+          });
         }
       }
       
       if (toLoad.length === 0) return;
-      
-      // Mark as loading
-      setLoadingKeys(prev => {
-        const next = new Set(prev);
-        for (const { layerId } of toLoad) next.add(layerId);
-        return next;
-      });
-      
+
       // Load in parallel
-      await Promise.all(toLoad.map(async ({ layerId, element }) => {
-        try {
-          if (element.type === 'shapes') {
-            const data = await loadShapesData(element.element as ShapesElement);
-            loadedDataRef.current.shapes.set(element.key, data);
-          } else if (element.type === 'points') {
+      await Promise.all(toLoad.map(async ({ layerId, element, loadGeometry, loadTooltip, loadImage, loadPoints }) => {
+        if (element.type === 'shapes') {
+          const existing = loadedDataRef.current.shapes.get(element.key);
+          if (loadGeometry) {
+            try {
+              setLayerResourceStatus(layerId, 'geometry', 'loading');
+              const geometryData = await loadShapesLayerData(element.element as ShapesElement);
+              loadedDataRef.current.shapes.set(element.key, {
+                ...existing,
+                ...geometryData,
+              });
+              setLayerResourceStatus(layerId, 'geometry', 'ready');
+            } catch (error) {
+              setLayerResourceStatus(layerId, 'geometry', 'error');
+              console.error(`Failed to load shapes geometry for ${layerId}:`, error);
+              return;
+            }
+          } else {
+            setLayerResourceStatus(layerId, 'geometry', existing ? 'ready' : 'idle');
+          }
+
+          if (loadTooltip) {
+            try {
+              const shapeLayerConfig =
+                layersRef.current[layerId]?.type === 'shapes'
+                  ? layersRef.current[layerId]
+                  : undefined;
+              const tooltipFields = shapeLayerConfig?.tooltipFields ?? [];
+              const requestedSignature = getTooltipSignature(shapeLayerConfig);
+              if (tooltipFields.length > 0) {
+                setLayerResourceStatus(layerId, 'tooltip', 'loading');
+                const current = loadedDataRef.current.shapes.get(element.key);
+                const tooltipData = await loadShapeTooltipData(
+                  spatialData,
+                  element.element as ShapesElement,
+                  tooltipFields,
+                );
+                const latestDesired = getTooltipSignature(
+                  layersRef.current[layerId]?.type === 'shapes'
+                    ? layersRef.current[layerId]
+                    : undefined,
+                );
+                if (latestDesired !== requestedSignature) {
+                  return;
+                }
+                loadedDataRef.current.shapes.set(element.key, {
+                  ...current,
+                  ...tooltipData,
+                } as LoadedShapesData);
+                setLayerResourceStatus(
+                  layerId,
+                  'tooltip',
+                  tooltipData.tooltipSignature === undefined ? 'idle' : 'ready',
+                );
+              } else {
+                const current = loadedDataRef.current.shapes.get(element.key);
+                loadedDataRef.current.shapes.set(element.key, {
+                  ...current,
+                  tooltipSignature: '',
+                  tooltipFields: [],
+                  tooltipColumns: undefined,
+                  tooltipRowIndices: undefined,
+                } as LoadedShapesData);
+                setLayerResourceStatus(layerId, 'tooltip', 'idle');
+              }
+            } catch (error) {
+              setLayerResourceStatus(layerId, 'tooltip', 'error');
+              console.error(`Failed to load shapes tooltip for ${layerId}:`, error);
+            }
+          }
+        } else if (element.type === 'points' && loadPoints) {
+          try {
+            setLayerResourceStatus(layerId, 'geometry', 'loading');
             // todo better type-guards etc here.
             const e = element.element as PointsElement;
             const data = await e.loadPoints();
             loadedDataRef.current.points.set(element.key, data);
-          } else if (element.type === 'image') {
+            setLayerResourceStatus(layerId, 'geometry', 'ready');
+          } catch (error) {
+            setLayerResourceStatus(layerId, 'geometry', 'error');
+            console.error(`Failed to load points for ${layerId}:`, error);
+          }
+        } else if (element.type === 'image' && loadImage) {
+          try {
+            setLayerResourceStatus(layerId, 'image', 'loading');
             const loader = await createImageLoader(
               element.element as ImageElement,
               getOmeZarrMultiscalesData,
@@ -165,9 +450,9 @@ export function useLayerData(
             // Compute channel defaults from loader metadata
             const imageElement = element.element as ImageElement;
             const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
-            
+
             const imageData: ImageLoaderData = { loader };
-            
+
             try {
               if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
                 const loaderObj = loaderToCheck as VivLoaderMetadata;
@@ -254,23 +539,19 @@ export function useLayerData(
                 imageData.selections = [{}];
               }
             }
-            
+
             loadedDataRef.current.images.set(element.key, imageData);
+            setLayerResourceStatus(layerId, 'image', 'ready');
+          } catch (error) {
+            setLayerResourceStatus(layerId, 'image', 'error');
+            console.error(`Failed to load image for ${layerId}:`, error);
           }
-        } catch (error) {
-          console.error(`Failed to load data for ${layerId}:`, error);
-        } finally {
-          setLoadingKeys(prev => {
-            const next = new Set(prev);
-            next.delete(layerId);
-            return next;
-          });
         }
       }));
     };
     
     loadData();
-  }, [layers, layerOrder, getOmeZarrMultiscalesData]);
+  }, [layers, layerOrder, getOmeZarrMultiscalesData, spatialData, setLayerResourceStatus]);
 
   const reloadElement = useCallback((type: string, key: string) => {
     const loaded = loadedDataRef.current;
@@ -282,6 +563,21 @@ export function useLayerData(
       loaded.images.delete(key);
     }
     // The useEffect will pick up the missing data and reload
+  }, []);
+
+  const hasRenderableLayerData = useCallback((layerId: string): boolean => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem) return false;
+    if (elem.type === 'shapes') {
+      return loadedDataRef.current.shapes.has(elem.key);
+    }
+    if (elem.type === 'points') {
+      return loadedDataRef.current.points.has(elem.key);
+    }
+    if (elem.type === 'image') {
+      return loadedDataRef.current.images.has(elem.key);
+    }
+    return false;
   }, []);
 
   const getLayers = useCallback((): Layer[] => {
@@ -296,8 +592,8 @@ export function useLayerData(
       if (!elem) continue;
       
       if (config.type === 'shapes') {
-        const polygonData = loaded.shapes.get(elem.key);
-        if (polygonData) {
+        const shapeData = loaded.shapes.get(elem.key);
+        if (shapeData) {
           const layer = renderShapesLayer({
             element: elem.element as ShapesElement,
             id: layerId,
@@ -307,7 +603,7 @@ export function useLayerData(
             fillColor: config.fillColor,
             strokeColor: config.strokeColor,
             strokeWidth: config.strokeWidth,
-            polygonData,
+            polygonData: shapeData.polygons,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -337,6 +633,56 @@ export function useLayerData(
     const elem = elementMap.current.get(layerId);
     if (!elem || elem.type !== 'image') return undefined;
     return loadedDataRef.current.images.get(elem.key);
+  }, []);
+
+  const getLayerLoadState = useCallback((layerId?: string): LayerLoadState | undefined => {
+    if (layerId === undefined) return undefined;
+    return layerLoadStates[layerId];
+  }, [layerLoadStates]);
+
+  const getFeatureTooltip = useCallback((layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem || elem.type !== 'shapes') {
+      return undefined;
+    }
+
+    const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
+    if (!loadedShapeData?.featureIds || !loadedShapeData.tooltipFields || !loadedShapeData.tooltipColumns) {
+      return undefined;
+    }
+
+    const config = layersRef.current[layerId];
+    if (getTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
+      return undefined;
+    }
+
+    const featureId = loadedShapeData.featureIds[objectIndex];
+    if (!featureId) {
+      return undefined;
+    }
+
+    const rowIndex = loadedShapeData.tooltipRowIndices
+      ? loadedShapeData.tooltipRowIndices[objectIndex]
+      : objectIndex;
+    if (rowIndex === undefined || rowIndex < 0) {
+      return undefined;
+    }
+
+    const items = loadedShapeData.tooltipFields
+      .map((field, fieldIndex) => ({
+        label: field,
+        value: normalizeTooltipValue(loadedShapeData.tooltipColumns?.[fieldIndex], rowIndex),
+      }))
+      .filter((item) => item.value !== '');
+
+    if (items.length === 0) {
+      return undefined;
+    }
+
+    return {
+      title: featureId,
+      items,
+    };
   }, []);
 
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
@@ -391,12 +737,39 @@ export function useLayerData(
     return vivProps;
   }, [layers, layerOrder]);
 
+  const isLoading = useMemo(
+    () => Object.values(layerLoadStates).some((state) =>
+      Object.values(state).some((status) => status === 'loading')
+    ),
+    [layerLoadStates],
+  );
+
+  const isBlocking = useMemo(
+    () => layerOrder.some((layerId) => {
+      const config = layers[layerId];
+      if (!config?.visible) return false;
+      const state = layerLoadStates[layerId];
+      if (!state) return false;
+      if (config.type === 'image') {
+        return state.image === 'loading' && !hasRenderableLayerData(layerId);
+      }
+      if (config.type === 'shapes' || config.type === 'points') {
+        return state.geometry === 'loading' && !hasRenderableLayerData(layerId);
+      }
+      return false;
+    }),
+    [layerLoadStates, layerOrder, layers, hasRenderableLayerData],
+  );
+
   return {
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
-    isLoading: loadingKeys.size > 0,
+    getLayerLoadState,
+    hasRenderableLayerData,
+    getFeatureTooltip,
+    isLoading,
+    isBlocking,
     reloadElement,
   };
 }
-

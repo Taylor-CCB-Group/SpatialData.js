@@ -34,6 +34,52 @@ The package is organized into these internal modules:
 └── types.ts        # Core type definitions
 ```
 
+## Documented Divergences
+
+Some internal loaders started from upstream Vitessce implementations but have
+already diverged in a few deliberate ways. We try to keep those divergences
+small, documented, and tied to higher-level API goals rather than ad hoc fixes.
+
+### `VShapesSource.ts`
+
+`VShapesSource.ts` began as a Vitessce-derived shapes loader. The current
+intentional divergences are:
+
+- TypeScript cleanup and normalization.
+- Modern `ngff:shapes` metadata revisions are routed through the same
+  parquet-backed path as the older supported modern format, instead of requiring
+  one exact version string.
+
+Why this exists:
+- `ShapesElement.loadFeatureIds()` is part of the high-level feature-association
+  story used by vis tooltip / picked-feature workflows.
+- In practice, stable feature-id loading is the behavior we need to preserve,
+  even when upstream metadata version strings move forward.
+
+Planned evolution:
+- keep `VShapesSource.ts` narrowly scoped to geometry / feature-id loading
+- review how that relates to use of e.g. https://github.com/geoarrow/deck.gl-layers/ in future
+- avoid pushing more vis policy into this file
+- if the divergence grows, prefer moving compatibility logic into a more
+  explicitly SpatialData.js-owned layer rather than silently accumulating it
+  here
+
+### Table Access Helpers
+
+`TableElement.getAnnDataJS()` is still exposed, but feature-association helpers
+such as `loadObsIndex()` and `loadObsColumns()` now prefer the direct
+zarr/parquet loader path in `VTableSource.ts`.
+
+Why this exists:
+- these reads sit on the hot path for table-to-spatial-feature association
+- we want them to remain usable even when wrapper libraries lag behind the
+  relevant zarr/string-dtype support
+
+Planned evolution:
+- add clearer typed dataframe-column accessors for general table use
+- keep the current convenience helpers focused on association / tooltip use
+- continue feeding capability gaps back upstream to `anndata.js`
+
 ## Element Factory (Internal)
 
 Elements are created internally when loading stores. These functions are not intended for application use:
@@ -194,4 +240,3 @@ You can import `Result` and its utilities from either `@spatialdata/core` or `@s
 This is currently a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow` or `ts-result`) in the future, but for now this provides a lightweight, dependency-free solution.
 
 :::
-

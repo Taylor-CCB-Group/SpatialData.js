@@ -5,7 +5,7 @@
 import type * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
 import {type ConsolidatedStore, openExtraConsolidated, serializeZarrTree } from '@spatialdata/zarrextra';
-import { loadElements, type ElementInstanceMap, type SpatialElement } from '../models';
+import { getTableKeys, loadElements, type ElementInstanceMap, type SpatialElement, type TableElement } from '../models';
 import type { 
   ElementName, 
   StoreLocation, 
@@ -19,6 +19,10 @@ import { SpatialElementNames, ElementNames } from '../types';
  * Type alias for element collections - maps element keys to element instances
  */
 type Elements<T extends ElementName> = Record<string, ElementInstanceMap[T]>;
+
+function elementPathCandidates(kind: Exclude<ElementName, 'tables'>, key: string) {
+  return new Set([key, `${kind}/${key}`]);
+}
 
 // Re-export SpatialElement from models
 export type { SpatialElement, AnyElement } from '../models';
@@ -116,6 +120,29 @@ export class SpatialData {
   toJSON() {
     if (!this.rootStore.tree) return this;
     return serializeZarrTree(this.rootStore.tree);
+  }
+
+  /**
+   * Get all tables that annotate a given spatial element.
+   * Matches both bare element keys such as "cell_circles" and
+   * qualified paths such as "shapes/cell_circles".
+   */
+  getAssociatedTables(kind: Exclude<ElementName, 'tables'>, key: string): Array<[string, TableElement]> {
+    if (!this.tables) {
+      return [];
+    }
+    const candidates = elementPathCandidates(kind, key);
+    return Object.entries(this.tables).filter(([, table]) => {
+      const { region } = getTableKeys(table);
+      return region.some(regionName => candidates.has(regionName));
+    });
+  }
+
+  /**
+   * Convenience helper for the common case where at most one table is expected.
+   */
+  getAssociatedTable(kind: Exclude<ElementName, 'tables'>, key: string): [string, TableElement] | undefined {
+    return this.getAssociatedTables(kind, key)[0];
   }
 }
 

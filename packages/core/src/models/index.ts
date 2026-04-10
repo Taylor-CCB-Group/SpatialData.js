@@ -1,9 +1,10 @@
-import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny, Result } from '../types';
+import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, ZAttrsAny, Result, TableColumnData } from '../types';
 import { ATTRS_KEY } from '../types';
 import { Ok, Err } from '../types';
 import * as ad from 'anndata.js'
 import * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';
+import SpatialDataTableSource from './VTableSource';
 import { 
   rasterAttrsSchema, 
   shapesAttrsSchema, 
@@ -189,6 +190,33 @@ abstract class AbstractSpatialElement<
   }
 }
 
+export type TableKeys = {
+  region: string[];
+  regionKey: string;
+  instanceKey: string;
+};
+
+type TableKeysInput = TableAttrs | { attrs: TableAttrs };
+
+function getTableAttrs(input: TableKeysInput): TableAttrs {
+  const attrs = (input as { attrs?: TableAttrs }).attrs;
+  return attrs ?? (input as TableAttrs);
+}
+
+/**
+ * Equivalent of SpatialData's Python-side `get_table_keys()`.
+ * Returns normalized table association metadata, always exposing `region`
+ * as an array for easier downstream matching.
+ */
+export function getTableKeys(input: TableKeysInput): TableKeys {
+  const attrs = getTableAttrs(input);
+  return {
+    region: Array.isArray(attrs.region) ? attrs.region : [attrs.region],
+    regionKey: attrs.region_key,
+    instanceKey: attrs.instance_key,
+  };
+}
+
 // ============================================
 // Table Element (non-spatial)
 // ============================================
@@ -199,6 +227,8 @@ abstract class AbstractSpatialElement<
  */
 export class TableElement extends AbstractElement<'tables'> {
   readonly attrs: TableAttrs;
+  private anndataPromise?: Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>>;
+  private readonly tableSource: SpatialDataTableSource;
   
   constructor(params: ElementParams<'tables'>) {
     super(params);
@@ -208,13 +238,62 @@ export class TableElement extends AbstractElement<'tables'> {
       throw result.error;
     } 
     this.attrs = result.data;
+    this.tableSource = new SpatialDataTableSource({
+      store: params.sdata.rootStore.zarritaStore,
+      fileType: '.zarr',
+    });
   }
   
   /**
    * Load the table as an AnnData.js object.
    */
   async getAnnDataJS(): Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>> {
-    return await ad.readZarr(new zarr.FetchStore(this.url));
+    if (!this.anndataPromise) {
+      this.anndataPromise = ad.readZarr(new zarr.FetchStore(this.url));
+    }
+    return await this.anndataPromise;
+  }
+
+  /**
+   * Return the normalized association keys for this table.
+   */
+  getTableKeys(): TableKeys {
+    return getTableKeys(this);
+  }
+
+  /**
+   * Get available obs column names from the parsed tree.
+   */
+  getObsColumnNames(): string[] {
+    const node = this.parsed as ZarrTree;
+    const obsNode = node.obs as ZarrTree | undefined;
+    if (!obsNode || typeof obsNode !== 'object') {
+      return [];
+    }
+    return Object.keys(obsNode);
+  }
+
+  /**
+   * Load the effective row ids for this table, respecting `instance_key`.
+   *
+   * This stays on our zarr-backed loader path rather than depending on
+   * `anndata.js`, since tooltip/association reads should work even when the
+   * AnnData wrapper lags behind newer string dtype support.
+   */
+  async loadObsIndex(): Promise<string[]> {
+    return this.tableSource.loadObsIndex(`tables/${this.key}`);
+  }
+
+  /**
+   * Load specific obs columns by column name.
+   *
+   * Column-level reads use the same direct zarr/parquet path as `loadObsIndex`
+   * so feature-association helpers are not blocked on `anndata.js`.
+   */
+  async loadObsColumns(columnNames: string[]): Promise<Array<TableColumnData | undefined>> {
+    return this.tableSource.loadObsColumns(
+      columnNames.map((columnName) => `tables/${this.key}/obs/${columnName}`),
+    ) as Promise<Array<TableColumnData | undefined>>;
   }
 }
 
@@ -310,10 +389,15 @@ export class ImageElement extends RasterElement<'images'> {
 
 /**
  * Labels element - raster data representing segmentation labels.
+ *
+ * Conceptually, labels and shapes both expose spatial "features" that can be
+ * associated with table rows. For labels this will eventually come from picked
+ * raster values (for example ObjectID-style segment ids), whereas shapes expose
+ * feature identity via their row/index arrays.
  */
 export class LabelsElement extends RasterElement<'labels'> {
   // Labels-specific methods can be added here
-  // e.g., colormap, associated table lookup, etc.
+  // e.g., colormap, picked-feature identity / table association helpers, etc.
 }
 
 // ============================================
@@ -366,9 +450,13 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
   }
   
   /**
-   * Load the shapes index.
+   * Load stable feature ids for this shapes element.
+   *
+   * This is the preferred high-level API when the caller wants to associate a
+   * picked shape with table rows. It corresponds to the same conceptual role
+   * that picked label values will play for segmentation rasters.
    */
-  async loadShapesIndex() {
+  async loadFeatureIds() {
     return this.vShapes.loadShapesIndex(`shapes/${this.key}`);
   }
 }
