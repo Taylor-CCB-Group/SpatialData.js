@@ -340,8 +340,9 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     selectedConfig?.type === 'shapes'
       ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
       : undefined;
-  const selectedLayerLoadState =
-    selectedConfig ? getLayerLoadState(selectedConfig.id) : undefined;
+  const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
+  // we probably want to see more than obs columns here... but I also don't understand what subset of those we end up with.
+  // why not allow instanceKey & regionKey...
   const availableTooltipFields =
     associatedTable?.getObsColumnNames().filter((columnName) => {
       const tableKeys = associatedTable.getTableKeys();

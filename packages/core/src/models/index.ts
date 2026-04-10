@@ -280,7 +280,7 @@ export class TableElement extends AbstractElement<'tables'> {
    * `anndata.js`, since tooltip/association reads should work even when the
    * AnnData wrapper lags behind newer string dtype support.
    */
-  async loadObsIndex(): Promise<TableColumnData> {
+  async loadObsIndex(): Promise<string[]> {
     return this.tableSource.loadObsIndex(`tables/${this.key}`);
   }
 

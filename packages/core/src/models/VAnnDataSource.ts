@@ -22,8 +22,8 @@ function prependSlash(path: string) {
  */
 export default class AnnDataSource extends ZarrDataSource {
   promises: Map<string, Promise<TableColumnData | TableColumnData[] | undefined>>;
-  obsIndex?: Promise<TableColumnData>;
-  varIndex?: Promise<TableColumnData>;
+  obsIndex?: Promise<string[]>;
+  varIndex?: Promise<string[]>;
   varAlias?: string[];
   constructor(params: DataSourceParams) {
     super(params);
@@ -199,7 +199,7 @@ export default class AnnDataSource extends ZarrDataSource {
   /**
    * Class method for loading the obs index.
    * @param {string|undefined} path Used by subclasses.
-   * @returns {Promise<TableColumnData>} An promise for a zarr array
+   * @returns {Promise<string[]>} An promise for a zarr array
    * containing the indices.
    */
   loadObsIndex(path?: string) {
@@ -207,14 +207,15 @@ export default class AnnDataSource extends ZarrDataSource {
       return this.obsIndex;
     }
     this.obsIndex = this.getJson('obs/.zattrs')
-      .then(({ _index }) => this._loadColumn(`/obs/${_index}`));
+      .then(({ _index }) => this._loadColumn(`/obs/${_index}`))
+      .then(normalizeIndexData);
     return this.obsIndex;
   }
 
   /**
    * Class method for loading the obs index.
    * @param {string|undefined} path Used by subclasses.
-   * @returns {Promise<TableColumnData>} An promise for a zarr array
+   * @returns {Promise<string[]>} An promise for a zarr array
    * containing the indices.
    */
   loadDataFrameIndex(
@@ -223,13 +224,14 @@ export default class AnnDataSource extends ZarrDataSource {
   ) {
     const dfPath = path ? dirname(path) : '';
     return this.getJson(`${dfPath}/.zattrs`)
-      .then(({ _index }) => this._loadColumn(`${dfPath.length > 0 ? '/' : ''}${dfPath}/${_index}`));
+      .then(({ _index }) => this._loadColumn(`${dfPath.length > 0 ? '/' : ''}${dfPath}/${_index}`))
+      .then(normalizeIndexData);
   }
 
   /**
    * Class method for loading the var index.
    * @param {string|undefined} path Used by subclasses.
-   * @returns {Promise<TableColumnData>} An promise for a zarr array containing the indices.
+   * @returns {Promise<string[]>} An promise for a zarr array containing the indices.
    */
   loadVarIndex(
     // eslint-disable-next-line no-unused-vars
@@ -239,7 +241,8 @@ export default class AnnDataSource extends ZarrDataSource {
       return this.varIndex;
     }
     this.varIndex = this.getJson('var/.zattrs')
-      .then(({ _index }) => this._loadColumn(`/var/${_index}`));
+      .then(({ _index }) => this._loadColumn(`/var/${_index}`))
+      .then(normalizeIndexData);
     return this.varIndex;
   }
 
@@ -378,4 +381,11 @@ export default class AnnDataSource extends ZarrDataSource {
     }
     throw new Error('Keys for encoding-type or encoding-version not found in AnnDataSource._loadString');
   }
+}
+
+function normalizeIndexData(column: TableColumnData): string[] {
+  return Array.from(
+    column,
+    (value) => (value === null || value === undefined ? '' : String(value)),
+  );
 }

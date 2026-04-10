@@ -91,7 +91,7 @@ interface UseLayerDataResult {
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
   /** Current load state for a given layer. */
-  getLayerLoadState: (layerId: string) => LayerLoadState | undefined;
+  getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
   /** Resolve a feature tooltip lazily from the picked row index. */
@@ -184,6 +184,7 @@ async function loadShapeTooltipData(
   const columns = await table.loadObsColumns(requestedColumns);
   const regionColumn = columns[0];
   const tooltipColumns = columns.slice(1);
+  // I don't like the look of this... creating 0-length arrays then pushing data...
   const filteredRowIds: string[] = [];
   const filteredRowIndices: number[] = [];
 
@@ -196,8 +197,8 @@ async function loadShapeTooltipData(
     filteredRowIds.push(String(rowId));
     filteredRowIndices.push(rowIndex);
   }
-
   let tooltipRowIndices: Int32Array | undefined;
+  // this looks costly?
   const isDirectlyAligned =
     filteredRowIds.length === featureIds.length
     && filteredRowIds.every((rowId, index) => rowId === featureIds[index]);
@@ -634,7 +635,8 @@ export function useLayerData(
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
-  const getLayerLoadState = useCallback((layerId: string): LayerLoadState | undefined => {
+  const getLayerLoadState = useCallback((layerId?: string): LayerLoadState | undefined => {
+    if (layerId === undefined) return undefined;
     return layerLoadStates[layerId];
   }, [layerLoadStates]);
 

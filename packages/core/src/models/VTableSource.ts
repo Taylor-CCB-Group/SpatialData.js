@@ -129,8 +129,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
   parquetTableBytes: Record<string, Uint8Array>;
-  obsIndices: Record<string, Promise<TableColumnData>>;
-  varIndices: Record<string, Promise<TableColumnData>>;
+  obsIndices: Record<string, Promise<string[]>>;
+  varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
   constructor(params: DataSourceParams) {
     super(params);
@@ -440,7 +440,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (!indexPath) {
       throw new Error(`No index path found for obs index at ${path}`);
     }
-    this.obsIndices[indexPath] = this._loadColumn(indexPath);
+    this.obsIndices[indexPath] = this._loadColumn(indexPath).then((values) => (
+      // not clear this extra pass is useful... does it exist just to satisfy types?
+      Array.from(values, (value) => (value === null || value === undefined ? '' : String(value)))
+    ));
     return this.obsIndices[indexPath];
   }
 
@@ -456,7 +459,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
       return this.varIndices[varPath];
     }
     this.varIndices[varPath] = this.getJson(`${varPath}/.zattrs`)
-      .then(({ _index }) => this.getFlatArrDecompressed(`${varPath}/${_index}`));
+      .then(({ _index }) => this.getFlatArrDecompressed(`${varPath}/${_index}`))
+      .then((values) => Array.from(values, (value) => (value === null || value === undefined ? '' : String(value))));
     return this.varIndices[varPath];
   }
 
