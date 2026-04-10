@@ -4,11 +4,8 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import type { SpatialData, SpatialElement } from '@spatialdata/core';
-import type { 
-  AvailableElement, 
-  ElementsByType, 
-  LayerType,
-} from './types';
+import type { ElementsByType, LayerType } from './types';
+import { type AxisAlignedBounds, viewStateFromBounds } from './viewStateFit';
 
 /**
  * Map from SpatialData element property names to layer types
@@ -47,7 +44,7 @@ export function getAvailableElements(
       // Type assertion needed because TypeScript can't narrow the union
       const spatialElement = element as SpatialElement;
       const transformResult = spatialElement.getTransformation(coordinateSystem);
-      
+
       if (transformResult.ok) {
         const transform = transformResult.value.toMatrix();
         result[elementType].push({
@@ -106,17 +103,15 @@ export function parseLayerId(layerId: string): { type: LayerType; key: string } 
 }
 
 /**
- * Calculate initial view state to fit all enabled layers.
- * This is a simple implementation that could be enhanced with actual bounds calculation.
+ * Map world-space bounds to an orthographic view state (Viv-compatible zoom).
  */
 export function calculateInitialViewState(
-  _elements: AvailableElement[]
+  bounds: AxisAlignedBounds | null,
+  viewWidth: number,
+  viewHeight: number
 ): { target: [number, number]; zoom: number } {
-  // TODO: Calculate actual bounds from element extents
-  // For now, return a reasonable default
-  return {
-    target: [0, 0],
-    zoom: 0,
-  };
+  if (!bounds) {
+    return { target: [0, 0], zoom: 0 };
+  }
+  return viewStateFromBounds(bounds, viewWidth, viewHeight);
 }
-
