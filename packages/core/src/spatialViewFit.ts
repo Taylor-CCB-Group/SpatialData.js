@@ -1,13 +1,11 @@
 /**
- * Fit orthographic view state to axis-aligned bounds in world coordinates.
- * Zoom matches @vivjs/views getDefaultInitialViewState (log2 scale, optional backoff).
+ * Orthographic 2D view fitting and world-space bounds for spatial data.
+ * Framework-agnostic: no React, deck.gl, or Viv. Used by @spatialdata/vis and other hosts.
  */
 
-import { getDefaultInitialViewState, getImageSize } from '@hms-dbmi/viv';
 import { Matrix4 } from '@math.gl/core';
-import type { PointData } from './renderers/pointsRenderer';
-import type { ViewState2D } from './types';
 
+/** Axis-aligned rectangle in world / target coordinate space. */
 export type AxisAlignedBounds = {
   minX: number;
   minY: number;
@@ -15,13 +13,28 @@ export type AxisAlignedBounds = {
   maxY: number;
 };
 
-/** Same default as ImageView / Viv detail framing. */
+/** Pan/zoom state compatible with Viv / deck OrthographicView detail views. */
+export type OrthographicViewState2D = {
+  target: [number, number];
+  zoom: number;
+};
+
+/** Ndarray-style columnar points: data[0]=x, data[1]=y, optional data[2]=z. */
+export type PointsColumnarData = {
+  data: number[][];
+  shape?: number[];
+};
+
+/** Same default as Viv ImageView detail framing. */
 export const DEFAULT_ZOOM_BACK_OFF = 0.2;
 
-function getPhysicalSizeScalingMatrix(loader: {
+/** OME-style physical size ratios on a loader-like `meta` object. */
+export type PhysicalSizesMeta = {
   meta?: { physicalSizes?: Record<string, { size?: number } | undefined> };
-}): Matrix4 {
-  const { x, y, z } = loader?.meta?.physicalSizes ?? {};
+};
+
+export function getPhysicalSizeScalingMatrixFromMeta(loaderLike: PhysicalSizesMeta): Matrix4 {
+  const { x, y, z } = loaderLike?.meta?.physicalSizes ?? {};
   if (x?.size !== undefined && y?.size !== undefined && z?.size !== undefined) {
     const min = Math.min(z.size, x.size, y.size);
     const ratio: [number, number, number] = [x.size / min, y.size / min, z.size / min];
@@ -52,7 +65,7 @@ export function viewStateFromBounds(
   viewWidth: number,
   viewHeight: number,
   zoomBackOff: number = DEFAULT_ZOOM_BACK_OFF
-): ViewState2D {
+): OrthographicViewState2D {
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;
   let trueWidth = bounds.maxX - bounds.minX;
@@ -73,10 +86,6 @@ function xyPairFromVertex(v: unknown): [number, number] | null {
   return [x, y];
 }
 
-/**
- * Walk nested polygon / multipolygon coordinate trees from loaders (WKB / GeoJSON-style).
- * Skips malformed vertices instead of throwing.
- */
 function accumulatePolygonBounds(
   polygons: unknown,
   modelMatrix: Matrix4,
@@ -138,7 +147,7 @@ export function boundsFromPolygons(
 }
 
 export function boundsFromPoints(
-  pointData: PointData,
+  pointData: PointsColumnarData,
   modelMatrix: Matrix4,
   use3d = false
 ): AxisAlignedBounds | null {
@@ -177,18 +186,25 @@ export function boundsFromPoints(
   return any ? { minX, minY, maxX, maxY } : null;
 }
 
-export function boundsFromImageLoader(
-  loader: unknown,
-  modelMatrix: Matrix4
+/**
+ * World-space bounds of an image raster in pixel coordinates [0..w]×[0..h],
+ * after optional OME physical-size scaling and modelMatrix (e.g. transform to a coordinate system).
+ */
+export function boundsFromImagePixelExtents(
+  pixelWidth: number,
+  pixelHeight: number,
+  modelMatrix: Matrix4,
+  physicalSizeScalingMatrix: Matrix4 = new Matrix4()
 ): AxisAlignedBounds | null {
+  if (
+    !Number.isFinite(pixelWidth) ||
+    !Number.isFinite(pixelHeight) ||
+    pixelWidth <= 0 ||
+    pixelHeight <= 0
+  ) {
+    return null;
+  }
   try {
-    const source = Array.isArray(loader) ? loader[0] : loader;
-    if (!source || typeof source !== 'object') return null;
-    // PixelSource typing is strict; loader at runtime matches Viv loaders.
-    const { width: pixelWidth, height: pixelHeight } = getImageSize(source as never);
-    const physical = getPhysicalSizeScalingMatrix(
-      source as { meta?: { physicalSizes?: Record<string, { size?: number }> } }
-    );
     let minX = Number.POSITIVE_INFINITY;
     let minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY;
@@ -200,7 +216,7 @@ export function boundsFromImageLoader(
       [0, pixelHeight, 0],
     ];
     for (const c of corners) {
-      const p = modelMatrix.transformPoint(physical.transformPoint(c));
+      const p = modelMatrix.transformPoint(physicalSizeScalingMatrix.transformPoint(c));
       minX = Math.min(minX, p[0]);
       maxX = Math.max(maxX, p[0]);
       minY = Math.min(minY, p[1]);
@@ -213,36 +229,47 @@ export function boundsFromImageLoader(
 }
 
 /**
- * View state that matches Viv's getDefaultInitialViewState for a single image layer
- * (including modelMatrix and physical size scaling).
+ * Initial orthographic view for a raster image — same math as @vivjs/views `getDefaultInitialViewState`
+ * (2D path). Callers supply pixel size (e.g. from Viv `getImageSize`) and optional physical scaling from
+ * {@link getPhysicalSizeScalingMatrixFromMeta}.
  */
-type VivInitialViewState = { target: [number, number, number]; zoom: number | number[] };
+export function viewStateForOrthographicImageFit(params: {
+  pixelWidth: number;
+  pixelHeight: number;
+  viewWidth: number;
+  viewHeight: number;
+  modelMatrix: Matrix4;
+  zoomBackOff?: number;
+  use3d?: boolean;
+  /** Pixel extent along z (Viv uses shape[labels.indexOf('z')]); used when use3d is true. */
+  zAxisPixelSize?: number;
+  physicalSizeScalingMatrix?: Matrix4;
+}): OrthographicViewState2D {
+  const {
+    pixelWidth,
+    pixelHeight,
+    viewWidth,
+    viewHeight,
+    modelMatrix,
+    zoomBackOff = DEFAULT_ZOOM_BACK_OFF,
+    use3d = false,
+    zAxisPixelSize = 0,
+    physicalSizeScalingMatrix = new Matrix4(),
+  } = params;
 
-/** Viv .d.ts wrongly types modelMatrix as boolean; runtime uses Matrix4. */
-const getDefaultInitialViewStateWithMatrix = getDefaultInitialViewState as unknown as (
-  loader: object,
-  viewSize: { width: number; height: number },
-  zoomBackOff?: number,
-  use3d?: boolean,
-  modelMatrix?: Matrix4
-) => VivInitialViewState;
+  const scale = modelMatrix.getScale();
+  const trueWidth = scale[0] * pixelWidth;
+  const trueHeight = scale[1] * pixelHeight;
+  const zoom = Math.log2(Math.min(viewWidth / trueWidth, viewHeight / trueHeight)) - zoomBackOff;
 
-export function viewStateForImageLayer(
-  loader: unknown,
-  viewWidth: number,
-  viewHeight: number,
-  modelMatrix: Matrix4,
-  zoomBackOff: number = DEFAULT_ZOOM_BACK_OFF
-): ViewState2D {
-  const vs = getDefaultInitialViewStateWithMatrix(
-    loader as object,
-    { width: viewWidth, height: viewHeight },
-    zoomBackOff,
-    false,
-    modelMatrix
+  const inner = use3d ? physicalSizeScalingMatrix : new Matrix4();
+  const zMid = use3d && zAxisPixelSize > 0 ? zAxisPixelSize / 2 : 0;
+  const target3 = modelMatrix.transformPoint(
+    inner.transformPoint([pixelWidth / 2, pixelHeight / 2, zMid])
   );
-  const target = vs.target;
-  const zoomRaw = vs.zoom;
-  const zoom = Array.isArray(zoomRaw) ? (zoomRaw[0] ?? 0) : (zoomRaw ?? 0);
-  return { target: [target[0], target[1]], zoom };
+
+  return {
+    target: [target3[0], target3[1]],
+    zoom,
+  };
 }

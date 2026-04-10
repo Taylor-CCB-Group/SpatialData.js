@@ -1,6 +1,5 @@
 import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it } from 'vitest';
-import { calculateInitialViewState } from '../src/SpatialCanvas/utils.js';
 import {
   DEFAULT_ZOOM_BACK_OFF,
   boundsFromPoints,
@@ -8,7 +7,7 @@ import {
   unionBounds,
   unionBoundsList,
   viewStateFromBounds,
-} from '../src/SpatialCanvas/viewStateFit.js';
+} from '../src/spatialViewFit.js';
 
 describe('viewStateFromBounds', () => {
   it('centers target and matches Viv-style zoom (log2 scale minus backoff)', () => {
@@ -47,7 +46,7 @@ describe('unionBounds / unionBoundsList', () => {
   it('unions two rectangles', () => {
     const u = unionBounds(
       { minX: 0, minY: 0, maxX: 10, maxY: 10 },
-      { minX: 5, minY: 5, maxX: 20, maxY: 15 }
+      { minX: 5, minY: 5, maxX: 20, maxY: 15 },
     );
     expect(u).toEqual({ minX: 0, minY: 0, maxX: 20, maxY: 15 });
   });
@@ -121,20 +120,8 @@ describe('boundsFromPoints', () => {
         ],
       },
       m,
-      false
+      false,
     );
     expect(b).toEqual({ minX: 0, minY: 0, maxX: 2, maxY: 3 });
-  });
-});
-
-describe('calculateInitialViewState', () => {
-  it('delegates to viewStateFromBounds', () => {
-    const vs = calculateInitialViewState({ minX: 0, minY: 0, maxX: 100, maxY: 50 }, 200, 100);
-    expect(vs.target[0]).toBeCloseTo(50);
-    expect(vs.target[1]).toBeCloseTo(25);
-  });
-
-  it('returns origin when bounds are null', () => {
-    expect(calculateInitialViewState(null, 100, 100)).toEqual({ target: [0, 0], zoom: 0 });
   });
 });

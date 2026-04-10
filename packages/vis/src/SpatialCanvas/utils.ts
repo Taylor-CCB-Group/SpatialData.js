@@ -3,9 +3,13 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialData, SpatialElement } from '@spatialdata/core';
+import {
+  type AxisAlignedBounds,
+  type SpatialData,
+  type SpatialElement,
+  viewStateFromBounds,
+} from '@spatialdata/core';
 import type { ElementsByType, LayerType } from './types';
-import { type AxisAlignedBounds, viewStateFromBounds } from './viewStateFit';
 
 /**
  * Map from SpatialData element property names to layer types

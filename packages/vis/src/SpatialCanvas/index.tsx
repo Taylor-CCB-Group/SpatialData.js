@@ -7,6 +7,7 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
+import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { PickingInfo } from 'deck.gl';
@@ -34,7 +35,6 @@ import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
 import { useLayerData } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems, getAvailableElements } from './utils';
-import { viewStateFromBounds } from './viewStateFit';
 
 export {
   SpatialFeatureTooltip,

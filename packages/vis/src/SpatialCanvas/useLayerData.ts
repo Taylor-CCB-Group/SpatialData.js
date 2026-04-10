@@ -5,6 +5,7 @@
  * loading state for each layer.
  */
 
+import { getImageSize } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
 import {
   COLOR_PALLETE,
@@ -16,12 +17,18 @@ import {
   isInterleaved,
   tryParseOmeroHexColor,
 } from '@spatialdata/avivatorish';
-import type {
-  ImageElement,
-  PointsElement,
-  ShapesElement,
-  SpatialData,
-  TableColumnData,
+import {
+  type AxisAlignedBounds,
+  type ImageElement,
+  type PointsElement,
+  type ShapesElement,
+  type SpatialData,
+  type TableColumnData,
+  boundsFromImagePixelExtents,
+  boundsFromPoints,
+  boundsFromPolygons,
+  getPhysicalSizeScalingMatrixFromMeta,
+  unionBoundsList,
 } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -42,13 +49,6 @@ import {
   renderShapesLayer,
 } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig } from './types';
-import {
-  type AxisAlignedBounds,
-  boundsFromImageLoader,
-  boundsFromPoints,
-  boundsFromPolygons,
-  unionBoundsList,
-} from './viewStateFit';
 
 export interface ImageLoaderData {
   loader: unknown;
@@ -650,7 +650,11 @@ export function useLayerData(
         if (elem.type === 'image') {
           const imageData = loaded.images.get(elem.key);
           if (!imageData?.loader) return null;
-          return boundsFromImageLoader(imageData.loader, elem.transform);
+          const source = Array.isArray(imageData.loader) ? imageData.loader[0] : imageData.loader;
+          if (!source || typeof source !== 'object') return null;
+          const { width, height } = getImageSize(source as never);
+          const physical = getPhysicalSizeScalingMatrixFromMeta(source);
+          return boundsFromImagePixelExtents(width, height, elem.transform, physical);
         }
         return null;
       } catch (err) {
