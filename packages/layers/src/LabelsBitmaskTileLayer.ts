@@ -38,9 +38,9 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
   static defaultProps = {
     channelColors: { type: 'array', value: [[255, 255, 255]], compare: true },
     channelsFilled: { type: 'array', value: [true], compare: true },
-    channelOpacities: { type: 'array', value: [1], compare: true },
+    channelOpacities: { type: 'array', value: [0.35], compare: true },
     channelsVisible: { type: 'array', value: [true], compare: true },
-    channelStrokeWidths: { type: 'array', value: [1], compare: true },
+    channelStrokeWidths: { type: 'array', value: [2], compare: true },
   };
 
   constructor(...args: any[]) {
@@ -137,23 +137,51 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       maxZoom,
       opacity = 1,
       zoom,
+      channelData,
+      selections,
     } = this.props;
 
-    const normalizedColors = padWithDefault(channelColors, [255, 255, 255], MAX_LABEL_CHANNELS)
-      .slice(0, MAX_LABEL_CHANNELS)
-      .map(getNormalizedColor);
+    const actualChannelCount = Math.max(
+      1,
+      Math.min(
+        MAX_LABEL_CHANNELS,
+        channelData?.data?.length ??
+          selections?.length ??
+          channelColors?.length ??
+          channelsVisible?.length ??
+          channelOpacities?.length ??
+          channelsFilled?.length ??
+          channelStrokeWidths?.length ??
+          1
+      )
+    );
+
+    const normalizedColors = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
+      getNormalizedColor(
+        index < actualChannelCount ? channelColors?.[index] ?? [255, 255, 255] : [255, 255, 255]
+      )
+    );
 
     const zoomDelta =
       typeof zoom === 'number' && typeof maxZoom === 'number' ? maxZoom - zoom : 0;
     const scaleFactor = 1 / (2 ** zoomDelta);
 
-    const filled = padWithDefault(channelsFilled, true, MAX_LABEL_CHANNELS).slice(0, MAX_LABEL_CHANNELS);
-    const opacities = padWithDefault(channelOpacities, 1, MAX_LABEL_CHANNELS)
-      .slice(0, MAX_LABEL_CHANNELS);
-    const visible = padWithDefault(channelsVisible, true, MAX_LABEL_CHANNELS)
-      .slice(0, MAX_LABEL_CHANNELS);
-    const strokeWidths = padWithDefault(channelStrokeWidths, 1, MAX_LABEL_CHANNELS)
-      .slice(0, MAX_LABEL_CHANNELS);
+    const filled = Array.from(
+      { length: MAX_LABEL_CHANNELS },
+      (_, index) => (index < actualChannelCount ? channelsFilled?.[index] ?? true : false)
+    );
+    const opacities = Array.from(
+      { length: MAX_LABEL_CHANNELS },
+      (_, index) => (index < actualChannelCount ? channelOpacities?.[index] ?? 0.35 : 0)
+    );
+    const visible = Array.from(
+      { length: MAX_LABEL_CHANNELS },
+      (_, index) => (index < actualChannelCount ? channelsVisible?.[index] ?? true : false)
+    );
+    const strokeWidths = Array.from(
+      { length: MAX_LABEL_CHANNELS },
+      (_, index) => (index < actualChannelCount ? channelStrokeWidths?.[index] ?? 2 : 1)
+    );
 
     const labelsBitmask = Object.fromEntries([
       ...normalizedColors.map((color, index) => [`color${index}`, [...color, 1] as const]),

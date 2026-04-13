@@ -31,7 +31,6 @@ export const vs = `#version 300 es
 
 in vec2 texCoords;
 in vec3 positions;
-in vec3 positions64Low;
 in vec3 instancePickingColors;
 
 out vec2 vTexCoord;
@@ -40,7 +39,7 @@ void main(void) {
   geometry.worldPosition = positions;
   geometry.uv = texCoords;
   geometry.pickingColor = instancePickingColors;
-  gl_Position = project_position_to_clipspace(positions, positions64Low, vec3(0.0), geometry.position);
+  gl_Position = project_position_to_clipspace(positions, vec3(0.0), vec3(0.0), geometry.position);
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
   vTexCoord = texCoords;
   vec4 color = vec4(0.0);
@@ -81,8 +80,8 @@ float getEdgeMask(sampler2D dataTex, vec2 coord, float sampledData, float stroke
   diff = max(diff, abs(texture(dataTex, coord - offsetX + offsetY).r - sampledData));
   diff = max(diff, abs(texture(dataTex, coord - offsetX - offsetY).r - sampledData));
 
-  float aaWidth = max(fwidth(sampledData), 1e-6);
-  return smoothstep(0.5 * aaWidth, 1.5 * aaWidth, diff);
+  float aaWidth = max(fwidth(diff), 1e-6);
+  return smoothstep(0.0, aaWidth, diff);
 }
 
 vec3 sampleAndGetData(sampler2D dataTex, vec2 coord, float isFilled, float strokeWidth, float isOn) {
@@ -91,18 +90,25 @@ vec3 sampleAndGetData(sampler2D dataTex, vec2 coord, float isFilled, float strok
     return vec3(0.0, sampledData, 0.0);
   }
 
-  float isEdge = 1.0;
-  if (isFilled < 0.5) {
-    isEdge = getEdgeMask(dataTex, coord, sampledData, strokeWidth);
-  }
+  float isEdge = getEdgeMask(dataTex, coord, sampledData, strokeWidth);
 
   return vec3(1.0, sampledData, isEdge);
 }
 
-vec4 dataToColor(vec3 sampledDataAndIsEdge, vec4 channelColor, float channelOpacity) {
+vec4 dataToColor(
+  vec3 sampledDataAndIsEdge,
+  vec4 channelColor,
+  float channelOpacity,
+  float isFilled,
+  float strokeWidth
+) {
   float hasData = sampledDataAndIsEdge.x;
   float isEdge = sampledDataAndIsEdge.z;
-  return hasData * isEdge * vec4(channelColor.rgb, channelOpacity);
+  float fillAlpha = channelOpacity * step(0.5, isFilled);
+  float edgeBoost = mix(2.5, 3.0, clamp((strokeWidth - 1.0) / 2.0, 0.0, 1.0));
+  float edgeAlpha = min(1.0, channelOpacity * edgeBoost);
+  float combinedAlpha = hasData * mix(fillAlpha, max(fillAlpha, edgeAlpha), isEdge);
+  return vec4(channelColor.rgb, combinedAlpha);
 }
 
 void main() {
@@ -121,13 +127,13 @@ void main() {
     discard;
   }
 
-  vec4 val0 = dataToColor(dat0, labelsBitmask.color0, labelsBitmask.channelOpacity0);
-  vec4 val1 = dataToColor(dat1, labelsBitmask.color1, labelsBitmask.channelOpacity1);
-  vec4 val2 = dataToColor(dat2, labelsBitmask.color2, labelsBitmask.channelOpacity2);
-  vec4 val3 = dataToColor(dat3, labelsBitmask.color3, labelsBitmask.channelOpacity3);
-  vec4 val4 = dataToColor(dat4, labelsBitmask.color4, labelsBitmask.channelOpacity4);
-  vec4 val5 = dataToColor(dat5, labelsBitmask.color5, labelsBitmask.channelOpacity5);
-  vec4 val6 = dataToColor(dat6, labelsBitmask.color6, labelsBitmask.channelOpacity6);
+  vec4 val0 = dataToColor(dat0, labelsBitmask.color0, labelsBitmask.channelOpacity0, labelsBitmask.channelFilled0, labelsBitmask.channelStrokeWidth0);
+  vec4 val1 = dataToColor(dat1, labelsBitmask.color1, labelsBitmask.channelOpacity1, labelsBitmask.channelFilled1, labelsBitmask.channelStrokeWidth1);
+  vec4 val2 = dataToColor(dat2, labelsBitmask.color2, labelsBitmask.channelOpacity2, labelsBitmask.channelFilled2, labelsBitmask.channelStrokeWidth2);
+  vec4 val3 = dataToColor(dat3, labelsBitmask.color3, labelsBitmask.channelOpacity3, labelsBitmask.channelFilled3, labelsBitmask.channelStrokeWidth3);
+  vec4 val4 = dataToColor(dat4, labelsBitmask.color4, labelsBitmask.channelOpacity4, labelsBitmask.channelFilled4, labelsBitmask.channelStrokeWidth4);
+  vec4 val5 = dataToColor(dat5, labelsBitmask.color5, labelsBitmask.channelOpacity5, labelsBitmask.channelFilled5, labelsBitmask.channelStrokeWidth5);
+  vec4 val6 = dataToColor(dat6, labelsBitmask.color6, labelsBitmask.channelOpacity6, labelsBitmask.channelFilled6, labelsBitmask.channelStrokeWidth6);
 
   fragColor = val0;
   fragColor = (val1 == fragColor || val1 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val1, val1.a).rgb, max(fragColor.a, val1.a));

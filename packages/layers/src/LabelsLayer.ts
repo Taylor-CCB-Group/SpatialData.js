@@ -82,7 +82,17 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
   }
 
   renderLayers(): Layer | null {
-    const { id, onClick, onHover } = this.props;
+    const {
+      id,
+      onClick,
+      onHover,
+      channelColors,
+      channelsVisible,
+      channelOpacities,
+      channelsFilled,
+      channelStrokeWidths,
+      selections,
+    } = this.props;
     const { width, height, data } = this.state as {
       width?: number;
       height?: number;
@@ -104,6 +114,12 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
       }),
       {
         channelData: { data, height, width },
+        channelColors,
+        channelsVisible,
+        channelOpacities,
+        channelsFilled,
+        channelStrokeWidths,
+        selections,
         bounds,
         id: `image-sub-layer-${bounds}-${id}`,
         interpolation: 'nearest',
@@ -188,9 +204,9 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     selections: [{}],
     channelColors: [[255, 255, 255]],
     channelsVisible: [true],
-    channelOpacities: [1],
+    channelOpacities: [0.35],
     channelsFilled: [true],
-    channelStrokeWidths: [1],
+    channelStrokeWidths: [2],
   } satisfies Partial<LabelsLayerProps>;
 
   renderLayers(): Layer | null | LayersList {
@@ -202,9 +218,9 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       modelMatrix,
       channelColors = [[255, 255, 255]],
       channelsVisible = [true],
-      channelOpacities = [1],
+      channelOpacities = [0.35],
       channelsFilled = [true],
-      channelStrokeWidths = [1],
+      channelStrokeWidths = [2],
       onClick,
       onHover,
     } = this.props;

@@ -643,9 +643,9 @@ export function useLayerData(
                   loader,
                   colors: [[255, 255, 255]],
                   channelsVisible: [true],
-                  channelOpacities: [1],
+                  channelOpacities: [0.35],
                   channelsFilled: [true],
-                  channelStrokeWidths: [1],
+                  channelStrokeWidths: [2],
                   selections: [{}],
                 };
 
@@ -681,9 +681,9 @@ export function useLayerData(
                   labelsData.channelsVisible = colors.map(
                     (_, index) => metadataChannels?.[index]?.active ?? true
                   );
-                  labelsData.channelOpacities = colors.map(() => 1);
+                  labelsData.channelOpacities = colors.map(() => 0.35);
                   labelsData.channelsFilled = colors.map(() => true);
-                  labelsData.channelStrokeWidths = colors.map(() => 1);
+                  labelsData.channelStrokeWidths = colors.map(() => 2);
                 }
 
                 loadedDataRef.current.labels.set(element.key, labelsData);

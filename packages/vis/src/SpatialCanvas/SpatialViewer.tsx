@@ -18,10 +18,6 @@ import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import VivSpatialViewer from './VivSpatialViewer';
 
-const SHOULD_DEBUG_DECK =
-  typeof window !== 'undefined' &&
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
 export interface SpatialViewerProps {
   /** Viewport width */
   width: number;
@@ -161,7 +157,6 @@ function SpatialViewerSimple({
       onHover={onHover}
       onClick={onClick}
       controller={true}
-      debug={SHOULD_DEBUG_DECK}
       getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
       style={{ backgroundColor: '#111' }}
     />
