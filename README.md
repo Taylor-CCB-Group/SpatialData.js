@@ -20,7 +20,7 @@ This monorepo contains:
 - Python >= 3.12 (for generating test fixtures)
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
 
-If you prefer not to use Volta, use Node.js >= 20 and pnpm >= 10.
+If you prefer not to use Volta, use Node.js >= 20.19 (or 22.12+) and pnpm >= 10.
 
 ### Installation
 
