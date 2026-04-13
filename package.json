@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git"
   },
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "pnpm -r --filter='!docs' run build",
     "test": "pnpm -r --filter='!docs' run test",
@@ -39,5 +40,9 @@
   "engines": {
     "node": ">=20",
     "pnpm": ">=10"
+  },
+  "volta": {
+    "node": "24.14.1",
+    "pnpm": "10.33.0"
   }
 }
