@@ -16,16 +16,20 @@ This monorepo contains:
 
 ### Prerequisites
 
-- Node.js >= 20
-- pnpm >= 10
+- [Volta](https://volta.sh/) for managing the pinned Node.js and pnpm versions
 - Python >= 3.12 (for generating test fixtures)
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
+
+If you prefer not to use Volta, use Node.js >= 20.19 (or 22.12+) and pnpm >= 10.
 
 ### Installation
 
 ```bash
-# Install pnpm globally if you haven't already
-npm install -g pnpm
+# Install Volta once
+curl https://get.volta.sh | bash
+
+# Restart your shell so Volta is on PATH
+volta install node@24.14.1 pnpm@10.33.0
 
 # Install dependencies
 pnpm install

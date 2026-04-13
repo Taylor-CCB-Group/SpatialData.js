@@ -13,6 +13,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    "baseUrl": ".",
 
     /* Linting */
     "strict": true,
@@ -21,7 +22,12 @@
     "noFallthroughCasesInSwitch": true,
 
     "paths": {
-      "@spatialdata/vis": ["../src"]
+      "@spatialdata/avivatorish": ["../../avivatorish/src/index.ts"],
+      "@spatialdata/core": ["../../core/src/index.ts"],
+      "@spatialdata/layers": ["../../layers/src/index.ts"],
+      "@spatialdata/react": ["../../react/src/index.ts"],
+      "@spatialdata/vis": ["../src/index.ts"],
+      "@spatialdata/zarrextra": ["../../zarrextra/src/index.ts"]
     }
   },
   "include": ["src"]

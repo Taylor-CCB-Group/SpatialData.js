@@ -3,6 +3,17 @@ import react from '@vitejs/plugin-react';
 import dts from 'vite-plugin-dts';
 import path from 'node:path';
 
+export function createWorkspaceSourceAliases(rootDir: string) {
+  return {
+    '@spatialdata/avivatorish': path.resolve(rootDir, 'packages/avivatorish/src/index.ts'),
+    '@spatialdata/core': path.resolve(rootDir, 'packages/core/src/index.ts'),
+    '@spatialdata/layers': path.resolve(rootDir, 'packages/layers/src/index.ts'),
+    '@spatialdata/react': path.resolve(rootDir, 'packages/react/src/index.ts'),
+    '@spatialdata/vis': path.resolve(rootDir, 'packages/vis/src/index.ts'),
+    '@spatialdata/zarrextra': path.resolve(rootDir, 'packages/zarrextra/src/index.ts'),
+  };
+}
+
 interface DefineConfigOptions {
   pkgRoot: string;
   libName: string;
