@@ -83,6 +83,7 @@ export interface LayerLoadState {
 }
 
 export interface ImageLayerConfig {
+  id: string;
   loader: unknown; // Viv PixelSource
   colors: [number, number, number][];
   contrastLimits: [number, number][];
@@ -420,7 +421,7 @@ export function useLayerData(
                       const Channels = metadata.channels;
                       const isRgb = guessRgb({
                         Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) },
-                      } as any);
+                      });
 
                       if (isRgb) {
                         if (isInterleaved(loaderObj.shape)) {
@@ -442,8 +443,8 @@ export function useLayerData(
                       } else {
                         // Compute stats for non-RGB images
                         const stats = await getMultiSelectionStats({
-                          loader: loader as any,
-                          selections: selections as any,
+                          loader,
+                          selections,
                           use3d: false,
                         });
                         imageData.contrastLimits = stats.contrastLimits;
@@ -982,6 +983,7 @@ export function useLayerData(
           : rawSelections;
 
       vivProps.push({
+        id: config.id,
         loader: imageData.loader,
         colors,
         contrastLimits,
