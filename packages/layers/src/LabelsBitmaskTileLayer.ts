@@ -1,4 +1,6 @@
+import type { GetPickingInfoParams, PickingInfo } from '@deck.gl/core';
 import { project32, picking } from '@deck.gl/core';
+import { Matrix4 } from '@math.gl/core';
 import { XRLayer } from '@hms-dbmi/viv';
 import { fs, labelsBitmaskUniforms, vs } from './labelsBitmaskLayerShaders';
 
@@ -17,6 +19,82 @@ function getNormalizedColor(color?: readonly number[]): [number, number, number]
     return [0, 0, 0];
   }
   return [color[0] / 255, color[1] / 255, color[2] / 255];
+}
+
+function getLabelCoordinate(
+  coordinate: number[] | undefined,
+  modelMatrix: unknown,
+): [number, number, number] | null {
+  if (!coordinate || coordinate.length < 2) {
+    return null;
+  }
+  const point: [number, number, number] = [
+    coordinate[0] ?? 0,
+    coordinate[1] ?? 0,
+    coordinate[2] ?? 0,
+  ];
+  if (!modelMatrix) {
+    return point;
+  }
+  try {
+    return new Matrix4(modelMatrix as any).invert().transformAsPoint(point) as [number, number, number];
+  } catch {
+    return point;
+  }
+}
+
+function getTopmostLabelAtPixel(
+  props: any,
+  pixelX: number,
+  pixelY: number,
+): { channelIndex: number; labelId: number; selection?: unknown } | null {
+  const {
+    channelData,
+    channelsVisible,
+    selections,
+    channelColors,
+    channelOpacities,
+    channelOutlineOpacities,
+    channelsFilled,
+    channelStrokeWidths,
+  } = props;
+  const channelArrays = channelData?.data;
+  const width = channelData?.width;
+  const height = channelData?.height;
+  if (!channelArrays?.length || !width || !height) {
+    return null;
+  }
+
+  const actualChannelCount = Math.max(
+    1,
+    Math.min(
+      MAX_LABEL_CHANNELS,
+      channelArrays.length ??
+        selections?.length ??
+        channelColors?.length ??
+        channelsVisible?.length ??
+        channelOpacities?.length ??
+        channelOutlineOpacities?.length ??
+        channelsFilled?.length ??
+        channelStrokeWidths?.length ??
+        1
+    )
+  );
+  const pixelIndex = pixelY * width + pixelX;
+  for (let channelIndex = actualChannelCount - 1; channelIndex >= 0; channelIndex--) {
+    if (!(channelsVisible?.[channelIndex] ?? true)) {
+      continue;
+    }
+    const labelValue = Number(channelArrays[channelIndex]?.[pixelIndex] ?? 0);
+    if (Number.isFinite(labelValue) && labelValue > 0) {
+      return {
+        channelIndex,
+        labelId: labelValue,
+        selection: selections?.[channelIndex],
+      };
+    }
+  }
+  return null;
 }
 
 type LabelsBitmaskTileLayerProps = {
@@ -55,6 +133,57 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       vs,
       modules: [project32, picking, labelsBitmaskUniforms],
     };
+  }
+
+  getPickingInfo(params: GetPickingInfoParams): PickingInfo {
+    const info = super.getPickingInfo(params);
+    const localCoordinate = getLabelCoordinate(
+      info.coordinate as number[] | undefined,
+      this.props.modelMatrix,
+    );
+    const { bounds, channelData } = this.props;
+    const width = channelData?.width;
+    const height = channelData?.height;
+
+    if (
+      !localCoordinate ||
+      !bounds ||
+      !width ||
+      !height ||
+      !Number.isFinite(bounds[0]) ||
+      !Number.isFinite(bounds[1]) ||
+      !Number.isFinite(bounds[2]) ||
+      !Number.isFinite(bounds[3])
+    ) {
+      return info;
+    }
+
+    const xDenominator = bounds[2] - bounds[0];
+    const yDenominator = bounds[1] - bounds[3];
+    if (xDenominator === 0 || yDenominator === 0) {
+      return info;
+    }
+
+    const u = (localCoordinate[0] - bounds[0]) / xDenominator;
+    const v = (localCoordinate[1] - bounds[3]) / yDenominator;
+    if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) {
+      return info;
+    }
+
+    const pixelX = Math.max(0, Math.min(width - 1, Math.floor(u * width)));
+    const pixelY = Math.max(0, Math.min(height - 1, Math.floor(v * height)));
+    const pickedLabel = getTopmostLabelAtPixel(this.props, pixelX, pixelY);
+    if (!pickedLabel) {
+      info.object = null;
+      return info;
+    }
+
+    info.object = {
+      ...pickedLabel,
+      pixel: [pixelX, pixelY] as const,
+    };
+    info.index = pickedLabel.channelIndex;
+    return info;
   }
 
   dataToTexture(data: unknown, width: number, height: number) {

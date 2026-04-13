@@ -82,6 +82,7 @@ export interface PointsLayerConfig extends BaseLayerConfig {
 
 export interface LabelsLayerConfig extends BaseLayerConfig {
   type: 'labels';
+  tooltipFields?: string[];
   channels?: {
     channelIds?: string[];
     colors?: [number, number, number][];

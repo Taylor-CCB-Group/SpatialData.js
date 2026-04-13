@@ -27,6 +27,7 @@ export const spatialLabelsSublayerSchema = sublayerBase.extend({
   kind: z.literal('labels'),
   /** OME-Zarr labels URL understood by the labels bitmask layer. */
   url: z.string().optional(),
+  tooltipFields: z.array(z.string()).optional(),
 });
 
 export const spatialSublayerSchema = z.discriminatedUnion('kind', [

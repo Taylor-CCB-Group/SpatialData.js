@@ -6,13 +6,10 @@
 
 import { PolygonLayer } from 'deck.gl';
 import type { Matrix4 } from '@math.gl/core';
-import type { ShapesElement } from '@spatialdata/core';
+import type { ShapesElement, SpatialFeatureTooltipData } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
 
-export interface ShapeTooltipDatum {
-  title?: string;
-  items: Array<{ label: string; value: string }>;
-}
+export type ShapeTooltipDatum = SpatialFeatureTooltipData;
 
 export interface ShapesLayerRenderConfig {
   /** The shapes element to render */

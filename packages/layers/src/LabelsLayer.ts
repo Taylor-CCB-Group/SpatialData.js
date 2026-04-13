@@ -108,12 +108,12 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
     const bounds = [0, height, width, 0] as const;
 
     return new LabelsBitmaskTileLayer(
-      this.getSubLayerProps({
-        id: 'single-scale-labels-bitmask',
-        pickable: false,
-        ...(typeof onClick === 'function' ? { onClick } : {}),
-        ...(typeof onHover === 'function' ? { onHover } : {}),
-      }),
+        this.getSubLayerProps({
+          id: 'single-scale-labels-bitmask',
+          pickable: true,
+          ...(typeof onClick === 'function' ? { onClick } : {}),
+          ...(typeof onHover === 'function' ? { onHover } : {}),
+        }),
       {
         channelData: { data, height, width },
         channelColors,
@@ -296,7 +296,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       return new MultiscaleLabelsTileLayer(
         this.getSubLayerProps({
           id: 'labels',
-          pickable: false,
+          pickable: true,
           visible,
         }),
         {
@@ -318,7 +318,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     return new SingleScaleLabelsLayer(
       this.getSubLayerProps({
         id: 'labels',
-        pickable: false,
+        pickable: true,
         visible,
       }),
       {
