@@ -95,6 +95,126 @@ function mapSpatialValuesToXYZ(
   return [xValue, yValue, zValue];
 }
 
+function getSpatialAxes(axes?: Axis[]): Axis[] {
+  return axes?.filter((axis) => axis.type === 'space') ?? [];
+}
+
+function getAxisMatrixDimensions(axes: Axis[]): number[] {
+  const dims = new Array<number>(axes.length).fill(-1);
+  const used = new Set<number>();
+
+  for (let i = 0; i < axes.length; i++) {
+    const axisName = axes[i]?.name?.toLowerCase();
+    const dim =
+      axisName === 'x' ? 0 : axisName === 'y' ? 1 : axisName === 'z' ? 2 : undefined;
+    if (dim !== undefined && !used.has(dim)) {
+      dims[i] = dim;
+      used.add(dim);
+    }
+  }
+
+  let nextFallbackDim = 0;
+  for (let i = 0; i < axes.length; i++) {
+    if (dims[i] !== -1) continue;
+    while (used.has(nextFallbackDim) && nextFallbackDim < 3) {
+      nextFallbackDim += 1;
+    }
+    dims[i] = nextFallbackDim < 3 ? nextFallbackDim : 2;
+    used.add(dims[i]);
+  }
+
+  return dims;
+}
+
+function normalizeAffineMatrix(
+  affine: number[][],
+  logicalRows: number,
+  logicalInputDims: number
+): number[][] | null {
+  const actualRows = affine.length;
+  const actualCols = affine[0]?.length ?? 0;
+  const expectedCols = logicalInputDims + 1;
+
+  if (actualRows === logicalRows && actualCols === expectedCols) {
+    return affine;
+  }
+
+  if (actualRows === logicalRows + 1 && actualCols === expectedCols) {
+    const lastRow = affine[logicalRows] ?? [];
+    const expectedLastRow = Array.from({ length: logicalInputDims }, () => 0).concat(1);
+    const isStandardHomogeneousRow =
+      lastRow.length === expectedLastRow.length &&
+      lastRow.every((value, index) => value === expectedLastRow[index]);
+    if (!isStandardHomogeneousRow) {
+      console.warn(
+        `Non-standard homogeneous row in affine: [${lastRow.join(', ')}], expected [${expectedLastRow.join(', ')}]`
+      );
+    }
+    return affine.slice(0, logicalRows);
+  }
+
+  return null;
+}
+
+function rowMajor4x4ToColumnMajor(rows: number[][]): number[] {
+  const result: number[] = [];
+  for (let col = 0; col < 4; col++) {
+    for (let row = 0; row < 4; row++) {
+      result.push(rows[row]?.[col] ?? (row === col ? 1 : 0));
+    }
+  }
+  return result;
+}
+
+function buildSpatialMatrixFromAffine(
+  affine: number[][],
+  inputAxes: Axis[] | undefined,
+  outputAxes: Axis[] | undefined,
+  useFullAxes: boolean
+): number[] | null {
+  const spatialInputAxes = getSpatialAxes(inputAxes);
+  const spatialOutputAxes = getSpatialAxes(outputAxes);
+  if (spatialInputAxes.length === 0 || spatialOutputAxes.length === 0) {
+    return null;
+  }
+
+  const inputAxisDims = getAxisMatrixDimensions(spatialInputAxes);
+  const outputAxisDims = getAxisMatrixDimensions(spatialOutputAxes);
+  const inputIndices = useFullAxes
+    ? inputAxes
+        ?.map((axis, index) => (axis.type === 'space' ? index : -1))
+        .filter((index) => index !== -1) ?? []
+    : spatialInputAxes.map((_, index) => index);
+  const outputIndices = useFullAxes
+    ? outputAxes
+        ?.map((axis, index) => (axis.type === 'space' ? index : -1))
+        .filter((index) => index !== -1) ?? []
+    : spatialOutputAxes.map((_, index) => index);
+
+  const translationIndex = affine[0].length - 1;
+  const rows = [
+    [1, 0, 0, 0],
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1],
+  ];
+
+  for (let outIndex = 0; outIndex < outputIndices.length; outIndex++) {
+    const outputDim = outputAxisDims[outIndex];
+    const sourceRow = affine[outputIndices[outIndex]];
+    if (!sourceRow) continue;
+
+    for (let inIndex = 0; inIndex < inputIndices.length; inIndex++) {
+      const inputDim = inputAxisDims[inIndex];
+      rows[outputDim][inputDim] = sourceRow[inputIndices[inIndex]] ?? 0;
+    }
+
+    rows[outputDim][3] = sourceRow[translationIndex] ?? 0;
+  }
+
+  return rowMajor4x4ToColumnMajor(rows);
+}
+
 /**
  * Base class for all transformation types.
  * Provides a common interface for converting to Matrix4.
@@ -194,24 +314,41 @@ export class Affine extends BaseTransformation {
   
   toArray(): number[] {
     const { affine } = this;
-    
-    // Validate that affine matrix dimensions match expected spatial dimensions
-    // when axes are specified. We assume affine matrices already represent spatial dimensions only.
-    if (this.input?.axes) {
-      const expectedSpatialDims = this.input.axes.filter(axis => axis.type === 'space').length;
-      const actualDims = affine.length;
-      
-      // For 2D affine: 2x3 or 3x3 matrices
-      // For 3D affine: 3x4 or 4x4 matrices
-      // Warn if there's a mismatch
-      if (expectedSpatialDims === 2 && actualDims !== 2 && actualDims !== 3) {
-        console.warn(
-          `Affine matrix dimensions (${actualDims}x${affine[0]?.length}) don't match expected 2D spatial dimensions. Input axes indicate ${expectedSpatialDims} spatial dimensions. Assuming affine matrix represents spatial dimensions only.`
-        );
-      } else if (expectedSpatialDims === 3 && actualDims !== 3 && actualDims !== 4) {
-        console.warn(
-          `Affine matrix dimensions (${actualDims}x${affine[0]?.length}) don't match expected 3D spatial dimensions. Input axes indicate ${expectedSpatialDims} spatial dimensions. Assuming affine matrix represents spatial dimensions only.`
-        );
+
+    const inputAxes = this.input?.axes;
+    const outputAxes = this.output?.axes;
+    const spatialInputAxes = getSpatialAxes(inputAxes);
+    const spatialOutputAxes = getSpatialAxes(outputAxes);
+
+    const normalizedFullAxisAffine =
+      inputAxes && outputAxes
+        ? normalizeAffineMatrix(affine, outputAxes.length, inputAxes.length)
+        : null;
+    if (normalizedFullAxisAffine) {
+      const mapped = buildSpatialMatrixFromAffine(
+        normalizedFullAxisAffine,
+        inputAxes,
+        outputAxes,
+        true
+      );
+      if (mapped) {
+        return mapped;
+      }
+    }
+
+    const normalizedSpatialAffine =
+      spatialInputAxes.length > 0 && spatialOutputAxes.length > 0
+        ? normalizeAffineMatrix(affine, spatialOutputAxes.length, spatialInputAxes.length)
+        : null;
+    if (normalizedSpatialAffine) {
+      const mapped = buildSpatialMatrixFromAffine(
+        normalizedSpatialAffine,
+        spatialInputAxes,
+        spatialOutputAxes,
+        false
+      );
+      if (mapped) {
+        return mapped;
       }
     }
     
