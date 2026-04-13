@@ -87,6 +87,7 @@ export interface LabelsLayerConfig extends BaseLayerConfig {
     colors?: [number, number, number][];
     channelsVisible?: boolean[];
     channelOpacities?: number[];
+    channelOutlineOpacities?: number[];
     channelsFilled?: boolean[];
     channelStrokeWidths?: number[];
     selections?: Partial<{ z: number; c: number; t: number }>[];

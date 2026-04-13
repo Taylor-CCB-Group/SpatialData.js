@@ -23,6 +23,7 @@ type LabelsBitmaskTileLayerProps = {
   channelColors?: Array<[number, number, number]>;
   channelsFilled?: boolean[];
   channelOpacities?: number[];
+  channelOutlineOpacities?: number[];
   channelsVisible?: boolean[];
   channelStrokeWidths?: number[];
   maxZoom?: number;
@@ -38,9 +39,10 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
   static defaultProps = {
     channelColors: { type: 'array', value: [[255, 255, 255]], compare: true },
     channelsFilled: { type: 'array', value: [true], compare: true },
-    channelOpacities: { type: 'array', value: [0.35], compare: true },
+    channelOpacities: { type: 'array', value: [0.18], compare: true },
+    channelOutlineOpacities: { type: 'array', value: [0.95], compare: true },
     channelsVisible: { type: 'array', value: [true], compare: true },
-    channelStrokeWidths: { type: 'array', value: [2], compare: true },
+    channelStrokeWidths: { type: 'array', value: [1.5], compare: true },
   };
 
   constructor(...args: any[]) {
@@ -132,6 +134,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       channelColors,
       channelsFilled,
       channelOpacities,
+      channelOutlineOpacities,
       channelsVisible,
       channelStrokeWidths,
       maxZoom,
@@ -150,6 +153,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
           channelColors?.length ??
           channelsVisible?.length ??
           channelOpacities?.length ??
+          channelOutlineOpacities?.length ??
           channelsFilled?.length ??
           channelStrokeWidths?.length ??
           1
@@ -172,7 +176,11 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     );
     const opacities = Array.from(
       { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelOpacities?.[index] ?? 0.35 : 0)
+      (_, index) => (index < actualChannelCount ? channelOpacities?.[index] ?? 0.18 : 0)
+    );
+    const outlineOpacities = Array.from(
+      { length: MAX_LABEL_CHANNELS },
+      (_, index) => (index < actualChannelCount ? channelOutlineOpacities?.[index] ?? 0.95 : 0)
     );
     const visible = Array.from(
       { length: MAX_LABEL_CHANNELS },
@@ -180,13 +188,14 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     );
     const strokeWidths = Array.from(
       { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelStrokeWidths?.[index] ?? 2 : 1)
+      (_, index) => (index < actualChannelCount ? channelStrokeWidths?.[index] ?? 1.5 : 1)
     );
 
     const labelsBitmask = Object.fromEntries([
       ...normalizedColors.map((color, index) => [`color${index}`, [...color, 1] as const]),
       ...filled.map((value, index) => [`channelFilled${index}`, value ? 1 : 0]),
       ...opacities.map((value, index) => [`channelOpacity${index}`, value]),
+      ...outlineOpacities.map((value, index) => [`channelOutlineOpacity${index}`, value]),
       ...visible.map((value, index) => [`channelVisible${index}`, value ? 1 : 0]),
       ...strokeWidths.map((value, index) => [`channelStrokeWidth${index}`, value]),
       ['scaleFactor', scaleFactor],

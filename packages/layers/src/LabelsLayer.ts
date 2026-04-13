@@ -17,6 +17,7 @@ export interface LabelsLayerProps {
   channelColors?: Array<[number, number, number]>;
   channelsVisible?: boolean[];
   channelOpacities?: number[];
+  channelOutlineOpacities?: number[];
   channelsFilled?: boolean[];
   channelStrokeWidths?: number[];
   onClick?: (info: unknown) => void;
@@ -89,6 +90,7 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
       channelColors,
       channelsVisible,
       channelOpacities,
+      channelOutlineOpacities,
       channelsFilled,
       channelStrokeWidths,
       selections,
@@ -117,6 +119,7 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
         channelColors,
         channelsVisible,
         channelOpacities,
+        channelOutlineOpacities,
         channelsFilled,
         channelStrokeWidths,
         selections,
@@ -204,9 +207,10 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     selections: [{}],
     channelColors: [[255, 255, 255]],
     channelsVisible: [true],
-    channelOpacities: [0.35],
+    channelOpacities: [0.18],
+    channelOutlineOpacities: [0.95],
     channelsFilled: [true],
-    channelStrokeWidths: [2],
+    channelStrokeWidths: [1.5],
   } satisfies Partial<LabelsLayerProps>;
 
   renderLayers(): Layer | null | LayersList {
@@ -218,9 +222,10 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       modelMatrix,
       channelColors = [[255, 255, 255]],
       channelsVisible = [true],
-      channelOpacities = [0.35],
+      channelOpacities = [0.18],
+      channelOutlineOpacities = [0.95],
       channelsFilled = [true],
-      channelStrokeWidths = [2],
+      channelStrokeWidths = [1.5],
       onClick,
       onHover,
     } = this.props;
@@ -238,6 +243,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       channelsVisible,
       channelColors,
       channelOpacities,
+      channelOutlineOpacities,
       channelsFilled,
       channelStrokeWidths,
     } as const;

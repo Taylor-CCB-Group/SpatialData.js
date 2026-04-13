@@ -23,6 +23,7 @@ import {
 import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { LabelsChannelPanel } from './LabelsChannelPanel';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -257,6 +258,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
+    getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
@@ -713,6 +715,14 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                     layerId={selectedConfig.id}
                     config={selectedConfig}
                     defaults={getImageLayerLoadedData(selectedConfig.id)}
+                    updateLayer={actions.updateLayer}
+                  />
+                )}
+                {selectedConfig.type === 'labels' && (
+                  <LabelsChannelPanel
+                    layerId={selectedConfig.id}
+                    config={selectedConfig}
+                    defaults={getLabelsLayerLoadedData(selectedConfig.id)}
                     updateLayer={actions.updateLayer}
                   />
                 )}

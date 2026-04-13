@@ -107,6 +107,7 @@ export interface LabelsLoaderData {
   colors: [number, number, number][];
   channelsVisible: boolean[];
   channelOpacities: number[];
+  channelOutlineOpacities: number[];
   channelsFilled: boolean[];
   channelStrokeWidths: number[];
   selections: Array<Partial<{ z: number; c: number; t: number }>>;
@@ -120,6 +121,8 @@ interface UseLayerDataResult {
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
+  /** Raw loaded labels pipeline data (defaults) for the properties UI */
+  getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
   /** Current load state for a given layer. */
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
@@ -643,9 +646,10 @@ export function useLayerData(
                   loader,
                   colors: [[255, 255, 255]],
                   channelsVisible: [true],
-                  channelOpacities: [0.35],
+                  channelOpacities: [0.18],
+                  channelOutlineOpacities: [0.95],
                   channelsFilled: [true],
-                  channelStrokeWidths: [2],
+                  channelStrokeWidths: [1.5],
                   selections: [{}],
                 };
 
@@ -681,9 +685,10 @@ export function useLayerData(
                   labelsData.channelsVisible = colors.map(
                     (_, index) => metadataChannels?.[index]?.active ?? true
                   );
-                  labelsData.channelOpacities = colors.map(() => 0.35);
+                  labelsData.channelOpacities = colors.map(() => 0.18);
+                  labelsData.channelOutlineOpacities = colors.map(() => 0.95);
                   labelsData.channelsFilled = colors.map(() => true);
-                  labelsData.channelStrokeWidths = colors.map(() => 2);
+                  labelsData.channelStrokeWidths = colors.map(() => 1.5);
                 }
 
                 loadedDataRef.current.labels.set(element.key, labelsData);
@@ -858,6 +863,10 @@ export function useLayerData(
               ch?.channelOpacities && ch.channelOpacities.length > 0
                 ? ch.channelOpacities
                 : labelsData.channelOpacities,
+            channelOutlineOpacities:
+              ch?.channelOutlineOpacities && ch.channelOutlineOpacities.length > 0
+                ? ch.channelOutlineOpacities
+                : labelsData.channelOutlineOpacities,
             channelsFilled:
               ch?.channelsFilled && ch.channelsFilled.length > 0
                 ? ch.channelsFilled
@@ -881,6 +890,12 @@ export function useLayerData(
     const elem = elementMap.current.get(layerId);
     if (!elem || elem.type !== 'image') return undefined;
     return loadedDataRef.current.images.get(elem.key);
+  }, []);
+
+  const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem || elem.type !== 'labels') return undefined;
+    return loadedDataRef.current.labels.get(elem.key);
   }, []);
 
   const getLayerLoadState = useCallback(
@@ -1024,6 +1039,7 @@ export function useLayerData(
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
+    getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,

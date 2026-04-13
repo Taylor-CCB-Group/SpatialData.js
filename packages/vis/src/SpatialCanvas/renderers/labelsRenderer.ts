@@ -19,6 +19,7 @@ export interface LabelsLayerRenderConfig {
   channelColors: [number, number, number][];
   channelsVisible: boolean[];
   channelOpacities: number[];
+  channelOutlineOpacities: number[];
   channelsFilled: boolean[];
   channelStrokeWidths: number[];
   selections: Partial<{ z: number; c: number; t: number }>[];
@@ -34,6 +35,7 @@ export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null
     channelColors,
     channelsVisible,
     channelOpacities,
+    channelOutlineOpacities,
     channelsFilled,
     channelStrokeWidths,
     selections,
@@ -52,6 +54,7 @@ export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null
     channelColors,
     channelsVisible,
     channelOpacities,
+    channelOutlineOpacities,
     channelsFilled,
     channelStrokeWidths,
     selections,
