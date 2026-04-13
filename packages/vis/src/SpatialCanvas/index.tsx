@@ -1,44 +1,40 @@
 /**
  * SpatialCanvas - A UI-driven component for composing spatial layers
- * 
+ *
  * Provides a complete interface for:
  * - Selecting a coordinate system
  * - Choosing which elements to display
  * - Viewing overlaid spatial data with pan/zoom
  */
 
-import { useEffect, useMemo, useCallback, useState, useRef, type CSSProperties, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { useMeasure } from '@uidotdev/usehooks';
+import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
+import { useMeasure } from '@uidotdev/usehooks';
 import type { PickingInfo } from 'deck.gl';
-import { 
-  SpatialCanvasProvider, 
-  useSpatialCanvasStore, 
-  useSpatialCanvasActions,
-} from './context';
-import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
-import { LayerOrderList } from './LayerOrderList';
-import { ImageChannelPanel } from './ImageChannelPanel';
-import { 
-  getAvailableElements, 
-  getAllCoordinateSystems,
-  generateLayerId,
-} from './utils';
-import type { 
-  AvailableElement, 
-  ElementsByType, 
-  LayerConfig,
-  ViewState,
-} from './types';
-import type { SpatialCanvasStoreApi } from './stores';
-import { useLayerData } from './useLayerData';
-import { SpatialViewer } from './SpatialViewer';
 import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { ImageChannelPanel } from './ImageChannelPanel';
+import { LayerOrderList } from './LayerOrderList';
+import {
+  type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
   type SpatialFeatureTooltipData,
-  type SpatialCanvasTooltipRenderProps,
 } from './SpatialFeatureTooltip';
+import { SpatialViewer } from './SpatialViewer';
+import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
+import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
+import type { SpatialCanvasStoreApi } from './stores';
+import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
+import { useLayerData } from './useLayerData';
+import { generateLayerId, getAllCoordinateSystems, getAvailableElements } from './utils';
 
 export {
   SpatialFeatureTooltip,
@@ -49,9 +45,9 @@ export {
 } from './SpatialFeatureTooltip';
 
 // Re-export for external use
-export { 
-  SpatialCanvasProvider, 
-  useSpatialCanvasStore, 
+export {
+  SpatialCanvasProvider,
+  useSpatialCanvasStore,
   useSpatialCanvasActions,
   useSpatialCanvasStoreApi,
 } from './context';
@@ -174,9 +170,9 @@ interface LayerSelectorProps {
 
 function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelectorProps) {
   const elementTypes = ['images', 'shapes', 'points', 'labels'] as const;
-  const typeLabels: Record<typeof elementTypes[number], string> = {
+  const typeLabels: Record<(typeof elementTypes)[number], string> = {
     images: 'Images',
-    shapes: 'Shapes', 
+    shapes: 'Shapes',
     points: 'Points',
     labels: 'Labels',
   };
@@ -186,7 +182,7 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
       {elementTypes.map((type) => {
         const typeElements = elements[type];
         if (typeElements.length === 0) return null;
-        
+
         return (
           <div key={type} style={rowStyle}>
             <span style={labelStyle}>{typeLabels[type]}:</span>
@@ -266,12 +262,14 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     getFeatureTooltip,
     isLoading,
     isBlocking,
+    getWorldBoundsForLayer,
+    getWorldBoundsForVisibleLayers,
   } = useLayerData(
     layers,
     layerOrder,
     availableElements,
     coordinateSystem,
-    spatialData ?? undefined,
+    spatialData ?? undefined
   );
 
   const deckLayers = getLayers();
@@ -280,12 +278,27 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     (vs: ViewState) => {
       actions.setViewState(vs);
     },
-    [actions],
+    [actions]
   );
 
   const enabledLayerIds = useMemo(() => {
     return new Set(layerOrder.filter((id) => layers[id]?.visible));
   }, [layers, layerOrder]);
+
+  const vw = width ?? 0;
+  const vh = height ?? 0;
+  const hasEnabledLayers = enabledLayerIds.size > 0;
+
+  useEffect(() => {
+    if (!hasEnabledLayers || vw <= 0 || vh <= 0 || isBlocking || viewState !== null) {
+      return;
+    }
+    const bounds = getWorldBoundsForVisibleLayers();
+    const next = bounds
+      ? viewStateFromBounds(bounds, vw, vh)
+      : { target: [0, 0] as [number, number], zoom: 0 };
+    actions.setViewState(next);
+  }, [hasEnabledLayers, vw, vh, isBlocking, viewState, getWorldBoundsForVisibleLayers, actions]);
 
   useEffect(() => {
     if (coordinateSystems.length > 0 && !coordinateSystem) {
@@ -310,7 +323,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       actions.setCoordinateSystem(e.target.value || null);
     },
-    [actions],
+    [actions]
   );
 
   const handleToggleLayer = useCallback(
@@ -331,7 +344,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
         actions.addLayer(config);
       }
     },
-    [layers, actions],
+    [layers, actions]
   );
 
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
@@ -341,6 +354,24 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
       : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
+
+  /** Avoid recomputing polygon/image bounds on every pan (viewState) — only when layer data / CS / selection changes. */
+  const selectedLayerWorldBounds = useMemo(() => {
+    const id = selectedConfig?.id;
+    if (!id) return null;
+    if (!hasRenderableLayerData(id)) return null;
+    return getWorldBoundsForLayer(id);
+  }, [
+    selectedConfig?.id,
+    selectedLayerLoadState,
+    coordinateSystem,
+    layerOrder,
+    layers,
+    availableElements,
+    getWorldBoundsForLayer,
+    hasRenderableLayerData,
+  ]);
+
   // we probably want to see more than obs columns here... but I also don't understand what subset of those we end up with.
   // why not allow instanceKey & regionKey...
   const availableTooltipFields =
@@ -348,37 +379,50 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       const tableKeys = associatedTable.getTableKeys();
       return columnName !== tableKeys.instanceKey && columnName !== tableKeys.regionKey;
     }) ?? [];
-  const vw = width ?? 0;
-  const vh = height ?? 0;
 
-  const handleHover = useCallback((info: PickingInfo) => {
-    if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
-      setHoverTooltip(null);
-      return;
-    }
-    const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
-    const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
-    if (typeof info.index !== 'number' || info.index < 0) {
-      setHoverTooltip(null);
-      return;
-    }
-    const tooltip = getFeatureTooltip(normalizedLayerId, info.index);
-    if (!tooltip) {
-      setHoverTooltip(null);
-      return;
-    }
-    setHoverTooltip({
-      x: info.x,
-      y: info.y,
-      ...tooltip,
-    });
-  }, [getFeatureTooltip]);
+  const handleHover = useCallback(
+    (info: PickingInfo) => {
+      if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
+        setHoverTooltip(null);
+        return;
+      }
+      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      if (typeof info.index !== 'number' || info.index < 0) {
+        setHoverTooltip(null);
+        return;
+      }
+      const tooltip = getFeatureTooltip(normalizedLayerId, info.index);
+      if (!tooltip) {
+        setHoverTooltip(null);
+        return;
+      }
+      setHoverTooltip({
+        x: info.x,
+        y: info.y,
+        ...tooltip,
+      });
+    },
+    [getFeatureTooltip]
+  );
 
-  const handleViewerRef = useCallback((node: HTMLDivElement | null) => {
-    viewerContainerRef.current = node;
-    measureRef(node);
-  }, [measureRef]);
-  
+  const handleViewerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      viewerContainerRef.current = node;
+      measureRef(node);
+    },
+    [measureRef]
+  );
+
+  const handleCenterOnSelectedLayer = useCallback(() => {
+    if (!selectedLayerId || vw <= 0 || vh <= 0) return;
+    const config = layers[selectedLayerId];
+    if (!config) return;
+    const b = getWorldBoundsForLayer(config.id);
+    if (!b) return;
+    actions.setViewState(viewStateFromBounds(b, vw, vh));
+  }, [selectedLayerId, layers, vw, vh, getWorldBoundsForLayer, actions]);
+
   if (sdLoading) {
     return (
       <div style={containerStyle}>
@@ -396,7 +440,6 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
   }
 
   const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
-  const hasEnabledLayers = enabledLayerIds.size > 0;
   const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
   /** Viewport coordinates of the deck.gl pick (for portaled `position: fixed` tooltip). */
   const tooltipClientPosition =
@@ -419,8 +462,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
         }
       : null;
 
-  const portalTarget =
-    typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
+  const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
 
   const tooltipPortal =
     tooltipPayload &&
@@ -441,245 +483,302 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
           position="fixed"
         />
       ),
-      portalTarget,
+      portalTarget
     );
 
   return (
     <>
       <div ref={shellRef} style={shellStyle}>
-      <div style={controlsStyle}>
-        <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
-          <span style={labelStyle}>Coordinate System:</span>
-          <select style={selectStyle} value={coordinateSystem || ''} onChange={handleCSChange}>
-            <option value="">Select...</option>
-            {coordinateSystems.map((cs) => (
-              <option key={cs} value={cs}>
-                {cs}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            style={{ ...selectStyle, marginLeft: 'auto', cursor: 'pointer' }}
-            onClick={() => setFullscreen((f) => !f)}
-          >
-            {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-          </button>
-        </div>
-
-        {coordinateSystem && hasElements && (
-          <LayerSelector
-            elements={availableElements}
-            enabledLayerIds={enabledLayerIds}
-            onToggleLayer={handleToggleLayer}
-          />
-        )}
-
-        {coordinateSystem && !hasElements && (
-          <div style={{ color: '#666', fontSize: '12px' }}>
-            No elements available in this coordinate system
+        <div style={controlsStyle}>
+          <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+            <span style={labelStyle}>Coordinate System:</span>
+            <select style={selectStyle} value={coordinateSystem || ''} onChange={handleCSChange}>
+              <option value="">Select...</option>
+              {coordinateSystems.map((cs) => (
+                <option key={cs} value={cs}>
+                  {cs}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              style={{ ...selectStyle, marginLeft: 'auto', cursor: 'pointer' }}
+              onClick={() => setFullscreen((f) => !f)}
+            >
+              {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            </button>
           </div>
-        )}
-      </div>
 
-      <div style={mainRowStyle}>
-        <aside style={{ ...sidebarStyle, width: 220, borderRight: '1px solid #333' }}>
-          <div style={{ color: '#aaa', fontSize: '12px', marginBottom: 8, fontWeight: 600 }}>Layers</div>
-          <LayerOrderList
-            layerOrder={layerOrder}
-            layers={layers}
-            selectedLayerId={selectedLayerId}
-            onSelect={actions.setSelectedLayerId}
-            reorderLayers={actions.reorderLayers}
-          />
-        </aside>
+          {coordinateSystem && hasElements && (
+            <LayerSelector
+              elements={availableElements}
+              enabledLayerIds={enabledLayerIds}
+              onToggleLayer={handleToggleLayer}
+            />
+          )}
 
-        <div ref={handleViewerRef} style={viewerContainerStyle}>
-          {hasEnabledLayers ? (
-            <div style={{ width: vw, height: vh, position: 'relative' }}>
-              <SpatialViewer
-                width={vw}
-                height={vh}
-                viewState={viewState}
-                onViewStateChange={handleViewStateChange}
-                layers={deckLayers}
-                vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
-                onHover={handleHover}
-              />
-              {isBlocking && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 8,
-                    right: 8,
-                    padding: '4px 8px',
-                    backgroundColor: 'rgba(0,0,0,0.7)',
-                    color: '#fff',
-                    fontSize: '11px',
-                    borderRadius: 4,
-                  }}
-                >
-                  Loading layer data...
-                </div>
-              )}
-              {isLoading && !isBlocking && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 8,
-                    right: 8,
-                    padding: '4px 8px',
-                    backgroundColor: 'rgba(20,20,20,0.78)',
-                    color: '#d5d5d5',
-                    fontSize: '11px',
-                    borderRadius: 4,
-                  }}
-                >
-                  Refreshing layer metadata...
-                </div>
-              )}
-              {!hasLayersDrawn && !isBlocking && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    color: '#666',
-                    fontSize: '13px',
-                  }}
-                >
-                  No layers to display
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={placeholderStyle}>
-              {coordinateSystem ? 'Select layers to display' : 'Select a coordinate system'}
+          {coordinateSystem && !hasElements && (
+            <div style={{ color: '#666', fontSize: '12px' }}>
+              No elements available in this coordinate system
             </div>
           )}
         </div>
 
-        <aside style={{ ...sidebarStyle, width: 300, borderLeft: '1px solid #333' }}>
-          <div style={{ color: '#aaa', fontSize: '12px', marginBottom: 8, fontWeight: 600 }}>Properties</div>
-          {!selectedConfig && (
-            <div style={{ color: '#666', fontSize: '12px' }}>Select a layer in the list</div>
-          )}
-          {selectedConfig && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div>
-                <span style={labelStyle}>Element</span>
-                <div style={{ color: '#ddd', fontSize: '13px' }}>{selectedConfig.elementKey}</div>
-                <div style={{ color: '#888', fontSize: '11px' }}>{selectedConfig.type}</div>
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ccc', fontSize: '12px' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedConfig.visible}
-                  onChange={() => actions.toggleLayerVisibility(selectedConfig.id)}
-                />
-                Visible
-              </label>
-              <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                Opacity
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={selectedConfig.opacity}
-                  onChange={(e) =>
-                    actions.updateLayer(selectedConfig.id, { opacity: Number(e.target.value) })
-                  }
-                />
-              </label>
-              {selectedLayerLoadState && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, color: '#888', fontSize: '11px' }}>
-                  {selectedConfig.type !== 'image' && selectedLayerLoadState.geometry && (
-                    <div>
-                      Geometry: {selectedLayerLoadState.geometry}
-                      {!hasRenderableLayerData(selectedConfig.id) && selectedLayerLoadState.geometry === 'loading'
-                        ? ' (blocking)'
-                        : ''}
+        <div style={mainRowStyle}>
+          <aside style={{ ...sidebarStyle, width: 220, borderRight: '1px solid #333' }}>
+            <div style={{ color: '#aaa', fontSize: '12px', marginBottom: 8, fontWeight: 600 }}>
+              Layers
+            </div>
+            <LayerOrderList
+              layerOrder={layerOrder}
+              layers={layers}
+              selectedLayerId={selectedLayerId}
+              onSelect={actions.setSelectedLayerId}
+              reorderLayers={actions.reorderLayers}
+            />
+          </aside>
+
+          <div ref={handleViewerRef} style={viewerContainerStyle}>
+            {hasEnabledLayers ? (
+              viewState === null ? (
+                <div style={placeholderStyle}>
+                  {isBlocking ? 'Loading layer data...' : 'Framing view...'}
+                </div>
+              ) : (
+                <div style={{ width: vw, height: vh, position: 'relative' }}>
+                  <SpatialViewer
+                    width={vw}
+                    height={vh}
+                    viewState={viewState}
+                    onViewStateChange={handleViewStateChange}
+                    layers={deckLayers}
+                    vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
+                    onHover={handleHover}
+                  />
+                  {isBlocking && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        padding: '4px 8px',
+                        backgroundColor: 'rgba(0,0,0,0.7)',
+                        color: '#fff',
+                        fontSize: '11px',
+                        borderRadius: 4,
+                      }}
+                    >
+                      Loading layer data...
                     </div>
                   )}
-                  {selectedConfig.type === 'image' && selectedLayerLoadState.image && (
-                    <div>
-                      Image: {selectedLayerLoadState.image}
-                      {!hasRenderableLayerData(selectedConfig.id) && selectedLayerLoadState.image === 'loading'
-                        ? ' (blocking)'
-                        : ''}
+                  {isLoading && !isBlocking && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        padding: '4px 8px',
+                        backgroundColor: 'rgba(20,20,20,0.78)',
+                        color: '#d5d5d5',
+                        fontSize: '11px',
+                        borderRadius: 4,
+                      }}
+                    >
+                      Refreshing layer metadata...
                     </div>
                   )}
-                  {selectedConfig.type === 'shapes' && selectedLayerLoadState.tooltip && (
-                    <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
+                  {!hasLayersDrawn && !isBlocking && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        color: '#666',
+                        fontSize: '13px',
+                      }}
+                    >
+                      No layers to display
+                    </div>
                   )}
                 </div>
-              )}
-              {selectedConfig.type === 'image' && (
-                <ImageChannelPanel
-                  layerId={selectedConfig.id}
-                  config={selectedConfig}
-                  defaults={getImageLayerLoadedData(selectedConfig.id)}
-                  updateLayer={actions.updateLayer}
-                />
-              )}
-              {selectedConfig.type === 'shapes' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div>
-                    <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>Tooltip fields</div>
-                    {associatedTable ? (
-                      <>
-                        <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>
-                          Table: {associatedTable.key}
-                        </div>
-                        {availableTooltipFields.length > 0 ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {availableTooltipFields.map((field) => {
-                              const checked = selectedConfig.tooltipFields?.includes(field) ?? false;
-                              return (
-                                <label
-                                  key={field}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ccc', fontSize: '12px' }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => {
-                                      const current = new Set(selectedConfig.tooltipFields ?? []);
-                                      if (checked) {
-                                        current.delete(field);
-                                      } else {
-                                        current.add(field);
-                                      }
-                                      actions.updateLayer(selectedConfig.id, {
-                                        tooltipFields: Array.from(current),
-                                      });
-                                    }}
-                                  />
-                                  {field}
-                                </label>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div style={{ color: '#666', fontSize: '12px' }}>
-                            No eligible obs columns found on the associated table
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div style={{ color: '#666', fontSize: '12px' }}>
-                        No associated table found for this shapes layer
+              )
+            ) : (
+              <div style={placeholderStyle}>
+                {coordinateSystem ? 'Select layers to display' : 'Select a coordinate system'}
+              </div>
+            )}
+          </div>
+
+          <aside style={{ ...sidebarStyle, width: 300, borderLeft: '1px solid #333' }}>
+            <div style={{ color: '#aaa', fontSize: '12px', marginBottom: 8, fontWeight: 600 }}>
+              Properties
+            </div>
+            {!selectedConfig && (
+              <div style={{ color: '#666', fontSize: '12px' }}>Select a layer in the list</div>
+            )}
+            {selectedConfig && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <span style={labelStyle}>Element</span>
+                  <div style={{ color: '#ddd', fontSize: '13px' }}>{selectedConfig.elementKey}</div>
+                  <div style={{ color: '#888', fontSize: '11px' }}>{selectedConfig.type}</div>
+                </div>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    color: '#ccc',
+                    fontSize: '12px',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedConfig.visible}
+                    onChange={() => actions.toggleLayerVisibility(selectedConfig.id)}
+                  />
+                  Visible
+                </label>
+                <button
+                  type="button"
+                  style={{
+                    ...selectStyle,
+                    cursor: vw > 0 && vh > 0 && selectedLayerWorldBounds ? 'pointer' : 'not-allowed',
+                    opacity: vw > 0 && vh > 0 && selectedLayerWorldBounds ? 1 : 0.5,
+                  }}
+                  disabled={vw <= 0 || vh <= 0 || !selectedLayerWorldBounds}
+                  onClick={handleCenterOnSelectedLayer}
+                >
+                  Center on layer
+                </button>
+                <label
+                  style={{
+                    color: '#ccc',
+                    fontSize: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  Opacity
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={selectedConfig.opacity}
+                    onChange={(e) =>
+                      actions.updateLayer(selectedConfig.id, { opacity: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                {selectedLayerLoadState && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      color: '#888',
+                      fontSize: '11px',
+                    }}
+                  >
+                    {selectedConfig.type !== 'image' && selectedLayerLoadState.geometry && (
+                      <div>
+                        Geometry: {selectedLayerLoadState.geometry}
+                        {!hasRenderableLayerData(selectedConfig.id) &&
+                        selectedLayerLoadState.geometry === 'loading'
+                          ? ' (blocking)'
+                          : ''}
                       </div>
                     )}
+                    {selectedConfig.type === 'image' && selectedLayerLoadState.image && (
+                      <div>
+                        Image: {selectedLayerLoadState.image}
+                        {!hasRenderableLayerData(selectedConfig.id) &&
+                        selectedLayerLoadState.image === 'loading'
+                          ? ' (blocking)'
+                          : ''}
+                      </div>
+                    )}
+                    {selectedConfig.type === 'shapes' && selectedLayerLoadState.tooltip && (
+                      <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
+                    )}
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-        </aside>
-      </div>
+                )}
+                {selectedConfig.type === 'image' && (
+                  <ImageChannelPanel
+                    layerId={selectedConfig.id}
+                    config={selectedConfig}
+                    defaults={getImageLayerLoadedData(selectedConfig.id)}
+                    updateLayer={actions.updateLayer}
+                  />
+                )}
+                {selectedConfig.type === 'shapes' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div>
+                      <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>
+                        Tooltip fields
+                      </div>
+                      {associatedTable ? (
+                        <>
+                          <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>
+                            Table: {associatedTable.key}
+                          </div>
+                          {availableTooltipFields.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {availableTooltipFields.map((field) => {
+                                const checked =
+                                  selectedConfig.tooltipFields?.includes(field) ?? false;
+                                return (
+                                  <label
+                                    key={field}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 8,
+                                      color: '#ccc',
+                                      fontSize: '12px',
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        const current = new Set(selectedConfig.tooltipFields ?? []);
+                                        if (checked) {
+                                          current.delete(field);
+                                        } else {
+                                          current.add(field);
+                                        }
+                                        actions.updateLayer(selectedConfig.id, {
+                                          tooltipFields: Array.from(current),
+                                        });
+                                      }}
+                                    />
+                                    {field}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ color: '#666', fontSize: '12px' }}>
+                              No eligible obs columns found on the associated table
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ color: '#666', fontSize: '12px' }}>
+                          No associated table found for this shapes layer
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </aside>
+        </div>
       </div>
       {tooltipPortal}
     </>
@@ -711,36 +810,36 @@ export interface SpatialCanvasProps {
 
 /**
  * SpatialCanvas provides a complete UI for viewing and composing spatial data layers.
- * 
+ *
  * It uses SpatialData from the nearest SpatialDataProvider context and allows users to:
  * - Select a coordinate system
  * - Toggle visibility of elements that can be displayed in that coordinate system
  * - Pan and zoom the view
  * - View images, shapes, points, and labels(tbd) together
- * 
+ *
  * @example Basic usage
  * ```tsx
  * <SpatialDataProvider url="https://example.com/data.zarr">
  *   <SpatialCanvas />
  * </SpatialDataProvider>
  * ```
- * 
+ *
  * @example With external store (for MDV integration)
  * ```tsx
  * const store = createSpatialCanvasStore();
- * 
+ *
  * <SpatialDataProvider url="...">
  *   <SpatialCanvas store={store} />
  * </SpatialDataProvider>
- * 
+ *
  * // Store can also be accessed externally
  * store.getState().setCoordinateSystem('global');
  * ```
- * 
+ *
  * @example With image layer channel controls (advanced API)
  * ```tsx
  * const store = createSpatialCanvasStore();
- * 
+ *
  * // Add image layer with custom channel configuration
  * store.getState().addLayer({
  *   id: 'image:my_image',
@@ -765,10 +864,7 @@ export default function SpatialCanvas({
   return (
     <VivLoaderRegistryProvider>
       <SpatialCanvasProvider store={store}>
-        <SpatialCanvasInner
-          tooltipContainer={tooltipContainer}
-          renderTooltip={renderTooltip}
-        />
+        <SpatialCanvasInner tooltipContainer={tooltipContainer} renderTooltip={renderTooltip} />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>
   );

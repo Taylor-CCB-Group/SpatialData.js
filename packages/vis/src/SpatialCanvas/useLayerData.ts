@@ -1,38 +1,54 @@
 /**
  * Hook for loading and caching layer data
- * 
+ *
  * Handles async loading of geometry data (shapes, points) and manages
  * loading state for each layer.
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { getImageSize } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
-import type { Layer } from 'deck.gl';
-import type { ShapesElement, PointsElement, ImageElement, SpatialData, TableColumnData } from '@spatialdata/core';
 import {
+  COLOR_PALLETE,
   buildDefaultSelection,
   clampVivSelectionsToAxes,
   getMultiSelectionStats,
   getVivSelectionAxisSizes,
   guessRgb,
   isInterleaved,
-  COLOR_PALLETE,
   tryParseOmeroHexColor,
 } from '@spatialdata/avivatorish';
-import type { LayerConfig, ElementsByType, AvailableElement } from './types';
-import { 
-  renderShapesLayer, 
-  loadShapesData,
-  type ShapeTooltipDatum,
-} from './renderers/shapesRenderer';
-import { 
-  renderPointsLayer, 
-  type PointsLayerRenderConfig,
-  type PointData,
-} from './renderers/pointsRenderer';
-import { createImageLoader } from './renderers/imageRenderer';
+import {
+  type AxisAlignedBounds,
+  type ImageElement,
+  type PointsElement,
+  type ShapesElement,
+  type SpatialData,
+  type TableColumnData,
+  boundsFromImagePixelExtents,
+  boundsFromPoints,
+  boundsFromPolygons,
+  getPhysicalSizeScalingMatrixFromMeta,
+  unionBoundsList,
+} from '@spatialdata/core';
+import type { Layer } from 'deck.gl';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
-import { applyPerChannelFallbackWithoutOmero, type VivLoaderMetadata } from './imageLoaderChannelDefaults';
+import {
+  type VivLoaderMetadata,
+  applyPerChannelFallbackWithoutOmero,
+} from './imageLoaderChannelDefaults';
+import { createImageLoader } from './renderers/imageRenderer';
+import {
+  type PointData,
+  type PointsLayerRenderConfig,
+  renderPointsLayer,
+} from './renderers/pointsRenderer';
+import {
+  type ShapeTooltipDatum,
+  loadShapesData,
+  renderShapesLayer,
+} from './renderers/shapesRenderer';
+import type { AvailableElement, ElementsByType, LayerConfig } from './types';
 
 export interface ImageLoaderData {
   loader: unknown;
@@ -102,6 +118,10 @@ interface UseLayerDataResult {
   isBlocking: boolean;
   /** Trigger a reload of data for a specific element */
   reloadElement: (type: string, key: string) => void;
+  /** World-space axis-aligned bounds for one visible layer with loaded data, or null. */
+  getWorldBoundsForLayer: (layerId: string) => AxisAlignedBounds | null;
+  /** Union of bounds for all visible layers in order that have renderable data. */
+  getWorldBoundsForVisibleLayers: () => AxisAlignedBounds | null;
 }
 
 function getTooltipSignature(config: LayerConfig | undefined): string {
@@ -125,7 +145,7 @@ function tableRegionMatches(regionValue: string, shapeKey: string) {
 async function loadShapeTooltipData(
   spatialData: SpatialData | undefined,
   element: ShapesElement,
-  tooltipFields: string[],
+  tooltipFields: string[]
 ): Promise<
   Pick<
     LoadedShapesData,
@@ -133,7 +153,9 @@ async function loadShapeTooltipData(
   >
 > {
   const featureIdsRaw = await element.loadFeatureIds();
-  const featureIds = featureIdsRaw ? Array.from(featureIdsRaw, (value: unknown) => String(value)) : undefined;
+  const featureIds = featureIdsRaw
+    ? Array.from(featureIdsRaw, (value: unknown) => String(value))
+    : undefined;
 
   if (tooltipFields.length === 0) {
     return {
@@ -200,8 +222,8 @@ async function loadShapeTooltipData(
   let tooltipRowIndices: Int32Array | undefined;
   // this looks costly?
   const isDirectlyAligned =
-    filteredRowIds.length === featureIds.length
-    && filteredRowIds.every((rowId, index) => rowId === featureIds[index]);
+    filteredRowIds.length === featureIds.length &&
+    filteredRowIds.every((rowId, index) => rowId === featureIds[index]);
 
   if (!isDirectlyAligned) {
     const rowIndexByFeatureId = new Map<string, number>();
@@ -229,7 +251,7 @@ async function loadShapeTooltipData(
 }
 
 async function loadShapesLayerData(
-  element: ShapesElement,
+  element: ShapesElement
 ): Promise<Pick<LoadedShapesData, 'polygons'>> {
   const polygons = await loadShapesData(element);
   return { polygons };
@@ -237,7 +259,7 @@ async function loadShapesLayerData(
 
 /**
  * Hook to manage async loading of layer data and produce deck.gl layers.
- * 
+ *
  * This hook:
  * 1. Watches for changes to enabled layers
  * 2. Loads data for newly enabled layers
@@ -249,7 +271,7 @@ export function useLayerData(
   layerOrder: string[],
   availableElements: ElementsByType,
   coordinateSystem: string | null,
-  spatialData?: SpatialData,
+  spatialData?: SpatialData
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -267,7 +289,7 @@ export function useLayerData(
 
   // Build a map of element key -> AvailableElement for quick lookup
   const elementMap = useRef<Map<string, AvailableElement>>(new Map());
-  
+
   useEffect(() => {
     const map = new Map<string, AvailableElement>();
     for (const type of ['images', 'shapes', 'points', 'labels'] as const) {
@@ -278,25 +300,24 @@ export function useLayerData(
     elementMap.current = map;
   }, [availableElements]);
 
-  const setLayerResourceStatus = useCallback((
-    layerId: string,
-    resource: keyof LayerLoadState,
-    status: ResourceLoadStatus,
-  ) => {
-    setLayerLoadStates((prev) => {
-      const existing = prev[layerId] ?? {};
-      if (existing[resource] === status) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [layerId]: {
-          ...existing,
-          [resource]: status,
-        },
-      };
-    });
-  }, []);
+  const setLayerResourceStatus = useCallback(
+    (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
+      setLayerLoadStates((prev) => {
+        const existing = prev[layerId] ?? {};
+        if (existing[resource] === status) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [layerId]: {
+            ...existing,
+            [resource]: status,
+          },
+        };
+      });
+    },
+    []
+  );
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -309,14 +330,14 @@ export function useLayerData(
         loadImage: boolean;
         loadPoints: boolean;
       }> = [];
-      
+
       for (const layerId of layerOrder) {
         const config = layers[layerId];
         if (!config?.visible) continue;
-        
+
         const elem = elementMap.current.get(layerId);
         if (!elem) continue;
-        
+
         // Check if we need to load data
         const loaded = loadedDataRef.current;
         if (config.type === 'shapes') {
@@ -354,202 +375,231 @@ export function useLayerData(
           });
         }
       }
-      
+
       if (toLoad.length === 0) return;
 
       // Load in parallel
-      await Promise.all(toLoad.map(async ({ layerId, element, loadGeometry, loadTooltip, loadImage, loadPoints }) => {
-        if (element.type === 'shapes') {
-          const existing = loadedDataRef.current.shapes.get(element.key);
-          if (loadGeometry) {
-            try {
-              setLayerResourceStatus(layerId, 'geometry', 'loading');
-              const geometryData = await loadShapesLayerData(element.element as ShapesElement);
-              loadedDataRef.current.shapes.set(element.key, {
-                ...existing,
-                ...geometryData,
-              });
-              setLayerResourceStatus(layerId, 'geometry', 'ready');
-            } catch (error) {
-              setLayerResourceStatus(layerId, 'geometry', 'error');
-              console.error(`Failed to load shapes geometry for ${layerId}:`, error);
-              return;
-            }
-          } else {
-            setLayerResourceStatus(layerId, 'geometry', existing ? 'ready' : 'idle');
-          }
-
-          if (loadTooltip) {
-            try {
-              const shapeLayerConfig =
-                layersRef.current[layerId]?.type === 'shapes'
-                  ? layersRef.current[layerId]
-                  : undefined;
-              const tooltipFields = shapeLayerConfig?.tooltipFields ?? [];
-              const requestedSignature = getTooltipSignature(shapeLayerConfig);
-              if (tooltipFields.length > 0) {
-                setLayerResourceStatus(layerId, 'tooltip', 'loading');
-                const current = loadedDataRef.current.shapes.get(element.key);
-                const tooltipData = await loadShapeTooltipData(
-                  spatialData,
-                  element.element as ShapesElement,
-                  tooltipFields,
-                );
-                const latestDesired = getTooltipSignature(
-                  layersRef.current[layerId]?.type === 'shapes'
-                    ? layersRef.current[layerId]
-                    : undefined,
-                );
-                if (latestDesired !== requestedSignature) {
+      await Promise.all(
+        toLoad.map(
+          async ({ layerId, element, loadGeometry, loadTooltip, loadImage, loadPoints }) => {
+            if (element.type === 'shapes') {
+              const existing = loadedDataRef.current.shapes.get(element.key);
+              if (loadGeometry) {
+                try {
+                  setLayerResourceStatus(layerId, 'geometry', 'loading');
+                  const geometryData = await loadShapesLayerData(element.element as ShapesElement);
+                  loadedDataRef.current.shapes.set(element.key, {
+                    ...existing,
+                    ...geometryData,
+                  });
+                  setLayerResourceStatus(layerId, 'geometry', 'ready');
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'geometry', 'error');
+                  console.error(`Failed to load shapes geometry for ${layerId}:`, error);
                   return;
                 }
-                loadedDataRef.current.shapes.set(element.key, {
-                  ...current,
-                  ...tooltipData,
-                } as LoadedShapesData);
-                setLayerResourceStatus(
-                  layerId,
-                  'tooltip',
-                  tooltipData.tooltipSignature === undefined ? 'idle' : 'ready',
-                );
               } else {
-                const current = loadedDataRef.current.shapes.get(element.key);
-                loadedDataRef.current.shapes.set(element.key, {
-                  ...current,
-                  tooltipSignature: '',
-                  tooltipFields: [],
-                  tooltipColumns: undefined,
-                  tooltipRowIndices: undefined,
-                } as LoadedShapesData);
-                setLayerResourceStatus(layerId, 'tooltip', 'idle');
+                setLayerResourceStatus(layerId, 'geometry', existing ? 'ready' : 'idle');
               }
-            } catch (error) {
-              setLayerResourceStatus(layerId, 'tooltip', 'error');
-              console.error(`Failed to load shapes tooltip for ${layerId}:`, error);
-            }
-          }
-        } else if (element.type === 'points' && loadPoints) {
-          try {
-            setLayerResourceStatus(layerId, 'geometry', 'loading');
-            // todo better type-guards etc here.
-            const e = element.element as PointsElement;
-            const data = await e.loadPoints();
-            loadedDataRef.current.points.set(element.key, data);
-            setLayerResourceStatus(layerId, 'geometry', 'ready');
-          } catch (error) {
-            setLayerResourceStatus(layerId, 'geometry', 'error');
-            console.error(`Failed to load points for ${layerId}:`, error);
-          }
-        } else if (element.type === 'image' && loadImage) {
-          try {
-            setLayerResourceStatus(layerId, 'image', 'loading');
-            const loader = await createImageLoader(
-              element.element as ImageElement,
-              getOmeZarrMultiscalesData,
-            );
-            // Compute channel defaults from loader metadata
-            const imageElement = element.element as ImageElement;
-            const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
 
-            const imageData: ImageLoaderData = { loader };
-
-            try {
-              if (loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck) {
-                const loaderObj = loaderToCheck as VivLoaderMetadata;
-                imageData.selectionAxisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
-                
-                // Build selections
-                const selections = buildDefaultSelection({
-                  labels: loaderObj.labels,
-                  shape: loaderObj.shape,
-                });
-                
-                // Get metadata from image element
-                const metadata = imageElement.attrs.omero;
-                
-                if (metadata?.channels) {
-                  const Channels = metadata.channels;
-                  const isRgb = guessRgb({ Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) } } as any);
-                  
-                  if (isRgb) {
-                    if (isInterleaved(loaderObj.shape)) {
-                      imageData.contrastLimits = [[0, 255]];
-                      imageData.colors = [[255, 0, 0]];
-                    } else {
-                      imageData.contrastLimits = [[0, 255], [0, 255], [0, 255]];
-                      imageData.colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
-                    }
-                    imageData.channelsVisible = imageData.colors.map(() => true);
-                  } else {
-                    // Compute stats for non-RGB images
-                    const stats = await getMultiSelectionStats({
-                      loader: loader as any,
-                      selections: selections as any,
-                      use3d: false,
-                    });
-                    imageData.contrastLimits = stats.contrastLimits;
-                    // Use channel colors from metadata or palette
-                    const computedColors: [number, number, number][] =
-                      stats.contrastLimits.length === 1
-                        ? [[255, 255, 255]]
-                        : stats.contrastLimits.map((_, i): [number, number, number] => {
-                            const rgb = tryParseOmeroHexColor(Channels[i]?.color);
-                            const p = COLOR_PALLETE[i % COLOR_PALLETE.length];
-                            return rgb ?? [p[0], p[1], p[2]];
-                          });
-                    imageData.colors = computedColors;
-                    imageData.channelsVisible = computedColors.map(() => true);
-                  }
-                  imageData.selections = selections;
-                } else {
-                  applyPerChannelFallbackWithoutOmero(imageData, loaderObj, selections);
-                }
-              } else {
-                imageData.contrastLimits = [[0, 65535]];
-                imageData.colors = [[255, 255, 255]];
-                imageData.channelsVisible = [true];
-                imageData.selections = [{}];
-              }
-            } catch (error) {
-              console.warn(`Failed to compute channel defaults for ${element.key}:`, error);
-              const fallbackLoader =
-                loaderToCheck && typeof loaderToCheck === 'object' && 'labels' in loaderToCheck && 'shape' in loaderToCheck
-                  ? (loaderToCheck as VivLoaderMetadata)
-                  : undefined;
-              if (fallbackLoader) {
+              if (loadTooltip) {
                 try {
-                  imageData.selectionAxisSizes =
-                    imageData.selectionAxisSizes ??
-                    getVivSelectionAxisSizes(fallbackLoader.labels, fallbackLoader.shape);
-                  const fallbackSelections = buildDefaultSelection({
-                    labels: fallbackLoader.labels,
-                    shape: fallbackLoader.shape,
-                  });
-                  applyPerChannelFallbackWithoutOmero(imageData, fallbackLoader, fallbackSelections);
-                } catch {
-                  imageData.contrastLimits = [[0, 65535]];
-                  imageData.colors = [[255, 255, 255]];
-                  imageData.channelsVisible = [true];
-                  imageData.selections = [{}];
+                  const shapeLayerConfig =
+                    layersRef.current[layerId]?.type === 'shapes'
+                      ? layersRef.current[layerId]
+                      : undefined;
+                  const tooltipFields = shapeLayerConfig?.tooltipFields ?? [];
+                  const requestedSignature = getTooltipSignature(shapeLayerConfig);
+                  if (tooltipFields.length > 0) {
+                    setLayerResourceStatus(layerId, 'tooltip', 'loading');
+                    const current = loadedDataRef.current.shapes.get(element.key);
+                    const tooltipData = await loadShapeTooltipData(
+                      spatialData,
+                      element.element as ShapesElement,
+                      tooltipFields
+                    );
+                    const latestDesired = getTooltipSignature(
+                      layersRef.current[layerId]?.type === 'shapes'
+                        ? layersRef.current[layerId]
+                        : undefined
+                    );
+                    if (latestDesired !== requestedSignature) {
+                      return;
+                    }
+                    loadedDataRef.current.shapes.set(element.key, {
+                      ...current,
+                      ...tooltipData,
+                    } as LoadedShapesData);
+                    setLayerResourceStatus(
+                      layerId,
+                      'tooltip',
+                      tooltipData.tooltipSignature === undefined ? 'idle' : 'ready'
+                    );
+                  } else {
+                    const current = loadedDataRef.current.shapes.get(element.key);
+                    loadedDataRef.current.shapes.set(element.key, {
+                      ...current,
+                      tooltipSignature: '',
+                      tooltipFields: [],
+                      tooltipColumns: undefined,
+                      tooltipRowIndices: undefined,
+                    } as LoadedShapesData);
+                    setLayerResourceStatus(layerId, 'tooltip', 'idle');
+                  }
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'tooltip', 'error');
+                  console.error(`Failed to load shapes tooltip for ${layerId}:`, error);
                 }
-              } else {
-                imageData.contrastLimits = [[0, 65535]];
-                imageData.colors = [[255, 255, 255]];
-                imageData.channelsVisible = [true];
-                imageData.selections = [{}];
+              }
+            } else if (element.type === 'points' && loadPoints) {
+              try {
+                setLayerResourceStatus(layerId, 'geometry', 'loading');
+                // todo better type-guards etc here.
+                const e = element.element as PointsElement;
+                const data = await e.loadPoints();
+                loadedDataRef.current.points.set(element.key, data);
+                setLayerResourceStatus(layerId, 'geometry', 'ready');
+              } catch (error) {
+                setLayerResourceStatus(layerId, 'geometry', 'error');
+                console.error(`Failed to load points for ${layerId}:`, error);
+              }
+            } else if (element.type === 'image' && loadImage) {
+              try {
+                setLayerResourceStatus(layerId, 'image', 'loading');
+                const loader = await createImageLoader(
+                  element.element as ImageElement,
+                  getOmeZarrMultiscalesData
+                );
+                // Compute channel defaults from loader metadata
+                const imageElement = element.element as ImageElement;
+                const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+
+                const imageData: ImageLoaderData = { loader };
+
+                try {
+                  if (
+                    loaderToCheck &&
+                    typeof loaderToCheck === 'object' &&
+                    'labels' in loaderToCheck &&
+                    'shape' in loaderToCheck
+                  ) {
+                    const loaderObj = loaderToCheck as VivLoaderMetadata;
+                    imageData.selectionAxisSizes = getVivSelectionAxisSizes(
+                      loaderObj.labels,
+                      loaderObj.shape
+                    );
+
+                    // Build selections
+                    const selections = buildDefaultSelection({
+                      labels: loaderObj.labels,
+                      shape: loaderObj.shape,
+                    });
+
+                    // Get metadata from image element
+                    const metadata = imageElement.attrs.omero;
+
+                    if (metadata?.channels) {
+                      const Channels = metadata.channels;
+                      const isRgb = guessRgb({
+                        Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) },
+                      } as any);
+
+                      if (isRgb) {
+                        if (isInterleaved(loaderObj.shape)) {
+                          imageData.contrastLimits = [[0, 255]];
+                          imageData.colors = [[255, 0, 0]];
+                        } else {
+                          imageData.contrastLimits = [
+                            [0, 255],
+                            [0, 255],
+                            [0, 255],
+                          ];
+                          imageData.colors = [
+                            [255, 0, 0],
+                            [0, 255, 0],
+                            [0, 0, 255],
+                          ];
+                        }
+                        imageData.channelsVisible = imageData.colors.map(() => true);
+                      } else {
+                        // Compute stats for non-RGB images
+                        const stats = await getMultiSelectionStats({
+                          loader: loader as any,
+                          selections: selections as any,
+                          use3d: false,
+                        });
+                        imageData.contrastLimits = stats.contrastLimits;
+                        // Use channel colors from metadata or palette
+                        const computedColors: [number, number, number][] =
+                          stats.contrastLimits.length === 1
+                            ? [[255, 255, 255]]
+                            : stats.contrastLimits.map((_, i): [number, number, number] => {
+                                const rgb = tryParseOmeroHexColor(Channels[i]?.color);
+                                const p = COLOR_PALLETE[i % COLOR_PALLETE.length];
+                                return rgb ?? [p[0], p[1], p[2]];
+                              });
+                        imageData.colors = computedColors;
+                        imageData.channelsVisible = computedColors.map(() => true);
+                      }
+                      imageData.selections = selections;
+                    } else {
+                      applyPerChannelFallbackWithoutOmero(imageData, loaderObj, selections);
+                    }
+                  } else {
+                    imageData.contrastLimits = [[0, 65535]];
+                    imageData.colors = [[255, 255, 255]];
+                    imageData.channelsVisible = [true];
+                    imageData.selections = [{}];
+                  }
+                } catch (error) {
+                  console.warn(`Failed to compute channel defaults for ${element.key}:`, error);
+                  const fallbackLoader =
+                    loaderToCheck &&
+                    typeof loaderToCheck === 'object' &&
+                    'labels' in loaderToCheck &&
+                    'shape' in loaderToCheck
+                      ? (loaderToCheck as VivLoaderMetadata)
+                      : undefined;
+                  if (fallbackLoader) {
+                    try {
+                      imageData.selectionAxisSizes =
+                        imageData.selectionAxisSizes ??
+                        getVivSelectionAxisSizes(fallbackLoader.labels, fallbackLoader.shape);
+                      const fallbackSelections = buildDefaultSelection({
+                        labels: fallbackLoader.labels,
+                        shape: fallbackLoader.shape,
+                      });
+                      applyPerChannelFallbackWithoutOmero(
+                        imageData,
+                        fallbackLoader,
+                        fallbackSelections
+                      );
+                    } catch {
+                      imageData.contrastLimits = [[0, 65535]];
+                      imageData.colors = [[255, 255, 255]];
+                      imageData.channelsVisible = [true];
+                      imageData.selections = [{}];
+                    }
+                  } else {
+                    imageData.contrastLimits = [[0, 65535]];
+                    imageData.colors = [[255, 255, 255]];
+                    imageData.channelsVisible = [true];
+                    imageData.selections = [{}];
+                  }
+                }
+
+                loadedDataRef.current.images.set(element.key, imageData);
+                setLayerResourceStatus(layerId, 'image', 'ready');
+              } catch (error) {
+                setLayerResourceStatus(layerId, 'image', 'error');
+                console.error(`Failed to load image for ${layerId}:`, error);
               }
             }
-
-            loadedDataRef.current.images.set(element.key, imageData);
-            setLayerResourceStatus(layerId, 'image', 'ready');
-          } catch (error) {
-            setLayerResourceStatus(layerId, 'image', 'error');
-            console.error(`Failed to load image for ${layerId}:`, error);
           }
-        }
-      }));
+        )
+      );
     };
-    
+
     loadData();
   }, [layers, layerOrder, getOmeZarrMultiscalesData, spatialData, setLayerResourceStatus]);
 
@@ -580,17 +630,63 @@ export function useLayerData(
     return false;
   }, []);
 
-  const getLayers = useCallback((): Layer[] => {
-    const deckLayers: Layer[] = [];
-    const loaded = loadedDataRef.current;
-    
+  const getWorldBoundsForLayer = useCallback(
+    (layerId: string): AxisAlignedBounds | null => {
+      try {
+        const config = layers[layerId];
+        const elem = elementMap.current.get(layerId);
+        if (!config?.visible || !elem) return null;
+        const loaded = loadedDataRef.current;
+        if (elem.type === 'shapes') {
+          const shapeData = loaded.shapes.get(elem.key);
+          if (!shapeData?.polygons?.length) return null;
+          return boundsFromPolygons(shapeData.polygons, elem.transform);
+        }
+        if (elem.type === 'points') {
+          const pointData = loaded.points.get(elem.key);
+          if (!pointData) return null;
+          return boundsFromPoints(pointData, elem.transform, false);
+        }
+        if (elem.type === 'image') {
+          const imageData = loaded.images.get(elem.key);
+          if (!imageData?.loader) return null;
+          const source = Array.isArray(imageData.loader) ? imageData.loader[0] : imageData.loader;
+          if (!source || typeof source !== 'object') return null;
+          const { width, height } = getImageSize(source as never);
+          const physical = getPhysicalSizeScalingMatrixFromMeta(source);
+          return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+        }
+        return null;
+      } catch (err) {
+        console.warn(`[useLayerData] getWorldBoundsForLayer failed for ${layerId}`, err);
+        return null;
+      }
+    },
+    [layers]
+  );
+
+  const getWorldBoundsForVisibleLayers = useCallback((): AxisAlignedBounds | null => {
+    const list: AxisAlignedBounds[] = [];
     for (const layerId of layerOrder) {
       const config = layers[layerId];
       if (!config?.visible) continue;
-      
+      const b = getWorldBoundsForLayer(layerId);
+      if (b) list.push(b);
+    }
+    return unionBoundsList(list);
+  }, [layerOrder, layers, getWorldBoundsForLayer]);
+
+  const getLayers = useCallback((): Layer[] => {
+    const deckLayers: Layer[] = [];
+    const loaded = loadedDataRef.current;
+
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible) continue;
+
       const elem = elementMap.current.get(layerId);
       if (!elem) continue;
-      
+
       if (config.type === 'shapes') {
         const shapeData = loaded.shapes.get(elem.key);
         if (shapeData) {
@@ -625,7 +721,7 @@ export function useLayerData(
       }
       // Image layers are handled separately via getVivLayerProps()
     }
-    
+
     return deckLayers;
   }, [layers, layerOrder]);
 
@@ -635,93 +731,99 @@ export function useLayerData(
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
-  const getLayerLoadState = useCallback((layerId?: string): LayerLoadState | undefined => {
-    if (layerId === undefined) return undefined;
-    return layerLoadStates[layerId];
-  }, [layerLoadStates]);
+  const getLayerLoadState = useCallback(
+    (layerId?: string): LayerLoadState | undefined => {
+      if (layerId === undefined) return undefined;
+      return layerLoadStates[layerId];
+    },
+    [layerLoadStates]
+  );
 
-  const getFeatureTooltip = useCallback((layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
-    const elem = elementMap.current.get(layerId);
-    if (!elem || elem.type !== 'shapes') {
-      return undefined;
-    }
+  const getFeatureTooltip = useCallback(
+    (layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
+      const elem = elementMap.current.get(layerId);
+      if (!elem || elem.type !== 'shapes') {
+        return undefined;
+      }
 
-    const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
-    if (!loadedShapeData?.featureIds || !loadedShapeData.tooltipFields || !loadedShapeData.tooltipColumns) {
-      return undefined;
-    }
+      const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
+      if (
+        !loadedShapeData?.featureIds ||
+        !loadedShapeData.tooltipFields ||
+        !loadedShapeData.tooltipColumns
+      ) {
+        return undefined;
+      }
 
-    const config = layersRef.current[layerId];
-    if (getTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
-      return undefined;
-    }
+      const config = layersRef.current[layerId];
+      if (getTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
+        return undefined;
+      }
 
-    const featureId = loadedShapeData.featureIds[objectIndex];
-    if (!featureId) {
-      return undefined;
-    }
+      const featureId = loadedShapeData.featureIds[objectIndex];
+      if (!featureId) {
+        return undefined;
+      }
 
-    const rowIndex = loadedShapeData.tooltipRowIndices
-      ? loadedShapeData.tooltipRowIndices[objectIndex]
-      : objectIndex;
-    if (rowIndex === undefined || rowIndex < 0) {
-      return undefined;
-    }
+      const rowIndex = loadedShapeData.tooltipRowIndices
+        ? loadedShapeData.tooltipRowIndices[objectIndex]
+        : objectIndex;
+      if (rowIndex === undefined || rowIndex < 0) {
+        return undefined;
+      }
 
-    const items = loadedShapeData.tooltipFields
-      .map((field, fieldIndex) => ({
-        label: field,
-        value: normalizeTooltipValue(loadedShapeData.tooltipColumns?.[fieldIndex], rowIndex),
-      }))
-      .filter((item) => item.value !== '');
+      const items = loadedShapeData.tooltipFields
+        .map((field, fieldIndex) => ({
+          label: field,
+          value: normalizeTooltipValue(loadedShapeData.tooltipColumns?.[fieldIndex], rowIndex),
+        }))
+        .filter((item) => item.value !== '');
 
-    if (items.length === 0) {
-      return undefined;
-    }
+      if (items.length === 0) {
+        return undefined;
+      }
 
-    return {
-      title: featureId,
-      items,
-    };
-  }, []);
+      return {
+        title: featureId,
+        items,
+      };
+    },
+    []
+  );
 
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
     const vivProps: ImageLayerConfig[] = [];
     const loaded = loadedDataRef.current;
-    
+
     for (const layerId of layerOrder) {
       const config = layers[layerId];
       if (!config?.visible || config.type !== 'image') continue;
-      
+
       const elem = elementMap.current.get(layerId);
       if (!elem || elem.type !== 'image') continue;
-      
+
       const imageData = loaded.images.get(elem.key);
       if (!imageData) continue; // Skip if loader not ready yet
-      
+
       const ch = config.channels;
       const colors =
-        ch?.colors && ch.colors.length > 0
-          ? ch.colors
-          : (imageData.colors || [[255, 255, 255]]);
+        ch?.colors && ch.colors.length > 0 ? ch.colors : imageData.colors || [[255, 255, 255]];
       const contrastLimits =
         ch?.contrastLimits && ch.contrastLimits.length > 0
           ? ch.contrastLimits
-          : (imageData.contrastLimits || [[0, 65535]]);
+          : imageData.contrastLimits || [[0, 65535]];
       const channelsVisible =
         ch?.channelsVisible && ch.channelsVisible.length > 0
           ? ch.channelsVisible
-          : (imageData.channelsVisible || [true]);
+          : imageData.channelsVisible || [true];
       const rawSelections =
-        ch?.selections && ch.selections.length > 0
-          ? ch.selections
-          : (imageData.selections || [{}]);
+        ch?.selections && ch.selections.length > 0 ? ch.selections : imageData.selections || [{}];
       const axisSizes = imageData.selectionAxisSizes;
       const selections =
         axisSizes !== undefined
           ? clampVivSelectionsToAxes(rawSelections, axisSizes)
           : rawSelections;
-      
+
       vivProps.push({
         loader: imageData.loader,
         colors,
@@ -733,32 +835,34 @@ export function useLayerData(
         visible: config.visible,
       });
     }
-    
+
     return vivProps;
   }, [layers, layerOrder]);
 
   const isLoading = useMemo(
-    () => Object.values(layerLoadStates).some((state) =>
-      Object.values(state).some((status) => status === 'loading')
-    ),
-    [layerLoadStates],
+    () =>
+      Object.values(layerLoadStates).some((state) =>
+        Object.values(state).some((status) => status === 'loading')
+      ),
+    [layerLoadStates]
   );
 
   const isBlocking = useMemo(
-    () => layerOrder.some((layerId) => {
-      const config = layers[layerId];
-      if (!config?.visible) return false;
-      const state = layerLoadStates[layerId];
-      if (!state) return false;
-      if (config.type === 'image') {
-        return state.image === 'loading' && !hasRenderableLayerData(layerId);
-      }
-      if (config.type === 'shapes' || config.type === 'points') {
-        return state.geometry === 'loading' && !hasRenderableLayerData(layerId);
-      }
-      return false;
-    }),
-    [layerLoadStates, layerOrder, layers, hasRenderableLayerData],
+    () =>
+      layerOrder.some((layerId) => {
+        const config = layers[layerId];
+        if (!config?.visible) return false;
+        const state = layerLoadStates[layerId];
+        if (!state) return false;
+        if (config.type === 'image') {
+          return state.image === 'loading' && !hasRenderableLayerData(layerId);
+        }
+        if (config.type === 'shapes' || config.type === 'points') {
+          return state.geometry === 'loading' && !hasRenderableLayerData(layerId);
+        }
+        return false;
+      }),
+    [layerLoadStates, layerOrder, layers, hasRenderableLayerData]
   );
 
   return {
@@ -771,5 +875,7 @@ export function useLayerData(
     isLoading,
     isBlocking,
     reloadElement,
+    getWorldBoundsForLayer,
+    getWorldBoundsForVisibleLayers,
   };
 }
