@@ -20,6 +20,7 @@ import {
 import {
   type AxisAlignedBounds,
   type ImageElement,
+  type LabelsElement,
   type PointsElement,
   type ShapesElement,
   type SpatialData,
@@ -43,6 +44,7 @@ import {
   type PointsLayerRenderConfig,
   renderPointsLayer,
 } from './renderers/pointsRenderer';
+import { renderLabelsLayer } from './renderers/labelsRenderer';
 import {
   type ShapeTooltipDatum,
   loadShapesData,
@@ -78,6 +80,7 @@ interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
+  labels: Map<string, LabelsLoaderData>;
 }
 
 type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -97,6 +100,17 @@ export interface ImageLayerConfig {
   modelMatrix?: Matrix4; // Transformation matrix for coordinate system alignment
   opacity?: number; // Layer opacity (0-1)
   visible?: boolean; // Whether layer is visible
+}
+
+export interface LabelsLoaderData {
+  loader: unknown;
+  colors: [number, number, number][];
+  channelsVisible: boolean[];
+  channelOpacities: number[];
+  channelsFilled: boolean[];
+  channelStrokeWidths: number[];
+  selections: Array<Partial<{ z: number; c: number; t: number }>>;
+  selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
 interface UseLayerDataResult {
@@ -280,6 +294,7 @@ export function useLayerData(
     shapes: new Map(),
     points: new Map(),
     images: new Map(),
+    labels: new Map(),
   });
 
   const layersRef = useRef(layers);
@@ -329,6 +344,7 @@ export function useLayerData(
         loadTooltip: boolean;
         loadImage: boolean;
         loadPoints: boolean;
+        loadLabels: boolean;
       }> = [];
 
       for (const layerId of layerOrder) {
@@ -353,6 +369,7 @@ export function useLayerData(
               loadTooltip,
               loadImage: false,
               loadPoints: false,
+              loadLabels: false,
             });
           }
         } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
@@ -363,6 +380,7 @@ export function useLayerData(
             loadTooltip: false,
             loadImage: false,
             loadPoints: true,
+            loadLabels: false,
           });
         } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
           toLoad.push({
@@ -372,6 +390,17 @@ export function useLayerData(
             loadTooltip: false,
             loadImage: true,
             loadPoints: false,
+            loadLabels: false,
+          });
+        } else if (config.type === 'labels' && !loaded.labels.has(elem.key)) {
+          toLoad.push({
+            layerId,
+            element: elem,
+            loadGeometry: false,
+            loadTooltip: false,
+            loadImage: false,
+            loadPoints: false,
+            loadLabels: true,
           });
         }
       }
@@ -381,7 +410,15 @@ export function useLayerData(
       // Load in parallel
       await Promise.all(
         toLoad.map(
-          async ({ layerId, element, loadGeometry, loadTooltip, loadImage, loadPoints }) => {
+          async ({
+            layerId,
+            element,
+            loadGeometry,
+            loadTooltip,
+            loadImage,
+            loadPoints,
+            loadLabels,
+          }) => {
             if (element.type === 'shapes') {
               const existing = loadedDataRef.current.shapes.get(element.key);
               if (loadGeometry) {
@@ -594,6 +631,67 @@ export function useLayerData(
                 setLayerResourceStatus(layerId, 'image', 'error');
                 console.error(`Failed to load image for ${layerId}:`, error);
               }
+            } else if (element.type === 'labels' && loadLabels) {
+              try {
+                setLayerResourceStatus(layerId, 'image', 'loading');
+                const loader = await createImageLoader(
+                  element.element as LabelsElement,
+                  getOmeZarrMultiscalesData
+                );
+                const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+                const labelsData: LabelsLoaderData = {
+                  loader,
+                  colors: [[255, 255, 255]],
+                  channelsVisible: [true],
+                  channelOpacities: [1],
+                  channelsFilled: [true],
+                  channelStrokeWidths: [1],
+                  selections: [{}],
+                };
+
+                if (
+                  loaderToCheck &&
+                  typeof loaderToCheck === 'object' &&
+                  'labels' in loaderToCheck &&
+                  'shape' in loaderToCheck
+                ) {
+                  const loaderObj = loaderToCheck as VivLoaderMetadata;
+                  const axisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
+                  const selections = clampVivSelectionsToAxes(
+                    buildDefaultSelection({
+                      labels: loaderObj.labels,
+                      shape: loaderObj.shape,
+                    }),
+                    axisSizes
+                  ).slice(0, 7);
+                  const channelCount = Math.max(selections.length, 1);
+                  const metadataChannels = (element.element as LabelsElement).attrs.omero?.channels;
+
+                  const colors = Array.from(
+                    { length: channelCount },
+                    (_, index): [number, number, number] => {
+                      const rgb = tryParseOmeroHexColor(metadataChannels?.[index]?.color);
+                      const palette = COLOR_PALLETE[index % COLOR_PALLETE.length];
+                      return rgb ?? [palette[0], palette[1], palette[2]];
+                    }
+                  );
+                  labelsData.selectionAxisSizes = axisSizes;
+                  labelsData.selections = selections.length > 0 ? selections : [{}];
+                  labelsData.colors = colors;
+                  labelsData.channelsVisible = colors.map(
+                    (_, index) => metadataChannels?.[index]?.active ?? true
+                  );
+                  labelsData.channelOpacities = colors.map(() => 1);
+                  labelsData.channelsFilled = colors.map(() => true);
+                  labelsData.channelStrokeWidths = colors.map(() => 1);
+                }
+
+                loadedDataRef.current.labels.set(element.key, labelsData);
+                setLayerResourceStatus(layerId, 'image', 'ready');
+              } catch (error) {
+                setLayerResourceStatus(layerId, 'image', 'error');
+                console.error(`Failed to load labels for ${layerId}:`, error);
+              }
             }
           }
         )
@@ -611,6 +709,8 @@ export function useLayerData(
       loaded.points.delete(key);
     } else if (type === 'image') {
       loaded.images.delete(key);
+    } else if (type === 'labels') {
+      loaded.labels.delete(key);
     }
     // The useEffect will pick up the missing data and reload
   }, []);
@@ -626,6 +726,9 @@ export function useLayerData(
     }
     if (elem.type === 'image') {
       return loadedDataRef.current.images.has(elem.key);
+    }
+    if (elem.type === 'labels') {
+      return loadedDataRef.current.labels.has(elem.key);
     }
     return false;
   }, []);
@@ -651,6 +754,16 @@ export function useLayerData(
           const imageData = loaded.images.get(elem.key);
           if (!imageData?.loader) return null;
           const source = Array.isArray(imageData.loader) ? imageData.loader[0] : imageData.loader;
+          if (!source || typeof source !== 'object') return null;
+          const { width, height } = getImageSize(source as never);
+          const physical = getPhysicalSizeScalingMatrixFromMeta(source);
+          return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+        }
+        if (elem.type === 'labels') {
+          const labelsData = loaded.labels.get(elem.key);
+          if (!labelsData?.loader) return null;
+          const source =
+            Array.isArray(labelsData.loader) ? labelsData.loader[0] : labelsData.loader;
           if (!source || typeof source !== 'object') return null;
           const { width, height } = getImageSize(source as never);
           const physical = getPhysicalSizeScalingMatrixFromMeta(source);
@@ -715,6 +828,45 @@ export function useLayerData(
             pointSize: config.pointSize,
             color: config.color,
             pointData,
+          });
+          if (layer) deckLayers.push(layer);
+        }
+      } else if (config.type === 'labels') {
+        const labelsData = loaded.labels.get(elem.key);
+        if (labelsData) {
+          const ch = config.channels;
+          const rawSelections =
+            ch?.selections && ch.selections.length > 0 ? ch.selections : labelsData.selections;
+          const selections =
+            labelsData.selectionAxisSizes !== undefined
+              ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
+              : rawSelections;
+
+          const layer = renderLabelsLayer({
+            id: layerId,
+            loader: labelsData.loader,
+            modelMatrix: elem.transform,
+            opacity: config.opacity,
+            visible: config.visible,
+            channelColors:
+              ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
+            channelsVisible:
+              ch?.channelsVisible && ch.channelsVisible.length > 0
+                ? ch.channelsVisible
+                : labelsData.channelsVisible,
+            channelOpacities:
+              ch?.channelOpacities && ch.channelOpacities.length > 0
+                ? ch.channelOpacities
+                : labelsData.channelOpacities,
+            channelsFilled:
+              ch?.channelsFilled && ch.channelsFilled.length > 0
+                ? ch.channelsFilled
+                : labelsData.channelsFilled,
+            channelStrokeWidths:
+              ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
+                ? ch.channelStrokeWidths
+                : labelsData.channelStrokeWidths,
+            selections,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -855,6 +1007,9 @@ export function useLayerData(
         const state = layerLoadStates[layerId];
         if (!state) return false;
         if (config.type === 'image') {
+          return state.image === 'loading' && !hasRenderableLayerData(layerId);
+        }
+        if (config.type === 'labels') {
           return state.image === 'loading' && !hasRenderableLayerData(layerId);
         }
         if (config.type === 'shapes' || config.type === 'points') {

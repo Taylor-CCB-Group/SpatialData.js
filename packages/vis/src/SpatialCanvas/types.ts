@@ -82,10 +82,15 @@ export interface PointsLayerConfig extends BaseLayerConfig {
 
 export interface LabelsLayerConfig extends BaseLayerConfig {
   type: 'labels';
-  // Labels-specific settings (colormap, etc.)
-  // should also be able to associate with picked feature identity
-  // (for example ObjectID-style raster values), so we'll need some kind of
-  // buffer lookup for color/filter/etc
+  channels?: {
+    channelIds?: string[];
+    colors?: [number, number, number][];
+    channelsVisible?: boolean[];
+    channelOpacities?: number[];
+    channelsFilled?: boolean[];
+    channelStrokeWidths?: number[];
+    selections?: Partial<{ z: number; c: number; t: number }>[];
+  };
 }
 
 export type LayerConfig = ImageLayerConfig | ShapesLayerConfig | PointsLayerConfig | LabelsLayerConfig;

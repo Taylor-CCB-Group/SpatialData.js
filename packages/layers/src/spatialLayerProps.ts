@@ -23,10 +23,17 @@ export const spatialShapesSublayerSchema = sublayerBase.extend({
   tooltipFields: z.array(z.string()).optional(),
 });
 
+export const spatialLabelsSublayerSchema = sublayerBase.extend({
+  kind: z.literal('labels'),
+  /** OME-Zarr labels URL understood by the labels bitmask layer. */
+  url: z.string().optional(),
+});
+
 export const spatialSublayerSchema = z.discriminatedUnion('kind', [
   spatialImageSublayerSchema,
   spatialScatterSublayerSchema,
   spatialShapesSublayerSchema,
+  spatialLabelsSublayerSchema,
 ]);
 
 export type SpatialSublayer = z.infer<typeof spatialSublayerSchema>;

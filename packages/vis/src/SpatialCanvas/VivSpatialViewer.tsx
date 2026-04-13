@@ -21,6 +21,10 @@ import type { OrthographicViewState, OrbitViewState, DeckGLProps, Layer, LayersL
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
+const SHOULD_DEBUG_DECK =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 export function getVivId(id: string): string {
   return `-#${id}#`;
 }
@@ -334,6 +338,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         views={deckGLView}
         viewState={viewStates}
         useDevicePixels={deckProps?.useDevicePixels ?? true}
+        debug={deckProps?.debug ?? SHOULD_DEBUG_DECK}
         getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
         onHover={onHover}
         onClick={onClick}
@@ -345,4 +350,3 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
 export { VivSpatialViewer };
 export default VivSpatialViewer;
-

@@ -14,8 +14,12 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
     "paths": {
+      "@spatialdata/avivatorish": ["../avivatorish/src/index.ts"],
+      "@spatialdata/avivatorish/*": ["../avivatorish/src/*"],
       "@spatialdata/core": ["../core/src/index.ts"],
       "@spatialdata/core/*": ["../core/src/*"],
+      "@spatialdata/layers": ["../layers/src/index.ts"],
+      "@spatialdata/layers/*": ["../layers/src/*"],
       "@spatialdata/react": ["../react/src/index.ts"],
       "@spatialdata/react/*": ["../react/src/*"],
       "@spatialdata/zarrextra": ["../zarrextra/src/index.ts"],
@@ -26,4 +30,3 @@
   "include": ["src", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]
 }
-

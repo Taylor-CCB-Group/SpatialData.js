@@ -8,5 +8,4 @@
 export { renderImageLayer, type ImageLayerRenderConfig } from './imageRenderer';
 export { renderShapesLayer, type ShapesLayerRenderConfig } from './shapesRenderer';
 export { renderPointsLayer, type PointsLayerRenderConfig } from './pointsRenderer';
-// export { renderLabelsLayer, type LabelsLayerRenderConfig } from './labelsRenderer';
-
+export { renderLabelsLayer, type LabelsLayerRenderConfig } from './labelsRenderer';

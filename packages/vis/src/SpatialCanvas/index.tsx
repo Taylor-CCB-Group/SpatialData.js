@@ -692,9 +692,11 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                           : ''}
                       </div>
                     )}
-                    {selectedConfig.type === 'image' && selectedLayerLoadState.image && (
+                    {(selectedConfig.type === 'image' || selectedConfig.type === 'labels') &&
+                      selectedLayerLoadState.image && (
                       <div>
-                        Image: {selectedLayerLoadState.image}
+                        {selectedConfig.type === 'labels' ? 'Labels' : 'Image'}:{' '}
+                        {selectedLayerLoadState.image}
                         {!hasRenderableLayerData(selectedConfig.id) &&
                         selectedLayerLoadState.image === 'loading'
                           ? ' (blocking)'

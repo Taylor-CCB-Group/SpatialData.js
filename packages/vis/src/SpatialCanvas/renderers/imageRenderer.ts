@@ -7,7 +7,7 @@
 
 import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
 import type { Matrix4 } from '@math.gl/core';
-import type { ImageElement } from '@spatialdata/core';
+import type { ImageElement, LabelsElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
 
 export interface ImageLayerRenderConfig {
@@ -89,7 +89,7 @@ export function extractChannelConfig(config: {
  * SpatialData only supports OME-Zarr format, so we use loadOmeZarr.
  */
 export async function createImageLoader(
-  element: ImageElement,
+  element: ImageElement | LabelsElement,
   fetchMultiscales: (url: string) => Promise<unknown> = loadOmeZarrMultiscalesData,
 ): Promise<unknown> {
   try {
@@ -99,4 +99,3 @@ export async function createImageLoader(
     throw error;
   }
 }
-

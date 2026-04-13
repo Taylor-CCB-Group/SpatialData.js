@@ -19,6 +19,12 @@ sidebar_position: 1
 - **View state** conversion between SpatialCanvas and Viv is still **2D-oriented**; full 3D orbit state is not fully round-tripped.
 - **`useLayerData`** prefers explicit `LayerConfig.channels` when arrays are non-empty; further **override flags** may still be useful for edge cases.
 
+## Upstream Viv Follow-ups
+
+- **Labels currently carry local Viv workarounds:** SpatialCanvas labels use local single-scale and multiscale wrappers instead of Viv `ImageLayer` / `MultiscaleImageLayer` because the current Viv prop schemas reject `null` callback defaults such as `onHover`, `onClick`, and `onViewportLoad`.
+- **Viv interpolation prop typing also needs cleanup:** current Viv layer defaults still type `interpolation` incorrectly on some paths, which triggers deck.gl prop validation when labels request `'nearest'` / `'linear'`.
+- **Shader path should converge back toward upstream Viv:** labels already use GLSL 300 ES + UBO-style uniforms locally; once the Viv shader/toolchain work is published we should revisit these wrappers and delete any compatibility code that is no longer needed.
+
 ## Related code
 
 - [`packages/vis/src/SpatialCanvas/index.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/index.tsx) — `SpatialCanvas` UI and store wiring
