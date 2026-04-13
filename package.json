@@ -10,6 +10,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "clean": "rm -rf packages/*/dist packages/vis/demo/dist",
     "build": "pnpm -r --filter='!docs' run build",
     "test": "pnpm -r --filter='!docs' run test",
     "test:unit": "vitest run --exclude tests/integration/**",

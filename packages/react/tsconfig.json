@@ -15,12 +15,13 @@
     "baseUrl": ".",
     "paths": {
       "@spatialdata/core": ["../core/src/index.ts"],
-      "@spatialdata/core/*": ["../core/src/*"]
+      "@spatialdata/core/*": ["../core/src/*"],
+      "@spatialdata/zarrextra": ["../zarrextra/src/index.ts"],
+      "@spatialdata/zarrextra/*": ["../zarrextra/src/*"]
     },
     "types": ["react", "react-dom"]
   },
   "include": ["src", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]
 }
-
 
