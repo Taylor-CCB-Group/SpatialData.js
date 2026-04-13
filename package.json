@@ -10,7 +10,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "clean": "rm -rf packages/*/dist packages/vis/demo/dist",
+    "clean": "rm -rf packages/*/dist packages/vis/demo/dist packages/zarrextra/src/*.d.ts packages/zarrextra/src/*.d.ts.map",
     "build": "pnpm -r --filter='!docs' run build",
     "test": "pnpm -r --filter='!docs' run test",
     "test:unit": "vitest run --exclude tests/integration/**",

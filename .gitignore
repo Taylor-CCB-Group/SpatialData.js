@@ -6,6 +6,8 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+packages/zarrextra/src/*.d.ts
+packages/zarrextra/src/*.d.ts.map
 
 # Testing
 coverage/
