@@ -580,7 +580,7 @@ export function getPhysicalSizeScalingMatrix(loader: PixelSource | any) {
 export function getBoundingCube(loader: PixelSource) {
     const source = getRasterSource(loader);
     const { shape, labels } = source;
-    const physicalSizeScalingMatrix = getPhysicalSizeScalingMatrix(source);
+    const physicalSizeScalingMatrix = getPhysicalSizeScalingMatrix(loader);
     const xSlice: [number, number] = [
         0,
         physicalSizeScalingMatrix[0] * shape[labels.indexOf("x")],
