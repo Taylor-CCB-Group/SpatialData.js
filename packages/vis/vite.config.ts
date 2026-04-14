@@ -9,7 +9,7 @@ const workspaceRoot = path.resolve(pkgRoot, '../..');
 const baseConfig = defineViteConfig({
   pkgRoot,
   libName: 'SpatialDataVis',
-  external: ['@spatialdata/core', '@spatialdata/react'],
+  external: [/^@spatialdata\/[^/]+$/, /^zustand(?:\/.*)?$/],
 });
 
 export default mergeConfig(baseConfig, {

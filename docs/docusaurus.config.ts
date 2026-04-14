@@ -1,5 +1,5 @@
 import type * as Preset from '@docusaurus/preset-classic';
-import type { Config } from '@docusaurus/types';
+import type { Config, Plugin } from '@docusaurus/types';
 import { themes as prismThemes } from 'prism-react-renderer';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
@@ -19,6 +19,8 @@ const config: Config = {
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/SpatialData.js/',
+
+  plugins: [disableDevSplitChunks],
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
@@ -130,3 +132,20 @@ const config: Config = {
 };
 
 export default config;
+
+function disableDevSplitChunks(): Plugin {
+  return {
+    name: 'disable-dev-split-chunks',
+    configureWebpack(_config, isServer) {
+      if (process.env.NODE_ENV === 'production' || isServer) {
+        return {};
+      }
+
+      return {
+        optimization: {
+          splitChunks: false,
+        },
+      };
+    },
+  };
+}

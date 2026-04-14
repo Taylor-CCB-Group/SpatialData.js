@@ -7,7 +7,7 @@ const pkgRoot = fileURLToPath(new URL('.', import.meta.url));
 const baseConfig = defineViteConfig({
   pkgRoot,
   libName: 'SpatialDataAvivatorish',
-  external: ['@hms-dbmi/viv', '@math.gl/core', 'geotiff', 'zustand'],
+  external: ['@hms-dbmi/viv', '@math.gl/core', 'geotiff', /^zustand(?:\/.*)?$/],
 });
 
 export default mergeConfig(baseConfig, {

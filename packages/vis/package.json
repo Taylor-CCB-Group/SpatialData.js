@@ -16,7 +16,8 @@
   ],
   "scripts": {
     "build": "vite build && tsc --noEmit",
-    "dev": "vite --config vite.config.demo.ts",
+    "dev": "node scripts/dev.mjs",
+    "dev:demo": "vite --config vite.config.demo.ts --host 127.0.0.1 --port 5173 --strictPort",
     "watch": "vite build --watch",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -10,6 +10,7 @@ import {
   VivProvider,
   useChannelsStoreApi,
   DEFAULT_CHANNEL_STATE,
+  resolveRasterSource,
 } from '@spatialdata/avivatorish';
 import { DetailView, VivViewer, getDefaultInitialViewState } from '@hms-dbmi/viv';
 import { useImage } from '@spatialdata/avivatorish';
@@ -19,9 +20,8 @@ import { useImage } from '@spatialdata/avivatorish';
  * the conditions under which this function returns false are conditions where internally it would have pixelWidth undefined, etc.
  */
 function _isValidImage(image: ReturnType<typeof useLoader>) {
-  if (!image) return false;
-  const source = Array.isArray(image) ? image[0] : image;
-  return source.shape.length > 0;
+  const source = resolveRasterSource(image);
+  return !!source && source.shape.length > 0;
 }
 
 function VivImage({ url, width, height }: { url?: string | URL; width: number; height: number }) {
@@ -66,7 +66,7 @@ function VivImage({ url, width, height }: { url?: string | URL; width: number; h
   useEffect(() => {
     if (!url) return;
     const source = { urlOrFile: url.toString(), description: 'image' };
-    viewerStore.setState({ source, viewState: null });
+    viewerStore.setState({ source, viewState: null, metadata: null });
     channelsStore.setState({ loader: DEFAULT_CHANNEL_STATE.loader });
   }, [url, viewerStore, channelsStore]);
 

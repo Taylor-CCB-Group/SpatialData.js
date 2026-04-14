@@ -405,8 +405,55 @@ function narrowLimits(limits: number[]): limits is [number, number] {
 function narrowStats(stats: { domain: number[]; contrastLimits: number[] }): stats is { domain: [number, number]; contrastLimits: [number, number] } {
     return narrowLimits(stats.domain) && narrowLimits(stats.contrastLimits);
 }
+type RasterSourceLike = {
+    getRaster: (args: { selection: VivSelection }) => Promise<{ data: any }>;
+    labels: string[];
+    shape: number[];
+};
+export function isRasterSourceLike(value: unknown): value is RasterSourceLike {
+    if (!value || typeof value !== "object") return false;
+    return "getRaster" in value && typeof value.getRaster === "function" && "labels" in value && "shape" in value;
+}
+export function resolveRasterSource(loader: LOADER): RasterSourceLike | undefined {
+    const seen = new Set<unknown>();
+    function visit(current: unknown): RasterSourceLike | undefined {
+        if (!current || typeof current !== "object" || seen.has(current)) {
+            return undefined;
+        }
+        seen.add(current);
+        if (isRasterSourceLike(current)) {
+            return current;
+        }
+        if (Array.isArray(current)) {
+            for (let i = current.length - 1; i >= 0; i -= 1) {
+                const found = visit(current[i]);
+                if (found) return found;
+            }
+            return undefined;
+        }
+        if ("data" in current) {
+            const found = visit(current.data);
+            if (found) return found;
+        }
+        if ("source" in current) {
+            const found = visit(current.source);
+            if (found) return found;
+        }
+        if ("loader" in current) {
+            const found = visit(current.loader);
+            if (found) return found;
+        }
+        return undefined;
+    }
+    return visit(loader);
+}
+export function getRasterSource(loader: LOADER): RasterSourceLike {
+    const source = resolveRasterSource(loader);
+    if (source) return source;
+    throw new Error("Expected Viv loader to resolve to a raster source with getRaster().");
+}
 export async function getSingleSelectionStats2D({ loader, selection }: { loader: LOADER, selection: VivSelection}) {
-    const data = Array.isArray(loader) ? loader[loader.length - 1] : loader;
+    const data = getRasterSource(loader);
     const raster = await data.getRaster({ selection });
     const selectionStats = getChannelStats(raster.data);
     if (!narrowStats(selectionStats)) {
@@ -422,7 +469,7 @@ export async function getSingleSelectionStats2D({ loader, selection }: { loader:
 }
 
 export async function getSingleSelectionStats3D({ loader, selection }: { loader: LOADER, selection: VivSelection }) {
-    const lowResSource = loader[loader.length - 1];
+    const lowResSource = getRasterSource(loader);
     const { shape, labels } = lowResSource;
     const sizeZ = shape[labels.indexOf("z")];
     const raster0 = await lowResSource.getRaster({
@@ -531,9 +578,9 @@ export function getPhysicalSizeScalingMatrix(loader: PixelSource | any) {
 }
 
 export function getBoundingCube(loader: PixelSource) {
-    const source = Array.isArray(loader) ? loader[0] : loader;
+    const source = getRasterSource(loader);
     const { shape, labels } = source;
-    const physicalSizeScalingMatrix = getPhysicalSizeScalingMatrix(source);
+    const physicalSizeScalingMatrix = getPhysicalSizeScalingMatrix(loader);
     const xSlice: [number, number] = [
         0,
         physicalSizeScalingMatrix[0] * shape[labels.indexOf("x")],
