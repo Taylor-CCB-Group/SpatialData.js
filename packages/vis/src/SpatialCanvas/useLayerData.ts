@@ -20,14 +20,21 @@ import {
 import {
   type AxisAlignedBounds,
   type ImageElement,
+  type LabelsElement,
   type PointsElement,
   type ShapesElement,
+  type LabelsTooltipMetadata,
+  type ShapesTooltipMetadata,
+  type SpatialFeatureTooltipData,
   type SpatialData,
-  type TableColumnData,
   boundsFromImagePixelExtents,
   boundsFromPoints,
   boundsFromPolygons,
+  getTooltipSignature,
   getPhysicalSizeScalingMatrixFromMeta,
+  loadLabelsTooltipMetadata,
+  loadShapesTooltipMetadata,
+  resolveTooltipItems,
   unionBoundsList,
 } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
@@ -40,14 +47,10 @@ import {
 import { createImageLoader } from './renderers/imageRenderer';
 import {
   type PointData,
-  type PointsLayerRenderConfig,
   renderPointsLayer,
 } from './renderers/pointsRenderer';
-import {
-  type ShapeTooltipDatum,
-  loadShapesData,
-  renderShapesLayer,
-} from './renderers/shapesRenderer';
+import { renderLabelsLayer } from './renderers/labelsRenderer';
+import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig } from './types';
 
 export interface ImageLoaderData {
@@ -60,24 +63,15 @@ export interface ImageLoaderData {
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
-interface LoadedShapesData {
+interface LoadedShapesData extends ShapesTooltipMetadata {
   polygons: Array<Array<Array<[number, number]>>>;
-  featureIds?: string[];
-  tooltipSignature?: string;
-  tooltipFields?: string[];
-  tooltipColumns?: Array<TableColumnData | undefined>;
-  /**
-   * Optional row-index lookup aligned to picked feature order.
-   * When omitted, picked feature index and tooltip row index are assumed to be identical.
-   * A value of -1 indicates no matching tooltip row for that feature.
-   */
-  tooltipRowIndices?: Int32Array;
 }
 
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
+  labels: Map<string, LabelsLoaderData>;
 }
 
 type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -89,6 +83,7 @@ export interface LayerLoadState {
 }
 
 export interface ImageLayerConfig {
+  id: string;
   loader: unknown; // Viv PixelSource
   colors: [number, number, number][];
   contrastLimits: [number, number][];
@@ -99,6 +94,18 @@ export interface ImageLayerConfig {
   visible?: boolean; // Whether layer is visible
 }
 
+export interface LabelsLoaderData extends LabelsTooltipMetadata {
+  loader: unknown;
+  colors: [number, number, number][];
+  channelsVisible: boolean[];
+  channelOpacities: number[];
+  channelOutlineOpacities: number[];
+  channelsFilled: boolean[];
+  channelStrokeWidths: number[];
+  selections: Array<Partial<{ z: number; c: number; t: number }>>;
+  selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
+}
+
 interface UseLayerDataResult {
   /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
   getLayers: () => Layer[];
@@ -106,12 +113,17 @@ interface UseLayerDataResult {
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
+  /** Raw loaded labels pipeline data (defaults) for the properties UI */
+  getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
   /** Current load state for a given layer. */
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
   /** Resolve a feature tooltip lazily from the picked row index. */
-  getFeatureTooltip: (layerId: string, objectIndex: number) => ShapeTooltipDatum | undefined;
+  getFeatureTooltip: (
+    layerId: string,
+    pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+  ) => SpatialFeatureTooltipData | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
@@ -124,130 +136,8 @@ interface UseLayerDataResult {
   getWorldBoundsForVisibleLayers: () => AxisAlignedBounds | null;
 }
 
-function getTooltipSignature(config: LayerConfig | undefined): string {
-  if (!config || config.type !== 'shapes') {
-    return '';
-  }
-  return (config.tooltipFields ?? []).join('\u0001');
-}
-
-function normalizeTooltipValue(value: TableColumnData | undefined, rowIndex: number): string {
-  if (!value) return '';
-  const row = value[rowIndex];
-  if (row === null || row === undefined) return '';
-  return String(row);
-}
-
-function tableRegionMatches(regionValue: string, shapeKey: string) {
-  return regionValue === shapeKey || regionValue === `shapes/${shapeKey}`;
-}
-
-async function loadShapeTooltipData(
-  spatialData: SpatialData | undefined,
-  element: ShapesElement,
-  tooltipFields: string[]
-): Promise<
-  Pick<
-    LoadedShapesData,
-    'featureIds' | 'tooltipSignature' | 'tooltipFields' | 'tooltipColumns' | 'tooltipRowIndices'
-  >
-> {
-  const featureIdsRaw = await element.loadFeatureIds();
-  const featureIds = featureIdsRaw
-    ? Array.from(featureIdsRaw, (value: unknown) => String(value))
-    : undefined;
-
-  if (tooltipFields.length === 0) {
-    return {
-      featureIds,
-      tooltipSignature: '',
-      tooltipFields: [],
-      tooltipColumns: undefined,
-      tooltipRowIndices: undefined,
-    };
-  }
-
-  if (!featureIds) {
-    return {
-      featureIds,
-      tooltipSignature: undefined,
-      tooltipFields,
-      tooltipColumns: undefined,
-      tooltipRowIndices: undefined,
-    };
-  }
-
-  if (!spatialData) {
-    return {
-      featureIds,
-      tooltipSignature: undefined,
-      tooltipFields,
-      tooltipColumns: undefined,
-      tooltipRowIndices: undefined,
-    };
-  }
-
-  const associated = spatialData.getAssociatedTable('shapes', element.key);
-  if (!associated) {
-    return {
-      featureIds,
-      tooltipSignature: undefined,
-      tooltipFields,
-      tooltipColumns: undefined,
-      tooltipRowIndices: undefined,
-    };
-  }
-
-  const tooltipSignature = tooltipFields.join('\u0001');
-  const [, table] = associated;
-  const { regionKey } = table.getTableKeys();
-  const requestedColumns = Array.from(new Set([regionKey, ...tooltipFields]));
-  const rowIds = await table.loadObsIndex();
-  const columns = await table.loadObsColumns(requestedColumns);
-  const regionColumn = columns[0];
-  const tooltipColumns = columns.slice(1);
-  // I don't like the look of this... creating 0-length arrays then pushing data...
-  const filteredRowIds: string[] = [];
-  const filteredRowIndices: number[] = [];
-
-  for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex++) {
-    const rowId = rowIds[rowIndex];
-    const regionValue = normalizeTooltipValue(regionColumn, rowIndex);
-    if (regionValue && !tableRegionMatches(regionValue, element.key)) {
-      continue;
-    }
-    filteredRowIds.push(String(rowId));
-    filteredRowIndices.push(rowIndex);
-  }
-  let tooltipRowIndices: Int32Array | undefined;
-  // this looks costly?
-  const isDirectlyAligned =
-    filteredRowIds.length === featureIds.length &&
-    filteredRowIds.every((rowId, index) => rowId === featureIds[index]);
-
-  if (!isDirectlyAligned) {
-    const rowIndexByFeatureId = new Map<string, number>();
-    for (const [index, rowId] of filteredRowIds.entries()) {
-      rowIndexByFeatureId.set(rowId, filteredRowIndices[index]);
-    }
-
-    tooltipRowIndices = new Int32Array(featureIds.length);
-    tooltipRowIndices.fill(-1);
-    for (const [featureIndex, featureId] of featureIds.entries()) {
-      const matchedRowIndex = rowIndexByFeatureId.get(featureId);
-      if (matchedRowIndex !== undefined) {
-        tooltipRowIndices[featureIndex] = matchedRowIndex;
-      }
-    }
-  }
-
-  return {
-    featureIds,
-    tooltipSignature,
-    tooltipFields,
-    tooltipColumns,
-    tooltipRowIndices,
-  };
+function getLayerTooltipSignature(config: LayerConfig | undefined): string {
+  return config && 'tooltipFields' in config ? getTooltipSignature(config.tooltipFields) : '';
 }
 
 async function loadShapesLayerData(
@@ -280,6 +170,7 @@ export function useLayerData(
     shapes: new Map(),
     points: new Map(),
     images: new Map(),
+    labels: new Map(),
   });
 
   const layersRef = useRef(layers);
@@ -329,6 +220,7 @@ export function useLayerData(
         loadTooltip: boolean;
         loadImage: boolean;
         loadPoints: boolean;
+        loadLabels: boolean;
       }> = [];
 
       for (const layerId of layerOrder) {
@@ -342,7 +234,7 @@ export function useLayerData(
         const loaded = loadedDataRef.current;
         if (config.type === 'shapes') {
           const loadedShapes = loaded.shapes.get(elem.key);
-          const tooltipSignature = getTooltipSignature(config);
+          const tooltipSignature = getLayerTooltipSignature(config);
           const loadGeometry = !loadedShapes;
           const loadTooltip = !loadedShapes || loadedShapes.tooltipSignature !== tooltipSignature;
           if (loadGeometry || loadTooltip) {
@@ -353,6 +245,23 @@ export function useLayerData(
               loadTooltip,
               loadImage: false,
               loadPoints: false,
+              loadLabels: false,
+            });
+          }
+        } else if (config.type === 'labels') {
+          const loadedLabels = loaded.labels.get(elem.key);
+          const tooltipSignature = getLayerTooltipSignature(config);
+          const loadLabels = !loadedLabels;
+          const loadTooltip = !loadedLabels || loadedLabels.tooltipSignature !== tooltipSignature;
+          if (loadLabels || loadTooltip) {
+            toLoad.push({
+              layerId,
+              element: elem,
+              loadGeometry: false,
+              loadTooltip,
+              loadImage: false,
+              loadPoints: false,
+              loadLabels,
             });
           }
         } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
@@ -363,6 +272,7 @@ export function useLayerData(
             loadTooltip: false,
             loadImage: false,
             loadPoints: true,
+            loadLabels: false,
           });
         } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
           toLoad.push({
@@ -372,6 +282,7 @@ export function useLayerData(
             loadTooltip: false,
             loadImage: true,
             loadPoints: false,
+            loadLabels: false,
           });
         }
       }
@@ -381,7 +292,15 @@ export function useLayerData(
       // Load in parallel
       await Promise.all(
         toLoad.map(
-          async ({ layerId, element, loadGeometry, loadTooltip, loadImage, loadPoints }) => {
+          async ({
+            layerId,
+            element,
+            loadGeometry,
+            loadTooltip,
+            loadImage,
+            loadPoints,
+            loadLabels,
+          }) => {
             if (element.type === 'shapes') {
               const existing = loadedDataRef.current.shapes.get(element.key);
               if (loadGeometry) {
@@ -409,16 +328,16 @@ export function useLayerData(
                       ? layersRef.current[layerId]
                       : undefined;
                   const tooltipFields = shapeLayerConfig?.tooltipFields ?? [];
-                  const requestedSignature = getTooltipSignature(shapeLayerConfig);
+                  const requestedSignature = getLayerTooltipSignature(shapeLayerConfig);
                   if (tooltipFields.length > 0) {
                     setLayerResourceStatus(layerId, 'tooltip', 'loading');
                     const current = loadedDataRef.current.shapes.get(element.key);
-                    const tooltipData = await loadShapeTooltipData(
+                    const tooltipData = await loadShapesTooltipMetadata(
                       spatialData,
                       element.element as ShapesElement,
                       tooltipFields
                     );
-                    const latestDesired = getTooltipSignature(
+                    const latestDesired = getLayerTooltipSignature(
                       layersRef.current[layerId]?.type === 'shapes'
                         ? layersRef.current[layerId]
                         : undefined
@@ -502,7 +421,7 @@ export function useLayerData(
                       const Channels = metadata.channels;
                       const isRgb = guessRgb({
                         Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) },
-                      } as any);
+                      });
 
                       if (isRgb) {
                         if (isInterleaved(loaderObj.shape)) {
@@ -524,8 +443,8 @@ export function useLayerData(
                       } else {
                         // Compute stats for non-RGB images
                         const stats = await getMultiSelectionStats({
-                          loader: loader as any,
-                          selections: selections as any,
+                          loader,
+                          selections,
                           use3d: false,
                         });
                         imageData.contrastLimits = stats.contrastLimits;
@@ -594,6 +513,128 @@ export function useLayerData(
                 setLayerResourceStatus(layerId, 'image', 'error');
                 console.error(`Failed to load image for ${layerId}:`, error);
               }
+            } else if (element.type === 'labels') {
+              const existing = loadedDataRef.current.labels.get(element.key);
+              if (loadLabels) {
+                try {
+                  setLayerResourceStatus(layerId, 'image', 'loading');
+                  const loader = await createImageLoader(
+                    element.element as LabelsElement,
+                    getOmeZarrMultiscalesData
+                  );
+                  const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+                  const labelsData: LabelsLoaderData = {
+                    loader,
+                    colors: [[255, 255, 255]],
+                    channelsVisible: [true],
+                    channelOpacities: [0.18],
+                    channelOutlineOpacities: [0.95],
+                    channelsFilled: [true],
+                    channelStrokeWidths: [1.5],
+                    selections: [{}],
+                  };
+
+                  if (
+                    loaderToCheck &&
+                    typeof loaderToCheck === 'object' &&
+                    'labels' in loaderToCheck &&
+                    'shape' in loaderToCheck
+                  ) {
+                    const loaderObj = loaderToCheck as VivLoaderMetadata;
+                    const axisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
+                    const selections = clampVivSelectionsToAxes(
+                      buildDefaultSelection({
+                        labels: loaderObj.labels,
+                        shape: loaderObj.shape,
+                      }),
+                      axisSizes
+                    ).slice(0, 7);
+                    const channelCount = Math.max(selections.length, 1);
+                    const metadataChannels = (element.element as LabelsElement).attrs.omero?.channels;
+
+                    const colors = Array.from(
+                      { length: channelCount },
+                      (_, index): [number, number, number] => {
+                        const rgb = tryParseOmeroHexColor(metadataChannels?.[index]?.color);
+                        const palette = COLOR_PALLETE[index % COLOR_PALLETE.length];
+                        return rgb ?? [palette[0], palette[1], palette[2]];
+                      }
+                    );
+                    labelsData.selectionAxisSizes = axisSizes;
+                    labelsData.selections = selections.length > 0 ? selections : [{}];
+                    labelsData.colors = colors;
+                    labelsData.channelsVisible = colors.map(
+                      (_, index) => metadataChannels?.[index]?.active ?? true
+                    );
+                    labelsData.channelOpacities = colors.map(() => 0.18);
+                    labelsData.channelOutlineOpacities = colors.map(() => 0.95);
+                    labelsData.channelsFilled = colors.map(() => true);
+                    labelsData.channelStrokeWidths = colors.map(() => 1.5);
+                  }
+
+                  loadedDataRef.current.labels.set(element.key, {
+                    ...existing,
+                    ...labelsData,
+                  });
+                  setLayerResourceStatus(layerId, 'image', 'ready');
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'image', 'error');
+                  console.error(`Failed to load labels for ${layerId}:`, error);
+                  return;
+                }
+              } else {
+                setLayerResourceStatus(layerId, 'image', existing ? 'ready' : 'idle');
+              }
+
+              if (loadTooltip) {
+                try {
+                  const labelsLayerConfig =
+                    layersRef.current[layerId]?.type === 'labels'
+                      ? layersRef.current[layerId]
+                      : undefined;
+                  const tooltipFields = labelsLayerConfig?.tooltipFields ?? [];
+                  const requestedSignature = getLayerTooltipSignature(labelsLayerConfig);
+                  if (tooltipFields.length > 0) {
+                    setLayerResourceStatus(layerId, 'tooltip', 'loading');
+                    const current = loadedDataRef.current.labels.get(element.key);
+                    const tooltipData = await loadLabelsTooltipMetadata(
+                      spatialData,
+                      element.element as LabelsElement,
+                      tooltipFields
+                    );
+                    const latestDesired = getLayerTooltipSignature(
+                      layersRef.current[layerId]?.type === 'labels'
+                        ? layersRef.current[layerId]
+                        : undefined
+                    );
+                    if (latestDesired !== requestedSignature) {
+                      return;
+                    }
+                    loadedDataRef.current.labels.set(element.key, {
+                      ...current,
+                      ...tooltipData,
+                    } as LabelsLoaderData);
+                    setLayerResourceStatus(
+                      layerId,
+                      'tooltip',
+                      tooltipData.tooltipSignature === undefined ? 'idle' : 'ready'
+                    );
+                  } else {
+                    const current = loadedDataRef.current.labels.get(element.key);
+                    loadedDataRef.current.labels.set(element.key, {
+                      ...current,
+                      tooltipSignature: '',
+                      tooltipFields: [],
+                      tooltipColumns: undefined,
+                      tooltipRowIndexByFeatureId: undefined,
+                    } as LabelsLoaderData);
+                    setLayerResourceStatus(layerId, 'tooltip', 'idle');
+                  }
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'tooltip', 'error');
+                  console.error(`Failed to load labels tooltip for ${layerId}:`, error);
+                }
+              }
             }
           }
         )
@@ -611,6 +652,8 @@ export function useLayerData(
       loaded.points.delete(key);
     } else if (type === 'image') {
       loaded.images.delete(key);
+    } else if (type === 'labels') {
+      loaded.labels.delete(key);
     }
     // The useEffect will pick up the missing data and reload
   }, []);
@@ -626,6 +669,9 @@ export function useLayerData(
     }
     if (elem.type === 'image') {
       return loadedDataRef.current.images.has(elem.key);
+    }
+    if (elem.type === 'labels') {
+      return loadedDataRef.current.labels.has(elem.key);
     }
     return false;
   }, []);
@@ -651,6 +697,16 @@ export function useLayerData(
           const imageData = loaded.images.get(elem.key);
           if (!imageData?.loader) return null;
           const source = Array.isArray(imageData.loader) ? imageData.loader[0] : imageData.loader;
+          if (!source || typeof source !== 'object') return null;
+          const { width, height } = getImageSize(source as never);
+          const physical = getPhysicalSizeScalingMatrixFromMeta(source);
+          return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+        }
+        if (elem.type === 'labels') {
+          const labelsData = loaded.labels.get(elem.key);
+          if (!labelsData?.loader) return null;
+          const source =
+            Array.isArray(labelsData.loader) ? labelsData.loader[0] : labelsData.loader;
           if (!source || typeof source !== 'object') return null;
           const { width, height } = getImageSize(source as never);
           const physical = getPhysicalSizeScalingMatrixFromMeta(source);
@@ -718,6 +774,49 @@ export function useLayerData(
           });
           if (layer) deckLayers.push(layer);
         }
+      } else if (config.type === 'labels') {
+        const labelsData = loaded.labels.get(elem.key);
+        if (labelsData) {
+          const ch = config.channels;
+          const rawSelections =
+            ch?.selections && ch.selections.length > 0 ? ch.selections : labelsData.selections;
+          const selections =
+            labelsData.selectionAxisSizes !== undefined
+              ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
+              : rawSelections;
+
+          const layer = renderLabelsLayer({
+            id: layerId,
+            loader: labelsData.loader,
+            modelMatrix: elem.transform,
+            opacity: config.opacity,
+            visible: config.visible,
+            channelColors:
+              ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
+            channelsVisible:
+              ch?.channelsVisible && ch.channelsVisible.length > 0
+                ? ch.channelsVisible
+                : labelsData.channelsVisible,
+            channelOpacities:
+              ch?.channelOpacities && ch.channelOpacities.length > 0
+                ? ch.channelOpacities
+                : labelsData.channelOpacities,
+            channelOutlineOpacities:
+              ch?.channelOutlineOpacities && ch.channelOutlineOpacities.length > 0
+                ? ch.channelOutlineOpacities
+                : labelsData.channelOutlineOpacities,
+            channelsFilled:
+              ch?.channelsFilled && ch.channelsFilled.length > 0
+                ? ch.channelsFilled
+                : labelsData.channelsFilled,
+            channelStrokeWidths:
+              ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
+                ? ch.channelStrokeWidths
+                : labelsData.channelStrokeWidths,
+            selections,
+          });
+          if (layer) deckLayers.push(layer);
+        }
       }
       // Image layers are handled separately via getVivLayerProps()
     }
@@ -731,6 +830,12 @@ export function useLayerData(
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
+  const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
+    const elem = elementMap.current.get(layerId);
+    if (!elem || elem.type !== 'labels') return undefined;
+    return loadedDataRef.current.labels.get(elem.key);
+  }, []);
+
   const getLayerLoadState = useCallback(
     (layerId?: string): LayerLoadState | undefined => {
       if (layerId === undefined) return undefined;
@@ -740,9 +845,58 @@ export function useLayerData(
   );
 
   const getFeatureTooltip = useCallback(
-    (layerId: string, objectIndex: number): ShapeTooltipDatum | undefined => {
+    (
+      layerId: string,
+      pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+    ): SpatialFeatureTooltipData | undefined => {
       const elem = elementMap.current.get(layerId);
-      if (!elem || elem.type !== 'shapes') {
+      if (!elem) {
+        return undefined;
+      }
+
+      if (elem.type === 'labels') {
+        const pickedObject = pickInfo.object as
+          | { labelId?: number | string; channelIndex?: number }
+          | undefined;
+        const rawLabelId = pickedObject?.labelId;
+        const labelId = rawLabelId === undefined || rawLabelId === null ? '' : String(rawLabelId);
+        if (!labelId) {
+          return undefined;
+        }
+
+        const loadedLabelData = loadedDataRef.current.labels.get(elem.key);
+        const config = layersRef.current[layerId];
+        const title = labelId;
+        const items: Array<{ label: string; value: string }> = [
+          { label: 'id', value: labelId },
+        ];
+
+        if (
+          config?.type === 'labels' &&
+          (config.tooltipFields?.length ?? 0) > 0 &&
+          loadedLabelData?.tooltipFields &&
+          loadedLabelData.tooltipColumns &&
+          loadedLabelData.tooltipRowIndexByFeatureId &&
+          getLayerTooltipSignature(config) === (loadedLabelData.tooltipSignature ?? '')
+        ) {
+          const rowIndex = loadedLabelData.tooltipRowIndexByFeatureId.get(labelId);
+          if (rowIndex !== undefined && rowIndex >= 0) {
+            const tooltipItems = resolveTooltipItems(
+              loadedLabelData.tooltipFields,
+              loadedLabelData.tooltipColumns,
+              rowIndex,
+            );
+            items.push(...tooltipItems);
+          }
+        }
+
+        return {
+          title,
+          items,
+        };
+      }
+
+      if (elem.type !== 'shapes') {
         return undefined;
       }
 
@@ -756,7 +910,12 @@ export function useLayerData(
       }
 
       const config = layersRef.current[layerId];
-      if (getTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
+      if (getLayerTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
+        return undefined;
+      }
+
+      const objectIndex = pickInfo.index;
+      if (typeof objectIndex !== 'number' || objectIndex < 0) {
         return undefined;
       }
 
@@ -772,12 +931,11 @@ export function useLayerData(
         return undefined;
       }
 
-      const items = loadedShapeData.tooltipFields
-        .map((field, fieldIndex) => ({
-          label: field,
-          value: normalizeTooltipValue(loadedShapeData.tooltipColumns?.[fieldIndex], rowIndex),
-        }))
-        .filter((item) => item.value !== '');
+      const items = resolveTooltipItems(
+        loadedShapeData.tooltipFields,
+        loadedShapeData.tooltipColumns,
+        rowIndex,
+      );
 
       if (items.length === 0) {
         return undefined;
@@ -825,6 +983,7 @@ export function useLayerData(
           : rawSelections;
 
       vivProps.push({
+        id: config.id,
         loader: imageData.loader,
         colors,
         contrastLimits,
@@ -857,6 +1016,9 @@ export function useLayerData(
         if (config.type === 'image') {
           return state.image === 'loading' && !hasRenderableLayerData(layerId);
         }
+        if (config.type === 'labels') {
+          return state.image === 'loading' && !hasRenderableLayerData(layerId);
+        }
         if (config.type === 'shapes' || config.type === 'points') {
           return state.geometry === 'loading' && !hasRenderableLayerData(layerId);
         }
@@ -869,6 +1031,7 @@ export function useLayerData(
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
+    getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,

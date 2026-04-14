@@ -21,6 +21,8 @@
     "deck.gl": "catalog:"
   },
   "dependencies": {
+    "@deck.gl/core": "catalog:",
+    "@hms-dbmi/viv": "catalog:",
     "@math.gl/core": "catalog:",
     "zod": "catalog:"
   },

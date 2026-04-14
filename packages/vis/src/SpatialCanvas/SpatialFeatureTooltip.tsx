@@ -1,17 +1,14 @@
 import type { CSSProperties } from 'react';
+import type {
+  SpatialFeatureTooltipData,
+  SpatialFeatureTooltipItem,
+} from '@spatialdata/core';
 
-export type SpatialFeatureTooltipItem = {
-  label: string;
-  value: string;
-};
+export type {
+  SpatialFeatureTooltipData,
+  SpatialFeatureTooltipItem,
+} from '@spatialdata/core';
 
-/** Serializable payload for picked spatial feature hover tooltips (library-owned contract). */
-export type SpatialFeatureTooltipData = {
-  title?: string;
-  items: SpatialFeatureTooltipItem[];
-};
-
-/** Props for optional `renderTooltip` on SpatialCanvas (client = viewport coordinates). */
 export type SpatialCanvasTooltipRenderProps = {
   clientX: number;
   clientY: number;

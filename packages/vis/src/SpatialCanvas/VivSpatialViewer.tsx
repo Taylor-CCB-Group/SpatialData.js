@@ -178,14 +178,19 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   }
 
   private getDefaultViewState(): VivViewState {
+    const firstLayerWithLoader = this.props.vivLayerProps.find((layerProps) => layerProps.loader);
+
     // If we have a loader, use Viv's default initial view state
-    if (this.props.vivLayerProps.length > 0 && this.props.vivLayerProps[0].loader) {
+    if (
+      firstLayerWithLoader &&
+      firstLayerWithLoader.loader !== null &&
+      typeof firstLayerWithLoader.loader === 'object'
+    ) {
       try {
-        const loader = this.props.vivLayerProps[0].loader as any;
-        const defaultState = getDefaultInitialViewState(loader, {
+        const defaultState = getDefaultInitialViewState(firstLayerWithLoader.loader, {
           width: this.props.width,
           height: this.props.height,
-        });
+        }, 0, false, firstLayerWithLoader.modelMatrix);
         return {
           ...defaultState,
           id: this.viewId,
@@ -265,47 +270,61 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const deckLayersFlat = _flatten(deckProps?.layers ?? [], Boolean) as Layer[];
     const deckPropsLayersWithVivId = deckLayersFlat.map(withVivId);
 
-    // Viv typically handles one loader per view
-    // For now, use the first image layer (can be extended later for multiple images per view)
     if (vivLayerProps.length === 0) {
       return composeLayers([], extraLayersWithVivId, deckPropsLayersWithVivId);
     }
 
-    const firstLayerProps = vivLayerProps[0];
+    const vivLayers: Layer[] = [];
+    let scaleBarAdded = false;
 
-    // Get Viv layers from view
-    const layerProps: Record<string, unknown> = {
-      loader: firstLayerProps.loader,
-      colors: firstLayerProps.colors,
-      contrastLimits: firstLayerProps.contrastLimits,
-      channelsVisible: firstLayerProps.channelsVisible,
-      selections: firstLayerProps.selections,
-      onHover,
-    };
+    for (const imageLayerProps of vivLayerProps) {
+      const layerProps: Record<string, unknown> = {
+        loader: imageLayerProps.loader,
+        colors: imageLayerProps.colors,
+        contrastLimits: imageLayerProps.contrastLimits,
+        channelsVisible: imageLayerProps.channelsVisible,
+        selections: imageLayerProps.selections,
+        onHover,
+      };
 
-    // Let Viv/deck merge these with layer defaultProps (including `extensions`).
-    // Do not patch `layer.props` afterward with `{ ...layer.props, opacity }` — that spread
-    // drops non-enumerable props like `extensions` and breaks MultiscaleImageLayer._update.
-    if (firstLayerProps.opacity !== undefined) {
-      layerProps.opacity = firstLayerProps.opacity;
+      // Let Viv/deck merge these with layer defaultProps (including `extensions`).
+      // Do not patch `layer.props` afterward with `{ ...layer.props, opacity }` — that spread
+      // drops non-enumerable props like `extensions` and breaks MultiscaleImageLayer._update.
+      if (imageLayerProps.opacity !== undefined) {
+        layerProps.opacity = imageLayerProps.opacity;
+      }
+      if (imageLayerProps.visible !== undefined) {
+        layerProps.visible = imageLayerProps.visible;
+      }
+      if (imageLayerProps.modelMatrix) {
+        layerProps.modelMatrix = imageLayerProps.modelMatrix;
+      }
+
+      const vivLayersResult = this.detailView.getLayers({
+        viewStates,
+        props: layerProps,
+      });
+
+      // getLayers returns an array of arrays (one per view)
+      // For a single view, take the first element (like MDVivViewer does at line 385)
+      const layersForImage =
+        Array.isArray(vivLayersResult) && vivLayersResult.length > 0
+          ? (Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[]
+          : [];
+
+      for (const layer of layersForImage) {
+        if (layer instanceof ScaleBarLayer) {
+          if (!scaleBarAdded) {
+            vivLayers.push(layer);
+            scaleBarAdded = true;
+          }
+          continue;
+        }
+
+        // Viv uses generic source-based ids here, so overlays need a stable per-image suffix.
+        vivLayers.push(layer.clone({ id: `${layer.id}-${imageLayerProps.id}` }));
+      }
     }
-    if (firstLayerProps.visible !== undefined) {
-      layerProps.visible = firstLayerProps.visible;
-    }
-    if (firstLayerProps.modelMatrix) {
-      layerProps.modelMatrix = firstLayerProps.modelMatrix;
-    }
-
-    const vivLayersResult = this.detailView.getLayers({
-      viewStates,
-      props: layerProps,
-    });
-
-    // getLayers returns an array of arrays (one per view)
-    // For a single view, take the first element (like MDVivViewer does at line 385)
-    const vivLayers = Array.isArray(vivLayersResult) && vivLayersResult.length > 0
-      ? (Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[]
-      : [];
 
     // Compose with extra layers - following MDV pattern exactly
     // MDV does: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
@@ -345,4 +364,3 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
 export { VivSpatialViewer };
 export default VivSpatialViewer;
-

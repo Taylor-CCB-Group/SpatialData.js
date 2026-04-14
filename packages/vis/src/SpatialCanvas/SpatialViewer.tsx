@@ -162,5 +162,3 @@ function SpatialViewerSimple({
     />
   );
 }
-
-

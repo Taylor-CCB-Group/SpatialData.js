@@ -9,3 +9,4 @@ export * from './types.js';
 export * from './store/index.js';
 export * from './models/index.js';
 export * from './spatialViewFit.js';
+export * from './tooltip.js';

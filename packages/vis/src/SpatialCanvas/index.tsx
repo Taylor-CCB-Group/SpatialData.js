@@ -23,6 +23,8 @@ import {
 import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { LabelsChannelPanel } from './LabelsChannelPanel';
+import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -257,6 +259,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
+    getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
@@ -352,6 +355,8 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
   const associatedTable =
     selectedConfig?.type === 'shapes'
       ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
+      : selectedConfig?.type === 'labels'
+        ? spatialData?.getAssociatedTable('labels', selectedConfig.elementKey)?.[1]
       : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
 
@@ -388,11 +393,10 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       }
       const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
       const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
-      if (typeof info.index !== 'number' || info.index < 0) {
-        setHoverTooltip(null);
-        return;
-      }
-      const tooltip = getFeatureTooltip(normalizedLayerId, info.index);
+      const tooltip = getFeatureTooltip(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
       if (!tooltip) {
         setHoverTooltip(null);
         return;
@@ -692,16 +696,19 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                           : ''}
                       </div>
                     )}
-                    {selectedConfig.type === 'image' && selectedLayerLoadState.image && (
+                    {(selectedConfig.type === 'image' || selectedConfig.type === 'labels') &&
+                      selectedLayerLoadState.image && (
                       <div>
-                        Image: {selectedLayerLoadState.image}
+                        {selectedConfig.type === 'labels' ? 'Labels' : 'Image'}:{' '}
+                        {selectedLayerLoadState.image}
                         {!hasRenderableLayerData(selectedConfig.id) &&
                         selectedLayerLoadState.image === 'loading'
                           ? ' (blocking)'
                           : ''}
                       </div>
                     )}
-                    {selectedConfig.type === 'shapes' && selectedLayerLoadState.tooltip && (
+                    {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') &&
+                      selectedLayerLoadState.tooltip && (
                       <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
                     )}
                   </div>
@@ -714,66 +721,33 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                     updateLayer={actions.updateLayer}
                   />
                 )}
-                {selectedConfig.type === 'shapes' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div>
-                      <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>
-                        Tooltip fields
-                      </div>
-                      {associatedTable ? (
-                        <>
-                          <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>
-                            Table: {associatedTable.key}
-                          </div>
-                          {availableTooltipFields.length > 0 ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              {availableTooltipFields.map((field) => {
-                                const checked =
-                                  selectedConfig.tooltipFields?.includes(field) ?? false;
-                                return (
-                                  <label
-                                    key={field}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 8,
-                                      color: '#ccc',
-                                      fontSize: '12px',
-                                    }}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => {
-                                        const current = new Set(selectedConfig.tooltipFields ?? []);
-                                        if (checked) {
-                                          current.delete(field);
-                                        } else {
-                                          current.add(field);
-                                        }
-                                        actions.updateLayer(selectedConfig.id, {
-                                          tooltipFields: Array.from(current),
-                                        });
-                                      }}
-                                    />
-                                    {field}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div style={{ color: '#666', fontSize: '12px' }}>
-                              No eligible obs columns found on the associated table
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div style={{ color: '#666', fontSize: '12px' }}>
-                          No associated table found for this shapes layer
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                {selectedConfig.type === 'labels' && (
+                  <LabelsChannelPanel
+                    layerId={selectedConfig.id}
+                    config={selectedConfig}
+                    defaults={getLabelsLayerLoadedData(selectedConfig.id)}
+                    updateLayer={actions.updateLayer}
+                  />
+                )}
+                {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (
+                  <TooltipFieldsPanel
+                    tableName={associatedTable?.key}
+                    availableFields={availableTooltipFields}
+                    selectedFields={selectedConfig.tooltipFields ?? []}
+                    onChange={(tooltipFields) => {
+                      actions.updateLayer(selectedConfig.id, { tooltipFields });
+                    }}
+                    helperText={
+                      selectedConfig.type === 'labels'
+                        ? 'Picked label ids are always shown; selected fields are appended from the associated table.'
+                        : undefined
+                    }
+                    noAssociatedTableMessage={
+                      selectedConfig.type === 'labels'
+                        ? 'No associated table found for this labels layer. Hover will show the picked label id only.'
+                        : 'No associated table found for this shapes layer'
+                    }
+                  />
                 )}
               </div>
             )}
