@@ -9,7 +9,7 @@ const coreSrcIndex = path.resolve(pkgRoot, '../core/src/index.ts');
 const baseConfig = defineViteConfig({
   pkgRoot,
   libName: 'SpatialDataVis',
-  external: ['@spatialdata/core', '@spatialdata/react'],
+  external: [/^@spatialdata\/[^/]+$/, /^zustand(?:\/.*)?$/],
 });
 
 const testResolve =
