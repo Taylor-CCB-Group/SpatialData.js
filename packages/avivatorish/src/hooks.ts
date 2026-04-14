@@ -20,6 +20,7 @@ import {
     getMultiSelectionStats,
     getBoundingCube,
     isInterleaved,
+    resolveRasterSource,
 } from "./utils";
 import { COLOR_PALLETE, FILL_PIXEL_VALUE } from "./constants";
 import { createLoader } from "./utils";
@@ -53,7 +54,7 @@ export const useImage = (
         async function changeLoader() {
             // Placeholder
             viewerStore.setState({ isChannelLoading: [true] });
-            viewerStore.setState({ isViewerLoading: true });
+            viewerStore.setState({ isViewerLoading: true, metadata: null });
             if (use3d) toggleUse3d();
             if (!source) throw "this should never happen - this is a type-guard";
             const { urlOrFile } = source;
@@ -109,11 +110,15 @@ export const useImage = (
     useEffect(() => {
         if (!metadata) return;
         const changeSettings = async () => {
+            const rasterSource = resolveRasterSource(loader);
+            if (!rasterSource) {
+                return;
+            }
             // Placeholder
             viewerStore.setState({ isChannelLoading: [true] });
             viewerStore.setState({ isViewerLoading: true });
             if (use3d) toggleUse3d();
-            const newSelections = buildDefaultSelection(loader[0]);
+            const newSelections = buildDefaultSelection(rasterSource);
             const { Channels } = metadata.Pixels;
             const channelOptions = Channels.map(
                 (c, i) => c.Name ?? `Channel ${i}`,
@@ -126,7 +131,7 @@ export const useImage = (
             let newColors: Colors = [];
             const isRgb = guessRgb(metadata);
             if (isRgb) {
-                if (isInterleaved(loader[0].shape)) {
+                if (isInterleaved(rasterSource.shape)) {
                     // These don't matter because the data is interleaved.
                     newContrastLimits = [[0, 255]];
                     newDomains = [[0, 255]];
