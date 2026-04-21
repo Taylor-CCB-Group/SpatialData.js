@@ -25,6 +25,8 @@ import { openExtraConsolidated } from '@spatialdata/zarrextra';
 import * as zarr from 'zarrita';
 
 const result = await openExtraConsolidated('https://example.com/store.zarr');
+// or:
+// const result = await openExtraConsolidated(new zarr.FetchStore('https://example.com/store.zarr'));
 if (result.ok) {
   const { zarritaStore, tree } = result.value;
   ...
@@ -37,4 +39,3 @@ if (result.ok) {
 ## API
 
 See the TypeScript definitions for full API documentation.
-

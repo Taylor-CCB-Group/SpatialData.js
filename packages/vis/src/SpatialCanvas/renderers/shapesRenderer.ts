@@ -55,7 +55,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
   
   if (!polygonData) {
     // Data not loaded yet
-    console.debug(`[ShapesRenderer] No polygon data for layer "${id}" from ${element.url}`);
+    console.debug(`[ShapesRenderer] No polygon data for layer "${id}" from ${element.url ?? element.path}`);
     return null;
   }
 
@@ -91,7 +91,7 @@ export async function loadShapesData(
     // loadPolygonShapes returns { shape: [n, null], data: polygons[] }
     return result.data;
   } catch (error) {
-    console.warn(`[ShapesRenderer] Failed to load shapes from ${element.url}:`, error);
+    console.warn(`[ShapesRenderer] Failed to load shapes from ${element.url ?? element.path}:`, error);
     return [];
   }
 }

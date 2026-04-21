@@ -31,7 +31,7 @@ function DataSource({ children }: React.PropsWithChildren) {
         />
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        <SpatialDataProvider storeUrl={url}>{children}</SpatialDataProvider>
+        <SpatialDataProvider source={url}>{children}</SpatialDataProvider>
       </div>
     </div>
   );

@@ -24,7 +24,7 @@
   "dependencies": {
     "@spatialdata/zarrextra": "workspace:*",
     "@math.gl/core": "catalog:",
-    "@zarrita/storage": "^0.1.3",
+    "@zarrita/storage": "catalog:",
     "anndata.js": "catalog:",
     "apache-arrow": "catalog:",
     "ol": "^10.6.1",

@@ -793,7 +793,7 @@ export interface SpatialCanvasProps {
  *
  * @example Basic usage
  * ```tsx
- * <SpatialDataProvider url="https://example.com/data.zarr">
+ * <SpatialDataProvider source="https://example.com/data.zarr">
  *   <SpatialCanvas />
  * </SpatialDataProvider>
  * ```
@@ -802,7 +802,7 @@ export interface SpatialCanvasProps {
  * ```tsx
  * const store = createSpatialCanvasStore();
  *
- * <SpatialDataProvider url="...">
+ * <SpatialDataProvider source="...">
  *   <SpatialCanvas store={store} />
  * </SpatialDataProvider>
  *

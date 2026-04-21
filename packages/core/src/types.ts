@@ -35,7 +35,7 @@ export type ElementName = typeof ElementNames[number];
  * elements from the zarr store. They should be kept in sync with the
  * loader implementations in models/index.ts.
  */
-export type Table = ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>;
+export type Table = ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>;
 export type TableValue = string | number | boolean | bigint | null | undefined;
 export type TableColumnData = ArrayLike<TableValue> & Iterable<TableValue>;
 // export type Shapes = {
@@ -54,6 +54,7 @@ export type XSpatialElement = Awaited<ReturnType<typeof zarr.open>>;
  * Represents where a SpatialData store can be located.
  */
 export type StoreLocation = string;
+export type StoreReference = StoreLocation | zarr.Readable;
 
 /**
  * Bad file handler type
@@ -66,7 +67,7 @@ export type BadFileHandler = (file: string, error: Error) => void;
 /**
  * If we support drag 'n' drop loading then presumably this will need to be something different.
  */
-type Store = zarr.FetchStore;
+type Store = zarr.Readable;
 
 /**
  * Zarr group type
@@ -88,7 +89,8 @@ export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from '@spatialdata/zarrextra';
  * Used internally when passing around properties of a spatialdata object to be used by the models/loaders.
  */
 export type SDataProps = {
-  url: StoreLocation;
+  source: StoreReference;
+  url?: StoreLocation;
   onBadFiles?: BadFileHandler;
   selection?: ElementName[];
   rootStore: ConsolidatedStore;

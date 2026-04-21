@@ -66,7 +66,7 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
   
   if (!pointData) {
     // Data not loaded yet
-    console.debug(`[PointsRenderer] No point data for layer "${id}" from ${element.url}`);
+    console.debug(`[PointsRenderer] No point data for layer "${id}" from ${element.url ?? element.path}`);
     return null;
   }
   const d = pointData.data;

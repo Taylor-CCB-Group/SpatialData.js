@@ -92,6 +92,13 @@ export async function createImageLoader(
   element: ImageElement | LabelsElement,
   fetchMultiscales: (url: string) => Promise<unknown> = loadOmeZarrMultiscalesData,
 ): Promise<unknown> {
+  if (!element.url) {
+    throw new Error(
+      `Image element '${element.path}' does not have a URL-backed source. ` +
+      'Store-backed Viv loading is not implemented yet.',
+    );
+  }
+
   try {
     return await fetchMultiscales(element.url);
   } catch (error) {

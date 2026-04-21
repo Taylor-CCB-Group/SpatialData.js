@@ -2,7 +2,7 @@ import type { ElementName, BadFileHandler, SDataProps, ZarrTree, LazyZarrArray, 
 import { ATTRS_KEY } from '../types';
 import { Ok, Err } from '../types';
 import * as ad from 'anndata.js'
-import * as zarr from 'zarrita';
+import type * as zarr from 'zarrita';
 import SpatialDataShapesSource from './VShapesSource';
 import SpatialDataTableSource from './VTableSource';
 import { 
@@ -35,6 +35,34 @@ export type ElementParams<T extends ElementName = ElementName> = {
   onBadFiles?: BadFileHandler;
 }
 
+function toAbsolutePath(path: string): zarr.AbsolutePath {
+  const trimmed = path.replace(/^\/+|\/+$/g, '');
+  return (trimmed ? `/${trimmed}` : '/') as zarr.AbsolutePath;
+}
+
+function joinAbsolutePath(prefix: string, key: zarr.AbsolutePath): zarr.AbsolutePath {
+  const normalizedPrefix = toAbsolutePath(prefix);
+  if (normalizedPrefix === '/') {
+    return key;
+  }
+  if (key === '/') {
+    return normalizedPrefix;
+  }
+  return `${normalizedPrefix}${key}` as zarr.AbsolutePath;
+}
+
+function createPrefixedStore(store: zarr.Readable, prefix: string): zarr.Readable {
+  return {
+    async get(key: zarr.AbsolutePath, opts?: zarr.GetOptions) {
+      return await store.get(joinAbsolutePath(prefix, key), opts);
+    },
+    getRange: store.getRange
+      ? async (key: zarr.AbsolutePath, range: zarr.RangeQuery, opts?: zarr.GetOptions) =>
+          await store.getRange?.(joinAbsolutePath(prefix, key), range, opts)
+      : undefined,
+  };
+}
+
 // ============================================
 // Abstract Base Classes
 // ============================================
@@ -46,14 +74,16 @@ export type ElementParams<T extends ElementName = ElementName> = {
 abstract class AbstractElement<T extends ElementName> {
   readonly kind: T;
   readonly key: string;
-  readonly url: string;
+  readonly path: string;
+  readonly url?: string;
   protected readonly rawAttrs: ZAttrsAny;
   protected readonly parsed: ZarrTree | LazyZarrArray<zarr.DataType>;
 
   constructor({ sdata, name, key }: ElementParams<T>) {
     this.kind = name;
     this.key = key;
-    this.url = `${sdata.url}/${name}/${key}`;
+    this.path = `${name}/${key}`;
+    this.url = sdata.url ? `${sdata.url}/${this.path}` : undefined;
     
     const { tree } = sdata.rootStore;
     if (!tree) {
@@ -227,7 +257,8 @@ export function getTableKeys(input: TableKeysInput): TableKeys {
  */
 export class TableElement extends AbstractElement<'tables'> {
   readonly attrs: TableAttrs;
-  private anndataPromise?: Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>>;
+  private anndataPromise?: Promise<ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>>;
+  private readonly anndataStore: zarr.Readable;
   private readonly tableSource: SpatialDataTableSource;
   
   constructor(params: ElementParams<'tables'>) {
@@ -238,6 +269,7 @@ export class TableElement extends AbstractElement<'tables'> {
       throw result.error;
     } 
     this.attrs = result.data;
+    this.anndataStore = createPrefixedStore(params.sdata.rootStore.zarritaStore, this.path);
     this.tableSource = new SpatialDataTableSource({
       store: params.sdata.rootStore.zarritaStore,
       fileType: '.zarr',
@@ -247,9 +279,9 @@ export class TableElement extends AbstractElement<'tables'> {
   /**
    * Load the table as an AnnData.js object.
    */
-  async getAnnDataJS(): Promise<ad.AnnData<zarr.Readable<unknown>, zarr.NumberDataType, zarr.Uint32>> {
+  async getAnnDataJS(): Promise<ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>> {
     if (!this.anndataPromise) {
-      this.anndataPromise = ad.readZarr(new zarr.FetchStore(this.url));
+      this.anndataPromise = ad.readZarr(this.anndataStore);
     }
     return await this.anndataPromise;
   }
