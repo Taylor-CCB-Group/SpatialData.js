@@ -196,7 +196,7 @@ export const TIME_UNITS: Set<string> = getEnumValues(timeUnitSchema);
  * SHOULD contain the field "unit" to specify the physical unit of this dimension.
  * The value SHOULD be one of the following strings, which are valid units according to UDUNITS-2.
  * @see https://github.com/ome/ngff/blob/26039d997f16509f4ef7f4006ea641bef73733f7/rfc/5/versions/1/index.md?plain=1#L130
- * 
+ *
  * Note: This schema is relaxed to allow arbitrary string values (e.g., generic "unit" placeholder)
  * for backward compatibility, but prefers validated spatial and time units when available.
  */
@@ -283,7 +283,7 @@ export type NgffImage = z.infer<typeof imageSchema>;
  * Schema for spatialdata_attrs metadata (common to spatial elements).
  * Contains version info and other spatialdata-specific metadata.
  * Note: Transformations are stored at the top level of attrs, not inside spatialdata_attrs.
- * 
+ *
  * IMPORTANT: The semantic meaning of `version` varies by element type:
  * - For raster elements (images/labels): `version` is the spatialdata library version (e.g., '0.5.0', '0.6.1', '0.7.2')
  *   and does NOT control OME-NGFF format detection (which is determined by structure).
@@ -362,7 +362,7 @@ const rasterAttrs_OME_05_Schema = z
  * Supports both spatialdata 0.5.0 (OME-NGFF 0.4, top-level multiscales) and
  * spatialdata 0.6.0+ (OME-NGFF 0.5, nested under 'ome') formats.
  * Uses zod transform to normalize both formats to a consistent internal representation.
- * 
+ *
  * NOTE: Format detection is STRUCTURAL (presence of 'ome' key), NOT based on
  * spatialdata_attrs.version. The version field is metadata only and does not control
  * which schema is applied.
@@ -388,7 +388,7 @@ export const rasterAttrsSchema = z
         ),
       } as RasterAttrs;
     }
-    
+
     // Otherwise, it's already in the v0.5.0 format (top-level multiscales), return as-is
     return data as RasterAttrs;
   });

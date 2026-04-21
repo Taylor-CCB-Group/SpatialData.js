@@ -4,7 +4,7 @@ import type { CoordinateTransformation, Axis } from '../schemas';
 /**
  * Coordinate system reference from NGFF transformations.
  * @see https://github.com/ome/ngff/blob/main/rfc/5/versions/1/index.md
- * 
+ *
  * Note: `axes` is optional for backward compatibility with older NGFF data, but should be provided
  * for proper transformation handling when coordinate systems include non-spatial axes (e.g., "cyx").
  * Without axes, transformations fall back to direct mapping which assumes all values are spatial.
@@ -17,13 +17,13 @@ export interface CoordinateSystemRef {
 
 /**
  * Map spatial axis values to XYZ coordinates based on axis names.
- * 
+ *
  * Axes should be validated to have proper `type` fields by the time they reach this function.
  * We check `type === 'space'` to identify spatial axes and map them by name to x, y, z coordinates.
- * 
+ *
  * Note: Future work could handle mixed units (e.g., different spatial units like 'micrometer' vs 'meter')
  * by converting to a common unit for order-of-magnitude consistency in transformations.
- * 
+ *
  * @param values - Full transformation value array (ordered according to input axes)
  * @param axes - Array of axis definitions (should be validated Axis types)
  * @param defaultValue - Default value to use when padding (1 for scale, 0 for translation)
@@ -36,11 +36,13 @@ function mapSpatialValuesToXYZ(
 ): [number, number, number] {
   if (!axes || axes.length === 0) {
     // No axes specified - use direct mapping (backward compatibility)
-    console.warn("legacy data with no input axis specification - not really expecting to get here?")
+    console.warn(
+      'legacy data with no input axis specification - not really expecting to get here?'
+    );
     const [x = defaultValue, y = defaultValue, z = defaultValue] = values;
     return [x, y, z];
   }
-  
+
   // Map values to Matrix4 dimensions based on axis name
   // Matrix4 uses standard x, y, z ordering
   let xValue = defaultValue;
@@ -49,16 +51,16 @@ function mapSpatialValuesToXYZ(
   let xSet = false;
   let ySet = false;
   let zSet = false;
-  
+
   // Track spatial axes in order for fallback mapping
   const spatialAxesInOrder: Array<{ name: string; value: number }> = [];
-  
+
   for (let i = 0; i < axes.length && i < values.length; i++) {
     const axis = axes[i];
     if (axis.type === 'space') {
       const axisName = axis.name.toLowerCase();
       const value = values[i] ?? defaultValue;
-      
+
       // Map by exact axis name match (most common case: "x", "y", "z")
       if (axisName === 'x' && !xSet) {
         xSet = true;
@@ -75,7 +77,7 @@ function mapSpatialValuesToXYZ(
       }
     }
   }
-  
+
   // Fallback: if we have unmapped spatial axes, map them in order
   // This handles cases where axis names don't match x/y/z exactly
   // but preserves the spatial ordering (first → x, second → y, third → z)
@@ -91,7 +93,7 @@ function mapSpatialValuesToXYZ(
       zValue = value;
     }
   }
-  
+
   return [xValue, yValue, zValue];
 }
 
@@ -105,8 +107,7 @@ function getAxisMatrixDimensions(axes: Axis[]): number[] {
 
   for (let i = 0; i < axes.length; i++) {
     const axisName = axes[i]?.name?.toLowerCase();
-    const dim =
-      axisName === 'x' ? 0 : axisName === 'y' ? 1 : axisName === 'z' ? 2 : undefined;
+    const dim = axisName === 'x' ? 0 : axisName === 'y' ? 1 : axisName === 'z' ? 2 : undefined;
     if (dim !== undefined && !used.has(dim)) {
       dims[i] = dim;
       used.add(dim);
@@ -181,14 +182,14 @@ function buildSpatialMatrixFromAffine(
   const inputAxisDims = getAxisMatrixDimensions(spatialInputAxes);
   const outputAxisDims = getAxisMatrixDimensions(spatialOutputAxes);
   const inputIndices = useFullAxes
-    ? inputAxes
+    ? (inputAxes
         ?.map((axis, index) => (axis.type === 'space' ? index : -1))
-        .filter((index) => index !== -1) ?? []
+        .filter((index) => index !== -1) ?? [])
     : spatialInputAxes.map((_, index) => index);
   const outputIndices = useFullAxes
-    ? outputAxes
+    ? (outputAxes
         ?.map((axis, index) => (axis.type === 'space' ? index : -1))
-        .filter((index) => index !== -1) ?? []
+        .filter((index) => index !== -1) ?? [])
     : spatialOutputAxes.map((_, index) => index);
 
   const translationIndex = affine[0].length - 1;
@@ -224,27 +225,29 @@ export abstract class BaseTransformation {
   readonly input?: CoordinateSystemRef;
   /** Output coordinate system (target space, e.g., "global") */
   readonly output?: CoordinateSystemRef;
-  
+
   constructor(input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
     this.input = input;
     this.output = output;
   }
-  
+
   /** Get the transformation as a column-major 16-element array */
   abstract toArray(): number[];
-  
+
   /** Get the transformation as a Matrix4 */
   toMatrix(): Matrix4 {
     return new Matrix4(this.toArray());
   }
-  
+
   /** The transformation type name */
   abstract get type(): string;
 }
 
 export class Identity extends BaseTransformation {
-  get type() { return 'identity' as const; }
-  
+  get type() {
+    return 'identity' as const;
+  }
+
   toArray(): number[] {
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   }
@@ -252,66 +255,62 @@ export class Identity extends BaseTransformation {
 
 export class Translation extends BaseTransformation {
   readonly translation: number[];
-  
+
   constructor(translation: number[], input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
     super(input, output);
     this.translation = translation;
   }
-  
-  get type() { return 'translation' as const; }
-  
+
+  get type() {
+    return 'translation' as const;
+  }
+
   toArray(): number[] {
     // Transformation values are ordered according to the input coordinate system axes.
     // For example, if input axes are ["c", "y", "x"], then translation[0] corresponds to "c",
     // translation[1] to "y", and translation[2] to "x". We map spatial values to Matrix4
     // dimensions based on axis names (x→x, y→y, z→z) to preserve correct orientation.
     const [tx, ty, tz] = mapSpatialValuesToXYZ(this.translation, this.input?.axes, 0);
-    
-    return [
-      1, 0, 0, 0,
-      0, 1, 0, 0,
-      0, 0, 1, 0,
-      tx, ty, tz, 1,
-    ];
+
+    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, tx, ty, tz, 1];
   }
 }
 
 export class Scale extends BaseTransformation {
   readonly scale: number[];
-  
+
   constructor(scale: number[], input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
     super(input, output);
     this.scale = scale;
   }
-  
-  get type() { return 'scale' as const; }
-  
+
+  get type() {
+    return 'scale' as const;
+  }
+
   toArray(): number[] {
     // Transformation values are ordered according to the input coordinate system axes.
     // For example, if input axes are ["c", "y", "x"], then scale[0] corresponds to "c",
     // scale[1] to "y", and scale[2] to "x". We map spatial values to Matrix4
     // dimensions based on axis names (x→x, y→y, z→z) to preserve correct orientation.
     const [sx, sy, sz] = mapSpatialValuesToXYZ(this.scale, this.input?.axes);
-    
-    return [
-      sx, 0, 0, 0,
-      0, sy, 0, 0,
-      0, 0, sz, 0,
-      0, 0, 0, 1,
-    ];
+
+    return [sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0, 0, 0, 0, 1];
   }
 }
 
 export class Affine extends BaseTransformation {
   readonly affine: number[][];
-  
+
   constructor(affine: number[][], input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
     super(input, output);
     this.affine = affine;
   }
-  
-  get type() { return 'affine' as const; }
-  
+
+  get type() {
+    return 'affine' as const;
+  }
+
   toArray(): number[] {
     const { affine } = this;
 
@@ -351,33 +350,25 @@ export class Affine extends BaseTransformation {
         return mapped;
       }
     }
-    
+
     if (affine.length === 2 && affine[0].length === 3) {
       // 2x3 affine (2D) - common spatialdata format: [[a, b, tx], [c, d, ty]]
       const [[a, b, tx], [c, d, ty]] = affine;
-      return [
-        a, c, 0, 0,
-        b, d, 0, 0,
-        0, 0, 1, 0,
-        tx, ty, 0, 1,
-      ];
+      return [a, c, 0, 0, b, d, 0, 0, 0, 0, 1, 0, tx, ty, 0, 1];
     }
-    
+
     if (affine.length === 3 && affine[0].length === 3) {
       // 3x3 affine (2D with homogeneous row)
       // The third row should be [0, 0, 1] for a valid 2D homogeneous affine matrix
       const [[a, b, tx], [c, d, ty], [h0, h1, h2]] = affine;
       if (h0 !== 0 || h1 !== 0 || h2 !== 1) {
-        console.warn(`Non-standard homogeneous row in 3x3 affine: [${h0}, ${h1}, ${h2}], expected [0, 0, 1]`);
+        console.warn(
+          `Non-standard homogeneous row in 3x3 affine: [${h0}, ${h1}, ${h2}], expected [0, 0, 1]`
+        );
       }
-      return [
-        a, c, 0, 0,
-        b, d, 0, 0,
-        0, 0, 1, 0,
-        tx, ty, 0, 1,
-      ];
+      return [a, c, 0, 0, b, d, 0, 0, 0, 0, 1, 0, tx, ty, 0, 1];
     }
-    
+
     if (affine.length === 4 && affine[0].length === 4) {
       // 4x4 affine (3D) - convert row-major to column-major
       const result: number[] = [];
@@ -403,7 +394,7 @@ export class Affine extends BaseTransformation {
       }
       return result;
     }
-    
+
     console.warn(`Unexpected affine matrix dimensions: ${affine.length}x${affine[0]?.length}`);
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   }
@@ -411,14 +402,20 @@ export class Affine extends BaseTransformation {
 
 export class Sequence extends BaseTransformation {
   readonly transformations: BaseTransformation[];
-  
-  constructor(transformations: BaseTransformation[], input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
+
+  constructor(
+    transformations: BaseTransformation[],
+    input?: CoordinateSystemRef,
+    output?: CoordinateSystemRef
+  ) {
     super(input, output);
     this.transformations = transformations;
   }
-  
-  get type() { return 'sequence' as const; }
-  
+
+  get type() {
+    return 'sequence' as const;
+  }
+
   toArray(): number[] {
     const matrix = new Matrix4().identity();
     for (const t of this.transformations) {
@@ -426,7 +423,7 @@ export class Sequence extends BaseTransformation {
     }
     return Array.from(matrix);
   }
-  
+
   toMatrix(): Matrix4 {
     const matrix = new Matrix4().identity();
     for (const t of this.transformations) {
@@ -438,8 +435,10 @@ export class Sequence extends BaseTransformation {
 
 // MapAxis is less common, stub for now
 export class MapAxis extends BaseTransformation {
-  get type() { return 'mapAxis' as const; }
-  
+  get type() {
+    return 'mapAxis' as const;
+  }
+
   toArray(): number[] {
     // TODO: implement axis mapping
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -462,28 +461,28 @@ export function parseTransformEntry(t: TransformEntry): BaseTransformation {
   if (!('type' in t)) {
     return new Identity();
   }
-  
+
   const input = (t as { input?: CoordinateSystemRef }).input;
   const output = (t as { output?: CoordinateSystemRef }).output;
-  
+
   switch (t.type) {
     case 'identity':
       return new Identity(input, output);
-      
+
     case 'scale':
       return new Scale(t.scale, input, output);
-      
+
     case 'translation':
       return new Translation(t.translation, input, output);
-      
+
     case 'affine':
       return new Affine(t.affine, input, output);
-      
+
     case 'sequence': {
       const children = t.transformations.map((sub: TransformEntry) => parseTransformEntry(sub));
       return new Sequence(children, input, output);
     }
-    
+
     default:
       console.warn(`Unknown transform type: ${(t as { type: string }).type}`);
       return new Identity(input, output);
@@ -494,7 +493,7 @@ export function parseTransformEntry(t: TransformEntry): BaseTransformation {
  * Parse a CoordinateTransformation array into BaseTransformation instances.
  * If there's a single transform, returns it directly.
  * If there are multiple, wraps them in a Sequence.
- * 
+ *
  * @param transforms - Array of transformation objects from the schema
  * @returns A BaseTransformation instance
  */
@@ -502,11 +501,11 @@ export function parseTransforms(transforms: CoordinateTransformation): BaseTrans
   if (transforms.length === 0) {
     return new Identity();
   }
-  
+
   if (transforms.length === 1) {
     return parseTransformEntry(transforms[0]);
   }
-  
+
   // Multiple transforms → wrap in a Sequence
   const parsed = transforms.map(parseTransformEntry);
   // Use the first transform's input and last transform's output
@@ -522,7 +521,7 @@ export function parseTransforms(transforms: CoordinateTransformation): BaseTrans
 /**
  * Build a single Matrix4 from an array of transformation entries.
  * All transforms are composed into a single 4x4 matrix.
- * 
+ *
  * @param transforms - Array of transformation objects from the schema
  * @returns A Matrix4 representing the composed transformation
  */
@@ -533,7 +532,7 @@ export function buildMatrix4FromTransforms(transforms: CoordinateTransformation)
 /**
  * Compose element-level and dataset-level transforms into a single Matrix4.
  * Useful for getting the full transform for a specific resolution level.
- * 
+ *
  * @param elementTransforms - Transforms from the element level
  * @param datasetTransforms - Transforms from the specific dataset (resolution level)
  * @returns Combined Matrix4, or undefined if both inputs are undefined
@@ -545,19 +544,19 @@ export function composeTransforms(
   if (!elementTransforms && !datasetTransforms) {
     return undefined;
   }
-  
+
   const matrix = new Matrix4().identity();
-  
+
   // Apply dataset transforms first (inner), then element transforms (outer)
   // This follows the convention that dataset transforms go from pixel to element space,
   // then element transforms go from element space to coordinate system
   if (datasetTransforms) {
     matrix.multiplyRight(parseTransforms(datasetTransforms).toMatrix());
   }
-  
+
   if (elementTransforms) {
     matrix.multiplyRight(parseTransforms(elementTransforms).toMatrix());
   }
-  
+
   return matrix;
 }

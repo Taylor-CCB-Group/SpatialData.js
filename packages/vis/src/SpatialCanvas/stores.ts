@@ -1,14 +1,14 @@
 /**
  * Framework-agnostic zustand stores for SpatialCanvas
- * 
+ *
  * Uses zustand/vanilla so stores can be used without React.
  * React bindings are in ./context.tsx
  */
 
 import { createStore } from 'zustand/vanilla';
-import type { 
-  SpatialCanvasState, 
-  SpatialCanvasActions, 
+import type {
+  SpatialCanvasState,
+  SpatialCanvasActions,
   SpatialCanvasStore,
   LayerConfig,
   ViewState,
@@ -50,7 +50,10 @@ export function createSpatialCanvasStore() {
         return {
           layers: remainingLayers,
           layerOrder: nextOrder,
-          selectedLayerId: state.selectedLayerId === id ? nextOrder[nextOrder.length - 1] ?? null : state.selectedLayerId,
+          selectedLayerId:
+            state.selectedLayerId === id
+              ? (nextOrder[nextOrder.length - 1] ?? null)
+              : state.selectedLayerId,
         };
       });
     },
@@ -98,4 +101,3 @@ export function createSpatialCanvasStore() {
 }
 
 export type SpatialCanvasStoreApi = ReturnType<typeof createSpatialCanvasStore>;
-

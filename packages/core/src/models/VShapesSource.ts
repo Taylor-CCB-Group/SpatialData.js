@@ -107,7 +107,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     const encodingType = zattrs['encoding-type'];
     if (encodingType !== 'ngff:shapes') {
       throw new Error(
-        `Unexpected encoding type or version for shapes spatialdata_attrs: ${encodingType} ${formatVersion}`,
+        `Unexpected encoding type or version for shapes spatialdata_attrs: ${encodingType} ${formatVersion}`
       );
     }
 
@@ -116,7 +116,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
         return '0.1';
       }
       throw new Error(
-        `Unexpected encoding type or version for shapes spatialdata_attrs: ${encodingType} ${formatVersion}`,
+        `Unexpected encoding type or version for shapes spatialdata_attrs: ${encodingType} ${formatVersion}`
       );
     }
 
@@ -174,7 +174,9 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       throw new Error(`Column ${columnName} not found in parquet table`);
     }
     if (geometryColumn.type.toString() !== 'Binary') {
-      throw new Error(`Expected geometry column to have Binary type but got ${geometryColumn.type.toString()}`);
+      throw new Error(
+        `Expected geometry column to have Binary type but got ${geometryColumn.type.toString()}`
+      );
     }
     return geometryColumn;
   }
@@ -194,7 +196,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     // Check if the column has metadata indicating it is WKB encoded.
     // Reference: https://github.com/geopandas/geopandas/blob/6ab5a7145fa788d049a805f114bc46c6d0ed4507/geopandas/io/arrow.py#L172
     const geometryEncodingValue = arrowTable.schema.fields
-      .find(field => field.name === columnName)
+      .find((field) => field.name === columnName)
       ?.metadata?.get('ARROW:extension:name');
 
     if (!geometryEncodingValue) {
@@ -214,11 +216,11 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
   _decodeWkbColumnFlat(geometryColumn: Vector): Array<[number, number]> {
     const wkb = new WKB();
     const arr = geometryColumn.toArray();
-    return arr.map(
-      (geom: ArrayBuffer) => (
+    return arr.map((geom: ArrayBuffer) =>
+      wkb
+    .readGeometry(geom)
         // @ts-expect-error - getFlatCoordinates is not a method of Geometry, check this<<<
-        (wkb.readGeometry(geom)).getFlatCoordinates()
-      ),
+        .getFlatCoordinates()
     );
   }
 
@@ -235,16 +237,15 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     // TODO: alternatively, use positionFormat: 'XY' and return flat coordinates again.
     // However this may complicate applying transformations, at least in the current way.
     // Reference: https://deck.gl/docs/api-reference/layers/polygon-layer#data-accessors
-    return arr.map(
-      (geom: ArrayBuffer) => {
-        const coords = (
-          // @ts-expect-error - getCoordinates is not a method of Geometry, check this<<<
-          (wkb.readGeometry(geom)).getCoordinates()
-        );
-        // Take first polygon (if multipolygon)
-        return coords[0];
-      },
-    );
+    return arr.map((geom: ArrayBuffer) => {
+      const coords =
+      wkb
+      .readGeometry(geom)
+      // @ts-expect-error - getCoordinates is not a method of Geometry, check this<<<
+          .getCoordinates();
+      // Take first polygon (if multipolygon)
+      return coords[0];
+    });
   }
 
   /**
@@ -310,10 +311,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       // Return flat coordinates as a 2D array.
       return {
         shape: [2, points.length],
-        data: [
-          toFloat32Array(points.map((p) => p[0])),
-          toFloat32Array(points.map((p) => p[1])),
-        ],
+        data: [toFloat32Array(points.map((p) => p[0])), toFloat32Array(points.map((p) => p[1]))],
       };
     }
     throw new Error('Unexpected encoding type for circles, currently only WKB is supported');

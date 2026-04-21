@@ -48,21 +48,19 @@ function createMockSpatialData() {
     zarritaStore: {},
   };
 
-  return new SpatialData(
-    'https://example.com/mock.zarr',
-    rootStore as any,
-    ['shapes', 'tables'],
-  );
+  return new SpatialData('https://example.com/mock.zarr', rootStore as any, ['shapes', 'tables']);
 }
 
 describe('getTableKeys', () => {
   it('normalizes a single region to an array', () => {
-    expect(getTableKeys({
-      instance_key: 'cell_id',
-      region: 'cells',
-      region_key: 'region',
-      'spatialdata-encoding-type': 'ngff:regions_table',
-    })).toEqual({
+    expect(
+      getTableKeys({
+        instance_key: 'cell_id',
+        region: 'cells',
+        region_key: 'region',
+        'spatialdata-encoding-type': 'ngff:regions_table',
+      })
+    ).toEqual({
       instanceKey: 'cell_id',
       region: ['cells'],
       regionKey: 'region',
@@ -70,12 +68,14 @@ describe('getTableKeys', () => {
   });
 
   it('preserves multiple regions', () => {
-    expect(getTableKeys({
-      instance_key: 'cell_id',
-      region: ['cells', 'nuclei'],
-      region_key: 'region',
-      'spatialdata-encoding-type': 'ngff:regions_table',
-    })).toEqual({
+    expect(
+      getTableKeys({
+        instance_key: 'cell_id',
+        region: ['cells', 'nuclei'],
+        region_key: 'region',
+        'spatialdata-encoding-type': 'ngff:regions_table',
+      })
+    ).toEqual({
       instanceKey: 'cell_id',
       region: ['cells', 'nuclei'],
       regionKey: 'region',

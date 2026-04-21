@@ -1,211 +1,186 @@
-import { useEffect } from "react";
+import { useEffect } from 'react';
 // import { useDropzone as useReactDropzone } from 'react-dropzone';
-import { shallow } from "zustand/shallow";
+import { shallow } from 'zustand/shallow';
 // eslint-disable-next-line camelcase
-import { unstable_batchedUpdates } from "react-dom";
+import { unstable_batchedUpdates } from 'react-dom';
 
 import {
-    useImageSettingsStore,
-    useLoader,
-    useMetadata,
-    useViewerStore,
-    useViewerStoreApi,
-    useChannelsStoreApi,
-    useImageSettingsStoreApi,
-    // type PixelSource,
-} from "./state";
+  useImageSettingsStore,
+  useLoader,
+  useMetadata,
+  useViewerStore,
+  useViewerStoreApi,
+  useChannelsStoreApi,
+  useImageSettingsStoreApi,
+  // type PixelSource,
+} from './state';
 import {
-    buildDefaultSelection,
-    guessRgb,
-    getMultiSelectionStats,
-    getBoundingCube,
-    isInterleaved,
-    resolveRasterSource,
-} from "./utils";
-import { COLOR_PALLETE, FILL_PIXEL_VALUE } from "./constants";
-import { createLoader } from "./utils";
+  buildDefaultSelection,
+  guessRgb,
+  getMultiSelectionStats,
+  getBoundingCube,
+  isInterleaved,
+  resolveRasterSource,
+} from './utils';
+import { COLOR_PALLETE, FILL_PIXEL_VALUE } from './constants';
+import { createLoader } from './utils';
 
-
-
-export const useImage = (
-    source?: { description: string; urlOrFile: string },
-    history?: any,
-) => {
-    const [use3d, toggleUse3d, toggleIsOffsetsSnackbarOn] = useViewerStore(
-        (store) => [
-            store.use3d,
-            store.toggleUse3d,
-            store.toggleIsOffsetsSnackbarOn,
-        ],
-        shallow,
-    );
-    const [lensEnabled, toggleLensEnabled] = useImageSettingsStore(
-        (store) => [store.lensEnabled, store.toggleLensEnabled],
-        shallow,
-    );
-    const loader = useLoader();
-    const metadata = useMetadata();
-    const viewerStore = useViewerStoreApi();
-    const channelsStore = useChannelsStoreApi();
-    const imageSettingsStore = useImageSettingsStoreApi();
-    // biome-ignore lint/correctness/useExhaustiveDependencies: disabled in viv as well, and would cause a bunch of re-running...
-    useEffect(() => {
-        if (!source) return;
-        async function changeLoader() {
-            // Placeholder
-            viewerStore.setState({ isChannelLoading: [true] });
-            viewerStore.setState({ isViewerLoading: true, metadata: null });
-            if (use3d) toggleUse3d();
-            if (!source) throw "this should never happen - this is a type-guard";
-            const { urlOrFile } = source;
-            const newLoader = await createLoader(
-                urlOrFile,
-                toggleIsOffsetsSnackbarOn,
-                (message) =>
-                    viewerStore.setState({
-                        loaderErrorSnackbar: { on: true, message },
-                    }),
-            );
-            //@ts-ignore flagging so we can get back to this
-            let nextMeta: any;
-            //@ts-ignore flagging so we can get back to this
-            let nextLoader: any;//PixelSource | PixelSource[] | null = null;
-            if (Array.isArray(newLoader)) {
-                const arr = newLoader as Array<{ metadata?: unknown; data?: unknown }>;
-                if (arr.length > 1) {
-                    nextMeta = arr.map((l) => l.metadata);
-                    nextLoader = arr.map((l) => l.data);
-                } else {
-                    nextMeta = arr[0]?.metadata;
-                    nextLoader = arr[0]?.data;
-                }
-            } else {
-                const single = newLoader as { metadata?: unknown; data?: unknown };
-                nextMeta = single.metadata;
-                nextLoader = single.data;
-            }
-            if (nextLoader) {
-                console.info(
-                    "Metadata (in JSON-like form) for current file being viewed: ",
-                    nextMeta,
-                );
-                unstable_batchedUpdates(() => {
-                    channelsStore.setState({ loader: nextLoader });
-                    viewerStore.setState({
-                        metadata: nextMeta,
-                    });
-                });
-                if (use3d) toggleUse3d();
-                // eslint-disable-next-line no-unused-expressions
-                history?.push(
-                    typeof urlOrFile === "string"
-                        ? `?image_url=${urlOrFile}`
-                        : "",
-                );
-            }
+export const useImage = (source?: { description: string; urlOrFile: string }, history?: any) => {
+  const [use3d, toggleUse3d, toggleIsOffsetsSnackbarOn] = useViewerStore(
+    (store) => [store.use3d, store.toggleUse3d, store.toggleIsOffsetsSnackbarOn],
+    shallow
+  );
+  const [lensEnabled, toggleLensEnabled] = useImageSettingsStore(
+    (store) => [store.lensEnabled, store.toggleLensEnabled],
+    shallow
+  );
+  const loader = useLoader();
+  const metadata = useMetadata();
+  const viewerStore = useViewerStoreApi();
+  const channelsStore = useChannelsStoreApi();
+  const imageSettingsStore = useImageSettingsStoreApi();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: disabled in viv as well, and would cause a bunch of re-running...
+  useEffect(() => {
+    if (!source) return;
+    async function changeLoader() {
+      // Placeholder
+      viewerStore.setState({ isChannelLoading: [true] });
+      viewerStore.setState({ isViewerLoading: true, metadata: null });
+      if (use3d) toggleUse3d();
+      if (!source) throw 'this should never happen - this is a type-guard';
+      const { urlOrFile } = source;
+      const newLoader = await createLoader(urlOrFile, toggleIsOffsetsSnackbarOn, (message) =>
+        viewerStore.setState({
+          loaderErrorSnackbar: { on: true, message },
+        })
+      );
+      //@ts-ignore flagging so we can get back to this
+      let nextMeta: any;
+      //@ts-ignore flagging so we can get back to this
+      let nextLoader: any; //PixelSource | PixelSource[] | null = null;
+      if (Array.isArray(newLoader)) {
+        const arr = newLoader as Array<{ metadata?: unknown; data?: unknown }>;
+        if (arr.length > 1) {
+          nextMeta = arr.map((l) => l.metadata);
+          nextLoader = arr.map((l) => l.data);
+        } else {
+          nextMeta = arr[0]?.metadata;
+          nextLoader = arr[0]?.data;
         }
-        if (source) changeLoader();
-    }, [source, history]); // eslint-disable-line react-hooks/exhaustive-deps
-    // biome-ignore lint/correctness/useExhaustiveDependencies: suppressed in viv as well, and would cause a bunch of re-running...
-    useEffect(() => {
-        if (!metadata) return;
-        const changeSettings = async () => {
-            const rasterSource = resolveRasterSource(loader);
-            if (!rasterSource) {
-                return;
-            }
-            // Placeholder
-            viewerStore.setState({ isChannelLoading: [true] });
-            viewerStore.setState({ isViewerLoading: true });
-            if (use3d) toggleUse3d();
-            const newSelections = buildDefaultSelection(rasterSource);
-            const { Channels } = metadata.Pixels;
-            const channelOptions = Channels.map(
-                (c, i) => c.Name ?? `Channel ${i}`,
-            );
-            // Default RGB.
-            type Limits = [number, number][];
-            type Colors = [number, number, number][];
-            let newContrastLimits: Limits = [];
-            let newDomains: Limits = [];
-            let newColors: Colors = [];
-            const isRgb = guessRgb(metadata);
-            if (isRgb) {
-                if (isInterleaved(rasterSource.shape)) {
-                    // These don't matter because the data is interleaved.
-                    newContrastLimits = [[0, 255]];
-                    newDomains = [[0, 255]];
-                    newColors = [[255, 0, 0]];
-                } else {
-                    newContrastLimits = [
-                        [0, 255],
-                        [0, 255],
-                        [0, 255],
-                    ];
-                    newDomains = [
-                        [0, 255],
-                        [0, 255],
-                        [0, 255],
-                    ];
-                    newColors = [
-                        [255, 0, 0],
-                        [0, 255, 0],
-                        [0, 0, 255],
-                    ];
-                }
-                if (lensEnabled) {
-                    toggleLensEnabled();
-                }
-                viewerStore.setState({ useColormap: false, useLens: false });
-            } else {
-                const stats = await getMultiSelectionStats({
-                    loader,
-                    selections: newSelections,
-                    use3d: false,
-                });
-                newDomains = stats.domains;
-                newContrastLimits = stats.contrastLimits;
-                // If there is only one channel, use white.
-                newColors =
-                    newDomains.length === 1
-                        ? [[255, 255, 255]] as Colors
-                        : newDomains.map(
-                              (_, i) =>
-                                  (Channels[i]?.Color?.slice(0, -1) ??
-                                  COLOR_PALLETE[i]) as Colors[number],
-                          );
-                viewerStore.setState({
-                    useLens: channelOptions.length !== 1,
-                    useColormap: true,
-                });
-            }
-            channelsStore.setState({
-                ids: newDomains.map(() => String(Math.random())),
-                selections: newSelections,
-                domains: newDomains,
-                contrastLimits: newContrastLimits,
-                colors: newColors,
-                channelsVisible: newColors.map(() => true),
-            });
-            viewerStore.setState({
-                isChannelLoading: newSelections.map((i) => !i),
-                isViewerLoading: false,
-                pixelValues: new Array(newSelections.length).fill(
-                    FILL_PIXEL_VALUE,
-                ),
-                // Set the global selections (needed for the UI). All selections have the same global selection.
-                globalSelection: newSelections[0],
-                channelOptions,
-            });
-            const [xSlice, ySlice, zSlice] = getBoundingCube(loader);
-            imageSettingsStore.setState({
-                xSlice,
-                ySlice,
-                zSlice,
-            });
-        };
-        if (metadata) changeSettings();
-    }, [loader, metadata]); // eslint-disable-line react-hooks/exhaustive-deps
+      } else {
+        const single = newLoader as { metadata?: unknown; data?: unknown };
+        nextMeta = single.metadata;
+        nextLoader = single.data;
+      }
+      if (nextLoader) {
+        console.info('Metadata (in JSON-like form) for current file being viewed: ', nextMeta);
+        unstable_batchedUpdates(() => {
+          channelsStore.setState({ loader: nextLoader });
+          viewerStore.setState({
+            metadata: nextMeta,
+          });
+        });
+        if (use3d) toggleUse3d();
+        // eslint-disable-next-line no-unused-expressions
+        history?.push(typeof urlOrFile === 'string' ? `?image_url=${urlOrFile}` : '');
+      }
+    }
+    if (source) changeLoader();
+  }, [source, history]); // eslint-disable-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: suppressed in viv as well, and would cause a bunch of re-running...
+  useEffect(() => {
+    if (!metadata) return;
+    const changeSettings = async () => {
+      const rasterSource = resolveRasterSource(loader);
+      if (!rasterSource) {
+        return;
+      }
+      // Placeholder
+      viewerStore.setState({ isChannelLoading: [true] });
+      viewerStore.setState({ isViewerLoading: true });
+      if (use3d) toggleUse3d();
+      const newSelections = buildDefaultSelection(rasterSource);
+      const { Channels } = metadata.Pixels;
+      const channelOptions = Channels.map((c, i) => c.Name ?? `Channel ${i}`);
+      // Default RGB.
+      type Limits = [number, number][];
+      type Colors = [number, number, number][];
+      let newContrastLimits: Limits = [];
+      let newDomains: Limits = [];
+      let newColors: Colors = [];
+      const isRgb = guessRgb(metadata);
+      if (isRgb) {
+        if (isInterleaved(rasterSource.shape)) {
+          // These don't matter because the data is interleaved.
+          newContrastLimits = [[0, 255]];
+          newDomains = [[0, 255]];
+          newColors = [[255, 0, 0]];
+        } else {
+          newContrastLimits = [
+            [0, 255],
+            [0, 255],
+            [0, 255],
+          ];
+          newDomains = [
+            [0, 255],
+            [0, 255],
+            [0, 255],
+          ];
+          newColors = [
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+          ];
+        }
+        if (lensEnabled) {
+          toggleLensEnabled();
+        }
+        viewerStore.setState({ useColormap: false, useLens: false });
+      } else {
+        const stats = await getMultiSelectionStats({
+          loader,
+          selections: newSelections,
+          use3d: false,
+        });
+        newDomains = stats.domains;
+        newContrastLimits = stats.contrastLimits;
+        // If there is only one channel, use white.
+        newColors =
+          newDomains.length === 1
+            ? ([[255, 255, 255]] as Colors)
+            : newDomains.map(
+                (_, i) => (Channels[i]?.Color?.slice(0, -1) ?? COLOR_PALLETE[i]) as Colors[number]
+              );
+        viewerStore.setState({
+          useLens: channelOptions.length !== 1,
+          useColormap: true,
+        });
+      }
+      channelsStore.setState({
+        ids: newDomains.map(() => String(Math.random())),
+        selections: newSelections,
+        domains: newDomains,
+        contrastLimits: newContrastLimits,
+        colors: newColors,
+        channelsVisible: newColors.map(() => true),
+      });
+      viewerStore.setState({
+        isChannelLoading: newSelections.map((i) => !i),
+        isViewerLoading: false,
+        pixelValues: new Array(newSelections.length).fill(FILL_PIXEL_VALUE),
+        // Set the global selections (needed for the UI). All selections have the same global selection.
+        globalSelection: newSelections[0],
+        channelOptions,
+      });
+      const [xSlice, ySlice, zSlice] = getBoundingCube(loader);
+      imageSettingsStore.setState({
+        xSlice,
+        ySlice,
+        zSlice,
+      });
+    };
+    if (metadata) changeSettings();
+  }, [loader, metadata]); // eslint-disable-line react-hooks/exhaustive-deps
 };
 
 // export const useDropzone = () => {

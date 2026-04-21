@@ -1,14 +1,14 @@
-import { useSpatialData } from "@spatialdata/react";
-import JsonView from "@uiw/react-json-view";
-import { darkTheme } from "@uiw/react-json-view/dark";
-import { useEffect, useMemo, useState } from "react";
+import { useSpatialData } from '@spatialdata/react';
+import JsonView from '@uiw/react-json-view';
+import { darkTheme } from '@uiw/react-json-view/dark';
+import { useEffect, useMemo, useState } from 'react';
 // import type { Table } from "@spatialdata/core";
 
 export default function ShapesComponent() {
   const { spatialData } = useSpatialData();
   const [selectedShapes, setSelectedShapes] = useState<string>('');
   const shapeKeys = useMemo(() => Object.keys(spatialData?.shapes ?? {}), [spatialData?.shapes]);
-  
+
   // Default to first available shape
   useEffect(() => {
     if (shapeKeys.length > 0 && (!selectedShapes || !shapeKeys.includes(selectedShapes))) {
@@ -45,14 +45,16 @@ export default function ShapesComponent() {
   return (
     <div>
       <h3>Shapes component:</h3>
-      {spatialData?.shapes &&
+      {spatialData?.shapes && (
         <select value={selectedShapes || ''} onChange={(e) => setSelectedShapes(e.target.value)}>
           {Object.keys(spatialData.shapes).map((key) => (
-            <option key={key} value={key}>{key}</option>
+            <option key={key} value={key}>
+              {key}
+            </option>
           ))}
         </select>
-      }
+      )}
       {shapesData && <JsonView value={shapesData} style={darkTheme} collapsed />}
     </div>
-  )
+  );
 }

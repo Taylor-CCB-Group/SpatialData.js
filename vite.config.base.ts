@@ -65,13 +65,7 @@ export function defineViteConfig(options: DefineConfigOptions) {
         formats: ['es'],
       },
       rollupOptions: {
-        external: [
-          'react',
-          'react-dom',
-          'react/jsx-runtime',
-          'react/jsx-dev-runtime',
-          ...external,
-        ],
+        external: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime', ...external],
       },
     },
   });

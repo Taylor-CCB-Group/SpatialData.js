@@ -42,7 +42,7 @@ function emptySelectionRow(axisSizes: AxisSizes | undefined): SelectionRow {
 function mergeSelectionRow(
   override: SelectionRow | undefined,
   fallback: SelectionRow,
-  axisSizes: AxisSizes | undefined,
+  axisSizes: AxisSizes | undefined
 ): SelectionRow {
   const merged: SelectionRow = { ...fallback, ...override };
   if (axisSizes === undefined) {
@@ -70,7 +70,7 @@ type MergedChannelDisplay = {
 function mergeForDisplay(
   config: ImageLayerConfig,
   defaults: ImageLoaderData | undefined,
-  layerId: string,
+  layerId: string
 ): MergedChannelDisplay {
   const axisSizes = defaults?.selectionAxisSizes;
   const ch = config.channels;
@@ -97,7 +97,11 @@ function mergeForDisplay(
   let selections: SelectionRow[];
   if (ch?.selections && ch.selections.length > 0) {
     selections = ch.selections.map((s, i) =>
-      mergeSelectionRow(s, baseSelRaw[i] ?? baseSelRaw[0] ?? emptySelectionRow(axisSizes), axisSizes),
+      mergeSelectionRow(
+        s,
+        baseSelRaw[i] ?? baseSelRaw[0] ?? emptySelectionRow(axisSizes),
+        axisSizes
+      )
     );
   } else {
     selections = baseSelRaw.map((s) => mergeSelectionRow(undefined, s, axisSizes));
@@ -105,7 +109,7 @@ function mergeForDisplay(
 
   const channelCount = Math.min(
     MAX_CHANNELS,
-    Math.max(colors.length, contrastLimits.length, channelsVisible.length, selections.length, 1),
+    Math.max(colors.length, contrastLimits.length, channelsVisible.length, selections.length, 1)
   );
 
   function pad<T>(arr: T[], len: number, fill: T): T[] {
@@ -155,7 +159,8 @@ export function ImageChannelPanel({
     axisSizes === undefined ? true : axisSizes[dim] !== undefined;
 
   const showAxisGrid =
-    axisSizes === undefined || Object.keys(axisSizes).some((k) => axisSizes[k as keyof AxisSizes] !== undefined);
+    axisSizes === undefined ||
+    Object.keys(axisSizes).some((k) => axisSizes[k as keyof AxisSizes] !== undefined);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

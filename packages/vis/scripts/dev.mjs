@@ -58,4 +58,13 @@ process.on('SIGTERM', () => shutdown(143));
 
 console.log('Starting vis build watch and demo server...');
 start('watch', ['vite', 'build', '--watch']);
-start('demo', ['vite', '--config', 'vite.config.demo.ts', '--host', '127.0.0.1', '--port', '5173', '--strictPort']);
+start('demo', [
+  'vite',
+  '--config',
+  'vite.config.demo.ts',
+  '--host',
+  '127.0.0.1',
+  '--port',
+  '5173',
+  '--strictPort',
+]);

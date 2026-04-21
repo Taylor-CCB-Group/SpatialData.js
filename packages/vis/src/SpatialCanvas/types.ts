@@ -10,15 +10,15 @@ import type { SpatialElement, AnyElement } from '@spatialdata/core';
 // ============================================
 
 export type ViewState2D = {
-  target: [number, number],
+  target: [number, number];
   zoom: number;
-}
+};
 export type ViewState3D = {
-  target: [number, number, number],
-  zoom: number,
+  target: [number, number, number];
+  zoom: number;
   // TODO pitch, bearing for 3d.
   // do we really want this type to be different to OrbitViewState from deck?
-}
+};
 export type ViewState = ViewState2D | ViewState3D;
 
 // ============================================
@@ -95,7 +95,11 @@ export interface LabelsLayerConfig extends BaseLayerConfig {
   };
 }
 
-export type LayerConfig = ImageLayerConfig | ShapesLayerConfig | PointsLayerConfig | LabelsLayerConfig;
+export type LayerConfig =
+  | ImageLayerConfig
+  | ShapesLayerConfig
+  | PointsLayerConfig
+  | LabelsLayerConfig;
 
 // ============================================
 // Element Availability Types
@@ -123,16 +127,16 @@ export interface ElementsByType {
 export interface SpatialCanvasState {
   /** Currently selected coordinate system */
   coordinateSystem: string | null;
-  
+
   /** View state (pan/zoom) */
   viewState: ViewState | null;
-  
+
   /** Layer configurations keyed by layer ID */
   layers: Record<string, LayerConfig>;
-  
+
   /** Order of layers (bottom to top) */
   layerOrder: string[];
-  
+
   /** Selected layer for properties / channel UI */
   selectedLayerId: string | null;
 
@@ -143,27 +147,27 @@ export interface SpatialCanvasState {
 export interface SpatialCanvasActions {
   setCoordinateSystem: (cs: string | null) => void;
   setViewState: (vs: ViewState | null) => void;
-  
+
   /** Add a layer from an element */
   addLayer: (config: LayerConfig) => void;
-  
+
   /** Remove a layer by ID */
   removeLayer: (id: string) => void;
-  
+
   /** Update layer config */
   updateLayer: (id: string, updates: Partial<LayerConfig>) => void;
-  
+
   /** Toggle layer visibility */
   toggleLayerVisibility: (id: string) => void;
-  
+
   /** Reorder layers */
   reorderLayers: (newOrder: string[]) => void;
 
   setSelectedLayerId: (id: string | null) => void;
-  
+
   /** Set loading state */
   setLoading: (loading: boolean) => void;
-  
+
   /** Reset to initial state */
   reset: () => void;
 }

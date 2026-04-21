@@ -55,7 +55,7 @@ function emptySelectionRow(axisSizes: AxisSizes | undefined): SelectionRow {
 function mergeSelectionRow(
   override: SelectionRow | undefined,
   fallback: SelectionRow,
-  axisSizes: AxisSizes | undefined,
+  axisSizes: AxisSizes | undefined
 ): SelectionRow {
   const merged: SelectionRow = { ...fallback, ...override };
   if (axisSizes === undefined) {
@@ -82,7 +82,7 @@ function pad<T>(arr: T[], len: number, fill: T): T[] {
 function mergeForDisplay(
   config: LabelsLayerConfig,
   defaults: LabelsLoaderData | undefined,
-  layerId: string,
+  layerId: string
 ): MergedLabelsDisplay {
   const axisSizes = defaults?.selectionAxisSizes;
   const ch = config.channels;
@@ -117,9 +117,7 @@ function mergeForDisplay(
       ? [...ch.channelOutlineOpacities]
       : [...baseOutlineOpacities];
   const channelsFilled =
-    ch?.channelsFilled && ch.channelsFilled.length > 0
-      ? [...ch.channelsFilled]
-      : [...baseFilled];
+    ch?.channelsFilled && ch.channelsFilled.length > 0 ? [...ch.channelsFilled] : [...baseFilled];
   const channelStrokeWidths =
     ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
       ? [...ch.channelStrokeWidths]
@@ -128,12 +126,12 @@ function mergeForDisplay(
   const selections =
     ch?.selections && ch.selections.length > 0
       ? ch.selections.map((selection, index) =>
-        mergeSelectionRow(
-          selection,
-          baseSelections[index] ?? baseSelections[0] ?? emptySelectionRow(axisSizes),
-          axisSizes,
-        ),
-      )
+          mergeSelectionRow(
+            selection,
+            baseSelections[index] ?? baseSelections[0] ?? emptySelectionRow(axisSizes),
+            axisSizes
+          )
+        )
       : baseSelections.map((selection) => mergeSelectionRow(undefined, selection, axisSizes));
 
   const channelCount = Math.min(
@@ -146,14 +144,14 @@ function mergeForDisplay(
       channelsFilled.length,
       channelStrokeWidths.length,
       selections.length,
-      1,
-    ),
+      1
+    )
   );
 
   const fillSelection = emptySelectionRow(axisSizes);
   const channelIds = Array.from(
     { length: channelCount },
-    (_, index) => ch?.channelIds?.[index] ?? `${layerId}:labels:${index}`,
+    (_, index) => ch?.channelIds?.[index] ?? `${layerId}:labels:${index}`
   );
 
   return {
@@ -168,7 +166,7 @@ function mergeForDisplay(
     selections: pad(
       selections,
       channelCount,
-      mergeSelectionRow(undefined, fillSelection, axisSizes),
+      mergeSelectionRow(undefined, fillSelection, axisSizes)
     ),
   };
 }
@@ -196,7 +194,8 @@ export function LabelsChannelPanel({
   const axisActive = (dim: 'z' | 'c' | 't') =>
     axisSizes === undefined ? true : axisSizes[dim] !== undefined;
   const showAxisGrid =
-    axisSizes === undefined || Object.keys(axisSizes).some((k) => axisSizes[k as keyof AxisSizes] !== undefined);
+    axisSizes === undefined ||
+    Object.keys(axisSizes).some((k) => axisSizes[k as keyof AxisSizes] !== undefined);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -263,9 +262,7 @@ export function LabelsChannelPanel({
                     const value = Number(e.target.value);
                     const colors = m.colors.map((color) => [...color] as [number, number, number]);
                     if (!colors[i]) colors[i] = [255, 255, 255];
-                    colors[i][j] = Number.isFinite(value)
-                      ? Math.min(255, Math.max(0, value))
-                      : 0;
+                    colors[i][j] = Number.isFinite(value) ? Math.min(255, Math.max(0, value)) : 0;
                     setChannels({ colors });
                   }}
                 />
@@ -316,9 +313,7 @@ export function LabelsChannelPanel({
               onChange={(e) => {
                 const nextValue = Number(e.target.value);
                 const channelStrokeWidths = [...m.channelStrokeWidths];
-                channelStrokeWidths[i] = Number.isFinite(nextValue)
-                  ? Math.max(0, nextValue)
-                  : 1.5;
+                channelStrokeWidths[i] = Number.isFinite(nextValue) ? Math.max(0, nextValue) : 1.5;
                 setChannels({ channelStrokeWidths });
               }}
             />
@@ -344,11 +339,13 @@ export function LabelsChannelPanel({
                           const nextValue = Number(e.target.value);
                           const selections = m.selections.map((selection) => ({ ...selection }));
                           const nextSelection = { ...(selections[i] ?? {}) };
-                          nextSelection[dim] = Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0;
+                          nextSelection[dim] = Number.isFinite(nextValue)
+                            ? Math.max(0, nextValue)
+                            : 0;
                           selections[i] = mergeSelectionRow(
                             nextSelection,
                             emptySelectionRow(axisSizes),
-                            axisSizes,
+                            axisSizes
                           );
                           setChannels({ selections });
                         }}

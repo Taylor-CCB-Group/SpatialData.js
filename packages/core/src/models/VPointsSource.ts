@@ -43,7 +43,6 @@ export function normalizeAxes(axes: Axis[]) {
  * >       instance ids that this point refers to are stored, if available.
  */
 
-
 const pointsElementRegex = /^points\/([^/]*)$/;
 const pointsSubElementRegex = /^points\/([^/]*)\/(.*)$/;
 
@@ -69,21 +68,18 @@ function getParquetPath(arrPath?: string) {
   throw new Error(`Cannot determine parquet path for points array path: ${arrPath}`);
 }
 
-
 export default class SpatialDataPointsSource extends SpatialDataTableSource {
   /**
    *
    * @param path A path to within shapes.
    * @returns The format version.
    */
-  async getPointsFormatVersion(path: string): Promise<"0.1"> {
+  async getPointsFormatVersion(path: string): Promise<'0.1'> {
     const zattrs = await this.loadSpatialDataElementAttrs(path);
     const formatVersion = zattrs.spatialdata_attrs.version;
     const encodingType = zattrs['encoding-type'];
     if (encodingType === 'ngff:points' && !(formatVersion === '0.1')) {
-      throw new Error(
-        `Unexpected version for points spatialdata_attrs: ${formatVersion}`,
-      );
+      throw new Error(`Unexpected version for points spatialdata_attrs: ${formatVersion}`);
     }
     return formatVersion;
   }

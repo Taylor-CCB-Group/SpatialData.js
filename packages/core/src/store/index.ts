@@ -4,17 +4,26 @@
 
 import type * as zarr from 'zarrita';
 import { getTransformation } from '../transformations';
-import {type ConsolidatedStore, openExtraConsolidated, serializeZarrTree } from '@spatialdata/zarrextra';
-import { getTableKeys, loadElements, type ElementInstanceMap, type SpatialElement, type TableElement } from '../models';
-import type { 
-  ElementName, 
-  StoreLocation, 
+import {
+  type ConsolidatedStore,
+  openExtraConsolidated,
+  serializeZarrTree,
+} from '@spatialdata/zarrextra';
+import {
+  getTableKeys,
+  loadElements,
+  type ElementInstanceMap,
+  type SpatialElement,
+  type TableElement,
+} from '../models';
+import type {
+  ElementName,
+  StoreLocation,
   StoreReference,
   BadFileHandler,
-  ZarrTree
+  ZarrTree,
 } from '../types';
 import { SpatialElementNames, ElementNames } from '../types';
-
 
 /**
  * Type alias for element collections - maps element keys to element instances
@@ -44,7 +53,12 @@ export class SpatialData {
   shapes?: Elements<'shapes'>;
   tables?: Elements<'tables'>;
 
-  constructor(source: StoreReference, rootStore: ConsolidatedStore, selection?: ElementName[], onBadFiles?: BadFileHandler) {
+  constructor(
+    source: StoreReference,
+    rootStore: ConsolidatedStore,
+    selection?: ElementName[],
+    onBadFiles?: BadFileHandler
+  ) {
     this.source = source;
     this.url = typeof source === 'string' ? source : undefined;
     this.rootStore = rootStore;
@@ -53,11 +67,14 @@ export class SpatialData {
       // Load all elements of this type
       // Cast needed due to TypeScript's inability to correlate generic loop variable with property access
       // See: https://github.com/microsoft/TypeScript/issues/30581
-      (this as Record<ElementName, Elements<ElementName> | undefined>)[elementType] = loadElements(this, elementType);
+      (this as Record<ElementName, Elements<ElementName> | undefined>)[elementType] = loadElements(
+        this,
+        elementType
+      );
     }
   }
 
-  private* _genSpatialElementValues() {
+  private *_genSpatialElementValues() {
     for (const elementType of SpatialElementNames) {
       const d = this[elementType];
       if (d) {
@@ -79,14 +96,14 @@ export class SpatialData {
           allCS.add(cs);
         }
       } else {
-        throw new Error("Expected getTransformation to return a Map when getAll is true");
+        throw new Error('Expected getTransformation to return a Map when getAll is true');
       }
     }
     return Array.from(allCS);
   }
   /**
    * Generates a string representation of the SpatialData object, similar to the Python `__repr__` method.
-   * 
+   *
    * As `toString()` cannot be async, this may have limited information; {@link representation} may be able
    * to get more detailed info.
    */
@@ -97,22 +114,26 @@ export class SpatialData {
       if (nonEmptyElements.length === 0) {
         return `SpatialData object, with associated Zarr store: ${storeDescription}\n(No elements loaded)`;
       }
-      const elements = nonEmptyElements.map((name, i) => {
-        const element = this[name];
-        const isLast = i === nonEmptyElements.length - 1;
-        const prefix = isLast ? '└──' : '├──';
-        const childPrefix = isLast ? '    ' : '│   ';
-        if (element) {
-          const keys = Object.keys(element);
-          const children = keys.map((key, j) => {
-            const childIsLast = j === keys.length - 1;
-            const childBranch = childIsLast ? '└──' : '├──';
-            return `${childPrefix}${childBranch} ${key}`;
-          }).join('\n');
-          return `${prefix} ${name}:\n${children}`;
-        }
-        return `${prefix} ${name}: (empty)`;
-      }).join('\n');
+      const elements = nonEmptyElements
+        .map((name, i) => {
+          const element = this[name];
+          const isLast = i === nonEmptyElements.length - 1;
+          const prefix = isLast ? '└──' : '├──';
+          const childPrefix = isLast ? '    ' : '│   ';
+          if (element) {
+            const keys = Object.keys(element);
+            const children = keys
+              .map((key, j) => {
+                const childIsLast = j === keys.length - 1;
+                const childBranch = childIsLast ? '└──' : '├──';
+                return `${childPrefix}${childBranch} ${key}`;
+              })
+              .join('\n');
+            return `${prefix} ${name}:\n${children}`;
+          }
+          return `${prefix} ${name}: (empty)`;
+        })
+        .join('\n');
       const cs = `with coordinate systems: ${this.coordinateSystems.join(', ')}`;
       return `SpatialData object, with associated Zarr store: ${storeDescription}\nElements:\n${elements}\n${cs}`;
     } catch (error) {
@@ -121,7 +142,7 @@ export class SpatialData {
       // nb - we now don't allow elements to exist if the schema doesn't validate, but wouldn't be too suprised if we end up back here at some point...
       // will inevitably have some SNAFU somewhere.
       // sorry future code user/maintainer if that is so.
-      return `Corrupt SpatialData.toString(): '${error}'`
+      return `Corrupt SpatialData.toString(): '${error}'`;
     }
   }
 
@@ -135,26 +156,36 @@ export class SpatialData {
    * Matches both bare element keys such as "cell_circles" and
    * qualified paths such as "shapes/cell_circles".
    */
-  getAssociatedTables(kind: Exclude<ElementName, 'tables'>, key: string): Array<[string, TableElement]> {
+  getAssociatedTables(
+    kind: Exclude<ElementName, 'tables'>,
+    key: string
+  ): Array<[string, TableElement]> {
     if (!this.tables) {
       return [];
     }
     const candidates = elementPathCandidates(kind, key);
     return Object.entries(this.tables).filter(([, table]) => {
       const { region } = getTableKeys(table);
-      return region.some(regionName => candidates.has(regionName));
+      return region.some((regionName) => candidates.has(regionName));
     });
   }
 
   /**
    * Convenience helper for the common case where at most one table is expected.
    */
-  getAssociatedTable(kind: Exclude<ElementName, 'tables'>, key: string): [string, TableElement] | undefined {
+  getAssociatedTable(
+    kind: Exclude<ElementName, 'tables'>,
+    key: string
+  ): [string, TableElement] | undefined {
     return this.getAssociatedTables(kind, key)[0];
   }
 }
 
-export async function readZarr(source: StoreReference, selection?: ElementName[], onBadFiles?: BadFileHandler) {
+export async function readZarr(
+  source: StoreReference,
+  selection?: ElementName[],
+  onBadFiles?: BadFileHandler
+) {
   const normalizedSource = typeof source === 'string' ? source.replace(/\/+$/, '') : source;
   const result = await openExtraConsolidated(normalizedSource);
   if (result.ok) {

@@ -1,6 +1,6 @@
 /**
  * VivSpatialViewer - Class component for rendering Viv image layers with additional deck.gl layers
- * 
+ *
  * This component follows the MDVivViewer pattern from MDV, adapted for SpatialCanvas.
  * It handles:
  * - Viv DetailView management
@@ -8,7 +8,7 @@
  * - Composing Viv layers (from view.getLayers()) with extra deck.gl layers
  * - Scale bar positioning
  * - Layer filtering for multi-view support
- * 
+ *
  * Structured to allow gradual refactoring to hooks in the future.
  */
 
@@ -17,7 +17,14 @@ import { _flatten } from '@deck.gl/core';
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import { ScaleBarLayer, DetailView, getDefaultInitialViewState } from '@hms-dbmi/viv';
-import type { OrthographicViewState, OrbitViewState, DeckGLProps, Layer, LayersList, PickingInfo } from 'deck.gl';
+import type {
+  OrthographicViewState,
+  OrbitViewState,
+  DeckGLProps,
+  Layer,
+  LayersList,
+  PickingInfo,
+} from 'deck.gl';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -71,7 +78,7 @@ interface VivSpatialViewerState {
 /**
  * Pure function to compose layers: [vivImageLayers, ...extraLayers, scaleBarLayer]
  * Note: extraLayers (shapes/points) render on top of images
- * 
+ *
  * This matches MDVivViewer's pattern exactly:
  * - When deckProps.layers exists: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
  * - When deckProps.layers is undefined: [vivLayers (all), scaleBar]
@@ -89,35 +96,40 @@ function composeLayers(
   // In our case, extraLayers = shapes/points (equivalent to deckProps.layers in MDV)
   // Always compose: [image layers, ...extraLayers, ...deckPropsLayers, scaleBar]
   const layers: LayersList = [];
-  
+
   // Add image layers (without scale bar) first - these render at the bottom
   if (otherVivLayers.length > 0) {
     layers.push(...otherVivLayers);
   }
-  
+
   // Add extra layers (shapes/points) - these render on top of images
   // This is equivalent to deckProps.layers in MDV
   if (extraLayers.length > 0) {
     layers.push(...extraLayers);
   }
-  
+
   // Add any additional deckProps layers
   if (deckPropsLayers && deckPropsLayers.length > 0) {
     layers.push(...deckPropsLayers);
   }
-  
+
   // Scale bar always on top
   if (scaleBarLayer) {
     layers.push(scaleBarLayer);
   }
-  
+
   return layers;
 }
 
 /**
  * Convert SpatialCanvas ViewState to Viv ViewState format
  */
-function toVivViewState(viewState: ViewState, viewId: string, width: number, height: number): VivViewState {
+function toVivViewState(
+  viewState: ViewState,
+  viewId: string,
+  width: number,
+  height: number
+): VivViewState {
   const [x, y, z = 0] = viewState.target;
   return {
     id: viewId,
@@ -136,9 +148,7 @@ function fromVivViewState(vivViewState: VivViewState): ViewState {
   const target = vivViewState.target as [number, number, number];
   // still not exactly happy with this, and pending 3d etc
   // do we need our own ViewState types that don't match deck?
-  const zoom = Array.isArray(vivViewState.zoom)
-    ? vivViewState.zoom[0]
-    : (vivViewState.zoom ?? 0);
+  const zoom = Array.isArray(vivViewState.zoom) ? vivViewState.zoom[0] : (vivViewState.zoom ?? 0);
   return {
     target: [target[0], target[1]],
     zoom,
@@ -152,7 +162,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   constructor(props: VivSpatialViewerProps) {
     super(props);
     this.viewId = `spatial-detail-${Math.random().toString(36).substr(2, 9)}`;
-    
+
     // Create DetailView
     this.detailView = new DetailView({
       id: this.viewId,
@@ -187,10 +197,16 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       typeof firstLayerWithLoader.loader === 'object'
     ) {
       try {
-        const defaultState = getDefaultInitialViewState(firstLayerWithLoader.loader, {
-          width: this.props.width,
-          height: this.props.height,
-        }, 0, false, firstLayerWithLoader.modelMatrix);
+        const defaultState = getDefaultInitialViewState(
+          firstLayerWithLoader.loader,
+          {
+            width: this.props.width,
+            height: this.props.height,
+          },
+          0,
+          false,
+          firstLayerWithLoader.modelMatrix
+        );
         return {
           ...defaultState,
           id: this.viewId,
@@ -220,10 +236,13 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     }
 
     // Update view state if changed externally
-    if (viewState && !areViewStatesEqual(
-      toVivViewState(viewState, this.viewId, width, height),
-      this.state.viewStates[this.viewId]
-    )) {
+    if (
+      viewState &&
+      !areViewStatesEqual(
+        toVivViewState(viewState, this.viewId, width, height),
+        this.state.viewStates[this.viewId]
+      )
+    ) {
       this.setState((prevState) => ({
         viewStates: {
           ...prevState.viewStates,
@@ -237,7 +256,10 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     return layer.id.includes(getVivId(viewport.id));
   }
 
-  _onViewStateChange({ viewId, viewState }: { viewId: string; viewState: VivViewState }): VivViewState {
+  _onViewStateChange({
+    viewId,
+    viewState,
+  }: { viewId: string; viewState: VivViewState }): VivViewState {
     const { onViewStateChange } = this.props;
 
     // Update internal state
@@ -309,7 +331,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       // For a single view, take the first element (like MDVivViewer does at line 385)
       const layersForImage =
         Array.isArray(vivLayersResult) && vivLayersResult.length > 0
-          ? (Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[]
+          ? ((Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[])
           : [];
 
       for (const layer of layersForImage) {

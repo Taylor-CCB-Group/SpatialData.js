@@ -29,7 +29,7 @@ describe('SpatialDataProvider', () => {
     renderToStaticMarkup(
       <SpatialDataProvider source={source as any}>
         <div>viewer</div>
-      </SpatialDataProvider>,
+      </SpatialDataProvider>
     );
 
     expect(readZarrMock).toHaveBeenCalledWith(source, undefined);
@@ -39,7 +39,7 @@ describe('SpatialDataProvider', () => {
     renderToStaticMarkup(
       <SpatialDataProvider source="https://example.com/my.zarr">
         <div>viewer</div>
-      </SpatialDataProvider>,
+      </SpatialDataProvider>
     );
 
     expect(readZarrMock).toHaveBeenCalledWith('https://example.com/my.zarr', undefined);
@@ -49,7 +49,7 @@ describe('SpatialDataProvider', () => {
     renderToStaticMarkup(
       <SpatialDataProvider>
         <div>viewer</div>
-      </SpatialDataProvider>,
+      </SpatialDataProvider>
     );
 
     expect(readZarrMock).not.toHaveBeenCalled();

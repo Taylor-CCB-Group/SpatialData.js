@@ -23,7 +23,7 @@ function describeSource(source: StoreReference): string {
 
 function metadataKeysForPath(
   path: zarr.AbsolutePath,
-  kind: 'array' | 'group',
+  kind: 'array' | 'group'
 ): zarr.AbsolutePath[] {
   const basePath = path === '/' ? '' : path;
   if (kind === 'array') {
@@ -35,7 +35,7 @@ function metadataKeysForPath(
 async function readMetadataJson(
   store: zarr.Readable,
   path: zarr.AbsolutePath,
-  kind: 'array' | 'group',
+  kind: 'array' | 'group'
 ): Promise<ZAttrsAny | undefined> {
   for (const metadataKey of metadataKeysForPath(path, kind)) {
     const bytes = await store.get(metadataKey);
@@ -49,7 +49,7 @@ async function readMetadataJson(
 async function readNodeAttrs(
   root: zarr.Group<zarr.Readable>,
   path: zarr.AbsolutePath,
-  kind: 'array' | 'group',
+  kind: 'array' | 'group'
 ): Promise<ZAttrsAny> {
   if (path === '/') {
     return root.attrs;
@@ -64,7 +64,7 @@ async function readNodeAttrs(
 
 function sortContentsByDepth(
   a: { path: zarr.AbsolutePath },
-  b: { path: zarr.AbsolutePath },
+  b: { path: zarr.AbsolutePath }
 ): number {
   const depthA = a.path.split('/').filter(Boolean).length;
   const depthB = b.path.split('/').filter(Boolean).length;
@@ -96,7 +96,8 @@ async function parseStoreContents(store: zarr.Listable<zarr.Readable>): Promise<
 
           if (kind === 'array') {
             const arrayMetadata = await readMetadataJson(store, absolutePath, 'array');
-            const leafNode: Partial<Record<keyof ZarrTree, unknown>> & Record<PropertyKey, unknown> = {
+            const leafNode: Partial<Record<keyof ZarrTree, unknown>> &
+              Record<PropertyKey, unknown> = {
               [ATTRS_KEY]: attrs,
               get: () => zarr.open(root.resolve(absolutePath), { kind: 'array' }),
             };
@@ -146,7 +147,7 @@ async function resolveListableStore(source: StoreReference): Promise<zarr.Listab
  * Open a zarr store or store-backed source and return a parsed tree representation.
  */
 export async function openExtraConsolidated(
-  source: StoreReference,
+  source: StoreReference
 ): Promise<Result<ConsolidatedStore>> {
   try {
     const zarritaStore = await resolveListableStore(source);
@@ -188,7 +189,13 @@ export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
   return result;
 }
 
-export type { StoreReference, ZarrTree, ConsolidatedStore, LazyZarrArray, ZAttrsAny } from './types';
+export type {
+  StoreReference,
+  ZarrTree,
+  ConsolidatedStore,
+  LazyZarrArray,
+  ZAttrsAny,
+} from './types';
 export { ATTRS_KEY, ZARRAY_KEY } from './types';
 
 export type { Result } from './result';

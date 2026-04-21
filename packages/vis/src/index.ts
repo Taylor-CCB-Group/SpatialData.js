@@ -1,4 +1,8 @@
-export { SpatialLayer, migrateSpatialLayerProps, spatialLayerPropsSchema } from '@spatialdata/layers';
+export {
+  SpatialLayer,
+  migrateSpatialLayerProps,
+  spatialLayerPropsSchema,
+} from '@spatialdata/layers';
 export type { SpatialLayerProps } from '@spatialdata/layers';
 
 export { default as Sketch } from './Sketch';
@@ -10,7 +14,7 @@ export { default as Table } from './Table';
 
 // SpatialCanvas - composable spatial layers viewer
 export { default as SpatialCanvas } from './SpatialCanvas';
-export { 
+export {
   SpatialCanvasProvider,
   useSpatialCanvasStore,
   useSpatialCanvasActions,
@@ -19,7 +23,7 @@ export {
   useSpatialViewState,
   useViewStateUrl,
 } from './SpatialCanvas';
-export type { 
+export type {
   SpatialCanvasStoreApi,
   SpatialCanvasState,
   SpatialCanvasActions,

@@ -11,9 +11,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
@@ -39,4 +37,3 @@
     "directory": "packages/zarrextra"
   }
 }
-

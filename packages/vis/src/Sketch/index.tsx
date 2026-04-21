@@ -6,7 +6,6 @@ import ImageView from '../ImageView';
 import Transforms from '../Transforms';
 import SpatialCanvas from '../SpatialCanvas';
 
-
 const defaultUrl =
   'https://storage.googleapis.com/vitessce-demo-data/spatialdata-august-2025/visium_hd_3.0.0.spatialdata.zarr';
 
@@ -39,17 +38,21 @@ function DataSource({ children }: React.PropsWithChildren) {
 
 function Repr() {
   const { spatialData } = useSpatialData();
-  return (
-    <pre style={{maxWidth: '90vw'}}>
-      {spatialData?.toString()}
-    </pre>
-  )
+  return <pre style={{ maxWidth: '90vw' }}>{spatialData?.toString()}</pre>;
 }
 
 export default function Sketch() {
   return (
     <DataSource>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 12, minHeight: '100%' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          padding: 12,
+          minHeight: '100%',
+        }}
+      >
         <Repr />
 
         <section style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 360 }}>

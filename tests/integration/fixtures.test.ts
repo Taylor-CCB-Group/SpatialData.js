@@ -1,6 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { FileSystemStore } from '@zarrita/storage';
-import { readZarr, type SpatialData, type AnyElement } from '../../packages/core/src/store/index.js';
+import {
+  readZarr,
+  type SpatialData,
+  type AnyElement,
+} from '../../packages/core/src/store/index.js';
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -29,7 +33,7 @@ function ensureFixtures(version: string): string {
     } catch (error) {
       throw new Error(
         `Failed to generate fixtures for version ${version}. ` +
-        `Make sure uv is installed and spatialdata is available. Error: ${error}`,
+          `Make sure uv is installed and spatialdata is available. Error: ${error}`
       );
     }
   }
@@ -140,8 +144,7 @@ describe('Integration Tests - HTTP smoke test', () => {
     } catch (error) {
       if (error instanceof Error && error.message.includes('fetch')) {
         console.warn(
-          'Skipping HTTP smoke test - test server not running. ' +
-          'Start it with: pnpm test:server',
+          'Skipping HTTP smoke test - test server not running. Start it with: pnpm test:server'
         );
         return;
       }

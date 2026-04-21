@@ -22,9 +22,7 @@ describe('getVivSelectionAxisSizes', () => {
 describe('clampVivSelectionsToAxes', () => {
   it('drops keys for axes not in the loader', () => {
     const axisSizes = { c: 3 };
-    expect(
-      clampVivSelectionsToAxes([{ z: 0, c: 1, t: 0 }], axisSizes),
-    ).toEqual([{ c: 1 }]);
+    expect(clampVivSelectionsToAxes([{ z: 0, c: 1, t: 0 }], axisSizes)).toEqual([{ c: 1 }]);
   });
 
   it('clamps to dimension bounds', () => {

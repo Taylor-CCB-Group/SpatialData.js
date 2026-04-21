@@ -28,9 +28,7 @@ export function TooltipFieldsPanel({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div>
-        <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>
-          Tooltip fields
-        </div>
+        <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>Tooltip fields</div>
         {tableName ? (
           <>
             <div style={helperTextStyle}>Table: {tableName}</div>

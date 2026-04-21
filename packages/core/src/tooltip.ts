@@ -38,7 +38,7 @@ export function getTooltipSignature(tooltipFields?: string[]): string {
 
 export function normalizeTooltipValue(
   value: TableColumnData | undefined,
-  rowIndex: number,
+  rowIndex: number
 ): string {
   if (!value) return '';
   const row = value[rowIndex];
@@ -49,7 +49,7 @@ export function normalizeTooltipValue(
 export function resolveTooltipItems(
   tooltipFields: string[] | undefined,
   tooltipColumns: Array<TableColumnData | undefined> | undefined,
-  rowIndex: number,
+  rowIndex: number
 ): SpatialFeatureTooltipItem[] {
   if (!tooltipFields || !tooltipColumns || rowIndex < 0) {
     return [];
@@ -141,7 +141,7 @@ async function loadAssociatedTableTooltipData({
 export async function loadShapesTooltipMetadata(
   spatialData: SpatialData | undefined,
   element: ShapesElement,
-  tooltipFields: string[],
+  tooltipFields: string[]
 ): Promise<ShapesTooltipMetadata> {
   const featureIdsRaw = await element.loadFeatureIds();
   const featureIds = featureIdsRaw
@@ -185,7 +185,7 @@ export async function loadShapesTooltipMetadata(
 export async function loadLabelsTooltipMetadata(
   spatialData: SpatialData | undefined,
   element: LabelsElement,
-  tooltipFields: string[],
+  tooltipFields: string[]
 ): Promise<LabelsTooltipMetadata> {
   const associated = await loadAssociatedTableTooltipData({
     spatialData,

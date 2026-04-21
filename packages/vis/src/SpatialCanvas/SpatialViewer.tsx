@@ -1,9 +1,9 @@
 /**
  * SpatialViewer - Core rendering component for SpatialCanvas
- * 
+ *
  * This component handles the composition of Viv image layers with additional
  * deck.gl layers (shapes, points, etc.) following the pattern established in MDV.
- * 
+ *
  * Uses a unified Viv-compatible pattern:
  * - Always uses Viv's DetailView (even without images)
  * - If image layers present: uses VivSpatialViewer class component
@@ -39,7 +39,7 @@ export interface SpatialViewerProps {
 
 /**
  * SpatialViewer renders spatial data using deck.gl with Viv-compatible rendering.
- * 
+ *
  * Uses unified Viv pattern:
  * - If image layers present: uses VivSpatialViewer (class component)
  * - Otherwise: uses DetailView with deck.gl layers (functional component)
@@ -126,13 +126,16 @@ function SpatialViewerSimple({
   }, [viewState]);
 
   // Handle view state changes from deck.gl
-  const handleViewStateChange = useCallback(({ viewState: newVS }: { viewState: Record<string, unknown> }) => {
-    const target = newVS.target as [number, number, number];
-    onViewStateChange({
-      target: [target[0], target[1]],
-      zoom: newVS.zoom as number,
-    });
-  }, [onViewStateChange]);
+  const handleViewStateChange = useCallback(
+    ({ viewState: newVS }: { viewState: Record<string, unknown> }) => {
+      const target = newVS.target as [number, number, number];
+      onViewStateChange({
+        target: [target[0], target[1]],
+        zoom: newVS.zoom as number,
+      });
+    },
+    [onViewStateChange]
+  );
 
   // Filter out any null/undefined layers
   const composedLayers = useMemo(() => {

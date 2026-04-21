@@ -1,8 +1,5 @@
 import type { CSSProperties } from 'react';
-import type {
-  SpatialFeatureTooltipData,
-  SpatialFeatureTooltipItem,
-} from '@spatialdata/core';
+import type { SpatialFeatureTooltipData, SpatialFeatureTooltipItem } from '@spatialdata/core';
 
 export type {
   SpatialFeatureTooltipData,
@@ -88,11 +85,7 @@ export function SpatialFeatureTooltip({
 
   return (
     <div style={tooltipStyle}>
-      {tooltip.title && (
-        <div style={titleStyle}>
-          {tooltip.title}
-        </div>
-      )}
+      {tooltip.title && <div style={titleStyle}>{tooltip.title}</div>}
       <div style={itemsWrapStyle}>
         {tooltip.items.map((item) => (
           <div key={item.label} style={itemRowStyle}>

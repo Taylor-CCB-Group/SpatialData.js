@@ -108,12 +108,12 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
     const bounds = [0, height, width, 0] as const;
 
     return new LabelsBitmaskTileLayer(
-        this.getSubLayerProps({
-          id: 'single-scale-labels-bitmask',
-          pickable: true,
-          ...(typeof onClick === 'function' ? { onClick } : {}),
-          ...(typeof onHover === 'function' ? { onHover } : {}),
-        }),
+      this.getSubLayerProps({
+        id: 'single-scale-labels-bitmask',
+        pickable: true,
+        ...(typeof onClick === 'function' ? { onClick } : {}),
+        ...(typeof onHover === 'function' ? { onHover } : {}),
+      }),
       {
         channelData: { data, height, width },
         channelColors,
@@ -149,10 +149,7 @@ class MultiscaleLabelsTileLayer extends UntypedTileLayer {
       super._updateTileset();
       return;
     }
-    if (
-      this.context.viewport.id === this.props.viewportId ||
-      !this.state.tileset?._viewport
-    ) {
+    if (this.context.viewport.id === this.props.viewportId || !this.state.tileset?._viewport) {
       super._updateTileset();
     }
   }
@@ -160,15 +157,11 @@ class MultiscaleLabelsTileLayer extends UntypedTileLayer {
 
 function renderSubBitmaskLayers(props: any) {
   const {
-    bbox: {
-      left, top, right, bottom,
-    },
+    bbox: { left, top, right, bottom },
     index: { x, y, z },
     zoom,
   } = props.tile;
-  const {
-    data, id, loader, maxZoom, minZoom, zoomOffset,
-  } = props;
+  const { data, id, loader, maxZoom, minZoom, zoomOffset } = props;
 
   if (!data) {
     return null;
@@ -256,9 +249,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       const baseLoader = loader[0] as any;
       const { height, width } = getImageSize(baseLoader);
       const tileSize = baseLoader.tileSize;
-      const zoomOffset = Math.round(
-        Math.log2(modelMatrix ? modelMatrix.getScale()[0] : 1)
-      );
+      const zoomOffset = Math.round(Math.log2(modelMatrix ? modelMatrix.getScale()[0] : 1));
       const getTileData = async ({
         index: { x, y, z },
         signal,

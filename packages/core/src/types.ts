@@ -1,10 +1,10 @@
 /**
  * Core type definitions for SpatialData.ts
- * 
+ *
  * This file contains the fundamental types that are shared across the codebase.
  * It's designed to avoid circular dependencies by being imported by other modules
  * rather than importing from them.
- * 
+ *
  * IMPORTANT: When adding new types here, be careful to:
  * 1. Only import from external libraries (anndata.js, zarrita, etc.)
  * 2. Avoid importing from other modules in this codebase
@@ -18,7 +18,7 @@ import type { ConsolidatedStore } from '@spatialdata/zarrextra';
 
 /**
  * Element name constants and types
- * 
+ *
  * These define the different types of spatial elements that can be stored
  * in a SpatialData object. The distinction between SpatialElementNames and
  * ElementNames is that tables are not considered "spatial" elements in the
@@ -26,11 +26,11 @@ import type { ConsolidatedStore } from '@spatialdata/zarrextra';
  */
 export const SpatialElementNames = ['images', 'points', 'labels', 'shapes'] as const;
 export const ElementNames = [...SpatialElementNames, 'tables'] as const;
-export type ElementName = typeof ElementNames[number];
+export type ElementName = (typeof ElementNames)[number];
 
 /**
  * Core data types for different element types
- * 
+ *
  * These types represent the actual data structures returned when loading
  * elements from the zarr store. They should be kept in sync with the
  * loader implementations in models/index.ts.
@@ -50,7 +50,7 @@ export type XSpatialElement = Awaited<ReturnType<typeof zarr.open>>;
 
 /**
  * Store location type
- * 
+ *
  * Represents where a SpatialData store can be located.
  */
 export type StoreLocation = string;
@@ -58,7 +58,7 @@ export type StoreReference = StoreLocation | zarr.Readable;
 
 /**
  * Bad file handler type
- * 
+ *
  * Callback function type for handling errors when loading files from the store.
  * This allows consumers to define their own error handling strategy.
  */
@@ -84,7 +84,6 @@ export { ATTRS_KEY, ZARRAY_KEY } from '@spatialdata/zarrextra';
 export type { Result } from '@spatialdata/zarrextra';
 export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from '@spatialdata/zarrextra';
 
-
 /**
  * Used internally when passing around properties of a spatialdata object to be used by the models/loaders.
  */
@@ -94,4 +93,4 @@ export type SDataProps = {
   onBadFiles?: BadFileHandler;
   selection?: ElementName[];
   rootStore: ConsolidatedStore;
-}
+};

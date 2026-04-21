@@ -1,6 +1,6 @@
 /**
  * Points layer renderer using deck.gl ScatterplotLayer
- * 
+ *
  * Renders point cloud data from SpatialData points elements.
  */
 
@@ -45,16 +45,16 @@ export interface PointsLayerRenderConfig {
 
 /**
  * Create a deck.gl ScatterplotLayer for points data.
- * 
+ *
  * Note: This requires the point data to be pre-loaded since deck.gl layers
  * are synchronous. The data loading should happen at a higher level.
  */
 export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null {
-  const { 
-    element, 
-    id, 
-    modelMatrix, 
-    opacity, 
+  const {
+    element,
+    id,
+    modelMatrix,
+    opacity,
     visible,
     pointSize = 1,
     color = [255, 100, 100, 200],
@@ -63,10 +63,12 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
   } = config;
 
   if (!visible) return null;
-  
+
   if (!pointData) {
     // Data not loaded yet
-    console.debug(`[PointsRenderer] No point data for layer "${id}" from ${element.url ?? element.path}`);
+    console.debug(
+      `[PointsRenderer] No point data for layer "${id}" from ${element.url ?? element.path}`
+    );
     return null;
   }
   const d = pointData.data;
@@ -78,7 +80,11 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     // spatial data-structure (quad/oct-tree) vs pushing raw attributes.
     // with ways of querying within view.
     // also allow accessors for other props
-    getPosition: (_d, {index, target}) => [d[0][index], d[1][index], use3d ? (d[2]?.[index] || 0) : 0],
+    getPosition: (_d, { index, target }) => [
+      d[0][index],
+      d[1][index],
+      use3d ? d[2]?.[index] || 0 : 0,
+    ],
     getRadius: pointSize,
     radiusUnits: 'pixels',
     getFillColor: color,

@@ -46,7 +46,7 @@ describe('unionBounds / unionBoundsList', () => {
   it('unions two rectangles', () => {
     const u = unionBounds(
       { minX: 0, minY: 0, maxX: 10, maxY: 10 },
-      { minX: 5, minY: 5, maxX: 20, maxY: 15 },
+      { minX: 5, minY: 5, maxX: 20, maxY: 15 }
     );
     expect(u).toEqual({ minX: 0, minY: 0, maxX: 20, maxY: 15 });
   });
@@ -120,7 +120,7 @@ describe('boundsFromPoints', () => {
         ],
       },
       m,
-      false,
+      false
     );
     expect(b).toEqual({ minX: 0, minY: 0, maxX: 2, maxY: 3 });
   });

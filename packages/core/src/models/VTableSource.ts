@@ -11,12 +11,11 @@ import AnnDataSource from './VAnnDataSource';
 // have all of the required functionality to load the
 // table data and the parquet data.
 
-
 async function getParquetModule() {
   // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
   // that needs to be initialized before use in browser environments.
   // In Node.js, the module loads WASM synchronously so no init is needed.
-  // 
+  //
   // TODO: Replace with a more civilised parquet module that's built in a way we can actually consume.
   // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
   //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
@@ -33,13 +32,15 @@ async function getParquetModule() {
     // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
     console.warn(
       '[VTableSource] Local parquet-wasm import failed, falling back to CDN version. ' +
-      'This is a temporary workaround pending a better parquet module solution.',
+        'This is a temporary workaround pending a better parquet module solution.',
       error
     );
-    
+
     try {
-      // @ts-ignore - CDN import not recognized by TypeScript
-      const cdnModule = await import('https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js');
+      const cdnModule = await import(
+        // @ts-expect-error - CDN import not recognized by TypeScript
+        'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js'
+      );
       await cdnModule.default();
       return { readParquet: cdnModule.readParquet, readSchema: cdnModule.readSchema };
     } catch (cdnError) {
@@ -63,8 +64,8 @@ function tableToIndexColumnName(arrowTable: ArrowTable) {
   if (pandasMetadata) {
     const pandasMetadataJson = JSON.parse(pandasMetadata);
     if (
-      Array.isArray(pandasMetadataJson.index_columns)
-      && pandasMetadataJson.index_columns.length === 1
+      Array.isArray(pandasMetadataJson.index_columns) &&
+      pandasMetadataJson.index_columns.length === 1
     ) {
       return pandasMetadataJson.index_columns?.[0] as string;
     }
@@ -72,7 +73,6 @@ function tableToIndexColumnName(arrowTable: ArrowTable) {
   }
   return; //changing this to return undefined rather than null, better fits uses elsewhere.
 }
-
 
 // If the array path starts with table/something/rest
 // capture table/something.
@@ -124,7 +124,10 @@ function getVarPath(arrPath?: string) {
  * - logic for manipulating spatialdata element paths is shared across all elements.
  */
 export default class SpatialDataTableSource extends AnnDataSource {
-  static parquetModulePromise: Promise<{ readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => any, readSchema: (bytes: Uint8Array) => any }>;
+  static parquetModulePromise: Promise<{
+    readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => any;
+    readSchema: (bytes: Uint8Array) => any;
+  }>;
   rootAttrs: { softwareVersion: string; formatVersion: string } | null;
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
@@ -149,7 +152,6 @@ export default class SpatialDataTableSource extends AnnDataSource {
     // TODO: change to column-specific storage.
     this.parquetTableBytes = {};
 
-
     // Table-specific properties
     this.obsIndices = {};
     this.varIndices = {};
@@ -173,10 +175,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
     // Load the root attrs.
     const rootAttrs = await this.getJson('.zattrs');
     const { spatialdata_attrs } = rootAttrs;
-    const {
-      spatialdata_software_version: softwareVersion,
-      version: formatVersion,
-    } = spatialdata_attrs;
+    const { spatialdata_software_version: softwareVersion, version: formatVersion } =
+      spatialdata_attrs;
     this.rootAttrs = { softwareVersion, formatVersion };
     return this.rootAttrs;
   }
@@ -198,10 +198,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     let result = v0_4_0_attrs;
     if (v0_4_0_attrs['encoding-type'] === 'anndata') {
       const attrsKeys = Object.keys(v0_4_0_attrs);
-      if (
-        ['instance_key', 'region', 'region_key']
-          .every(k => attrsKeys.includes(k))
-      ) {
+      if (['instance_key', 'region', 'region_key'].every((k) => attrsKeys.includes(k))) {
         // TODO: assert things about "spatialdata-encoding-type" and "version" values?
         // TODO: first check the "spatialdata_software_version" metadata in
         // the root of the spatialdata object? (i.e., sdata.zarr/.zattrs)
@@ -209,10 +206,11 @@ export default class SpatialDataTableSource extends AnnDataSource {
       } else {
         // Prior to v0.4.0 of the spatialdata package, the spatialdata_attrs
         // lived within their own dictionary within "uns".
-        const pre_v0_4_0_attrs = await this._loadDict(
-          `${elementPath}/uns/spatialdata_attrs`,
-          ['instance_key', 'region', 'region_key'],
-        );
+        const pre_v0_4_0_attrs = await this._loadDict(`${elementPath}/uns/spatialdata_attrs`, [
+          'instance_key',
+          'region',
+          'region_key',
+        ]);
         result = pre_v0_4_0_attrs;
       }
     }
@@ -440,10 +438,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (!indexPath) {
       throw new Error(`No index path found for obs index at ${path}`);
     }
-    this.obsIndices[indexPath] = this._loadColumn(indexPath).then((values) => (
+    this.obsIndices[indexPath] = this._loadColumn(indexPath).then((values) =>
       // not clear this extra pass is useful... does it exist just to satisfy types?
       Array.from(values, (value) => (value === null || value === undefined ? '' : String(value)))
-    ));
+    );
     return this.obsIndices[indexPath];
   }
 
@@ -460,7 +458,9 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }
     this.varIndices[varPath] = this.getJson(`${varPath}/.zattrs`)
       .then(({ _index }) => this.getFlatArrDecompressed(`${varPath}/${_index}`))
-      .then((values) => Array.from(values, (value) => (value === null || value === undefined ? '' : String(value))));
+      .then((values) =>
+        Array.from(values, (value) => (value === null || value === undefined ? '' : String(value)))
+      );
     return this.varIndices[varPath];
   }
 
@@ -474,23 +474,19 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (varPath in this.varAliases) {
       return this.varAliases[varPath];
     }
-    const [varAliasData] = await this.loadVarColumns([varPath]) as [TableColumnData | undefined];
+    const [varAliasData] = (await this.loadVarColumns([varPath])) as [TableColumnData | undefined];
     if (!varAliasData) {
       throw new Error(`Failed to load var alias at ${varPath}`);
     }
-    this.varAliases[varPath] = Array.from(
-      varAliasData,
-      (value) => (value === null || value === undefined ? '' : String(value)),
+    this.varAliases[varPath] = Array.from(varAliasData, (value) =>
+      value === null || value === undefined ? '' : String(value)
     );
     const index = await this.loadVarIndex(matrixPath);
-    this.varAliases[varPath] = Array.from(
-      this.varAliases[varPath],
-      (val, ind) => {
-        const indexValue = index[ind];
-        const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
-        return val ? val.concat(` (${suffix})`) : suffix;
-      },
-    );
+    this.varAliases[varPath] = Array.from(this.varAliases[varPath], (val, ind) => {
+      const indexValue = index[ind];
+      const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
+      return val ? val.concat(` (${suffix})`) : suffix;
+    });
     return this.varAliases[varPath];
   }
 }
