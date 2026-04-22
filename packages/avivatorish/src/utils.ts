@@ -209,12 +209,12 @@ type DIMENSION_FIELD = 'z' | 't';
 function getDefaultGlobalSelection(dimensions: { name: string; size: number }[]) {
   const globalSelectableDimensions = dimensions.filter((d) =>
     GLOBAL_SLIDER_DIMENSION_FIELDS.includes(d.name.toLowerCase())
-  ) as unknown as DIMENSION_FIELD[];
+  );
 
   const selection: Partial<VivSelection> = {};
   for (const dim of globalSelectableDimensions) {
-    //@ts-expect-error dim type in getDefaultGlobalSelection
-    selection[dim.name] = Math.floor(dim.size / 2);
+    const key = dim.name.toLowerCase() as DIMENSION_FIELD;
+    selection[key] = Math.floor(dim.size / 2);
   }
 
   return selection as VivSelection; //!probably not partial at this point?
@@ -478,7 +478,10 @@ export async function getSingleSelectionStats3D({
 }: { loader: LOADER; selection: VivSelection }) {
   const lowResSource = getRasterSource(loader);
   const { shape, labels } = lowResSource;
-  const sizeZ = shape[labels.indexOf('z')];
+  const sizeZ = getVivSelectionAxisSizes(labels, shape).z;
+  if (sizeZ === undefined) {
+    return getSingleSelectionStats2D({ loader, selection });
+  }
   const raster0 = await lowResSource.getRaster({
     selection: { ...selection, z: 0 },
   });

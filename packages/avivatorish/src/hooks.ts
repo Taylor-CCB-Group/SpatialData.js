@@ -42,13 +42,13 @@ export const useImage = (source?: { description: string; urlOrFile: string }, hi
   // biome-ignore lint/correctness/useExhaustiveDependencies: disabled in viv as well, and would cause a bunch of re-running...
   useEffect(() => {
     if (!source) return;
+    const src = source;
     async function changeLoader() {
       // Placeholder
       viewerStore.setState({ isChannelLoading: [true] });
       viewerStore.setState({ isViewerLoading: true, metadata: null });
       if (use3d) toggleUse3d();
-      if (!source) throw 'this should never happen - this is a type-guard';
-      const { urlOrFile } = source;
+      const { urlOrFile } = src;
       const newLoader = await createLoader(urlOrFile, toggleIsOffsetsSnackbarOn, (message) =>
         viewerStore.setState({
           loaderErrorSnackbar: { on: true, message },
@@ -82,10 +82,17 @@ export const useImage = (source?: { description: string; urlOrFile: string }, hi
         });
         if (use3d) toggleUse3d();
         // eslint-disable-next-line no-unused-expressions
-        history?.push(typeof urlOrFile === 'string' ? `?image_url=${urlOrFile}` : '');
+        history?.push(`?image_url=${src.urlOrFile}`);
       }
     }
-    if (source) changeLoader();
+    void changeLoader().catch((error: unknown) => {
+      viewerStore.setState({
+        loaderErrorSnackbar: {
+          on: true,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    });
   }, [source, history]); // eslint-disable-line react-hooks/exhaustive-deps
   // biome-ignore lint/correctness/useExhaustiveDependencies: suppressed in viv as well, and would cause a bunch of re-running...
   useEffect(() => {
@@ -156,8 +163,9 @@ export const useImage = (source?: { description: string; urlOrFile: string }, hi
           useColormap: true,
         });
       }
+      const ids = newDomains.map(() => globalThis.crypto.randomUUID());
       channelsStore.setState({
-        ids: newDomains.map(() => String(Math.random())),
+        ids,
         selections: newSelections,
         domains: newDomains,
         contrastLimits: newContrastLimits,

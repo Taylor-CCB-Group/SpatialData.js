@@ -6,9 +6,10 @@ Core library for interfacing with SpatialData stores in TypeScript/JavaScript.
 
 `readZarr` is async, and `@spatialdata/core` is published as ESM. In a Node REPL, the simplest pattern is to use `await import(...)`.
 
-If you are working inside this monorepo, build first so the package entrypoint exists:
+If you are working inside this monorepo, note that `test-fixtures/` is gitignored. Generate the sample fixture first, then build so the package entrypoint exists:
 
 ```bash
+pnpm test:fixtures:generate:0.7.2
 pnpm build
 node
 ```
@@ -48,6 +49,7 @@ Object.keys(sdata.images ?? {});
 If you want to try that example against this repo's generated fixtures:
 
 ```bash
+pnpm test:fixtures:generate:0.7.2
 pnpm test:server
 ```
 

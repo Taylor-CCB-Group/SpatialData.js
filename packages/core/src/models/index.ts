@@ -625,10 +625,12 @@ export function loadElements<T extends ElementName>(
     try {
       result[key] = createElement(name, sdata, key);
     } catch (error) {
-      // we might want to take this more seriously - but this should prevent any crash
-      // and not have any worse symptom than the element not being there as a result(?)
-      // might be slightly confusing to get {} rather than undefined in that case
-      console.error(error);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      if (sdata.onBadFiles) {
+        sdata.onBadFiles(`${name}/${key}`, normalizedError);
+      } else {
+        console.error(normalizedError);
+      }
     }
   }
   return result;

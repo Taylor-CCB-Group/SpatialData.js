@@ -44,6 +44,7 @@ function describeStoreSource(url?: StoreLocation): string {
 export class SpatialData {
   readonly source: StoreReference;
   readonly url?: StoreLocation;
+  readonly onBadFiles?: BadFileHandler;
   rootStore: ConsolidatedStore;
   // metadata: Record<string, unknown>; //todo: add this, with type (validated by zod)
 
@@ -61,6 +62,7 @@ export class SpatialData {
   ) {
     this.source = source;
     this.url = typeof source === 'string' ? source : undefined;
+    this.onBadFiles = onBadFiles;
     this.rootStore = rootStore;
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {

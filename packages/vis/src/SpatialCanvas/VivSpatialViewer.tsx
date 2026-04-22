@@ -13,7 +13,6 @@
  */
 
 import * as React from 'react';
-import { _flatten } from '@deck.gl/core';
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import { ScaleBarLayer, DetailView, getDefaultInitialViewState } from '@hms-dbmi/viv';
@@ -36,11 +35,41 @@ export type VivViewState = (OrthographicViewState | OrbitViewState) & { id: stri
 export type VivViewStates = VivViewState[];
 export type View = { id: string } & any; // Viv View type
 export type VivPickInfo = PickingInfo<any, any> & { tile?: any };
+type VivZoom = number | readonly number[] | null | undefined;
+
+export function normalizeVivZoom(zoom: VivZoom): number {
+  if (Array.isArray(zoom)) {
+    return zoom[0] ?? 0;
+  }
+  if (typeof zoom === 'number') {
+    return zoom;
+  }
+  return 0;
+}
+
+function isLayerLike(value: unknown): value is Layer {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const id = Reflect.get(value, 'id');
+  const clone = Reflect.get(value, 'clone');
+  return typeof id === 'string' && typeof clone === 'function';
+}
+
+export function normalizeVivLayers(raw: unknown): Layer[] {
+  if (isLayerLike(raw)) {
+    return [raw];
+  }
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.flatMap((entry) => normalizeVivLayers(entry));
+}
 
 const areViewStatesEqual = (viewState: VivViewState, otherViewState?: VivViewState): boolean => {
   return (
     otherViewState === viewState ||
-    (viewState?.zoom === otherViewState?.zoom &&
+    (normalizeVivZoom(viewState?.zoom) === normalizeVivZoom(otherViewState?.zoom) &&
       // @ts-expect-error - CBA to discriminate between Orbit and Ortho viewStates
       viewState?.rotationX === otherViewState?.rotationX &&
       // @ts-expect-error
@@ -148,7 +177,7 @@ function fromVivViewState(vivViewState: VivViewState): ViewState {
   const target = vivViewState.target as [number, number, number];
   // still not exactly happy with this, and pending 3d etc
   // do we need our own ViewState types that don't match deck?
-  const zoom = Array.isArray(vivViewState.zoom) ? vivViewState.zoom[0] : (vivViewState.zoom ?? 0);
+  const zoom = normalizeVivZoom(vivViewState.zoom);
   return {
     target: [target[0], target[1]],
     zoom,
@@ -288,9 +317,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       layer.id.includes(vivId) ? layer : layer.clone({ id: `${layer.id}${vivId}` });
 
     const extraLayersWithVivId = (extraLayers || []).map(withVivId);
-    // `deckProps.layers` is LayersList (nested arrays, falsy slots); LayerManager normalizes with the same flatten + Boolean filter.
-    const deckLayersFlat = _flatten(deckProps?.layers ?? [], Boolean) as Layer[];
-    const deckPropsLayersWithVivId = deckLayersFlat.map(withVivId);
+    const deckPropsLayersWithVivId = normalizeVivLayers(deckProps?.layers ?? []).map(withVivId);
 
     if (vivLayerProps.length === 0) {
       return composeLayers([], extraLayersWithVivId, deckPropsLayersWithVivId);
@@ -327,12 +354,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         props: layerProps,
       });
 
-      // getLayers returns an array of arrays (one per view)
-      // For a single view, take the first element (like MDVivViewer does at line 385)
-      const layersForImage =
-        Array.isArray(vivLayersResult) && vivLayersResult.length > 0
-          ? ((Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[])
-          : [];
+      const layersForImage = normalizeVivLayers(vivLayersResult);
 
       for (const layer of layersForImage) {
         if (layer instanceof ScaleBarLayer) {

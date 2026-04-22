@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -15,6 +16,8 @@ vi.mock('@spatialdata/core', async () => {
 
 import { SpatialDataProvider } from '../src/provider/SpatialDataProvider.js';
 
+type ProviderSource = Exclude<ComponentProps<typeof SpatialDataProvider>['source'], undefined>;
+
 describe('SpatialDataProvider', () => {
   beforeEach(() => {
     readZarrMock.mockReset();
@@ -22,12 +25,12 @@ describe('SpatialDataProvider', () => {
   });
 
   it('accepts a store or store-like source directly', () => {
-    const source = {
-      get: vi.fn(),
+    const source: ProviderSource = {
+      get: async () => undefined,
     };
 
     renderToStaticMarkup(
-      <SpatialDataProvider source={source as any}>
+      <SpatialDataProvider source={source}>
         <div>viewer</div>
       </SpatialDataProvider>
     );

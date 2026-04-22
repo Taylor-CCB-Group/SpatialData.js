@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampVivSelectionsToAxes, getVivSelectionAxisSizes } from '../src/utils';
+import { buildDefaultSelection, clampVivSelectionsToAxes, getVivSelectionAxisSizes } from '../src/utils';
 
 describe('getVivSelectionAxisSizes', () => {
   it('returns only axes present in labels (case-insensitive)', () => {
@@ -32,5 +32,21 @@ describe('clampVivSelectionsToAxes', () => {
 
   it('yields empty objects when no z/c/t axes exist', () => {
     expect(clampVivSelectionsToAxes([{ z: 0, c: 0, t: 0 }], {})).toEqual([{}]);
+  });
+});
+
+describe('buildDefaultSelection', () => {
+  it('lowercases uppercase Z labels in the emitted selection keys', () => {
+    expect(buildDefaultSelection({ labels: ['Z', 'c', 'y', 'x'], shape: [7, 2, 64, 64] })).toEqual([
+      { c: 0, z: 3 },
+      { c: 1, z: 3 },
+    ]);
+  });
+
+  it('lowercases uppercase T labels in the emitted selection keys', () => {
+    expect(buildDefaultSelection({ labels: ['T', 'c', 'y', 'x'], shape: [5, 2, 64, 64] })).toEqual([
+      { c: 0, t: 2 },
+      { c: 1, t: 2 },
+    ]);
   });
 });

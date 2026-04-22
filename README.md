@@ -56,9 +56,10 @@ pnpm docs:dev
 
 ### Quick Node REPL Check
 
-To try `readZarr` in a Node REPL from this repo:
+To try `readZarr` in a Node REPL from this repo, first generate the example fixture. `test-fixtures/` is gitignored, so a fresh checkout will not have it yet:
 
 ```bash
+pnpm test:fixtures:generate:0.7.2
 pnpm build
 node
 ```
