@@ -53,7 +53,7 @@ export default function Sketch() {
           minHeight: '100%',
         }}
       >
-        <Repr />
+        {/* <Repr /> */}
 
         <section style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 360 }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>SpatialCanvas</h3>
@@ -63,9 +63,9 @@ export default function Sketch() {
         </section>
 
         <SpatialDataTree />
-        <Table />
+        {/* <Table /> */}
         <Transforms />
-        <ImageView />
+        {/* <ImageView /> */}
       </div>
     </DataSource>
   );
