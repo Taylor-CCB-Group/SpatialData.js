@@ -273,11 +273,12 @@ export function buildDefaultSelection({
     return [globalSelection];
   }
 
+  const selectableAxis = firstNonGlobalSelectableDimension.name.toLowerCase() as keyof VivSelection;
   for (let i = 0; i < Math.min(4, firstNonGlobalSelectableDimension.size); i += 1) {
     selection.push({
-      [firstNonGlobalSelectableDimension.name]: i,
+      [selectableAxis]: i,
       ...globalSelection,
-    });
+    } as VivSelection);
   }
 
   if (isInterleaved(shape)) {
@@ -399,6 +400,13 @@ function narrowStats(stats: { domain: number[]; contrastLimits: number[] }): sta
 } {
   return narrowLimits(stats.domain) && narrowLimits(stats.contrastLimits);
 }
+function clampVivSelectionToSource(selection: VivSelection, source: RasterSourceLike): VivSelection {
+  return (clampVivSelectionsToAxes(
+    [selection],
+    getVivSelectionAxisSizes(source.labels, source.shape)
+  )[0] ?? {}) as VivSelection;
+}
+
 type RasterSourceLike = {
   getRaster: (args: { selection: VivSelection }) => Promise<{ data: any }>;
   labels: string[];
@@ -456,7 +464,7 @@ export async function getSingleSelectionStats2D({
   selection,
 }: { loader: LOADER; selection: VivSelection }) {
   const data = getRasterSource(loader);
-  const raster = await data.getRaster({ selection });
+  const raster = await data.getRaster({ selection: clampVivSelectionToSource(selection, data) });
   const selectionStats = getChannelStats(raster.data);
   if (!narrowStats(selectionStats)) {
     throw new Error(
@@ -482,18 +490,24 @@ export async function getSingleSelectionStats3D({
   if (sizeZ === undefined) {
     return getSingleSelectionStats2D({ loader, selection });
   }
+  const baseSelection = clampVivSelectionToSource(selection, lowResSource);
   const raster0 = await lowResSource.getRaster({
-    selection: { ...selection, z: 0 },
+    selection: { ...baseSelection, z: 0 },
   });
   const rasterMid = await lowResSource.getRaster({
-    selection: { ...selection, z: Math.floor(sizeZ / 2) },
+    selection: { ...baseSelection, z: Math.floor(sizeZ / 2) },
   });
   const rasterTop = await lowResSource.getRaster({
-    selection: { ...selection, z: Math.max(0, sizeZ - 1) },
+    selection: { ...baseSelection, z: Math.max(0, sizeZ - 1) },
   });
   const stats0 = getChannelStats(raster0.data);
   const statsMid = getChannelStats(rasterMid.data);
   const statsTop = getChannelStats(rasterTop.data);
+  if (!narrowStats(stats0) || !narrowStats(statsMid) || !narrowStats(statsTop)) {
+    throw new Error(
+      'expected getChannelStats() to return domain and contrastLimits as [number, number]'
+    );
+  }
   return {
     domain: [
       Math.min(stats0.domain[0], statsMid.domain[0], statsTop.domain[0]),
@@ -582,13 +596,18 @@ export function getPhysicalSizeScalingMatrix(loader: PixelSource | any) {
   return new Matrix4().identity();
 }
 
-export function getBoundingCube(loader: PixelSource) {
+function getAxisSize(shape: number[], labels: string[], axis: 'x' | 'y' | 'z') {
+  const index = labels.findIndex((label) => label.toLowerCase() === axis);
+  return index >= 0 ? shape[index] ?? 0 : 0;
+}
+
+export function getBoundingCube(loader: PixelSource | RasterSourceLike) {
   const source = getRasterSource(loader);
   const { shape, labels } = source;
   const physicalSizeScalingMatrix = getPhysicalSizeScalingMatrix(loader);
-  const xSlice: [number, number] = [0, physicalSizeScalingMatrix[0] * shape[labels.indexOf('x')]];
-  const ySlice: [number, number] = [0, physicalSizeScalingMatrix[5] * shape[labels.indexOf('y')]];
-  const zSlice: [number, number] = [0, physicalSizeScalingMatrix[10] * shape[labels.indexOf('z')]];
+  const xSlice: [number, number] = [0, physicalSizeScalingMatrix[0] * getAxisSize(shape, labels, 'x')];
+  const ySlice: [number, number] = [0, physicalSizeScalingMatrix[5] * getAxisSize(shape, labels, 'y')];
+  const zSlice: [number, number] = [0, physicalSizeScalingMatrix[10] * getAxisSize(shape, labels, 'z')];
   return [xSlice, ySlice, zSlice];
 }
 

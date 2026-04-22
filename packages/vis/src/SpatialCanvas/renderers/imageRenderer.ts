@@ -94,7 +94,7 @@ export async function createImageLoader(
 ): Promise<unknown> {
   if (!element.url) {
     throw new Error(
-      `Image element '${element.path}' does not have a URL-backed source. ` +
+      `SpatialCanvas currently requires a URL-backed raster source for '${element.path}'. ` +
         'Store-backed Viv loading is not implemented yet.'
     );
   }

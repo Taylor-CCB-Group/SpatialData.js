@@ -187,7 +187,7 @@ export async function readZarr(
   source: StoreReference,
   selection?: ElementName[],
   onBadFiles?: BadFileHandler
-) {
+): Promise<SpatialData> {
   const normalizedSource = typeof source === 'string' ? source.replace(/\/+$/, '') : source;
   const result = await openExtraConsolidated(normalizedSource);
   if (result.ok) {

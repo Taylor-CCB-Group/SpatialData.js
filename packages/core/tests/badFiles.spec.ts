@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ATTRS_KEY } from '@spatialdata/zarrextra';
+import type { ConsolidatedStore } from '@spatialdata/zarrextra';
+import type * as zarr from 'zarrita';
 import { SpatialData } from '../src/store/index.js';
 
 describe('SpatialData bad-file handling', () => {
@@ -8,7 +10,12 @@ describe('SpatialData bad-file handling', () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     try {
-      const rootStore = {
+      const readableStore: zarr.Readable = {
+        async get() {
+          return undefined;
+        },
+      };
+      const rootStore: ConsolidatedStore = {
         tree: {
           images: {
             broken_image: {
@@ -16,12 +23,17 @@ describe('SpatialData bad-file handling', () => {
             },
           },
         },
-        zarritaStore: {},
+        zarritaStore: {
+          ...readableStore,
+          contents() {
+            return [];
+          },
+        },
       };
 
       const sdata = new SpatialData(
         'https://example.com/mock.zarr',
-        rootStore as any,
+        rootStore,
         ['images'],
         onBadFiles
       );
