@@ -1,5 +1,10 @@
 import { type PropsWithChildren, createContext, useContext, useMemo } from 'react';
-import { readZarr, type ElementName, type SpatialData } from '@spatialdata/core';
+import {
+  readZarr,
+  type ElementName,
+  type SpatialData,
+  type StoreReference,
+} from '@spatialdata/core';
 
 type SpatialDataContextValue = {
   spatialDataPromise: Promise<SpatialData> | null;
@@ -8,12 +13,15 @@ type SpatialDataContextValue = {
 const SpatialDataContext = createContext<SpatialDataContextValue>({ spatialDataPromise: null });
 
 export type SpatialDataProviderProps = {
-  storeUrl: string;
+  source?: StoreReference;
   selection?: ElementName[];
 } & PropsWithChildren;
 
-export function SpatialDataProvider({ children, storeUrl, selection }: SpatialDataProviderProps) {
-  const spatialDataPromise = useMemo(() => readZarr(storeUrl, selection), [storeUrl, selection]);
+export function SpatialDataProvider({ children, source, selection }: SpatialDataProviderProps) {
+  const spatialDataPromise = useMemo(
+    () => (source ? readZarr(source, selection) : null),
+    [source, selection]
+  );
   return (
     <SpatialDataContext.Provider value={{ spatialDataPromise }}>
       {children}
@@ -24,5 +32,3 @@ export function SpatialDataProvider({ children, storeUrl, selection }: SpatialDa
 export function useSpatialDataContext() {
   return useContext(SpatialDataContext);
 }
-
-

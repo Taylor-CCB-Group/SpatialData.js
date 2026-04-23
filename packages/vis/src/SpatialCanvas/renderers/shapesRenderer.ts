@@ -1,6 +1,6 @@
 /**
  * Shapes layer renderer using deck.gl PolygonLayer
- * 
+ *
  * Renders GeoParquet-style polygon/multipolygon data from SpatialData shapes elements.
  */
 
@@ -34,16 +34,16 @@ export interface ShapesLayerRenderConfig {
 
 /**
  * Create a deck.gl PolygonLayer for shapes data.
- * 
+ *
  * Note: This requires the polygon data to be pre-loaded since deck.gl layers
  * are synchronous. The data loading should happen at a higher level.
  */
 export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null {
-  const { 
-    element, 
-    id, 
-    modelMatrix, 
-    opacity, 
+  const {
+    element,
+    id,
+    modelMatrix,
+    opacity,
     visible,
     fillColor = [100, 100, 200, 180],
     strokeColor = [255, 255, 255, 255],
@@ -52,10 +52,12 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
   } = config;
 
   if (!visible) return null;
-  
+
   if (!polygonData) {
     // Data not loaded yet
-    console.debug(`[ShapesRenderer] No polygon data for layer "${id}" from ${element.url}`);
+    console.debug(
+      `[ShapesRenderer] No polygon data for layer "${id}" from ${element.url ?? element.path}`
+    );
     return null;
   }
 
@@ -91,7 +93,10 @@ export async function loadShapesData(
     // loadPolygonShapes returns { shape: [n, null], data: polygons[] }
     return result.data;
   } catch (error) {
-    console.warn(`[ShapesRenderer] Failed to load shapes from ${element.url}:`, error);
+    console.warn(
+      `[ShapesRenderer] Failed to load shapes from ${element.url ?? element.path}:`,
+      error
+    );
     return [];
   }
 }

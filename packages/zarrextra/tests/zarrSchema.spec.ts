@@ -8,15 +8,12 @@ import {
 
 describe('zarrextra - Zarr Schema Validation', () => {
   describe('v2ZarraySchema', () => {
-
     it('should validate v2 zarray with filters and compressor', () => {
       const zarray = {
         shape: [100],
         chunks: [10],
         dtype: 'float64',
-        filters: [
-          { id: 'delta', configuration: { dtype: 'float64' } },
-        ],
+        filters: [{ id: 'delta', configuration: { dtype: 'float64' } }],
         compressor: { id: 'blosc', configuration: { cname: 'lz4' } },
       };
 
@@ -104,7 +101,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
   });
 
   describe('v3ZarraySchema', () => {
-
     it('should validate v3 zarray with codecs', () => {
       const zarray = {
         shape: [100],
@@ -113,9 +109,7 @@ describe('zarrextra - Zarr Schema Validation', () => {
           name: 'regular',
           configuration: { chunk_shape: [10] },
         },
-        codecs: [
-          { name: 'blosc', configuration: { cname: 'lz4' } },
-        ],
+        codecs: [{ name: 'blosc', configuration: { cname: 'lz4' } }],
       };
 
       expect(() => v3ZarraySchema.parse(zarray)).not.toThrow();
@@ -173,9 +167,7 @@ describe('zarrextra - Zarr Schema Validation', () => {
         shape: [100],
         chunks: [10],
         dtype: 'float64',
-        filters: [
-          { id: 'delta', configuration: { dtype: 'float64' } },
-        ],
+        filters: [{ id: 'delta', configuration: { dtype: 'float64' } }],
         compressor: { id: 'blosc', configuration: { cname: 'lz4' } },
       };
 
@@ -232,7 +224,6 @@ describe('zarrextra - Zarr Schema Validation', () => {
   });
 
   describe('validateV3Zarray', () => {
-
     it('should provide default chunk_key_encoding if missing', () => {
       const v3Zarray = {
         shape: [100],
@@ -271,4 +262,3 @@ describe('zarrextra - Zarr Schema Validation', () => {
     });
   });
 });
-

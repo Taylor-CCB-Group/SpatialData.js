@@ -4,7 +4,6 @@ import ZarrDataSource from './VZarrDataSource';
 import type { DataSourceParams } from '../Vutils';
 import type { TableColumnData } from '../types';
 
-
 function prependSlash(path: string) {
   if (typeof path === 'string' && path.length >= 1) {
     if (path.charAt(0) === '/') {
@@ -94,41 +93,27 @@ export default class AnnDataSource extends ZarrDataSource {
     let categoriesValues: string[] | undefined;
     let codesPath: string | undefined;
     if (categories) {
-      const { dtype } = await zarrOpen(
-        storeRoot.resolve(`${prefix}/${categories}`),
-        { kind: 'array' },
-      );
+      const { dtype } = await zarrOpen(storeRoot.resolve(`${prefix}/${categories}`), {
+        kind: 'array',
+      });
       if (dtype === 'v2:object') {
-        categoriesValues = await this.getFlatArrDecompressed(
-          `${prefix}/${categories}`,
-        );
+        categoriesValues = await this.getFlatArrDecompressed(`${prefix}/${categories}`);
       }
     } else if (encodingType === 'categorical') {
-      const { dtype } = await zarrOpen(
-        storeRoot.resolve(`${path}/categories`),
-        { kind: 'array' },
-      );
+      const { dtype } = await zarrOpen(storeRoot.resolve(`${path}/categories`), { kind: 'array' });
       if (dtype === 'v2:object') {
-        categoriesValues = await this.getFlatArrDecompressed(
-          `${path}/categories`,
-        );
+        categoriesValues = await this.getFlatArrDecompressed(`${path}/categories`);
       }
       codesPath = `${path}/codes`;
     } else if (encodingType === 'string-array') {
       return this.getFlatArrDecompressed(path);
     } else {
-      const { dtype } = await zarrOpen(
-        storeRoot.resolve(path),
-        { kind: 'array' },
-      );
+      const { dtype } = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
       if (dtype === 'v2:object') {
         return this.getFlatArrDecompressed(path);
       }
     }
-    const arr = await zarrOpen(
-      storeRoot.resolve(codesPath || path),
-      { kind: 'array' },
-    );
+    const arr = await zarrOpen(storeRoot.resolve(codesPath || path), { kind: 'array' });
     const values = await zarrGet(arr, [null]);
     const { data } = values;
     if (!categoriesValues) {
@@ -145,7 +130,7 @@ export default class AnnDataSource extends ZarrDataSource {
   async loadNumeric(path: string) {
     const { storeRoot } = this;
     const arr = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
-    const isNumber = arr.is("number");
+    const isNumber = arr.is('number');
     if (!isNumber) {
       throw new Error(`Expected a numeric array at ${path}, but got ${arr.dtype}`);
     }
@@ -168,13 +153,9 @@ export default class AnnDataSource extends ZarrDataSource {
     const { storeRoot } = this;
     const arr = zarrOpen(storeRoot.resolve(path), { kind: 'array' });
     return Promise.all(
-      dims.map(dim => arr.then(
-        loadedArr => zarrGet(loadedArr, [null, dim]),
-      )),
-    ).then(cols => ({
-      data: /** @type {[ZarrTypedArray<any>, ZarrTypedArray<any>]} */ (
-        cols.map(col => col.data)
-      ),
+      dims.map((dim) => arr.then((loadedArr) => zarrGet(loadedArr, [null, dim])))
+    ).then((cols) => ({
+      data: /** @type {[ZarrTypedArray<any>, ZarrTypedArray<any>]} */ (cols.map((col) => col.data)),
       shape: [dims.length, cols[0].shape[0]],
     }));
   }
@@ -220,7 +201,7 @@ export default class AnnDataSource extends ZarrDataSource {
    */
   loadDataFrameIndex(
     // eslint-disable-next-line no-unused-vars
-    path = undefined,
+    path = undefined
   ) {
     const dfPath = path ? dirname(path) : '';
     return this.getJson(`${dfPath}/.zattrs`)
@@ -235,7 +216,7 @@ export default class AnnDataSource extends ZarrDataSource {
    */
   loadVarIndex(
     // eslint-disable-next-line no-unused-vars
-    path = undefined,
+    path = undefined
   ) {
     if (this.varIndex) {
       return this.varIndex;
@@ -252,30 +233,23 @@ export default class AnnDataSource extends ZarrDataSource {
    * @param {string|undefined} matrixPath
    * @returns {Promise<string[]>} An promise for a zarr array containing the aliased names.
    */
-  async loadVarAlias(
-    varPath: string,
-    matrixPath?: string,
-  ) {
+  async loadVarAlias(varPath: string, matrixPath?: string) {
     if (this.varAlias) {
       return this.varAlias;
     }
-    const [varAliasData] = await this.loadVarColumns([varPath]) as [TableColumnData | undefined];
+    const [varAliasData] = (await this.loadVarColumns([varPath])) as [TableColumnData | undefined];
     if (!varAliasData) {
       throw new Error('Failed to load var alias');
     }
-    this.varAlias = Array.from(
-      varAliasData,
-      (value) => (value === null || value === undefined ? '' : String(value)),
+    this.varAlias = Array.from(varAliasData, (value) =>
+      value === null || value === undefined ? '' : String(value)
     );
     const index = await this.loadVarIndex();
-    this.varAlias = Array.from(
-      this.varAlias,
-      (val, ind) => {
-        const indexValue = index[ind];
-        const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
-        return val ? val.concat(` (${suffix})`) : suffix;
-      },
-    );
+    this.varAlias = Array.from(this.varAlias, (val, ind) => {
+      const indexValue = index[ind];
+      const suffix = indexValue === null || indexValue === undefined ? '' : String(indexValue);
+      return val ? val.concat(` (${suffix})`) : suffix;
+    });
     return this.varAlias;
   }
 
@@ -297,10 +271,7 @@ export default class AnnDataSource extends ZarrDataSource {
     const { storeRoot } = this;
     const zattrs = await this._loadAttrs(path);
     if ('encoding-type' in zattrs && 'encoding-version' in zattrs) {
-      const {
-        'encoding-type': encodingType,
-        'encoding-version': encodingVersion,
-      } = zattrs;
+      const { 'encoding-type': encodingType, 'encoding-version': encodingVersion } = zattrs;
 
       if (encodingType === 'string' && encodingVersion === '0.2.0') {
         const arr = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
@@ -309,9 +280,13 @@ export default class AnnDataSource extends ZarrDataSource {
         //@ts-expect-error we might be able to use a zarrita type-guard here?
         return data.get(0);
       }
-      throw new Error(`Unsupported encoding type ${encodingType} and version ${encodingVersion} in AnnDataSource._loadString`);
+      throw new Error(
+        `Unsupported encoding type ${encodingType} and version ${encodingVersion} in AnnDataSource._loadString`
+      );
     }
-    throw new Error('Keys for encoding-type or encoding-version not found in AnnDataSource._loadString');
+    throw new Error(
+      'Keys for encoding-type or encoding-version not found in AnnDataSource._loadString'
+    );
   }
 
   /**
@@ -327,9 +302,13 @@ export default class AnnDataSource extends ZarrDataSource {
       if (encodingType === 'string-array' && encodingVersion === '0.2.0') {
         return this.getFlatArrDecompressed(path);
       }
-      throw new Error(`Unsupported encoding type ${encodingType} and version ${encodingVersion} in AnnDataSource._loadStringArray`);
+      throw new Error(
+        `Unsupported encoding type ${encodingType} and version ${encodingVersion} in AnnDataSource._loadStringArray`
+      );
     }
-    throw new Error('Keys for encoding-type or encoding-version not found in AnnDataSource._loadString');
+    throw new Error(
+      'Keys for encoding-type or encoding-version not found in AnnDataSource._loadString'
+    );
   }
 
   /**
@@ -343,7 +322,8 @@ export default class AnnDataSource extends ZarrDataSource {
       const { 'encoding-type': encodingType } = zattrs;
       if (encodingType === 'string') {
         return this._loadString(path);
-      } if (encodingType === 'string-array') {
+      }
+      if (encodingType === 'string-array') {
         return this._loadStringArray(path);
       }
     }
@@ -360,32 +340,34 @@ export default class AnnDataSource extends ZarrDataSource {
   async _loadDict(path: string, keys: string[]) {
     const zattrs = await this._loadAttrs(path);
     if ('encoding-type' in zattrs && 'encoding-version' in zattrs) {
-      const {
-        'encoding-type': encodingType,
-        'encoding-version': encodingVersion,
-      } = zattrs;
+      const { 'encoding-type': encodingType, 'encoding-version': encodingVersion } = zattrs;
 
       if (encodingType === 'dict' && encodingVersion === '0.1.0') {
         const result: Record<string, string | string[] | null | undefined> = {};
-        await Promise.all(keys.map(async (key) => {
-          try {
-            result[key] = await this._loadElement(`${path}/${key}`);
-          } catch (e) {
-            console.error(`Error in _loadDict: could not load ${key}`);
-            result[key] = undefined; //not sure how useful this is
-          }
-        }));
+        await Promise.all(
+          keys.map(async (key) => {
+            try {
+              result[key] = await this._loadElement(`${path}/${key}`);
+            } catch (e) {
+              console.error(`Error in _loadDict: could not load ${key}`);
+              result[key] = undefined; //not sure how useful this is
+            }
+          })
+        );
         return result;
       }
-      throw new Error(`Unsupported encoding type ${encodingType} and version ${encodingVersion} in AnnDataSource._loadDict`);
+      throw new Error(
+        `Unsupported encoding type ${encodingType} and version ${encodingVersion} in AnnDataSource._loadDict`
+      );
     }
-    throw new Error('Keys for encoding-type or encoding-version not found in AnnDataSource._loadString');
+    throw new Error(
+      'Keys for encoding-type or encoding-version not found in AnnDataSource._loadString'
+    );
   }
 }
 
 function normalizeIndexData(column: TableColumnData): string[] {
-  return Array.from(
-    column,
-    (value) => (value === null || value === undefined ? '' : String(value)),
+  return Array.from(column, (value) =>
+    value === null || value === undefined ? '' : String(value)
   );
 }

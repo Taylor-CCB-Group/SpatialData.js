@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Simple static file server for serving test fixtures.
- * 
+ *
  * Serves the test-fixtures directory so that fixtures can be accessed
  * via HTTP URLs for testing with FetchStore.
  */
@@ -91,34 +91,34 @@ async function handleRequest(req, res) {
   try {
     // Remove query string and normalize path
     const urlPath = new URL(req.url, `http://${req.headers.host}`).pathname;
-    
+
     // Remove leading /test-fixtures if present (for cleaner URLs)
     let filePath = urlPath.startsWith('/test-fixtures')
       ? urlPath.slice('/test-fixtures'.length)
       : urlPath;
-    
+
     // Remove leading slash
     filePath = filePath.startsWith('/') ? filePath.slice(1) : filePath;
-    
+
     // Resolve to fixtures directory
     const fullPath = join(fixturesDir, filePath);
-    
+
     // Security: ensure path is within fixtures directory
     if (!fullPath.startsWith(fixturesDir)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('Forbidden');
       return;
     }
-    
+
     // Check if path exists
     const stats = await stat(fullPath).catch(() => null);
-    
+
     if (!stats) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
       return;
     }
-    
+
     // Handle directory listing
     if (stats.isDirectory()) {
       const files = await readdir(fullPath, { withFileTypes: true });
@@ -126,17 +126,17 @@ async function handleRequest(req, res) {
         name: file.name,
         isDirectory: file.isDirectory(),
       }));
-      
+
       const html = generateDirectoryListing(fileList, urlPath, '/test-fixtures');
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(html);
       return;
     }
-    
+
     // Serve file
     const content = await readFile(fullPath);
     const mimeType = getMimeType(fullPath);
-    
+
     // Add CORS headers for cross-origin requests
     res.writeHead(200, {
       'Content-Type': mimeType,
@@ -145,7 +145,7 @@ async function handleRequest(req, res) {
       'Access-Control-Allow-Headers': 'Range',
       'Content-Length': content.length,
     });
-    
+
     res.end(content);
   } catch (error) {
     console.error('Error handling request:', error);
@@ -172,4 +172,3 @@ process.on('SIGINT', () => {
     process.exit(0);
   });
 });
-

@@ -44,7 +44,7 @@ export function maxValueFromLoaderMetadata(loaderObj: {
 
 export function channelCountFromLoader(
   loaderObj: { labels: string[]; shape: number[] },
-  selectionAxisSizes: Partial<Record<'z' | 'c' | 't', number>> | undefined,
+  selectionAxisSizes: Partial<Record<'z' | 'c' | 't', number>> | undefined
 ): number {
   const c = selectionAxisSizes?.c;
   if (typeof c === 'number' && c > 0) return c;
@@ -65,18 +65,22 @@ export function channelCountFromLoader(
 export function applyPerChannelFallbackWithoutOmero(
   imageData: ImageLoaderChannelTarget,
   loaderObj: VivLoaderMetadata,
-  selections: Array<Partial<{ z: number; c: number; t: number }>>,
+  selections: Array<Partial<{ z: number; c: number; t: number }>>
 ): void {
   const axisSizes =
     imageData.selectionAxisSizes ?? getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
   const channelCount = channelCountFromLoader(loaderObj, axisSizes);
   const maxValue = maxValueFromLoaderMetadata(loaderObj);
-  imageData.contrastLimits = Array.from({ length: channelCount }, () => [0, maxValue] as [number, number]);
+  imageData.contrastLimits = Array.from(
+    { length: channelCount },
+    () => [0, maxValue] as [number, number]
+  );
   imageData.colors =
     channelCount === 1
       ? [[255, 255, 255] as [number, number, number]]
-      : Array.from({ length: channelCount }, (_, i) =>
-          COLOR_PALLETE[i % COLOR_PALLETE.length] as [number, number, number],
+      : Array.from(
+          { length: channelCount },
+          (_, i) => COLOR_PALLETE[i % COLOR_PALLETE.length] as [number, number, number]
         );
   imageData.channelsVisible = Array(channelCount).fill(true);
   imageData.selections = selections;

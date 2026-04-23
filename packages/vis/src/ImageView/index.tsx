@@ -147,7 +147,7 @@ export default function ImageView() {
   const [imageUrl, setImageUrl] = useState<string | URL>();
   useEffect(() => {
     if (image) {
-      setImageUrl(image.url);
+      setImageUrl(image.url ?? '');
     } else {
       setImageUrl('');
     }

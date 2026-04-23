@@ -3,7 +3,6 @@ import { open as zarrOpen, root as zarrRoot } from 'zarrita';
 import type { Group, Location, Readable } from 'zarrita';
 import type { DataSourceParams } from '../Vutils';
 
-
 /**
  * A loader ancestor class containing a default constructor
  * and a stub for the required load() method.
@@ -13,18 +12,30 @@ export default class ZarrDataSource {
   /**
    * @param params The parameters object.
    */
-  constructor({ url, requestInit, refSpecUrl, store, fileType }: DataSourceParams & { refSpecUrl?: string }) {
-    console.info('Using a Zarr-based data source. 403 and 404 HTTP responses for Zarr metadata files (.zattrs, .zarray, .zgroup, zarr.json) are to be expected and do not necessarily indicate errors.');
+  constructor({
+    url,
+    requestInit,
+    refSpecUrl,
+    store,
+    fileType,
+  }: DataSourceParams & { refSpecUrl?: string }) {
+    console.info(
+      'Using a Zarr-based data source. 403 and 404 HTTP responses for Zarr metadata files (.zattrs, .zarray, .zgroup, zarr.json) are to be expected and do not necessarily indicate errors.'
+    );
     if (store) {
       // TODO: check here that it is a valid Zarrita Readable?
       this.storeRoot = zarrRoot(store);
     } else if (url) {
       // come to think of it, there's an argument to be made that it could be confusing having 'url' and 'store' being mutually exclusive.
       // could use a discriminated union to make it clearer (at least to people familiar with typescript).
-      throw new Error('The version of ZarrDataSource in this experimental codebase should not reach this code path.');
+      throw new Error(
+        'The version of ZarrDataSource in this experimental codebase should not reach this code path.'
+      );
       // this.storeRoot = zarrOpenRoot(url, fileType, { requestInit, refSpecUrl });
     } else {
-      throw new Error('Either a store or a URL must be provided to the ZarrDataSource constructor.');
+      throw new Error(
+        'Either a store or a URL must be provided to the ZarrDataSource constructor.'
+      );
     }
   }
 
@@ -41,7 +52,10 @@ export default class ZarrDataSource {
    * that resolves to the parsed JSON if successful.
    * @throws This may throw an error.
    */
-  async getJson(key: string, storeRootParam: Location<Readable> | null = null): Promise<Record<string, any>> {
+  async getJson(
+    key: string,
+    storeRootParam: Location<Readable> | null = null
+  ): Promise<Record<string, any>> {
     const { storeRoot } = this;
     const storeRootToUse = storeRootParam || storeRoot;
 

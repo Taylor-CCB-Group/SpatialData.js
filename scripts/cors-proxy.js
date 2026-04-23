@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
  * CORS proxy server for local development.
- * 
+ *
  * Proxies requests to any URL and adds CORS headers to responses.
  * This allows accessing spatialdata stores that don't have CORS headers
  * from browser-based applications.
- * 
+ *
  * WARNING: This is for local development only. No security features are included.
  */
 
@@ -41,17 +41,17 @@ export function handleOptions(req, res) {
 export async function proxyRequest(req, res, targetUrl) {
   try {
     const url = new URL(targetUrl);
-    
+
     // Build fetch options
     const fetchOptions = {
       method: req.method,
       headers: { ...req.headers },
     };
-    
+
     // Remove host header (will be set by fetch)
     const { host, 'content-length': contentLength, ...safeHeaders } = fetchOptions.headers;
     fetchOptions.headers = safeHeaders;
-    
+
     // Forward request body for POST/PUT
     let body = null;
     if (req.method === 'POST' || req.method === 'PUT') {
@@ -64,13 +64,13 @@ export async function proxyRequest(req, res, targetUrl) {
         fetchOptions.body = body;
       }
     }
-    
+
     // Make the request
     const response = await fetch(targetUrl, fetchOptions);
-    
+
     // Add CORS headers
     addCorsHeaders(res);
-    
+
     // Copy response headers (except CORS-related ones which we set)
     const headersToSkip = new Set([
       'access-control-allow-origin',
@@ -79,16 +79,16 @@ export async function proxyRequest(req, res, targetUrl) {
       'access-control-expose-headers',
       'access-control-max-age',
     ]);
-    
+
     response.headers.forEach((value, key) => {
       if (!headersToSkip.has(key.toLowerCase())) {
         res.setHeader(key, value);
       }
     });
-    
+
     // Set status code
     res.writeHead(response.status, res.getHeaders());
-    
+
     // Stream response body
     if (response.body) {
       const reader = response.body.getReader();
@@ -128,7 +128,7 @@ export async function handleRequest(req, res) {
     handleOptions(req, res);
     return;
   }
-  
+
   try {
     // Extract target URL from query parameter or path
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -137,23 +137,25 @@ export async function handleRequest(req, res) {
     if (targetUrl.startsWith('url=')) {
       targetUrl = targetUrl.slice(4);
     }
-    
+
     if (!targetUrl) {
       addCorsHeaders(res);
       res.writeHead(400, { 'Content-Type': 'text/plain' });
       res.end('Usage: /?url=<target-url> or /<target-url>');
       return;
     }
-    
+
     // Validate URL (lightweight check without rejecting valid-but-unexpected forms)
     if (!/^https?:\/\//i.test(targetUrl)) {
       // console.log(`'${targetUrl}' didn't validate, but yolo...`);
       addCorsHeaders(res);
       res.writeHead(400, { 'Content-Type': 'text/plain' });
-      res.end('Invalid URL. Please provide a full URL starting with http:// or https:// (e.g., https://example.com/data.zarr)');
+      res.end(
+        'Invalid URL. Please provide a full URL starting with http:// or https:// (e.g., https://example.com/data.zarr)'
+      );
       return;
     }
-    
+
     // Proxy the request
     await proxyRequest(req, res, targetUrl);
   } catch (error) {
@@ -171,12 +173,12 @@ export async function handleRequest(req, res) {
  */
 export function createProxyServer(port = 8081) {
   const server = createServer(handleRequest);
-  
+
   return new Promise((resolve, reject) => {
     server.on('error', (err) => {
       reject(err);
     });
-    
+
     server.listen(port, () => {
       resolve(server);
     });
@@ -213,11 +215,13 @@ const isMainModule = process.argv[1] && resolve(process.argv[1]) === __filename;
 if (isMainModule) {
   const server = await createProxyServer(PORT);
   const actualPort = server.address()?.port || PORT;
-  
+
   console.log(`CORS proxy server running at http://localhost:${actualPort}`);
   console.log('\nUsage:');
   console.log(`  GET http://localhost:${actualPort}/?url=<target-url>`);
-  console.log(`  Example: http://localhost:${actualPort}/?url=https://example.com/data.zarr/.zattrs`);
+  console.log(
+    `  Example: http://localhost:${actualPort}/?url=https://example.com/data.zarr/.zattrs`
+  );
   console.log('\nPress Ctrl+C to stop\n');
 
   // Handle graceful shutdown
@@ -229,4 +233,3 @@ if (isMainModule) {
     });
   });
 }
-

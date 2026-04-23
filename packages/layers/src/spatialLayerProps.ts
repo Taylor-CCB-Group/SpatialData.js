@@ -40,7 +40,9 @@ export const spatialSublayerSchema = z.discriminatedUnion('kind', [
 export type SpatialSublayer = z.infer<typeof spatialSublayerSchema>;
 
 export const spatialLayerPropsSchema = z.object({
-  schemaVersion: z.literal(SPATIAL_LAYER_PROPS_SCHEMA_VERSION).default(SPATIAL_LAYER_PROPS_SCHEMA_VERSION),
+  schemaVersion: z
+    .literal(SPATIAL_LAYER_PROPS_SCHEMA_VERSION)
+    .default(SPATIAL_LAYER_PROPS_SCHEMA_VERSION),
   /** 2D | 3D scene mode (reserved for Viv + deck view alignment). */
   viewMode: z.enum(['2d', '3d']).optional().default('2d'),
   /** Global time index for scenes with a time axis (non-Viv layers may consume later). */

@@ -6,7 +6,11 @@ import { fs, labelsBitmaskUniforms, vs } from './labelsBitmaskLayerShaders';
 
 const MAX_LABEL_CHANNELS = 7;
 
-function padWithDefault<T>(arr: readonly T[] | undefined, defaultValue: T, targetLength: number): T[] {
+function padWithDefault<T>(
+  arr: readonly T[] | undefined,
+  defaultValue: T,
+  targetLength: number
+): T[] {
   const next = arr ? [...arr] : [];
   while (next.length < targetLength) {
     next.push(defaultValue);
@@ -23,7 +27,7 @@ function getNormalizedColor(color?: readonly number[]): [number, number, number]
 
 function getLabelCoordinate(
   coordinate: number[] | undefined,
-  modelMatrix: unknown,
+  modelMatrix: unknown
 ): [number, number, number] | null {
   if (!coordinate || coordinate.length < 2) {
     return null;
@@ -37,7 +41,11 @@ function getLabelCoordinate(
     return point;
   }
   try {
-    return new Matrix4(modelMatrix as any).invert().transformAsPoint(point) as [number, number, number];
+    return new Matrix4(modelMatrix as any).invert().transformAsPoint(point) as [
+      number,
+      number,
+      number,
+    ];
   } catch {
     return point;
   }
@@ -46,7 +54,7 @@ function getLabelCoordinate(
 function getTopmostLabelAtPixel(
   props: any,
   pixelX: number,
-  pixelY: number,
+  pixelY: number
 ): { channelIndex: number; labelId: number; selection?: unknown } | null {
   const {
     channelData,
@@ -139,7 +147,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     const info = super.getPickingInfo(params);
     const localCoordinate = getLabelCoordinate(
       info.coordinate as number[] | undefined,
-      this.props.modelMatrix,
+      this.props.modelMatrix
     );
     const { bounds, channelData } = this.props;
     const width = channelData?.width;
@@ -216,11 +224,11 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     };
 
     if (this.state.textures) {
-      Object.values(
-        this.state.textures as Record<string, { delete?: () => void } | null>
-      ).forEach((tex) => {
-        tex?.delete?.();
-      });
+      Object.values(this.state.textures as Record<string, { delete?: () => void } | null>).forEach(
+        (tex) => {
+          tex?.delete?.();
+        }
+      );
     }
 
     if (channelData?.data?.length) {
@@ -228,7 +236,11 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
         if (index >= MAX_LABEL_CHANNELS) {
           return;
         }
-        textures[`channel${index}`] = this.dataToTexture(data, channelData.width, channelData.height);
+        textures[`channel${index}`] = this.dataToTexture(
+          data,
+          channelData.width,
+          channelData.height
+        );
       });
       for (const key of Object.keys(textures)) {
         if (!textures.channel0) {
@@ -291,33 +303,27 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
 
     const normalizedColors = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
       getNormalizedColor(
-        index < actualChannelCount ? channelColors?.[index] ?? [255, 255, 255] : [255, 255, 255]
+        index < actualChannelCount ? (channelColors?.[index] ?? [255, 255, 255]) : [255, 255, 255]
       )
     );
 
-    const zoomDelta =
-      typeof zoom === 'number' && typeof maxZoom === 'number' ? maxZoom - zoom : 0;
-    const scaleFactor = 1 / (2 ** zoomDelta);
+    const zoomDelta = typeof zoom === 'number' && typeof maxZoom === 'number' ? maxZoom - zoom : 0;
+    const scaleFactor = 1 / 2 ** zoomDelta;
 
-    const filled = Array.from(
-      { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelsFilled?.[index] ?? true : false)
+    const filled = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
+      index < actualChannelCount ? (channelsFilled?.[index] ?? true) : false
     );
-    const opacities = Array.from(
-      { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelOpacities?.[index] ?? 0.18 : 0)
+    const opacities = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
+      index < actualChannelCount ? (channelOpacities?.[index] ?? 0.18) : 0
     );
-    const outlineOpacities = Array.from(
-      { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelOutlineOpacities?.[index] ?? 0.95 : 0)
+    const outlineOpacities = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
+      index < actualChannelCount ? (channelOutlineOpacities?.[index] ?? 0.95) : 0
     );
-    const visible = Array.from(
-      { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelsVisible?.[index] ?? true : false)
+    const visible = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
+      index < actualChannelCount ? (channelsVisible?.[index] ?? true) : false
     );
-    const strokeWidths = Array.from(
-      { length: MAX_LABEL_CHANNELS },
-      (_, index) => (index < actualChannelCount ? channelStrokeWidths?.[index] ?? 1.5 : 1)
+    const strokeWidths = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
+      index < actualChannelCount ? (channelStrokeWidths?.[index] ?? 1.5) : 1
     );
 
     const labelsBitmask = Object.fromEntries([

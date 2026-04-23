@@ -6,7 +6,6 @@ import ImageView from '../ImageView';
 import Transforms from '../Transforms';
 import SpatialCanvas from '../SpatialCanvas';
 
-
 const defaultUrl =
   'https://storage.googleapis.com/vitessce-demo-data/spatialdata-august-2025/visium_hd_3.0.0.spatialdata.zarr';
 
@@ -31,7 +30,7 @@ function DataSource({ children }: React.PropsWithChildren) {
         />
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        <SpatialDataProvider storeUrl={url}>{children}</SpatialDataProvider>
+        <SpatialDataProvider source={url}>{children}</SpatialDataProvider>
       </div>
     </div>
   );
@@ -39,18 +38,22 @@ function DataSource({ children }: React.PropsWithChildren) {
 
 function Repr() {
   const { spatialData } = useSpatialData();
-  return (
-    <pre style={{maxWidth: '90vw'}}>
-      {spatialData?.toString()}
-    </pre>
-  )
+  return <pre style={{ maxWidth: '90vw' }}>{spatialData?.toString()}</pre>;
 }
 
 export default function Sketch() {
   return (
     <DataSource>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 12, minHeight: '100%' }}>
-        <Repr />
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          padding: 12,
+          minHeight: '100%',
+        }}
+      >
+        {/* <Repr /> */}
 
         <section style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 360 }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>SpatialCanvas</h3>
@@ -60,9 +63,9 @@ export default function Sketch() {
         </section>
 
         <SpatialDataTree />
-        <Table />
+        {/* <Table /> */}
         <Transforms />
-        <ImageView />
+        {/* <ImageView /> */}
       </div>
     </DataSource>
   );

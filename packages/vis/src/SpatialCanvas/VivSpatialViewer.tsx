@@ -1,6 +1,6 @@
 /**
  * VivSpatialViewer - Class component for rendering Viv image layers with additional deck.gl layers
- * 
+ *
  * This component follows the MDVivViewer pattern from MDV, adapted for SpatialCanvas.
  * It handles:
  * - Viv DetailView management
@@ -8,16 +8,22 @@
  * - Composing Viv layers (from view.getLayers()) with extra deck.gl layers
  * - Scale bar positioning
  * - Layer filtering for multi-view support
- * 
+ *
  * Structured to allow gradual refactoring to hooks in the future.
  */
 
 import * as React from 'react';
-import { _flatten } from '@deck.gl/core';
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import { ScaleBarLayer, DetailView, getDefaultInitialViewState } from '@hms-dbmi/viv';
-import type { OrthographicViewState, OrbitViewState, DeckGLProps, Layer, LayersList, PickingInfo } from 'deck.gl';
+import type {
+  OrthographicViewState,
+  OrbitViewState,
+  DeckGLProps,
+  Layer,
+  LayersList,
+  PickingInfo,
+} from 'deck.gl';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -29,11 +35,41 @@ export type VivViewState = (OrthographicViewState | OrbitViewState) & { id: stri
 export type VivViewStates = VivViewState[];
 export type View = { id: string } & any; // Viv View type
 export type VivPickInfo = PickingInfo<any, any> & { tile?: any };
+type VivZoom = number | readonly number[] | null | undefined;
+
+export function normalizeVivZoom(zoom: VivZoom): number {
+  if (Array.isArray(zoom)) {
+    return zoom[0] ?? 0;
+  }
+  if (typeof zoom === 'number') {
+    return zoom;
+  }
+  return 0;
+}
+
+function isLayerLike(value: unknown): value is Layer {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const id = Reflect.get(value, 'id');
+  const clone = Reflect.get(value, 'clone');
+  return typeof id === 'string' && typeof clone === 'function';
+}
+
+export function normalizeVivLayers(raw: unknown): Layer[] {
+  if (isLayerLike(raw)) {
+    return [raw];
+  }
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.flatMap((entry) => normalizeVivLayers(entry));
+}
 
 const areViewStatesEqual = (viewState: VivViewState, otherViewState?: VivViewState): boolean => {
   return (
     otherViewState === viewState ||
-    (viewState?.zoom === otherViewState?.zoom &&
+    (normalizeVivZoom(viewState?.zoom) === normalizeVivZoom(otherViewState?.zoom) &&
       // @ts-expect-error - CBA to discriminate between Orbit and Ortho viewStates
       viewState?.rotationX === otherViewState?.rotationX &&
       // @ts-expect-error
@@ -71,7 +107,7 @@ interface VivSpatialViewerState {
 /**
  * Pure function to compose layers: [vivImageLayers, ...extraLayers, scaleBarLayer]
  * Note: extraLayers (shapes/points) render on top of images
- * 
+ *
  * This matches MDVivViewer's pattern exactly:
  * - When deckProps.layers exists: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
  * - When deckProps.layers is undefined: [vivLayers (all), scaleBar]
@@ -89,35 +125,40 @@ function composeLayers(
   // In our case, extraLayers = shapes/points (equivalent to deckProps.layers in MDV)
   // Always compose: [image layers, ...extraLayers, ...deckPropsLayers, scaleBar]
   const layers: LayersList = [];
-  
+
   // Add image layers (without scale bar) first - these render at the bottom
   if (otherVivLayers.length > 0) {
     layers.push(...otherVivLayers);
   }
-  
+
   // Add extra layers (shapes/points) - these render on top of images
   // This is equivalent to deckProps.layers in MDV
   if (extraLayers.length > 0) {
     layers.push(...extraLayers);
   }
-  
+
   // Add any additional deckProps layers
   if (deckPropsLayers && deckPropsLayers.length > 0) {
     layers.push(...deckPropsLayers);
   }
-  
+
   // Scale bar always on top
   if (scaleBarLayer) {
     layers.push(scaleBarLayer);
   }
-  
+
   return layers;
 }
 
 /**
  * Convert SpatialCanvas ViewState to Viv ViewState format
  */
-function toVivViewState(viewState: ViewState, viewId: string, width: number, height: number): VivViewState {
+function toVivViewState(
+  viewState: ViewState,
+  viewId: string,
+  width: number,
+  height: number
+): VivViewState {
   const [x, y, z = 0] = viewState.target;
   return {
     id: viewId,
@@ -136,9 +177,7 @@ function fromVivViewState(vivViewState: VivViewState): ViewState {
   const target = vivViewState.target as [number, number, number];
   // still not exactly happy with this, and pending 3d etc
   // do we need our own ViewState types that don't match deck?
-  const zoom = Array.isArray(vivViewState.zoom)
-    ? vivViewState.zoom[0]
-    : (vivViewState.zoom ?? 0);
+  const zoom = normalizeVivZoom(vivViewState.zoom);
   return {
     target: [target[0], target[1]],
     zoom,
@@ -152,7 +191,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   constructor(props: VivSpatialViewerProps) {
     super(props);
     this.viewId = `spatial-detail-${Math.random().toString(36).substr(2, 9)}`;
-    
+
     // Create DetailView
     this.detailView = new DetailView({
       id: this.viewId,
@@ -187,10 +226,16 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       typeof firstLayerWithLoader.loader === 'object'
     ) {
       try {
-        const defaultState = getDefaultInitialViewState(firstLayerWithLoader.loader, {
-          width: this.props.width,
-          height: this.props.height,
-        }, 0, false, firstLayerWithLoader.modelMatrix);
+        const defaultState = getDefaultInitialViewState(
+          firstLayerWithLoader.loader,
+          {
+            width: this.props.width,
+            height: this.props.height,
+          },
+          0,
+          false,
+          firstLayerWithLoader.modelMatrix
+        );
         return {
           ...defaultState,
           id: this.viewId,
@@ -220,10 +265,13 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     }
 
     // Update view state if changed externally
-    if (viewState && !areViewStatesEqual(
-      toVivViewState(viewState, this.viewId, width, height),
-      this.state.viewStates[this.viewId]
-    )) {
+    if (
+      viewState &&
+      !areViewStatesEqual(
+        toVivViewState(viewState, this.viewId, width, height),
+        this.state.viewStates[this.viewId]
+      )
+    ) {
       this.setState((prevState) => ({
         viewStates: {
           ...prevState.viewStates,
@@ -237,7 +285,10 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     return layer.id.includes(getVivId(viewport.id));
   }
 
-  _onViewStateChange({ viewId, viewState }: { viewId: string; viewState: VivViewState }): VivViewState {
+  _onViewStateChange({
+    viewId,
+    viewState,
+  }: { viewId: string; viewState: VivViewState }): VivViewState {
     const { onViewStateChange } = this.props;
 
     // Update internal state
@@ -266,9 +317,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       layer.id.includes(vivId) ? layer : layer.clone({ id: `${layer.id}${vivId}` });
 
     const extraLayersWithVivId = (extraLayers || []).map(withVivId);
-    // `deckProps.layers` is LayersList (nested arrays, falsy slots); LayerManager normalizes with the same flatten + Boolean filter.
-    const deckLayersFlat = _flatten(deckProps?.layers ?? [], Boolean) as Layer[];
-    const deckPropsLayersWithVivId = deckLayersFlat.map(withVivId);
+    const deckPropsLayersWithVivId = normalizeVivLayers(deckProps?.layers ?? []).map(withVivId);
 
     if (vivLayerProps.length === 0) {
       return composeLayers([], extraLayersWithVivId, deckPropsLayersWithVivId);
@@ -305,12 +354,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         props: layerProps,
       });
 
-      // getLayers returns an array of arrays (one per view)
-      // For a single view, take the first element (like MDVivViewer does at line 385)
-      const layersForImage =
-        Array.isArray(vivLayersResult) && vivLayersResult.length > 0
-          ? (Array.isArray(vivLayersResult[0]) ? vivLayersResult[0] : vivLayersResult) as Layer[]
-          : [];
+      const layersForImage = normalizeVivLayers(vivLayersResult);
 
       for (const layer of layersForImage) {
         if (layer instanceof ScaleBarLayer) {

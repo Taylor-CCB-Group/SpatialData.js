@@ -12,9 +12,9 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: [
-      'tests/**/*.test.ts',        // Integration tests (run via test:integration)
-      'packages/**/*.spec.ts',     // Package unit tests (.spec.ts)
-      'packages/**/*.spec.tsx',   // Package unit tests for React (.spec.tsx)
+      'tests/**/*.test.ts', // Integration tests (run via test:integration)
+      'packages/**/*.spec.ts', // Package unit tests (.spec.ts)
+      'packages/**/*.spec.tsx', // Package unit tests for React (.spec.tsx)
     ],
     // Integration tests may need extra time for fixture generation hooks
     hookTimeout: 60000,
@@ -32,4 +32,3 @@ export default defineConfig({
     },
   },
 });
-

@@ -18,7 +18,7 @@ export function VivLoaderRegistryProvider({
 }: PropsWithChildren<{ value?: Partial<VivLoaderRegistryValue> }>) {
   const merged = useMemo(
     () => ({ ...defaultRegistry, ...value }),
-    [value?.getOmeZarrMultiscalesData],
+    [value?.getOmeZarrMultiscalesData]
   );
   return (
     <VivLoaderRegistryContext.Provider value={merged}>{children}</VivLoaderRegistryContext.Provider>

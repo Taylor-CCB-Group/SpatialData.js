@@ -357,7 +357,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       ? spatialData?.getAssociatedTable('shapes', selectedConfig.elementKey)?.[1]
       : selectedConfig?.type === 'labels'
         ? spatialData?.getAssociatedTable('labels', selectedConfig.elementKey)?.[1]
-      : undefined;
+        : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
 
   /** Avoid recomputing polygon/image bounds on every pan (viewState) — only when layer data / CS / selection changes. */
@@ -648,7 +648,8 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                   type="button"
                   style={{
                     ...selectStyle,
-                    cursor: vw > 0 && vh > 0 && selectedLayerWorldBounds ? 'pointer' : 'not-allowed',
+                    cursor:
+                      vw > 0 && vh > 0 && selectedLayerWorldBounds ? 'pointer' : 'not-allowed',
                     opacity: vw > 0 && vh > 0 && selectedLayerWorldBounds ? 1 : 0.5,
                   }}
                   disabled={vw <= 0 || vh <= 0 || !selectedLayerWorldBounds}
@@ -698,19 +699,19 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                     )}
                     {(selectedConfig.type === 'image' || selectedConfig.type === 'labels') &&
                       selectedLayerLoadState.image && (
-                      <div>
-                        {selectedConfig.type === 'labels' ? 'Labels' : 'Image'}:{' '}
-                        {selectedLayerLoadState.image}
-                        {!hasRenderableLayerData(selectedConfig.id) &&
-                        selectedLayerLoadState.image === 'loading'
-                          ? ' (blocking)'
-                          : ''}
-                      </div>
-                    )}
+                        <div>
+                          {selectedConfig.type === 'labels' ? 'Labels' : 'Image'}:{' '}
+                          {selectedLayerLoadState.image}
+                          {!hasRenderableLayerData(selectedConfig.id) &&
+                          selectedLayerLoadState.image === 'loading'
+                            ? ' (blocking)'
+                            : ''}
+                        </div>
+                      )}
                     {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') &&
                       selectedLayerLoadState.tooltip && (
-                      <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
-                    )}
+                        <div>Tooltip metadata: {selectedLayerLoadState.tooltip}</div>
+                      )}
                   </div>
                 )}
                 {selectedConfig.type === 'image' && (
@@ -793,7 +794,7 @@ export interface SpatialCanvasProps {
  *
  * @example Basic usage
  * ```tsx
- * <SpatialDataProvider url="https://example.com/data.zarr">
+ * <SpatialDataProvider source="https://example.com/data.zarr">
  *   <SpatialCanvas />
  * </SpatialDataProvider>
  * ```
@@ -802,7 +803,7 @@ export interface SpatialCanvasProps {
  * ```tsx
  * const store = createSpatialCanvasStore();
  *
- * <SpatialDataProvider url="...">
+ * <SpatialDataProvider source="...">
  *   <SpatialCanvas store={store} />
  * </SpatialDataProvider>
  *

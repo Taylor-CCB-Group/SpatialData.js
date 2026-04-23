@@ -1,10 +1,10 @@
 /**
  * Result type for explicit error handling without exceptions.
  * Inspired by Rust's Result<T, E>.
- * 
+ *
  * This type is useful for operations that can fail, especially in zarr operations
  * where errors should be handled explicitly rather than thrown as exceptions.
- * 
+ *
  * Note: This is a custom implementation for simplicity. We may review using
  * an existing Result library (such as neverthrow) in the future,
  * but for now this provides a lightweight, dependency-free solution.
@@ -14,9 +14,7 @@
  * A Result type for explicit error handling without exceptions.
  * Inspired by Rust's Result<T, E>.
  */
-export type Result<T, E = Error> = 
-  | { ok: true; value: T }
-  | { ok: false; error: E };
+export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
 
 /** Create a successful Result */
 export const Ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
@@ -45,4 +43,3 @@ export const unwrap = <T, E>(result: Result<T, E>): T => {
 export const unwrapOr = <T, E>(result: Result<T, E>, defaultValue: T): T => {
   return result.ok ? result.value : defaultValue;
 };
-

@@ -45,10 +45,7 @@ import {
   applyPerChannelFallbackWithoutOmero,
 } from './imageLoaderChannelDefaults';
 import { createImageLoader } from './renderers/imageRenderer';
-import {
-  type PointData,
-  renderPointsLayer,
-} from './renderers/pointsRenderer';
+import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig } from './types';
@@ -550,7 +547,8 @@ export function useLayerData(
                       axisSizes
                     ).slice(0, 7);
                     const channelCount = Math.max(selections.length, 1);
-                    const metadataChannels = (element.element as LabelsElement).attrs.omero?.channels;
+                    const metadataChannels = (element.element as LabelsElement).attrs.omero
+                      ?.channels;
 
                     const colors = Array.from(
                       { length: channelCount },
@@ -705,8 +703,9 @@ export function useLayerData(
         if (elem.type === 'labels') {
           const labelsData = loaded.labels.get(elem.key);
           if (!labelsData?.loader) return null;
-          const source =
-            Array.isArray(labelsData.loader) ? labelsData.loader[0] : labelsData.loader;
+          const source = Array.isArray(labelsData.loader)
+            ? labelsData.loader[0]
+            : labelsData.loader;
           if (!source || typeof source !== 'object') return null;
           const { width, height } = getImageSize(source as never);
           const physical = getPhysicalSizeScalingMatrixFromMeta(source);
@@ -791,8 +790,7 @@ export function useLayerData(
             modelMatrix: elem.transform,
             opacity: config.opacity,
             visible: config.visible,
-            channelColors:
-              ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
+            channelColors: ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
             channelsVisible:
               ch?.channelsVisible && ch.channelsVisible.length > 0
                 ? ch.channelsVisible
@@ -867,9 +865,7 @@ export function useLayerData(
         const loadedLabelData = loadedDataRef.current.labels.get(elem.key);
         const config = layersRef.current[layerId];
         const title = labelId;
-        const items: Array<{ label: string; value: string }> = [
-          { label: 'id', value: labelId },
-        ];
+        const items: Array<{ label: string; value: string }> = [{ label: 'id', value: labelId }];
 
         if (
           config?.type === 'labels' &&
@@ -884,7 +880,7 @@ export function useLayerData(
             const tooltipItems = resolveTooltipItems(
               loadedLabelData.tooltipFields,
               loadedLabelData.tooltipColumns,
-              rowIndex,
+              rowIndex
             );
             items.push(...tooltipItems);
           }
@@ -934,7 +930,7 @@ export function useLayerData(
       const items = resolveTooltipItems(
         loadedShapeData.tooltipFields,
         loadedShapeData.tooltipColumns,
-        rowIndex,
+        rowIndex
       );
 
       if (items.length === 0) {

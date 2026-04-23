@@ -2,7 +2,7 @@
 // some things from various different places are combined here...
 // (ie file-types/zarr/ utils & zarr-utils/normalize.ts)
 
-import type { Readable } from "zarrita";
+import type { Readable } from 'zarrita';
 /**
  * Returns the directory part of a path,
  * (before the last '/' character).
@@ -35,4 +35,4 @@ export type DataSourceParams = {
   store?: Readable;
   /** The file type. */
   fileType: string; // '.zip' | '.h5ad' etc...
-}
+};

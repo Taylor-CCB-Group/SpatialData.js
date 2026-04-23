@@ -65,7 +65,9 @@ export function LayerOrderList({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>Drag to reorder (bottom → top)</div>
+      <div style={{ color: '#888', fontSize: '11px', marginBottom: 8 }}>
+        Drag to reorder (bottom → top)
+      </div>
       {layerOrder.map((id) => {
         const layer = layers[id];
         if (!layer) return null;
@@ -103,7 +105,9 @@ export function LayerOrderList({
               }}
               onClick={() => onSelect(id)}
             />
-            <span style={{ color: layer.visible ? '#6a9' : '#666' }}>{layer.visible ? 'on' : 'off'}</span>
+            <span style={{ color: layer.visible ? '#6a9' : '#666' }}>
+              {layer.visible ? 'on' : 'off'}
+            </span>
           </div>
         );
       })}

@@ -17,7 +17,7 @@ import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 
 function App() {
   return (
-    <SpatialDataProvider storeUrl={"https://example.com/my.zarr"}>
+    <SpatialDataProvider source={"https://example.com/my.zarr"}>
       <Viewer />
     </SpatialDataProvider>
   );
@@ -31,6 +31,8 @@ function Viewer() {
   return <pre>{spatialData.toString()}</pre>;
 }
 ```
+
+You can also pass a zarrita store instance via `source` in an application context where this is opened independently.
 
 ## Build
 

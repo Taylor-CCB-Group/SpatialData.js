@@ -14,44 +14,44 @@ import { startProxyServer } from './cors-proxy.js';
 // Dataset definitions from https://spatialdata.scverse.org/en/stable/tutorials/notebooks/datasets/README.html
 const DATASETS = [
   {
-    name: "Visium HD (Mouse intestin)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/visium_hd_3.0.0_io.zarr/",
+    name: 'Visium HD (Mouse intestin)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/visium_hd_3.0.0_io.zarr/',
   },
   {
-    name: "Visium (Breast cancer)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/visium_associated_xenium_io.zarr/",
+    name: 'Visium (Breast cancer)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/visium_associated_xenium_io.zarr/',
   },
   {
-    name: "Xenium (Breast cancer - Rep1)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/xenium_rep1_io.zarr/",
+    name: 'Xenium (Breast cancer - Rep1)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/xenium_rep1_io.zarr/',
   },
   {
-    name: "Xenium (Breast cancer - Rep2)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/xenium_rep2_io.zarr/",
+    name: 'Xenium (Breast cancer - Rep2)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/xenium_rep2_io.zarr/',
   },
   {
-    name: "CyCIF (Lung adenocarcinoma)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/mcmicro_io.zarr/",
+    name: 'CyCIF (Lung adenocarcinoma)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/mcmicro_io.zarr/',
   },
   {
-    name: "MERFISH (Mouse brain)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/merfish.zarr/",
+    name: 'MERFISH (Mouse brain)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/merfish.zarr/',
   },
   {
-    name: "MIBI-TOF (Colorectal carcinoma)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/mibitof.zarr/",
+    name: 'MIBI-TOF (Colorectal carcinoma)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/mibitof.zarr/',
   },
   {
-    name: "Imaging Mass Cytometry (Multiple cancers)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/steinbock_io.zarr/",
+    name: 'Imaging Mass Cytometry (Multiple cancers)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/steinbock_io.zarr/',
   },
   {
-    name: "Molecular Cartography (Mouse Liver)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/mouse_liver.zarr",
+    name: 'Molecular Cartography (Mouse Liver)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/mouse_liver.zarr',
   },
   {
-    name: "SpaceM (Hepa/NIH3T3 cells)",
-    url: "https://s3.embl.de/spatialdata/spatialdata-sandbox/spacem_helanih3t3.zarr",
+    name: 'SpaceM (Hepa/NIH3T3 cells)',
+    url: 'https://s3.embl.de/spatialdata/spatialdata-sandbox/spacem_helanih3t3.zarr',
   },
 ];
 
@@ -243,9 +243,7 @@ async function main() {
   // Filter datasets if specific one requested
   let datasets = DATASETS;
   if (args.dataset) {
-    datasets = DATASETS.filter(d =>
-      d.name.toLowerCase().includes(args.dataset.toLowerCase())
-    );
+    datasets = DATASETS.filter((d) => d.name.toLowerCase().includes(args.dataset.toLowerCase()));
 
     if (datasets.length === 0) {
       console.error(`Error: No dataset matching '${args.dataset}' found`);
@@ -299,12 +297,16 @@ async function main() {
     output = generateMarkdownTable(results);
   } else if (args.outputFormat === 'csv') {
     // Simple CSV generation
-    const lines = ['Dataset Name,Dataset URL,Implementation,Success,Error Type,Error Message,Elements,Coordinate Systems'];
+    const lines = [
+      'Dataset Name,Dataset URL,Implementation,Success,Error Type,Error Message,Elements,Coordinate Systems',
+    ];
     for (const r of results) {
       const elements = r.elements ? JSON.stringify(r.elements).replace(/"/g, '""') : '';
       const cs = r.coordinateSystems ? JSON.stringify(r.coordinateSystems).replace(/"/g, '""') : '';
       const errorMsg = (r.errorMessage || '').replace(/"/g, '""');
-      lines.push(`"${r.datasetName}","${r.datasetUrl}","${r.implementation}",${r.success},"${r.errorType || ''}","${errorMsg}","${elements}","${cs}"`);
+      lines.push(
+        `"${r.datasetName}","${r.datasetUrl}","${r.implementation}",${r.success},"${r.errorType || ''}","${errorMsg}","${elements}","${cs}"`
+      );
     }
     output = lines.join('\n');
   } else if (args.outputFormat === 'json') {
@@ -332,9 +334,9 @@ async function main() {
   });
 }
 
-main().catch(async error => {
+main().catch(async (error) => {
   console.error('Fatal error:', error);
-  
+
   // Clean up proxy server if it was started
   if (proxyServer) {
     console.error('\nShutting down proxy server...');
@@ -345,6 +347,6 @@ main().catch(async error => {
       });
     });
   }
-  
+
   process.exit(1);
 });

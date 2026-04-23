@@ -20,17 +20,13 @@ function createMockSpatialData() {
     zarritaStore: {},
   };
 
-  return new SpatialData(
-    'https://example.com/mock.zarr',
-    rootStore as any,
-    ['tables'],
-  );
+  return new SpatialData('https://example.com/mock.zarr', rootStore as any, ['tables']);
 }
 
 describe('TableElement direct table reads', () => {
   it('loads obs indices via the direct table source without touching anndata.js', async () => {
     const sdata = createMockSpatialData();
-    assert(sdata.tables, "sdata.tables on mock object should be truthy");
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
     const table = sdata.tables.cells_table;
 
     const getAnnDataSpy = vi.spyOn(table, 'getAnnDataJS');
@@ -47,7 +43,7 @@ describe('TableElement direct table reads', () => {
 
   it('loads obs columns via the direct table source without touching anndata.js', async () => {
     const sdata = createMockSpatialData();
-    assert(sdata.tables, "sdata.tables on mock object should be truthy");
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
     const table = sdata.tables.cells_table;
 
     const getAnnDataSpy = vi.spyOn(table, 'getAnnDataJS');
@@ -64,7 +60,7 @@ describe('TableElement direct table reads', () => {
 
   it('preserves non-string obs column values until the consumer formats them', async () => {
     const sdata = createMockSpatialData();
-    assert(sdata.tables, "sdata.tables on mock object should be truthy");
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
     const table = sdata.tables.cells_table;
 
     const loadObsColumns = vi.fn().mockResolvedValue([[1, 2, 3]]);

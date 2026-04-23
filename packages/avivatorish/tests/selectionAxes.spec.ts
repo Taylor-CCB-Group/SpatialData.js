@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { clampVivSelectionsToAxes, getVivSelectionAxisSizes } from '../src/utils';
+import {
+  buildDefaultSelection,
+  clampVivSelectionsToAxes,
+  getBoundingCube,
+  getVivSelectionAxisSizes,
+} from '../src/utils';
 
 describe('getVivSelectionAxisSizes', () => {
   it('returns only axes present in labels (case-insensitive)', () => {
@@ -22,9 +27,7 @@ describe('getVivSelectionAxisSizes', () => {
 describe('clampVivSelectionsToAxes', () => {
   it('drops keys for axes not in the loader', () => {
     const axisSizes = { c: 3 };
-    expect(
-      clampVivSelectionsToAxes([{ z: 0, c: 1, t: 0 }], axisSizes),
-    ).toEqual([{ c: 1 }]);
+    expect(clampVivSelectionsToAxes([{ z: 0, c: 1, t: 0 }], axisSizes)).toEqual([{ c: 1 }]);
   });
 
   it('clamps to dimension bounds', () => {
@@ -34,5 +37,62 @@ describe('clampVivSelectionsToAxes', () => {
 
   it('yields empty objects when no z/c/t axes exist', () => {
     expect(clampVivSelectionsToAxes([{ z: 0, c: 0, t: 0 }], {})).toEqual([{}]);
+  });
+});
+
+describe('buildDefaultSelection', () => {
+  it('lowercases uppercase Z labels in the emitted selection keys', () => {
+    expect(buildDefaultSelection({ labels: ['Z', 'c', 'y', 'x'], shape: [7, 2, 64, 64] })).toEqual([
+      { c: 0, z: 3 },
+      { c: 1, z: 3 },
+    ]);
+  });
+
+  it('lowercases uppercase C labels in the emitted selection keys', () => {
+    expect(buildDefaultSelection({ labels: ['z', 'C', 'y', 'x'], shape: [7, 2, 64, 64] })).toEqual([
+      { c: 0, z: 3 },
+      { c: 1, z: 3 },
+    ]);
+  });
+
+  it('lowercases uppercase T labels in the emitted selection keys', () => {
+    expect(buildDefaultSelection({ labels: ['T', 'c', 'y', 'x'], shape: [5, 2, 64, 64] })).toEqual([
+      { c: 0, t: 2 },
+      { c: 1, t: 2 },
+    ]);
+  });
+});
+
+describe('getBoundingCube', () => {
+  it('uses axis labels case-insensitively', () => {
+    const loader = {
+      labels: ['Z', 'Y', 'X'],
+      shape: [5, 8, 13],
+      async getRaster() {
+        return { data: 0 };
+      },
+    };
+
+    expect(getBoundingCube(loader)).toEqual([
+      [0, 13],
+      [0, 8],
+      [0, 5],
+    ]);
+  });
+
+  it('falls back to 0 when an axis is missing', () => {
+    const loader = {
+      labels: ['Y', 'X'],
+      shape: [8, 13],
+      async getRaster() {
+        return { data: 0 };
+      },
+    };
+
+    expect(getBoundingCube(loader)).toEqual([
+      [0, 13],
+      [0, 8],
+      [0, 0],
+    ]);
   });
 });

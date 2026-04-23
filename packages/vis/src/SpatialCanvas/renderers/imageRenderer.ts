@@ -1,6 +1,6 @@
 /**
  * Image layer renderer using Viv
- * 
+ *
  * This renderer creates Viv MultiscaleImageLayer instances for displaying
  * OME-Zarr and other multiscale image formats.
  */
@@ -34,7 +34,7 @@ export interface ImageLayerRenderConfig {
 
 /**
  * Create a Viv image layer for rendering.
- * 
+ *
  * Note: Actual layer creation happens in the viewer via Viv's view system.
  * This function is kept for API consistency but returns null - layers are
  * created by calling view.getLayers() in the viewer component.
@@ -85,13 +85,20 @@ export function extractChannelConfig(config: {
 /**
  * Create a Viv loader for an image element.
  * This is async and should be called during component setup.
- * 
+ *
  * SpatialData only supports OME-Zarr format, so we use loadOmeZarr.
  */
 export async function createImageLoader(
   element: ImageElement | LabelsElement,
-  fetchMultiscales: (url: string) => Promise<unknown> = loadOmeZarrMultiscalesData,
+  fetchMultiscales: (url: string) => Promise<unknown> = loadOmeZarrMultiscalesData
 ): Promise<unknown> {
+  if (!element.url) {
+    throw new Error(
+      `SpatialCanvas currently requires a URL-backed raster source for '${element.path}'. ` +
+        'Store-backed Viv loading is not implemented yet.'
+    );
+  }
+
   try {
     return await fetchMultiscales(element.url);
   } catch (error) {

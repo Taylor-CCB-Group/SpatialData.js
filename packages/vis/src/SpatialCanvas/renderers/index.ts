@@ -1,6 +1,6 @@
 /**
  * Layer renderers for SpatialCanvas
- * 
+ *
  * Each renderer takes element data and configuration, returning deck.gl layers
  * ready to be composed into the final view.
  */

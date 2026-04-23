@@ -34,5 +34,3 @@ export function useSpatialData() {
 
   return { spatialData, loading, error } as const;
 }
-
-

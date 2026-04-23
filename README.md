@@ -54,6 +54,28 @@ pnpm format
 pnpm docs:dev
 ```
 
+### Quick Node REPL Check
+
+To try `readZarr` in a Node REPL from this repo, first generate the example fixture. `test-fixtures/` is gitignored, so a fresh checkout will not have it yet:
+
+```bash
+pnpm test:fixtures:generate:0.7.2
+pnpm build
+node
+```
+
+Then:
+
+```js
+const { readZarr } = await import('./packages/core/dist/index.js');
+const { FileSystemStore } = await import('@zarrita/storage');
+const sdata = await readZarr(new FileSystemStore('./test-fixtures/v0.7.2/blobs.zarr'));
+
+sdata.toString();
+```
+
+For more detail, including URL-backed examples, see [packages/core/README.md](./packages/core/README.md).
+
 ## Testing
 
 ### Prerequisites for Testing
@@ -170,7 +192,7 @@ pnpm test:fixtures:generate:0.7.2
 
 #### Test Fixture Server
 
-The test fixture server serves generated fixtures over HTTP for testing with `FetchStore`:
+The main Node integration tests now load fixtures directly from a `FileSystemStore`. This server is still useful for HTTP smoke tests and browser-oriented local development with `FetchStore`:
 
 ```bash
 # Start the test fixture server (runs on http://localhost:8080)

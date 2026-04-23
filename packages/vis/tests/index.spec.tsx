@@ -40,4 +40,3 @@ describe('@spatialdata/vis', () => {
     expect(exports).toContain('SpatialCanvasProvider');
   });
 });
-

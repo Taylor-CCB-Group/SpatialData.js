@@ -25,4 +25,3 @@ describe('@spatialdata/react', () => {
     expect(exports).toContain('useSpatialDataContext');
   });
 });
-

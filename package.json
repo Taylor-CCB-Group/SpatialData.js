@@ -31,6 +31,7 @@
     "docs:build": "pnpm --filter docs build"
   },
   "devDependencies": {
+    "@zarrita/storage": "catalog:",
     "@biomejs/biome": "^1.9.4",
     "vite": "catalog:",
     "vite-plugin-dts": "catalog:",

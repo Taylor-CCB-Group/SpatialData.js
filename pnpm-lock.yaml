@@ -30,6 +30,9 @@ catalogs:
     '@vitejs/plugin-react':
       specifier: ^6.0.1
       version: 6.0.1
+    '@zarrita/storage':
+      specifier: ^0.2.0
+      version: 0.2.0
     anndata.js:
       specifier: ^0.0.2
       version: 0.0.2
@@ -64,8 +67,8 @@ catalogs:
       specifier: ^4.1.4
       version: 4.1.4
     zarrita:
-      specifier: ^0.6.1
-      version: 0.6.1
+      specifier: ^0.7.1
+      version: 0.7.1
     zod:
       specifier: ^4.1.13
       version: 4.1.13
@@ -80,6 +83,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 'catalog:'
         version: 6.0.1(vite@8.0.8(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+      '@zarrita/storage':
+        specifier: 'catalog:'
+        version: 0.2.0
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -200,8 +206,8 @@ importers:
         specifier: workspace:*
         version: link:../zarrextra
       '@zarrita/storage':
-        specifier: ^0.1.3
-        version: 0.1.3
+        specifier: 'catalog:'
+        version: 0.2.0
       anndata.js:
         specifier: 'catalog:'
         version: 0.0.2
@@ -216,7 +222,7 @@ importers:
         version: 0.6.1
       zarrita:
         specifier: 'catalog:'
-        version: 0.6.1
+        version: 0.7.1
       zod:
         specifier: 'catalog:'
         version: 4.1.13
@@ -290,7 +296,7 @@ importers:
         version: 19.2.0(react@19.2.0)
       zarrita:
         specifier: 'catalog:'
-        version: 0.6.1
+        version: 0.7.1
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -372,7 +378,7 @@ importers:
         version: 19.2.0(react@19.2.0)
       zarrita:
         specifier: 'catalog:'
-        version: 0.6.1
+        version: 0.7.1
       zustand:
         specifier: ^5.0.8
         version: 5.0.8(@types/react@19.2.2)(react@19.2.0)(use-sync-external-store@1.6.0(react@19.2.0))
@@ -409,7 +415,7 @@ importers:
     dependencies:
       zarrita:
         specifier: 'catalog:'
-        version: 0.6.1
+        version: 0.7.1
       zod:
         specifier: 'catalog:'
         version: 4.1.13
@@ -3135,11 +3141,11 @@ packages:
   '@xtuc/long@4.2.2':
     resolution: {integrity: sha512-NuHqBY1PB/D8xU6s/thBgOAiAP7HOYDQ32+BFZILJ8ivkUkAHQnWfn6WhL79Owj1qmUnoN/YPhktdIoucipkAQ==}
 
-  '@zarrita/storage@0.1.3':
-    resolution: {integrity: sha512-ZyCMYN3LuCNtKxro9876r/KyHyXV+ie2Bhk1qYsJR4Jp+sAjoVRRNNSJPsJxk64ZgFFezayO5S2hCu88/1Odwg==}
-
   '@zarrita/storage@0.1.4':
     resolution: {integrity: sha512-qURfJAQcQGRfDQ4J9HaCjGaj3jlJKc66bnRk6G/IeLUsM7WKyG7Bzsuf1EZurSXyc0I4LVcu6HaeQQ4d3kZ16g==}
+
+  '@zarrita/storage@0.2.0':
+    resolution: {integrity: sha512-855ZXqtnds7spnT8vNvD+MXa3QExP1m2GqShe8yt7uZXHnQLgJHgkpVwFjE1B0KDDRO0ki09hmk6OboTaIfPsQ==}
 
   '@zip.js/zip.js@2.8.11':
     resolution: {integrity: sha512-0fztsk/0ryJ+2PPr9EyXS5/Co7OK8q3zY/xOoozEWaUsL5x+C0cyZ4YyMuUffOO2Dx/rAdq4JMPqW0VUtm+vzA==}
@@ -7248,6 +7254,10 @@ packages:
     resolution: {integrity: sha512-gsq2PdJIWWGhx5kcdWStvNWit9FVdTewm4SEG7gFskWs+XCVaULt9+BwuoBtJiRE8eo3L1IPAOrbByNLtLtIlg==}
     engines: {node: '>=12'}
 
+  unzipit@2.0.0:
+    resolution: {integrity: sha512-DVeVIWUZCAQPNzm5sB0hpsG1GygTTdBnzNtYYEpInkttx5evkyqRgZi6rTczoySqp8hO5jHVKzrH0f23X8FZLg==}
+    engines: {node: '>=18'}
+
   update-browserslist-db@1.1.3:
     resolution: {integrity: sha512-UxhIZQ+QInVdunkDAaiazvvT/+fXL5Osr0JZlJulepYu6Jd7qJtDZjlur0emRlT71EN3ScPoE7gvsuIKKNavKw==}
     hasBin: true
@@ -7611,8 +7621,8 @@ packages:
   zarrita@0.5.4:
     resolution: {integrity: sha512-i88iN2+HqIQ+uiCEWLfhjbYNXAJD7IrM4h3lFwFclfqEOOhxp10amRWtqmgN5jbuy3+h0LwdyLVVzk4y9rTLgg==}
 
-  zarrita@0.6.1:
-    resolution: {integrity: sha512-YOMTW8FT55Rz+vadTIZeOFZ/F2h4svKizyldvPtMYSxPgSNcRkOzkxCsWpIWlWzB1I/LmISmi0bEekOhLlI+Zw==}
+  zarrita@0.7.1:
+    resolution: {integrity: sha512-Nu4liRKJES1kkIjWALXSryglJf2+WJURUxgndklfX+mTBCd0lk4MV797p00lt4NzmU3Bbdbs10uxeN8LWwPyWA==}
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
@@ -11697,15 +11707,15 @@ snapshots:
 
   '@xtuc/long@4.2.2': {}
 
-  '@zarrita/storage@0.1.3':
-    dependencies:
-      reference-spec-reader: 0.2.0
-      unzipit: 1.4.3
-
   '@zarrita/storage@0.1.4':
     dependencies:
       reference-spec-reader: 0.2.0
       unzipit: 1.4.3
+
+  '@zarrita/storage@0.2.0':
+    dependencies:
+      reference-spec-reader: 0.2.0
+      unzipit: 2.0.0
 
   '@zip.js/zip.js@2.8.11': {}
 
@@ -16386,6 +16396,8 @@ snapshots:
     dependencies:
       uzip-module: 1.0.3
 
+  unzipit@2.0.0: {}
+
   update-browserslist-db@1.1.3(browserslist@4.26.3):
     dependencies:
       browserslist: 4.26.3
@@ -16769,9 +16781,9 @@ snapshots:
       '@zarrita/storage': 0.1.4
       numcodecs: 0.3.2
 
-  zarrita@0.6.1:
+  zarrita@0.7.1:
     dependencies:
-      '@zarrita/storage': 0.1.4
+      '@zarrita/storage': 0.2.0
       numcodecs: 0.3.2
 
   zod@3.25.76: {}

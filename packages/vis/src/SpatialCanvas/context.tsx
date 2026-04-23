@@ -30,10 +30,10 @@ export interface SpatialCanvasProviderProps {
 
 /**
  * Provider for SpatialCanvas state.
- * 
+ *
  * Can either create its own store (default) or use an externally provided store.
  * This allows flexibility for different integration patterns:
- * 
+ *
  * @example Standalone (internal store)
  * ```tsx
  * <SpatialCanvasProvider>
@@ -41,32 +41,25 @@ export interface SpatialCanvasProviderProps {
  *   <LayerControls />
  * </SpatialCanvasProvider>
  * ```
- * 
+ *
  * @example External store (MDV integration)
  * ```tsx
  * // In class component
  * this.spatialStore = createSpatialCanvasStore();
- * 
+ *
  * // In render
  * <SpatialCanvasProvider store={this.spatialStore}>
  *   <SpatialCanvas />
  * </SpatialCanvasProvider>
  * ```
  */
-export function SpatialCanvasProvider({ 
-  store: externalStore, 
-  children 
+export function SpatialCanvasProvider({
+  store: externalStore,
+  children,
 }: PropsWithChildren<SpatialCanvasProviderProps>) {
-  const store = useMemo(
-    () => externalStore ?? createSpatialCanvasStore(),
-    [externalStore]
-  );
+  const store = useMemo(() => externalStore ?? createSpatialCanvasStore(), [externalStore]);
 
-  return (
-    <SpatialCanvasContext.Provider value={store}>
-      {children}
-    </SpatialCanvasContext.Provider>
-  );
+  return <SpatialCanvasContext.Provider value={store}>{children}</SpatialCanvasContext.Provider>;
 }
 
 // ============================================
@@ -88,19 +81,17 @@ export function useSpatialCanvasStoreApi(): SpatialCanvasStoreApi {
 /**
  * Subscribe to store state with a selector.
  * Re-renders only when the selected value changes.
- * 
+ *
  * @example
  * ```tsx
  * const coordinateSystem = useSpatialCanvasStore(s => s.coordinateSystem);
- * const { layers, layerOrder } = useSpatialCanvasStore(s => ({ 
- *   layers: s.layers, 
- *   layerOrder: s.layerOrder 
+ * const { layers, layerOrder } = useSpatialCanvasStore(s => ({
+ *   layers: s.layers,
+ *   layerOrder: s.layerOrder
  * }));
  * ```
  */
-export function useSpatialCanvasStore<U>(
-  selector: (state: SpatialCanvasStore) => U,
-): U {
+export function useSpatialCanvasStore<U>(selector: (state: SpatialCanvasStore) => U): U {
   const store = useSpatialCanvasStoreApi();
   return useStore(store, selector);
 }
@@ -111,17 +102,19 @@ export function useSpatialCanvasStore<U>(
  */
 export function useSpatialCanvasActions() {
   const store = useSpatialCanvasStoreApi();
-  return useMemo(() => ({
-    setCoordinateSystem: store.getState().setCoordinateSystem,
-    setViewState: store.getState().setViewState,
-    addLayer: store.getState().addLayer,
-    removeLayer: store.getState().removeLayer,
-    updateLayer: store.getState().updateLayer,
-    toggleLayerVisibility: store.getState().toggleLayerVisibility,
-    reorderLayers: store.getState().reorderLayers,
-    setSelectedLayerId: store.getState().setSelectedLayerId,
-    setLoading: store.getState().setLoading,
-    reset: store.getState().reset,
-  }), [store]);
+  return useMemo(
+    () => ({
+      setCoordinateSystem: store.getState().setCoordinateSystem,
+      setViewState: store.getState().setViewState,
+      addLayer: store.getState().addLayer,
+      removeLayer: store.getState().removeLayer,
+      updateLayer: store.getState().updateLayer,
+      toggleLayerVisibility: store.getState().toggleLayerVisibility,
+      reorderLayers: store.getState().reorderLayers,
+      setSelectedLayerId: store.getState().setSelectedLayerId,
+      setLoading: store.getState().setLoading,
+      reset: store.getState().reset,
+    }),
+    [store]
+  );
 }
-
