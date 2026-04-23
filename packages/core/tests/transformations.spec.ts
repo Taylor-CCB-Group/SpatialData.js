@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { Affine } from '../src/transformations/transformations.js';
+import {
+  Affine,
+  buildMatrix4FromTransforms,
+  composeTransforms,
+} from '../src/transformations/transformations.js';
 
 describe('Affine', () => {
   it('maps full-axis affines onto spatial x/y dimensions by axis name', () => {
@@ -62,5 +66,39 @@ describe('Affine', () => {
     expect(mapped[0]).toBeCloseTo(18);
     expect(mapped[1]).toBeCloseTo(35);
     expect(mapped[2]).toBeCloseTo(0);
+  });
+});
+
+describe('transform composition order', () => {
+  it('applies explicit sequence transformations in listed order', () => {
+    const matrix = buildMatrix4FromTransforms([
+      {
+        type: 'sequence',
+        transformations: [
+          { type: 'scale', scale: [2, 2] },
+          { type: 'translation', translation: [10, 20] },
+        ],
+      },
+    ]);
+
+    expect(matrix.transformPoint([1, 1, 0])).toEqual([12, 22, 0]);
+  });
+
+  it('applies top-level transform arrays in listed order', () => {
+    const matrix = buildMatrix4FromTransforms([
+      { type: 'scale', scale: [2, 2] },
+      { type: 'translation', translation: [10, 20] },
+    ]);
+
+    expect(matrix.transformPoint([1, 1, 0])).toEqual([12, 22, 0]);
+  });
+
+  it('applies dataset transforms before element transforms', () => {
+    const matrix = composeTransforms(
+      [{ type: 'translation', translation: [10, 20] }],
+      [{ type: 'scale', scale: [2, 2] }]
+    );
+
+    expect(matrix?.transformPoint([1, 1, 0])).toEqual([12, 22, 0]);
   });
 });
