@@ -167,6 +167,16 @@ function rowMajor4x4ToColumnMajor(rows: number[][]): number[] {
   return result;
 }
 
+function composeMatricesInApplicationOrder(matrices: Matrix4[]): Matrix4 {
+  const matrix = new Matrix4().identity();
+  // Matrix products apply right-to-left to points, so we multiply in reverse
+  // to preserve the listed/application order of transformations.
+  for (let i = matrices.length - 1; i >= 0; i--) {
+    matrix.multiplyRight(matrices[i]!);
+  }
+  return matrix;
+}
+
 function buildSpatialMatrixFromAffine(
   affine: number[][],
   inputAxes: Axis[] | undefined,
@@ -417,19 +427,11 @@ export class Sequence extends BaseTransformation {
   }
 
   toArray(): number[] {
-    const matrix = new Matrix4().identity();
-    for (const t of this.transformations) {
-      matrix.multiplyRight(t.toMatrix());
-    }
-    return Array.from(matrix);
+    return Array.from(this.toMatrix());
   }
 
   toMatrix(): Matrix4 {
-    const matrix = new Matrix4().identity();
-    for (const t of this.transformations) {
-      matrix.multiplyRight(t.toMatrix());
-    }
-    return matrix;
+    return composeMatricesInApplicationOrder(this.transformations.map((t) => t.toMatrix()));
   }
 }
 
@@ -545,18 +547,18 @@ export function composeTransforms(
     return undefined;
   }
 
-  const matrix = new Matrix4().identity();
+  const matrices: Matrix4[] = [];
 
   // Apply dataset transforms first (inner), then element transforms (outer)
   // This follows the convention that dataset transforms go from pixel to element space,
-  // then element transforms go from element space to coordinate system
+  // then element transforms go from element space to coordinate system.
   if (datasetTransforms) {
-    matrix.multiplyRight(parseTransforms(datasetTransforms).toMatrix());
+    matrices.push(parseTransforms(datasetTransforms).toMatrix());
   }
 
   if (elementTransforms) {
-    matrix.multiplyRight(parseTransforms(elementTransforms).toMatrix());
+    matrices.push(parseTransforms(elementTransforms).toMatrix());
   }
 
-  return matrix;
+  return composeMatricesInApplicationOrder(matrices);
 }
