@@ -1,5 +1,11 @@
 import * as zarr from 'zarrita';
-import type { ConsolidatedStore, StoreReference, ZarrTree, ZAttrsAny } from './types';
+import type {
+  ConsolidatedStore,
+  LazyZarrArray,
+  StoreReference,
+  ZarrTree,
+  ZAttrsAny,
+} from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
 import { Err, Ok, type Result } from './result';
 
@@ -96,15 +102,16 @@ async function parseStoreContents(store: zarr.Listable<zarr.Readable>): Promise<
 
           if (kind === 'array') {
             const arrayMetadata = await readMetadataJson(store, absolutePath, 'array');
-            const leafNode: Partial<Record<keyof ZarrTree, unknown>> &
-              Record<PropertyKey, unknown> = {
+            if (!arrayMetadata) {
+              throw new Error(`Missing array metadata for '${absolutePath}'`);
+            }
+
+            const leafNode: LazyZarrArray<zarr.DataType> = {
               [ATTRS_KEY]: attrs,
+              [ZARRAY_KEY]: arrayMetadata,
               get: () => zarr.open(root.resolve(absolutePath), { kind: 'array' }),
             };
-            if (arrayMetadata) {
-              leafNode[ZARRAY_KEY] = arrayMetadata;
-            }
-            currentNode[part] = leafNode as ZarrTree;
+            currentNode[part] = leafNode;
           } else {
             currentNode[part] = {
               [ATTRS_KEY]: attrs,
