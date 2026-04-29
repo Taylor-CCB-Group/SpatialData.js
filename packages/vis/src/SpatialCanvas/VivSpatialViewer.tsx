@@ -12,18 +12,19 @@
  * Structured to allow gradual refactoring to hooks in the future.
  */
 
-import * as React from 'react';
+import { ScaleBarLayer, getDefaultInitialViewState } from '@hms-dbmi/viv';
+import { DetailView, ScaleBarView } from '@vivjs/views';
 import { DeckGL } from 'deck.gl';
-import equal from 'fast-deep-equal';
-import { ScaleBarLayer, DetailView, getDefaultInitialViewState } from '@hms-dbmi/viv';
 import type {
-  OrthographicViewState,
-  OrbitViewState,
   DeckGLProps,
   Layer,
   LayersList,
+  OrbitViewState,
+  OrthographicViewState,
   PickingInfo,
 } from 'deck.gl';
+import equal from 'fast-deep-equal';
+import * as React from 'react';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -36,6 +37,7 @@ export type VivViewStates = VivViewState[];
 export type View = { id: string } & any; // Viv View type
 export type VivPickInfo = PickingInfo<any, any> & { tile?: any };
 type VivZoom = number | readonly number[] | null | undefined;
+type VivLoader = { meta?: { physicalSizes?: { x?: { size: number; unit: string } } } };
 
 export function normalizeVivZoom(zoom: VivZoom): number {
   if (Array.isArray(zoom)) {
@@ -184,18 +186,29 @@ function fromVivViewState(vivViewState: VivViewState): ViewState {
   };
 }
 
+function getScaleBarLoader(vivLayerProps: ImageLayerConfig[]): VivLoader[] | undefined {
+  for (const layerProps of vivLayerProps) {
+    const loader = layerProps.loader;
+    if (Array.isArray(loader) && loader[0]?.meta?.physicalSizes?.x) {
+      return loader as VivLoader[];
+    }
+  }
+  return undefined;
+}
+
 class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpatialViewerState> {
   private detailView: DetailView;
   private viewId: string;
+  private scaleBarViewId: string;
 
   constructor(props: VivSpatialViewerProps) {
     super(props);
     this.viewId = `spatial-detail-${Math.random().toString(36).substr(2, 9)}`;
+    this.scaleBarViewId = `${this.viewId}-scalebar`;
 
     // Create DetailView
     this.detailView = new DetailView({
       id: this.viewId,
-      snapScaleBar: true,
       width: props.width,
       height: props.height,
     });
@@ -208,6 +221,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     this.state = {
       viewStates: {
         [this.viewId]: initialViewState,
+        [this.scaleBarViewId]: this.getScaleBarViewState(),
       },
       // deckRef: React.createRef(),
     };
@@ -255,13 +269,47 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     } as VivViewState;
   }
 
+  private getScaleBarViewState(): VivViewState {
+    return {
+      id: this.scaleBarViewId,
+      target: [this.props.width / 2, this.props.height / 2, 0],
+      zoom: 0,
+      width: this.props.width,
+      height: this.props.height,
+    } as VivViewState;
+  }
+
+  private getScaleBarView(): ScaleBarView | undefined {
+    const loader = getScaleBarLoader(this.props.vivLayerProps);
+    if (!loader) {
+      return undefined;
+    }
+    return new ScaleBarView({
+      id: this.scaleBarViewId,
+      width: this.props.width,
+      height: this.props.height,
+      loader,
+      snap: true,
+      imageViewId: this.viewId,
+    });
+  }
+
   componentDidUpdate(prevProps: VivSpatialViewerProps) {
     const { width, height, viewState } = this.props;
+    const nextViewStates: Record<string, VivViewState> = { ...this.state.viewStates };
+    let viewStatesChanged = false;
 
     // Update view dimensions if changed
     if (width !== prevProps.width || height !== prevProps.height) {
       this.detailView.width = width;
       this.detailView.height = height;
+      nextViewStates[this.viewId] = {
+        ...nextViewStates[this.viewId],
+        width,
+        height,
+      } as unknown as VivViewState;
+      nextViewStates[this.scaleBarViewId] = this.getScaleBarViewState();
+      viewStatesChanged = true;
     }
 
     // Update view state if changed externally
@@ -272,12 +320,12 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         this.state.viewStates[this.viewId]
       )
     ) {
-      this.setState((prevState) => ({
-        viewStates: {
-          ...prevState.viewStates,
-          [this.viewId]: toVivViewState(viewState, this.viewId, width, height),
-        },
-      }));
+      nextViewStates[this.viewId] = toVivViewState(viewState, this.viewId, width, height);
+      viewStatesChanged = true;
+    }
+
+    if (viewStatesChanged) {
+      this.setState({ viewStates: nextViewStates });
     }
   }
 
@@ -300,7 +348,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     }));
 
     // Notify parent
-    if (onViewStateChange) {
+    if (viewId === this.viewId && onViewStateChange) {
       onViewStateChange(fromVivViewState(viewState));
     }
 
@@ -325,6 +373,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
     const vivLayers: Layer[] = [];
     let scaleBarAdded = false;
+    const scaleBarView = this.getScaleBarView();
 
     for (const imageLayerProps of vivLayerProps) {
       const layerProps: Record<string, unknown> = {
@@ -350,7 +399,6 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       }
 
       const vivLayersResult = this.detailView.getLayers({
-        viewStates,
         props: layerProps,
       });
 
@@ -370,6 +418,15 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       }
     }
 
+    if (!scaleBarAdded && scaleBarView) {
+      const scaleBarLayers = normalizeVivLayers(
+        scaleBarView.getLayers({
+          viewStates,
+        })
+      );
+      vivLayers.push(...scaleBarLayers);
+    }
+
     // Compose with extra layers - following MDV pattern exactly
     // MDV does: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
     return composeLayers(vivLayers, extraLayersWithVivId, deckPropsLayersWithVivId);
@@ -384,7 +441,10 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     }
 
     const layers = this._renderLayers();
-    const deckGLView = this.detailView.getDeckGlView();
+    const scaleBarView = this.getScaleBarView();
+    const deckGLViews = scaleBarView
+      ? [this.detailView.getDeckGlView(), scaleBarView.getDeckGlView()]
+      : this.detailView.getDeckGlView();
 
     return (
       <DeckGL
@@ -394,7 +454,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         layers={layers}
         //@ts-expect-error onViewStateChange
         onViewStateChange={this._onViewStateChange}
-        views={deckGLView}
+        views={deckGLViews}
         viewState={viewStates}
         useDevicePixels={deckProps?.useDevicePixels ?? true}
         getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
