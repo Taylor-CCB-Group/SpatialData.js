@@ -9,7 +9,19 @@ const workspaceRoot = path.resolve(pkgRoot, '../..');
 const baseConfig = defineViteConfig({
   pkgRoot,
   libName: 'SpatialDataVis',
-  external: [/^@spatialdata\/[^/]+$/, /^zustand(?:\/.*)?$/],
+  external: [
+    /^@spatialdata\/[^/]+$/,
+    /^zustand(?:\/.*)?$/,
+    /^@deck\.gl\/.+$/,
+    /^@luma\.gl\/.+$/,
+    /^@vivjs\/.+$/,
+    '@hms-dbmi/viv',
+    '@math.gl/core',
+    'deck.gl',
+    'geotiff',
+    'anndata.js',
+    'zarrita',
+  ],
 });
 
 export default mergeConfig(baseConfig, {

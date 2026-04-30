@@ -262,6 +262,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     const { model, textures } = this.state as {
       model?: {
         shaderInputs?: { setProps: (props: Record<string, unknown>) => void };
+        setUniforms?: (uniforms: Record<string, unknown>, opts?: Record<string, unknown>) => void;
         setBindings: (bindings: Record<string, unknown>) => void;
         draw: (renderPass?: unknown) => void;
       };
@@ -338,6 +339,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     ]);
 
     model.shaderInputs?.setProps({ labelsBitmask });
+    model.setUniforms?.(_opts.uniforms ?? {}, { disableWarnings: false });
     model.setBindings(textures);
     model.draw((this.context as { renderPass?: unknown }).renderPass);
   }

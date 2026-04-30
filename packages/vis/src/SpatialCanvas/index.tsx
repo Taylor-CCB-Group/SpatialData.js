@@ -228,6 +228,10 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
   const shellRef = useRef<HTMLDivElement | null>(null);
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [pendingFullscreenRefitSize, setPendingFullscreenRefitSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const [hoverTooltip, setHoverTooltip] = useState<{
     x: number;
     y: number;
@@ -302,6 +306,34 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
       : { target: [0, 0] as [number, number], zoom: 0 };
     actions.setViewState(next);
   }, [hasEnabledLayers, vw, vh, isBlocking, viewState, getWorldBoundsForVisibleLayers, actions]);
+
+  useEffect(() => {
+    if (
+      !pendingFullscreenRefitSize ||
+      !hasEnabledLayers ||
+      vw <= 0 ||
+      vh <= 0 ||
+      isBlocking ||
+      (vw === pendingFullscreenRefitSize.width && vh === pendingFullscreenRefitSize.height)
+    ) {
+      return;
+    }
+
+    const bounds = getWorldBoundsForVisibleLayers();
+    const next = bounds
+      ? viewStateFromBounds(bounds, vw, vh)
+      : { target: [0, 0] as [number, number], zoom: 0 };
+    actions.setViewState(next);
+    setPendingFullscreenRefitSize(null);
+  }, [
+    actions,
+    getWorldBoundsForVisibleLayers,
+    hasEnabledLayers,
+    isBlocking,
+    pendingFullscreenRefitSize,
+    vh,
+    vw,
+  ]);
 
   useEffect(() => {
     if (coordinateSystems.length > 0 && !coordinateSystem) {
@@ -507,7 +539,10 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
             <button
               type="button"
               style={{ ...selectStyle, marginLeft: 'auto', cursor: 'pointer' }}
-              onClick={() => setFullscreen((f) => !f)}
+              onClick={() => {
+                setPendingFullscreenRefitSize({ width: vw, height: vh });
+                setFullscreen((f) => !f);
+              }}
             >
               {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
             </button>

@@ -33,6 +33,7 @@ export const vs = `#version 300 es
 
 in vec2 texCoords;
 in vec3 positions;
+in vec3 positions64Low;
 in vec3 instancePickingColors;
 
 out vec2 vTexCoord;
@@ -41,11 +42,10 @@ void main(void) {
   geometry.worldPosition = positions;
   geometry.uv = texCoords;
   geometry.pickingColor = instancePickingColors;
-  gl_Position = project_position_to_clipspace(positions, vec3(0.0), vec3(0.0), geometry.position);
-  DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
+  gl_Position = project_position_to_clipspace(positions, positions64Low, vec3(0.0), geometry.position);
+  picking_setPickingAttribute(gl_Position.z / gl_Position.w);
   vTexCoord = texCoords;
-  vec4 color = vec4(0.0);
-  DECKGL_FILTER_COLOR(color, geometry);
+  picking_setPickingColor(geometry.pickingColor);
 }
 `;
 
@@ -152,6 +152,16 @@ vec4 dataToColor(
   return vec4(outRgb, outAlpha);
 }
 
+vec4 blendOver(vec4 baseColor, vec4 overlayColor) {
+  if (overlayColor.a <= 0.0) {
+    return baseColor;
+  }
+  return vec4(
+    mix(baseColor.rgb, overlayColor.rgb, overlayColor.a),
+    max(baseColor.a, overlayColor.a)
+  );
+}
+
 void main() {
   vec4 dat0 = sampleAndGetData(channel0, vTexCoord, labelsBitmask.channelFilled0, labelsBitmask.channelStrokeWidth0, labelsBitmask.channelVisible0);
   vec4 dat1 = sampleAndGetData(channel1, vTexCoord, labelsBitmask.channelFilled1, labelsBitmask.channelStrokeWidth1, labelsBitmask.channelVisible1);
@@ -177,15 +187,15 @@ void main() {
   vec4 val6 = dataToColor(dat6, labelsBitmask.color6, labelsBitmask.channelOpacity6, labelsBitmask.channelOutlineOpacity6, labelsBitmask.channelFilled6);
 
   fragColor = val0;
-  fragColor = (val1 == fragColor || val1 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val1, val1.a).rgb, max(fragColor.a, val1.a));
-  fragColor = (val2 == fragColor || val2 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val2, val2.a).rgb, max(fragColor.a, val2.a));
-  fragColor = (val3 == fragColor || val3 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val3, val3.a).rgb, max(fragColor.a, val3.a));
-  fragColor = (val4 == fragColor || val4 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val4, val4.a).rgb, max(fragColor.a, val4.a));
-  fragColor = (val5 == fragColor || val5 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val5, val5.a).rgb, max(fragColor.a, val5.a));
-  fragColor = (val6 == fragColor || val6 == vec4(0.0)) ? fragColor : vec4(mix(fragColor, val6, val6.a).rgb, max(fragColor.a, val6.a));
+  fragColor = blendOver(fragColor, val1);
+  fragColor = blendOver(fragColor, val2);
+  fragColor = blendOver(fragColor, val3);
+  fragColor = blendOver(fragColor, val4);
+  fragColor = blendOver(fragColor, val5);
+  fragColor = blendOver(fragColor, val6);
   fragColor.a = fragColor.a * labelsBitmask.labelOpacity;
 
-  geometry.uv = vTexCoord;
-  DECKGL_FILTER_COLOR(fragColor, geometry);
+  fragColor = picking_filterHighlightColor(fragColor);
+  fragColor = picking_filterPickingColor(fragColor);
 }
 `;
