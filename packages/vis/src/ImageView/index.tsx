@@ -1,19 +1,20 @@
-import { useSpatialData } from '@spatialdata/react';
-import { useEffect, useMemo, useState, useId, type CSSProperties, useCallback } from 'react';
-import { useMeasure } from '@uidotdev/usehooks';
+import { VivViewer, getDefaultInitialViewState } from '@hms-dbmi/viv';
 import {
+  DEFAULT_CHANNEL_STATE,
+  VivProvider,
   createVivStores,
+  resolveRasterSource,
   useChannelsStore,
+  useChannelsStoreApi,
   useLoader,
   useViewerStore,
   useViewerStoreApi,
-  VivProvider,
-  useChannelsStoreApi,
-  DEFAULT_CHANNEL_STATE,
-  resolveRasterSource,
 } from '@spatialdata/avivatorish';
-import { DetailView, VivViewer, getDefaultInitialViewState } from '@hms-dbmi/viv';
 import { useImage } from '@spatialdata/avivatorish';
+import { useSpatialData } from '@spatialdata/react';
+import { useMeasure } from '@uidotdev/usehooks';
+import { DetailView, ScaleBarView } from '@vivjs/views';
+import { type CSSProperties, useCallback, useEffect, useId, useMemo, useState } from 'react';
 
 /**
  * when trying to getDefaultInitialViewState, it'll do something a bit like this internally...
@@ -35,16 +36,26 @@ function VivImage({ url, width, height }: { url?: string | URL; width: number; h
   const layerConfig = useMemo(() => ({ loader, ...channels }), [loader, channels]);
   const id = useId();
   const detailId = `${id}detail-react`;
+  const scaleBarId = `${detailId}-scalebar`;
   const viewState = useViewerStore((state) => state.viewState);
   const isViewerLoading = useViewerStore((store) => store.isViewerLoading);
   const detailView = useMemo(() => {
     return new DetailView({
       id: detailId,
-      snapScaleBar: true,
       width,
       height,
     });
   }, [detailId, width, height]);
+  const scaleBarView = useMemo(() => {
+    return new ScaleBarView({
+      id: scaleBarId,
+      width,
+      height,
+      loader,
+      snap: true,
+      imageViewId: detailId,
+    });
+  }, [scaleBarId, width, height, loader, detailId]);
   const deckProps = useMemo(
     () => ({
       style: {
@@ -92,11 +103,17 @@ function VivImage({ url, width, height }: { url?: string | URL; width: number; h
   return (
     <VivViewer
       deckProps={deckProps}
-      layerProps={[layerConfig]}
-      views={[detailView]}
-      viewStates={[{ ...viewState, id: detailId }]}
-      onViewStateChange={({ viewState: newViewState }) => {
-        viewerStore.setState({ viewState: newViewState });
+      layerProps={[layerConfig, layerConfig]}
+      views={[detailView, scaleBarView]}
+      viewStates={[
+        { ...viewState, id: detailId },
+        { ...viewState, id: scaleBarId },
+      ]}
+      onViewStateChange={({ viewId, viewState: newViewState }) => {
+        if (viewId === detailId) {
+          viewerStore.setState({ viewState: newViewState });
+        }
+        return newViewState;
       }}
     />
   );

@@ -34,6 +34,7 @@
     "@spatialdata/layers": "workspace:*",
     "@spatialdata/core": "workspace:*",
     "@spatialdata/react": "workspace:*",
+    "@vivjs/views": "catalog:",
     "@uidotdev/usehooks": "^2.4.1",
     "@uiw/react-json-view": "2.0.0-alpha.39",
     "@deck.gl/core": "catalog:",

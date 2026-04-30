@@ -7,13 +7,13 @@ settings:
 catalogs:
   default:
     '@deck.gl/core':
-      specifier: ~9.1.11
+      specifier: ~9.1.15
       version: 9.1.15
     '@hms-dbmi/viv':
-      specifier: ^0.19.0
-      version: 0.19.0
+      specifier: ^0.20.1
+      version: 0.20.1
     '@luma.gl/core':
-      specifier: ~9.1.9
+      specifier: ~9.1.10
       version: 9.1.10
     '@math.gl/core':
       specifier: ^4.1.0
@@ -30,6 +30,9 @@ catalogs:
     '@vitejs/plugin-react':
       specifier: ^6.0.1
       version: 6.0.1
+    '@vivjs/views':
+      specifier: 0.20.1
+      version: 0.20.1
     '@zarrita/storage':
       specifier: ^0.2.0
       version: 0.2.0
@@ -40,7 +43,7 @@ catalogs:
       specifier: ^17.0.0
       version: 17.0.0
     deck.gl:
-      specifier: ~9.1.11
+      specifier: ~9.1.15
       version: 9.1.15
     jsdom:
       specifier: ^27.4.0
@@ -152,7 +155,7 @@ importers:
     dependencies:
       '@hms-dbmi/viv':
         specifier: 'catalog:'
-        version: 0.19.0(fd776ac1e5acea3be9c5cb4e7aa1f916)
+        version: 0.20.1(fd776ac1e5acea3be9c5cb4e7aa1f916)
       '@math.gl/core':
         specifier: 'catalog:'
         version: 4.1.0
@@ -253,7 +256,7 @@ importers:
         version: 9.1.15
       '@hms-dbmi/viv':
         specifier: 'catalog:'
-        version: 0.19.0(fd776ac1e5acea3be9c5cb4e7aa1f916)
+        version: 0.20.1(fd776ac1e5acea3be9c5cb4e7aa1f916)
       '@math.gl/core':
         specifier: 'catalog:'
         version: 4.1.0
@@ -333,7 +336,7 @@ importers:
         version: 9.1.15
       '@hms-dbmi/viv':
         specifier: 'catalog:'
-        version: 0.19.0(9a614091add8d9561d5b393ea4eef7a1)
+        version: 0.20.1(9a614091add8d9561d5b393ea4eef7a1)
       '@luma.gl/core':
         specifier: 'catalog:'
         version: 9.1.10
@@ -358,6 +361,9 @@ importers:
       '@uiw/react-json-view':
         specifier: 2.0.0-alpha.39
         version: 2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+      '@vivjs/views':
+        specifier: 'catalog:'
+        version: 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
       anndata.js:
         specifier: 'catalog:'
         version: 0.0.2
@@ -1825,8 +1831,8 @@ packages:
   '@hapi/topo@5.1.0':
     resolution: {integrity: sha512-foQZKJig7Ob0BMAYBfcJk8d77QtOe7Wo4ox7ff1lQYoNNAb6jwcY1ncdoy2e9wQZzvNy7ODZCYJkK8kzmcAnAg==}
 
-  '@hms-dbmi/viv@0.19.0':
-    resolution: {integrity: sha512-wH/GBjti9686xwuGnZp9sMwwkE6pLGRaRW3Qc27S/3GRwq5j6C9Fd3du12F4InFfle47GV2nv0X9mWO+wiRwsQ==}
+  '@hms-dbmi/viv@0.20.1':
+    resolution: {integrity: sha512-Q7x6MeXrOQe9RwwqpxNe3Aw+CBRCC6fYNZ33I5m22N1F/soBB7fFi67YDlJmBIwXtA1i+ApPY5AWb34XgcuHPQ==}
 
   '@interactjs/types@1.10.27':
     resolution: {integrity: sha512-BUdv0cvs4H5ODuwft2Xp4eL8Vmi3LcihK42z0Ft/FbVJZoRioBsxH+LlsBdK4tAie7PqlKGy+1oyOncu1nQ6eA==}
@@ -3020,16 +3026,16 @@ packages:
   '@vitest/utils@4.1.4':
     resolution: {integrity: sha512-13QMT+eysM5uVGa1rG4kegGYNp6cnQcsTc67ELFbhNLQO+vgsygtYJx2khvdt4gVQqSSpC/KT5FZZxUpP3Oatw==}
 
-  '@vivjs/constants@0.19.0':
-    resolution: {integrity: sha512-1X0cKfPGlFNscEgtXBhHsZu7BixMIq2cznZ1hNuvTnCtG7SDW9nsiAa3WrOMowDwYyzMFWkoaWmVcoJSdN0wkg==}
+  '@vivjs/constants@0.20.1':
+    resolution: {integrity: sha512-VYtQnT/3bO/kVx2RTspTCzX7lrTyeYMojDBzVy1zgJ/4co8iBan3Xtnbz7HlhvFFGBe3AssFTjNwwb6XdA8Cbw==}
 
-  '@vivjs/extensions@0.19.0':
-    resolution: {integrity: sha512-EHg7Y83+uv720micAaRjBh/Edw9lOq/uAfSQCbK0H4HBv7xUGzeXbCLmN/9ye8UgHWZd1cO6xvGDwBTQ7hp3gg==}
+  '@vivjs/extensions@0.20.1':
+    resolution: {integrity: sha512-ZWTqVHosSc0NIrteAL0yjQj1CWqpOtsm2K3SK/w3L6nLA/HMCIfbBcgRfkYerLFcUb8hRD86BNkGgV9kN2Iejg==}
     peerDependencies:
       '@deck.gl/core': ~9.1.11
 
-  '@vivjs/layers@0.19.0':
-    resolution: {integrity: sha512-M8zdlPsO8zEpESDevBiAnuEg9kv+H25B38XLfpPzTZS78hA6VD4PRw08xh5GjRHlaCV6CVnnKYAQDrvYNufDkg==}
+  '@vivjs/layers@0.20.1':
+    resolution: {integrity: sha512-DrB68BgLCTymmX/3sKd0h11K/ubA4x3Vy6TRUUOK3sX83j3a+SAsx0RHr2g/b7ethc0C/ZnQFBFJX6hTXHYzsA==}
     peerDependencies:
       '@deck.gl/core': ~9.1.11
       '@deck.gl/geo-layers': ~9.1.11
@@ -3040,20 +3046,20 @@ packages:
       '@luma.gl/shadertools': ~9.1.9
       '@luma.gl/webgl': ~9.1.9
 
-  '@vivjs/loaders@0.19.0':
-    resolution: {integrity: sha512-mCE2F8dih42hmIj96qYCPfvUqyNtuYlDKJa/i0LfT3Hrb5SclqgOpUrp4KW+C5Wy68O0P9c0ZIlmvWX0sMGJ8Q==}
+  '@vivjs/loaders@0.20.1':
+    resolution: {integrity: sha512-7F9uYXkoFPH945o+A+YO/2DIv2WO0LJYGFHiz0ZhO0THl1mBw8NaHO1YodwzM/sqoT4X+5oGCh+5E91YX87t7g==}
 
-  '@vivjs/types@0.19.0':
-    resolution: {integrity: sha512-936eBNXNmgSJUsfQ+iJcrC4oTVJS9vCb6J6I+TiSn7bymO0uKia+3yvLFN6cWGrjQiWo5hSTSh6ZV+ydiE4i5g==}
+  '@vivjs/types@0.20.1':
+    resolution: {integrity: sha512-VfWhqv893UDHii3Lr4UbWiSafDtqjXp2zsojYDAiabnLA7n4Q7bSk/BCoTt6CaehwwI7t8o3J6m9Axb2cLH4nQ==}
 
-  '@vivjs/viewers@0.19.0':
-    resolution: {integrity: sha512-Y58b/4F9J3RjZjPG80GciikiWZHFyIncRHFsmVqpIdE/7ubTUJTvzI0ZdrT5Y6NoP7dxjevIrhfSWQGbmjgZJQ==}
+  '@vivjs/viewers@0.20.1':
+    resolution: {integrity: sha512-4x9arLqI6beI6vp1hoSJ8JViG/k1WW0paC1sK92zKD/Ed0tfTZyAH69RwZf9I7TU/o+yGjNlMm3rH8HgowCHBQ==}
     peerDependencies:
       '@deck.gl/react': ~9.1.11
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  '@vivjs/views@0.19.0':
-    resolution: {integrity: sha512-2jSH6mfHaFk1ovE5oFvS3fAdUaVqZGr14gY+HlEF7V4lASgALcJoVvA8oVJflHvUZIn8jiwOqfIcoF9t7/m5eg==}
+  '@vivjs/views@0.20.1':
+    resolution: {integrity: sha512-cVtI4ILdfQ+vw/7VtHw5NPcrwz/sXlI5l3kU9pKjJ6Wp248OuJGvcOE8lAKdmb8nWSDbq1i0un+mQET1IVRERQ==}
     peerDependencies:
       '@deck.gl/core': ~9.1.11
       '@deck.gl/layers': ~9.1.11
@@ -5292,6 +5298,9 @@ packages:
 
   lodash@4.17.21:
     resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
+
+  lodash@4.18.1:
+    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
   long@3.2.0:
     resolution: {integrity: sha512-ZYvPPOMqUwPoDsbJaR10iQJYnMuZhRTvHYl62ErLIEX7RgFlziSBUUvrt3OVfc47QlHHpzPZYP17g3Fv7oeJkg==}
@@ -10004,15 +10013,15 @@ snapshots:
     dependencies:
       '@hapi/hoek': 9.3.0
 
-  '@hms-dbmi/viv@0.19.0(9a614091add8d9561d5b393ea4eef7a1)':
+  '@hms-dbmi/viv@0.20.1(9a614091add8d9561d5b393ea4eef7a1)':
     dependencies:
-      '@vivjs/constants': 0.19.0
-      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
-      '@vivjs/layers': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
-      '@vivjs/loaders': 0.19.0
-      '@vivjs/types': 0.19.0
-      '@vivjs/viewers': 0.19.0(9a614091add8d9561d5b393ea4eef7a1)
-      '@vivjs/views': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/constants': 0.20.1
+      '@vivjs/extensions': 0.20.1(@deck.gl/core@9.1.15)
+      '@vivjs/layers': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/loaders': 0.20.1
+      '@vivjs/types': 0.20.1
+      '@vivjs/viewers': 0.20.1(9a614091add8d9561d5b393ea4eef7a1)
+      '@vivjs/views': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
     transitivePeerDependencies:
       - '@deck.gl/core'
       - '@deck.gl/geo-layers'
@@ -10025,15 +10034,15 @@ snapshots:
       - '@luma.gl/webgl'
       - react
 
-  '@hms-dbmi/viv@0.19.0(fd776ac1e5acea3be9c5cb4e7aa1f916)':
+  '@hms-dbmi/viv@0.20.1(fd776ac1e5acea3be9c5cb4e7aa1f916)':
     dependencies:
-      '@vivjs/constants': 0.19.0
-      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
-      '@vivjs/layers': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
-      '@vivjs/loaders': 0.19.0
-      '@vivjs/types': 0.19.0
-      '@vivjs/viewers': 0.19.0(fd776ac1e5acea3be9c5cb4e7aa1f916)
-      '@vivjs/views': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/constants': 0.20.1
+      '@vivjs/extensions': 0.20.1(@deck.gl/core@9.1.15)
+      '@vivjs/layers': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/loaders': 0.20.1
+      '@vivjs/types': 0.20.1
+      '@vivjs/viewers': 0.20.1(fd776ac1e5acea3be9c5cb4e7aa1f916)
+      '@vivjs/views': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
     transitivePeerDependencies:
       - '@deck.gl/core'
       - '@deck.gl/geo-layers'
@@ -11488,16 +11497,16 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@vivjs/constants@0.19.0':
+  '@vivjs/constants@0.20.1':
     dependencies:
       '@luma.gl/constants': 9.1.10
 
-  '@vivjs/extensions@0.19.0(@deck.gl/core@9.1.15)':
+  '@vivjs/extensions@0.20.1(@deck.gl/core@9.1.15)':
     dependencies:
       '@deck.gl/core': 9.1.15
-      '@vivjs/constants': 0.19.0
+      '@vivjs/constants': 0.20.1
 
-  '@vivjs/layers@0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)':
+  '@vivjs/layers@0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)':
     dependencies:
       '@deck.gl/core': 9.1.15
       '@deck.gl/geo-layers': 9.1.15(@deck.gl/core@9.1.15)(@deck.gl/extensions@9.1.15(@deck.gl/core@9.1.15)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10))))(@deck.gl/layers@9.1.15(@deck.gl/core@9.1.15)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10))))(@deck.gl/mesh-layers@9.1.15(@deck.gl/core@9.1.15)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10))))(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10)))
@@ -11509,32 +11518,33 @@ snapshots:
       '@luma.gl/webgl': 9.1.10(@luma.gl/core@9.1.10)
       '@math.gl/core': 4.1.0
       '@math.gl/culling': 4.1.0
-      '@vivjs/constants': 0.19.0
-      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
-      '@vivjs/loaders': 0.19.0
-      '@vivjs/types': 0.19.0
+      '@vivjs/constants': 0.20.1
+      '@vivjs/extensions': 0.20.1(@deck.gl/core@9.1.15)
+      '@vivjs/loaders': 0.20.1
+      '@vivjs/types': 0.20.1
 
-  '@vivjs/loaders@0.19.0':
+  '@vivjs/loaders@0.20.1':
     dependencies:
-      '@vivjs/types': 0.19.0
+      '@vivjs/types': 0.20.1
       geotiff: 2.1.3
       lzw-tiff-decoder: 0.1.1
       quickselect: 2.0.0
       zarrita: 0.5.4
       zod: 3.25.76
 
-  '@vivjs/types@0.19.0':
+  '@vivjs/types@0.20.1':
     dependencies:
-      '@vivjs/constants': 0.19.0
+      '@vivjs/constants': 0.20.1
       math.gl: 4.1.0
 
-  '@vivjs/viewers@0.19.0(9a614091add8d9561d5b393ea4eef7a1)':
+  '@vivjs/viewers@0.20.1(9a614091add8d9561d5b393ea4eef7a1)':
     dependencies:
       '@deck.gl/react': 9.1.15(@deck.gl/core@9.1.15)(@deck.gl/widgets@9.1.15(@deck.gl/core@9.1.15))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
-      '@vivjs/constants': 0.19.0
-      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
-      '@vivjs/views': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/constants': 0.20.1
+      '@vivjs/extensions': 0.20.1(@deck.gl/core@9.1.15)
+      '@vivjs/views': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
       fast-deep-equal: 3.1.3
+      lodash: 4.18.1
       react: 19.2.0
     transitivePeerDependencies:
       - '@deck.gl/core'
@@ -11546,13 +11556,14 @@ snapshots:
       - '@luma.gl/shadertools'
       - '@luma.gl/webgl'
 
-  '@vivjs/viewers@0.19.0(fd776ac1e5acea3be9c5cb4e7aa1f916)':
+  '@vivjs/viewers@0.20.1(fd776ac1e5acea3be9c5cb4e7aa1f916)':
     dependencies:
       '@deck.gl/react': 9.1.15(@deck.gl/core@9.1.15)(@deck.gl/widgets@9.1.15(@deck.gl/core@9.1.15))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
-      '@vivjs/constants': 0.19.0
-      '@vivjs/extensions': 0.19.0(@deck.gl/core@9.1.15)
-      '@vivjs/views': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/constants': 0.20.1
+      '@vivjs/extensions': 0.20.1(@deck.gl/core@9.1.15)
+      '@vivjs/views': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
       fast-deep-equal: 3.1.3
+      lodash: 4.18.1
       react: 19.2.1
     transitivePeerDependencies:
       - '@deck.gl/core'
@@ -11564,13 +11575,13 @@ snapshots:
       - '@luma.gl/shadertools'
       - '@luma.gl/webgl'
 
-  '@vivjs/views@0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)':
+  '@vivjs/views@0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)':
     dependencies:
       '@deck.gl/core': 9.1.15
       '@deck.gl/layers': 9.1.15(@deck.gl/core@9.1.15)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.1.10)(@luma.gl/engine@9.1.10(@luma.gl/core@9.1.10)(@luma.gl/shadertools@9.1.10(@luma.gl/core@9.1.10)))
       '@math.gl/core': 4.1.0
-      '@vivjs/layers': 0.19.0(95853861a3a9bfb6cf4e0bb4f1c1545a)
-      '@vivjs/loaders': 0.19.0
+      '@vivjs/layers': 0.20.1(95853861a3a9bfb6cf4e0bb4f1c1545a)
+      '@vivjs/loaders': 0.20.1
       math.gl: 4.1.0
     transitivePeerDependencies:
       - '@deck.gl/geo-layers'
@@ -14015,6 +14026,8 @@ snapshots:
   lodash.uniq@4.5.0: {}
 
   lodash@4.17.21: {}
+
+  lodash@4.18.1: {}
 
   long@3.2.0: {}
 

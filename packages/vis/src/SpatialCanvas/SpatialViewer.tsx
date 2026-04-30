@@ -10,13 +10,13 @@
  * - Otherwise: uses simplified functional component with DetailView
  */
 
-import { useCallback, useMemo, useId } from 'react';
-import { DeckGL } from 'deck.gl';
 import { DetailView } from '@hms-dbmi/viv';
+import { DeckGL } from 'deck.gl';
 import type { Layer, PickingInfo } from 'deck.gl';
+import { useCallback, useId, useMemo } from 'react';
+import VivSpatialViewer from './VivSpatialViewer';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
-import VivSpatialViewer from './VivSpatialViewer';
 
 export interface SpatialViewerProps {
   /** Viewport width */
@@ -104,7 +104,6 @@ function SpatialViewerSimple({
   const detailView = useMemo(() => {
     return new DetailView({
       id: `spatial-${viewId}`,
-      snapScaleBar: true,
       width,
       height,
     });
