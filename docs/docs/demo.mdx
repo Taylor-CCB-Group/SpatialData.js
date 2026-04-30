@@ -2,9 +2,21 @@ import BrowserOnly from '@docusaurus/BrowserOnly';
 import Sketch from '@site/src/components/Sketch/';
 
 export default function Page() {
+  const demoFrameStyle = {
+    height: 'calc(100vh - 9rem)',
+    minHeight: 640,
+    maxHeight: 900,
+    overflow: 'hidden',
+    width: '100%',
+  };
+
   return (
     <BrowserOnly>
-      {() => <Sketch />}
+      {() => (
+        <div style={demoFrameStyle}>
+          <Sketch />
+        </div>
+      )}
     </BrowserOnly>
   );
 }

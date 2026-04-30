@@ -4,6 +4,7 @@ import { CompositeLayer, TileLayer, type Layer, type LayersList } from 'deck.gl'
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
 
 export const MAX_LABEL_CHANNELS = 7 as const;
+const MIN_LABELS_DISPLAY_ZOOM = -20;
 
 export type LabelsSelection = Partial<{ z: number; c: number; t: number }>;
 
@@ -127,7 +128,7 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
         id: `image-sub-layer-${bounds}-${id}`,
         interpolation: 'nearest',
         maxZoom: 0,
-        minZoom: 0,
+        minZoom: MIN_LABELS_DISPLAY_ZOOM,
         zoom: 0,
       }
     ) as unknown as Layer;
@@ -297,7 +298,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
           tileSize,
           extent: [0, 0, width, height],
           zoomOffset,
-          minZoom: Math.round(-(loader.length - 1)),
+          minZoom: MIN_LABELS_DISPLAY_ZOOM,
           maxZoom: 0,
           refinementStrategy: opacity === 1 ? 'best-available' : 'no-overlap',
           onTileError: baseLoader.onTileError,

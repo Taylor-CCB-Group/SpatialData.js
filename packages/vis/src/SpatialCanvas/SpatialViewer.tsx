@@ -99,30 +99,48 @@ function SpatialViewerSimple({
   onClick,
 }: Omit<SpatialViewerProps, 'vivLayerProps'>) {
   const viewId = useId();
+  const detailViewId = useMemo(() => `spatial-${viewId}`, [viewId]);
+  type DeckDetailViewState = {
+    id: string;
+    target: [number, number, number];
+    zoom: number;
+    width: number;
+    height: number;
+  };
 
   // Use DetailView for consistency with Viv pattern
   const detailView = useMemo(() => {
     return new DetailView({
-      id: `spatial-${viewId}`,
+      id: detailViewId,
       width,
       height,
     });
-  }, [viewId, width, height]);
+  }, [detailViewId, width, height]);
 
   // Convert our ViewState to deck.gl's expected format
-  const deckViewState = useMemo((): { target: [number, number, number]; zoom: number } => {
+  const deckViewState = useMemo((): Record<string, DeckDetailViewState> => {
     if (!viewState) {
       return {
-        target: [0, 0, 0],
-        zoom: 0,
+        [detailViewId]: {
+          id: detailViewId,
+          target: [0, 0, 0],
+          zoom: 0,
+          width,
+          height,
+        },
       };
     }
     const [x, y, z = 0] = viewState.target;
     return {
-      target: [x, y, z],
-      zoom: viewState.zoom,
+      [detailViewId]: {
+        id: detailViewId,
+        target: [x, y, z],
+        zoom: viewState.zoom,
+        width,
+        height,
+      },
     };
-  }, [viewState]);
+  }, [detailViewId, height, viewState, width]);
 
   // Handle view state changes from deck.gl
   const handleViewStateChange = useCallback(
