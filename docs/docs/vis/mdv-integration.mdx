@@ -2,26 +2,409 @@
 sidebar_position: 3
 ---
 
-# MDV integration (roadmap)
+# MDV integration roadmap
 
-This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Group/MDV)** so Oxford tooling can depend on published packages instead of vendored copies of Viv state and loaders.
+This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Group/MDV)** and **[Vitessce](https://vitessce.io/)** so both projects can render SpatialData images, labels, shapes, and points from shared packages instead of relying on diverging local implementations.
 
-## Checklist (not yet complete)
+The near-term target is not a full replacement for every MDV spatial feature. The target is a baseline `SpatialCanvas`-backed MDV chart that can stand in for `VivScatterComponent` where appropriate, accept MDV-controlled state, compose MDV custom deck.gl layers, and avoid showing this repo's demo/editor UI inside MDV. MDV is the first "use it in anger" sanity check; Vitessce compatibility remains a priority design target rather than a later afterthought.
 
-- [ ] Replace local `src/react/components/avivatorish/` with **`@spatialdata/avivatorish`**.
-- [ ] Replace **`viv_loader_cache.ts`** with **`createLoader`** / **`loadOmeZarrMultiscalesData`** from this repo (optional shared caching can be reintroduced later) — **no MobX** in shared loader code.
-- [ ] **`SpatialLayer` naming:** MDV today uses `@/webgl/SpatialLayer`; our plan is a **`SpatialLayer` `CompositeLayer`** in **`@spatialdata/layers`**. Converge names or use a temporary alias (e.g. `SpatialDataCompositeLayer`) during migration.
-- [ ] **`VivScatterComponent` / `scatter_state`:** Keep view-id conventions (`getVivId`) and metadata hooks compatible; long term, scatter props should accept **table-backed** descriptions aligned with **`@spatialdata/core`** `TableElement`.
-- [ ] **`contour_state`:** Phase 1 — extract **pure** functions (columnar data + view params → contour / deck extension props) into **`@spatialdata/layers`**; leave MobX + MDV GUI in MDV. Phase 2 — optional MobX-free hooks in **`vis`**.
+## Current state
 
-## Principles
+`@spatialdata/vis` already exports `SpatialCanvas`, `SpatialViewer`, and `VivSpatialViewer`. The rendering path is close to MDV's existing `MDVivViewer` pattern:
 
-- **MobX** stays at the MDV app boundary if needed; **shared packages** use Zustand or plain functions.
-- MDV keeps thin **adapters** from chart config → **`SpatialLayerProps`** (or equivalent).
+- image layers are rendered through Viv `DetailView`
+- extra deck.gl layers are composed above images
+- non-image spatial layers use the same deck.gl view model
+- shape, point, and labels renderers exist
+- `SpatialCanvas` has a zustand store and can persist layer config externally
+
+The blocker for MDV use is mostly API shape. `SpatialCanvas` currently owns a full UI shell: coordinate-system selector, layer selector, layer-order panel, properties panel, fullscreen button, loading overlays, tooltip rendering, and local layer creation. MDV needs the rendering core without that UI, and it needs to drive view state, layers, style, filtering, highlighting, and custom overlays from chart/data-store state.
+
+## Priority: headless first
+
+The top priority is a headless viewer path. Before MDV or Vitessce integration work gets clever, this repository should prove that the renderer can be driven by external state and external controls.
+
+Useful in-repo validation demos:
+
+- [ ] `demo/headless-basic`: render a fixed SpatialData image/labels/shapes stack with all props owned by the demo component, no `SpatialCanvas` sidebars.
+- [ ] `demo/headless-leva`: use Leva or a similar external control panel to drive coordinate system, layer visibility, opacity, channel colors, labels style, and view reset.
+- [ ] `demo/headless-custom-layers`: pass arbitrary deck.gl layers into the viewer, matching the way MDV will pass scatter, gates, contours, and ROI JSON.
+- [ ] `demo/headless-controlled-view`: keep view state fully controlled by an outer component, including programmatic pan/zoom/reset and saved/restored state.
+- [ ] `demo/headless-tooltips`: disable internal tooltip UI and route picking into an externally owned tooltip renderer.
+
+Acceptance signal: the demos should import the same public API that MDV would use. If a demo needs internal imports from `packages/vis/src/SpatialCanvas/*`, the API is not ready.
+
+## Phase 0: rendering stack and package sanity
+
+- [ ] Confirm package names, entry points, and exports for local MDV consumption:
+  - `@spatialdata/core`
+  - `@spatialdata/react`
+  - `@spatialdata/layers`
+  - `@spatialdata/vis`
+  - optional: `@spatialdata/avivatorish`
+- [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
+- [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
+- [ ] Track the next Viv/deck upgrade as a first-class migration. Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924) is currently open and targets deck.gl `9.2.9`, uniform-buffer-backed shader props, `model.shaderInputs`, and variable channel counts.
+- [ ] Update shader extensions here and in MDV in the same wave:
+  - replace deprecated `setUniforms` paths with `model.shaderInputs.setProps(...)`
+  - prefer `updateState()` for shader input updates where appropriate
+  - move custom extension uniforms to UBO/module prop style
+  - audit assumptions around `MAX_CHANNELS = 6`
+  - use Viv's `NUM_CHANNELS` / shader preprocessing conventions where relevant
+  - refactor props passed into Viv image layers so extension props are explicit and serializable
+- [ ] Align dependency versions before testing in MDV. This repo currently uses Viv `0.20.x` and deck.gl `9.1.x`; MDV currently declares Viv `0.19.x`. The expected integration target is likely newer than both, so the first MDV smoke test should use the same upgraded Viv/deck/luma stack as this repo.
+- [ ] Run a clean `pnpm build` and pack the packages, then install them into `~/code/www/MDV`.
+- [ ] Add one minimal MDV smoke chart that imports the package and renders a known fixture before attempting a full chart replacement.
+
+## Phase 1: headless `SpatialCanvas` API
+
+Add a controlled/headless rendering API to `@spatialdata/vis` so MDV can embed the viewer without this repo's UI.
+
+Proposed surface:
+
+```tsx
+<SpatialCanvas
+  mode="viewer"
+  coordinateSystem={coordinateSystem}
+  layers={layers}
+  layerOrder={layerOrder}
+  viewState={viewState}
+  onViewStateChange={setViewState}
+  deckLayers={mdvDeckLayers}
+  deckProps={deckProps}
+  renderTooltip={renderTooltip}
+/>
+```
+
+Likely implementation steps:
+
+- [ ] Split the current component into a UI wrapper and a reusable viewer core.
+- [ ] Export a stable `SpatialCanvasViewer` or `SpatialCanvasCore` that renders only the measured viewport and `SpatialViewer`.
+- [ ] Support controlled `coordinateSystem`, `layers`, `layerOrder`, and `viewState` props.
+- [ ] Keep the existing zustand-driven UI as `SpatialCanvas` or `SpatialCanvasEditor`.
+- [ ] Add `extraLayers` / `deckLayers` / `deckProps` so MDV can pass scatter points, gates, selection overlays, contours, ROI JSON, and custom tooltips.
+- [ ] Allow overlays and loading indicators to be disabled or replaced by MDV.
+- [ ] Allow tooltip handling to be fully external, including MDV's outer-container portal behavior.
+- [ ] Allow a stable externally supplied Viv/deck view id or layer id suffix, so MDV can keep its layer-filtering conventions.
+- [ ] Keep Viv image-layer props and non-image layer props separate enough that shader-extension migrations do not leak through the MDV adapter.
+
+Open design choice: either make `SpatialCanvas` support both controlled and uncontrolled modes, or introduce a separate `SpatialCanvasViewer` for embedding. A separate component is probably cleaner for MDV because it avoids accidental UI/state coupling.
+
+## Phase 2: MDV adapter chart
+
+Create a new MDV React chart alongside `VivMdvRegionReact` rather than replacing it in place.
+
+Possible MDV chart name: `SpatialDataMdvRegionReact`.
+
+Adapter responsibilities:
+
+- derive `source` / SpatialData store URL from MDV project state
+- select the active coordinate system from MDV region metadata
+- map MDV chart config to `LayerConfig[]`
+- map MDV view state to `SpatialCanvas` view state
+- pass existing MDV deck layers:
+  - scatterplot layer
+  - grey/background scatter layer
+  - selection layer
+  - gate display layer
+  - gate label layer
+  - contour/field layers
+  - ROI GeoJSON layer
+- preserve MDV chart linking via `useViewStateLink`
+- keep MDV tooltip behavior via `useOuterContainerDeckTooltip`
+- keep MDV keyboard/selection behavior around the viewer container
+
+The first-pass chart can deliberately avoid replacing the channel dialog and most image editing UI. It only needs enough layer config to render an image/labels/shapes baseline and enough view-state synchronization to sanity-check against the current Viv chart.
+
+## Phase 3: layer styling, filtering, and highlighting
+
+The current SpatialData renderers mostly accept constant style values:
+
+- shapes: `fillColor`, `strokeColor`, `strokeWidth`
+- points: `pointSize`, `color`
+- labels: channel colors/opacities/stroke widths
+
+MDV needs feature-aware styling:
+
+- color labels/shapes by MDV filter state
+- fade or hide filtered-out features
+- highlight selected/hovered/gated features
+- color by categorical or numeric table columns
+- keep image channels independent from feature-layer styling
+
+Required changes:
+
+- [ ] Define a stable feature identity model for shapes and labels.
+  - shapes need row/feature ids preserved through `loadPolygonShapes()`
+  - labels need label ids mapped to associated table rows
+- [ ] Extend layer configs with accessor-style props or precomputed style buffers.
+- [ ] Decide where MDV-specific filtering is evaluated:
+  - MDV computes style arrays and passes them in
+  - or shared package accepts filter/highlight sets and evaluates them
+- [ ] Add picking metadata that MDV can map back to datasource rows.
+- [ ] Add tests for picked shape/label id -> associated table row.
+- [ ] Add a fast path for large tables and many polygons. Avoid per-feature MobX reads in deck.gl accessors.
+
+Suggested first design:
+
+```ts
+type FeatureStyleState = {
+  visibleIds?: Set<string | number>;
+  highlightedIds?: Set<string | number>;
+  selectedIds?: Set<string | number>;
+  colorById?: Map<string | number, [number, number, number, number]>;
+};
+```
+
+MDV can compute this state from its datastore and filters, while `@spatialdata/vis` turns it into deck.gl accessors or binary attributes.
+
+## Phase 4: nicer GUI in MDV
+
+Once the headless viewer works, MDV can selectively reuse or replace pieces of the current SpatialCanvas UI:
+
+- layer visibility and order
+- image channel controls
+- labels channel controls
+- tooltip-field selection
+- color-by controls for associated tables
+- shape/label filter/highlight controls
+
+The current in-component sidebars should not appear inside MDV. Reusable panels should become standalone exports that accept controlled props and callbacks, so MDV can place them in its settings dialogs or chart menus.
+
+## Vitessce as a design target
+
+Vitessce is a priority consumer for the design, even though MDV is the first staging environment. The point of integrating into MDV first is to get a concrete sanity check under real application pressure, not to produce an MDV-specific architecture.
+
+Current signals from `~/code/www/vitessce`:
+
+- Vitessce currently uses older Viv/deck/luma versions than this repo, with Viv `0.16.x`, deck.gl `8.8.x`, and luma.gl `8.5.x` in its workspace lockfile.
+- Its spatial views already compose Viv image layers, scale bars, expression/scatter layers, selection layers, and channel/controller state.
+- It has both current and beta spatial view paths, plus accelerated/3D paths that are likely out of scope for the first headless 2D viewer.
+
+Likely requirements for Vitessce usefulness:
+
+- [ ] A headless React viewer with no MDV assumptions, no MobX dependency, and no app-specific tooltip or settings UI.
+- [ ] A plain layer/props schema that can be produced from Vitessce coordination values.
+- [ ] Compatibility with Vitessce's channel controller concepts: selections, colors, visibility, contrast/domain, colormap/rendering mode.
+- [ ] Explicit hooks for custom deck.gl layers and layer ordering.
+- [ ] A renderer API that does not require `@spatialdata/react` context if Vitessce wants to resolve/load data through its own loaders.
+- [ ] A separate investigation for 3D/volume paths after the 2D image/labels/shapes story is stable.
+
+For now, the Vitessce note should be treated as an API pressure test and a success criterion: if the headless demo API can plausibly be driven by MDV chart config, Leva state, and Vitessce coordination values, it is probably the right shape. If it only works naturally in MDV, the abstraction is too narrow.
+
+## Arrow, Parquet, and deck.gl boundaries
+
+We should track upstream deck.gl / loaders.gl / deck.gl-community work around Arrow, GeoArrow, and GeoParquet carefully. This is likely to affect where the boundary sits between `@spatialdata/core`, `@spatialdata/vis`, deck loaders, and app-specific adapters.
+
+Current local state:
+
+- `@spatialdata/core` currently loads Parquet bytes/tables through `parquet-wasm` in `VTableSource`, inherited by points and shapes sources.
+- points currently return an ndarray-ish `{ shape, data }` object with axis columns loaded from Parquet.
+- shapes currently decode WKB geometry into JavaScript polygon arrays before handing them to deck.gl `PolygonLayer`.
+- labels are still their own image/tile rendering path.
+- Vitessce-derived code already has more advanced point handling in places, including tiled point loading, viewport filtering, feature-index filtering, and `DataFilterExtension` use.
+
+Upstream signals to monitor:
+
+- deck.gl layers can load via loaders.gl and every layer supports `loadOptions`, but deck.gl core layers still generally consume arrays, binary attributes, flat GeoJSON, or app-supplied data rather than owning all Parquet semantics.
+- `@loaders.gl/parquet` / `GeoParquetLoader` exists but is documented as experimental/beta, with important limitations around large files and partial filtering.
+- deck.gl-community's Arrow layers accept Apache Arrow / GeoArrow tables directly and use deck.gl's binary data interface to avoid intermediate JS objects.
+- GeoParquet and GeoArrow are closely related but not identical. GeoParquet commonly stores geometry as WKB today; GeoArrow-native encodings are the direction to watch.
+
+Boundary options:
+
+1. `core` owns Parquet and returns simple JS/typed-array structures.
+   - This keeps apps and renderers decoupled from deck.gl.
+   - It is easiest to test and use outside visualization.
+   - It risks duplicating work that upstream deck/loaders/arrow layers may solve better.
+
+2. `core` owns data discovery and returns Arrow tables/vectors.
+   - `core` remains deck-free but exposes columnar data close to the source format.
+   - `vis` can choose deck.gl binary attributes, deck.gl-community Arrow layers, or fallback JS accessors.
+   - This probably gives the best medium-term boundary.
+
+3. `vis` owns deck-specific loaders and consumes URLs/metadata from `core`.
+   - This lets deck/loaders evolve naturally.
+   - It risks making non-visual `core` APIs too thin for MDV/Vitessce table association, feature ids, and filtering.
+
+4. apps own their existing loaders, and `vis` only receives ready-to-render layer data.
+   - This is useful for Vitessce compatibility and headless demos.
+   - It does not solve shared SpatialData loading unless paired with another path.
+
+Recommended direction for now:
+
+- [ ] Keep `@spatialdata/core` free of deck.gl dependencies.
+- [ ] Align `@spatialdata/core`'s points and shapes support with Vitessce's SpatialData-derived loaders so we do not fall behind format coverage while the rendering backend evolves.
+- [ ] Move toward `core` exposing Arrow-ish columnar primitives for points/shapes/tables, while preserving convenience methods for simple JS arrays.
+- [ ] Make `@spatialdata/vis` responsible for choosing the rendering backend:
+  - deck.gl binary attributes for stable built-in layers
+  - deck.gl-community Arrow layers when they are mature enough
+  - current JS-array fallback for compatibility
+- [ ] Keep feature identity, table association, coordinate transforms, and metadata interpretation in `core`; keep GPU filtering, tiling, layer construction, and picking/render props in `vis`.
+- [ ] Avoid baking `parquet-wasm` as the only long-term path. Treat it as the current implementation behind a replaceable interface.
+- [ ] Treat Vitessce parity tests as compatibility fixtures: when Vitessce supports a points/shapes SpatialData layout, `core` should either support it too or document why not.
+- [ ] Add a small compatibility matrix for points and shapes:
+  - WKB GeoParquet -> JS fallback
+  - WKB GeoParquet -> decoded Arrow/GeoArrow if available
+  - GeoArrow-native geometry -> Arrow layer or binary deck attributes
+  - tiled/row-group-aware points -> Vitessce-style path or upstream deck/loaders path
+
+Open questions:
+
+- Should `PointsElement.loadPoints()` return Arrow vectors/tables in addition to typed arrays?
+- Should `ShapesElement.loadPolygonShapes()` preserve feature ids alongside geometry in a first-class row object or columnar structure?
+- Where should row-group / viewport filtering live: `core`, `vis`, or app adapter?
+- Can deck.gl-community Arrow layers become a dependency of `@spatialdata/vis`, or should they be optional peer/adapter code?
+- How do we keep MDV filter/highlight state efficient if the underlying feature data is Arrow vectors rather than JS arrays?
+- How much of Vitessce's point tiling/filtering should be upstreamed into shared `vis` utilities versus left as a Vitessce-specific adapter until deck.gl upstream stabilizes?
+
+## Images, labels, and deck.gl-raster
+
+Viv is still the current image rendering foundation in this repo, MDV, and Vitessce-derived paths, but we should not assume it remains the only viable long-term raster path.
+
+Upstream `deck.gl-raster` is moving quickly:
+
+- PR [developmentseed/deck.gl-raster#467](https://github.com/developmentseed/deck.gl-raster/pull/467) merged an AlphaEarth Foundations GeoZarr mosaic example using `ZarrLayer`.
+- That example renders user-selected RGB composites from Zarr data, uploads 64-band tiles to a `Texture2DArray`, and performs band selection / dequantization / rescaling in shader code.
+- Recent `deck.gl-raster` releases also add higher-level GeoTIFF/COG and multi-band COG support.
+
+Implications for us:
+
+- [ ] Track whether `deck.gl-raster`'s `ZarrLayer` / raster pipeline can cover parts of our image rendering without Viv.
+- [ ] Track whether labels/segmentation rasters can be represented as a specialized raster shader pipeline rather than a Viv-derived labels layer.
+- [ ] Keep image/labels props in `@spatialdata/vis` abstract enough that the backend can be Viv today and `deck.gl-raster`/deck-native later.
+- [ ] Avoid coupling the public `SpatialCanvas` API to Viv-specific concepts such as `DetailView`, Viv selections, or Viv extension classes where a backend-neutral expression is possible.
+- [ ] Consider proposing upstream Viv support for deck.gl-raster primitives if Viv remains useful for OME/NGFF metadata, channel semantics, and viewer ergonomics.
+- [ ] Add a raster backend spike after the headless demo exists:
+  - render one image-like Zarr layer through Viv
+  - render the same or analogous data through `deck.gl-raster`
+  - compare coordinate transforms, channel controls, tile loading, shader extensibility, picking/labels feasibility, and dependency weight
+
+Open image/labels questions:
+
+- Is Viv primarily a metadata/channel/viewer abstraction for us, or is it also the rendering primitive we want long term?
+- Can `deck.gl-raster` handle OME-NGFF / SpatialData Zarr layouts directly, or do we need an adapter layer for axes, multiscales, transformations, and channel metadata?
+- Are labels better treated as raster category data, image overlays, or feature layers with table-backed identities?
+- Can one backend handle both continuous images and integer segmentation labels, or do labels need a dedicated layer either way?
+- If raster backends diverge, what is the minimum common image-layer prop schema MDV and Vitessce can both drive?
+
+## OME-TIFF, JP2K, and raster codecs
+
+MDV currently supports OME-TIFF, including JP2K/JPEG2000-encoded image paths, but this repo currently focuses on SpatialData/OME-Zarr-style stores. We should keep OME-TIFF in the roadmap because it is already useful in MDV and may be an important bridge format for real spatial workflows.
+
+Current state:
+
+- MDV can render OME-TIFF through its Viv/Avivator-derived path.
+- This repo does not yet expose an OME-TIFF-backed `SpatialCanvas` image source.
+- SpatialData workflows generally point toward Zarr-backed rasters, but users may already have pyramidal OME-TIFF assets, including tiled JPEG2000-compressed images.
+- OME-TIFF has strong bioimaging metadata support and can represent tiled multi-resolution images.
+- Zarr v3 supports codec pipelines, including standard codecs such as bytes, gzip, blosc, zstd, sharding, transpose, and CRC32C. NGFF notes that future image-specific codecs may be adopted as they emerge.
+
+Potential directions:
+
+- [ ] Treat OME-TIFF as an image-source backend that can participate in the same headless viewer API as SpatialData Zarr images.
+- [ ] Decide whether OME-TIFF belongs in `@spatialdata/core`, a sibling image-source package, or only in `@spatialdata/vis`.
+- [ ] Preserve a path for JP2K/HTJ2K-style image compression benefits where browser/runtime support is practical.
+- [ ] Clarify how an OME-TIFF image should attach to a SpatialData project:
+  - external image reference in project metadata
+  - converted/derived OME-Zarr image
+  - MDV-specific region metadata
+  - future community-standard image reference pattern
+- [ ] Add an image-source abstraction that can represent:
+  - OME-Zarr / SpatialData Zarr image
+  - OME-TIFF / pyramidal TIFF image
+  - deck.gl-raster Zarr/GeoZarr image
+  - labels/segmentation raster
+- [ ] Keep codec-specific behavior below the public layer config where possible. Users should configure channel/selection/rendering intent, while loaders/backends handle storage codecs.
+
+Community questions to clarify:
+
+- Should SpatialData workflows explicitly support external OME-TIFF references, or should OME-TIFF primarily be converted into Zarr/OME-Zarr/SpatialData stores?
+- What is the expected story for JP2K/HTJ2K-compressed microscopy imagery in web SpatialData viewers?
+- Which Zarr raster codecs are considered acceptable or desirable for OME-NGFF / SpatialData image arrays?
+- Are image-specific codecs likely to become standard enough that we should avoid investing too much in TIFF-specific paths?
+- How should labels/segmentation arrays be encoded in Zarr when storage efficiency and random tile access both matter?
+- Should MDV's existing OME-TIFF support become a compatibility adapter around the same headless image-source API, or remain an MDV-specific path until the community guidance is clearer?
+
+## Zarr beyond SpatialData
+
+Future MDV should probably support useful Zarr rasters that are not SpatialData stores. GIS, Earth observation, climate, and other geospatial workflows increasingly use Zarr-family formats with their own metadata conventions. The viewer architecture should be able to support these without pretending they are SpatialData.
+
+Relevant standards and conventions:
+
+- OGC has endorsed Zarr as a community standard for cloud-friendly multidimensional arrays.
+- GeoZarr is developing modular conventions for geospatial Zarr, including CRS metadata, spatial transforms, and multiscale pyramids.
+- GeoZarr aims to support both Zarr v2 and v3 and bridge scientific/geospatial conventions such as CF, STAC, OGC Tile Matrix Sets, and affine geotransforms.
+- GDAL can expose some Zarr datasets as rasters, but plain Zarr does not itself define spatial reference semantics. Metadata conventions matter.
+
+Potential MDV use cases:
+
+- GIS / GeoZarr raster layers alongside biological SpatialData layers.
+- Earth-observation or environmental rasters as contextual backgrounds.
+- Non-SpatialData Zarr arrays used as image-like overlays in projects.
+- Mixed workflows where MDV displays SpatialData-derived cell/shape/label layers over geospatial rasters.
+
+Design implications:
+
+- [ ] Separate the concepts of "SpatialData object" and "renderable Zarr raster source".
+- [ ] Add an image-source interface that can describe axes, CRS/coordinate transform, multiscales/pyramids, chunking, channels/bands, and storage location without requiring SpatialData-specific metadata.
+- [ ] Keep SpatialData parsing in `@spatialdata/core`, but consider a sibling or lower-level package for generic Zarr raster descriptors.
+- [ ] Let `@spatialdata/vis` consume normalized raster descriptors regardless of whether they came from SpatialData, OME-Zarr, GeoZarr, OME-TIFF, or an MDV adapter.
+- [ ] Track GeoZarr conventions for CRS, spatial transforms, and multiscales before inventing our own GIS-Zarr metadata contract.
+- [ ] Avoid overloading biological channel semantics for GIS bands. A common layer API can expose bands/channels, but app UI should label them according to source context.
+- [ ] Consider MapView / geospatial projection support separately from the current Viv-style Cartesian detail view. GIS rasters may need deck.gl `MapView`, basemap alignment, and longitude/latitude coordinate handling.
+
+Open questions:
+
+- Should the package names remain `@spatialdata/*` if we add generic Zarr/GIS support, or should generic raster source parsing live outside that namespace?
+- What minimum descriptor is needed to render a non-SpatialData Zarr raster in Cartesian MDV views?
+- What additional descriptor is needed to render the same source in geospatial `MapView` / MapLibre-aligned views?
+- Should MDV treat GIS Zarr as contextual imagery only, or should filtering/picking/measurement workflows apply there too?
+- How should coordinate-system linking work when a project mixes SpatialData coordinate systems and geospatial CRS?
+
+## Compatibility risks
+
+- **Viv/deck version skew:** MDV uses Viv `0.19.x`; this repo uses Viv `0.20.x`. Mixed deck/luma packages can fail in subtle WebGL ways.
+- **Upcoming Viv/deck migration:** Viv PR `924` moves shader props toward UBOs and `model.shaderInputs` while targeting deck.gl `9.2.9`. Custom shader extensions in this repo and MDV should be migrated deliberately, not patched piecemeal.
+- **Arrow/Parquet churn:** loaders.gl Parquet and deck.gl-community Arrow layers are promising but still moving targets. We should avoid locking public `core` APIs to one loader implementation too early.
+- **Raster backend churn:** `deck.gl-raster` may absorb image/Zarr responsibilities that currently sit in Viv or custom labels layers. Public props should leave room for a backend swap.
+- **Image format/codecs uncertainty:** OME-TIFF, JP2K-compressed TIFF, OME-Zarr, SpatialData Zarr, and future Zarr image codecs may all matter. Avoid encoding one storage format too deeply into viewer props.
+- **Generic Zarr scope creep:** MDV may need GeoZarr/GIS/non-SpatialData Zarr support, but that should be modeled as normalized raster sources rather than by weakening the SpatialData-specific APIs.
+- **View state shape:** MDV's Viv chart uses Viv `DetailView` view states with view ids. `SpatialCanvas` uses a smaller `{ target, zoom }` shape. The adapter needs careful conversion so linked charts and saved configs do not drift.
+- **Layer ids:** MDV relies on `getVivId(...)` tokens for layer filtering. `VivSpatialViewer` has its own generated ids. MDV embedding may need a supplied `viewId` / `layerIdSuffix`.
+- **UI ownership:** current `SpatialCanvas` resets its local store when coordinate systems change. In controlled MDV mode this could wipe chart-driven layers if not separated.
+- **Tooltip ownership:** both libraries have tooltip systems. MDV should own tooltip portals for now.
+- **Feature ids:** shapes currently load polygon arrays without an obvious stable id in the render path. Labels expose picked label ids, but table association must be explicit and tested.
+- **Performance:** shape/label styling from MDV filters must avoid expensive observable lookups inside render accessors.
+- **Data model mismatch:** MDV's regions/image metadata is not the same as a full SpatialData object. The first adapter may need a compatibility layer while MDV projects transition.
+- **CSS/layout:** `SpatialCanvas` has hard-coded dark UI styles and minimum height. Headless mode should render with parent-owned layout and no border/sidebar styles.
+
+## First-pass acceptance criteria
+
+- [ ] MDV can import `@spatialdata/vis` from a packed or prerelease package.
+- [ ] This repo has at least one headless demo whose state is driven from an external UI rather than from `SpatialCanvas`'s built-in panels.
+- [ ] The same headless API can be described in terms of Vitessce coordination values without requiring MDV chart classes or MobX concepts.
+- [ ] A new MDV chart can render a SpatialData-backed image layer using the same region/view size as the current Viv chart.
+- [ ] The same chart can compose at least one MDV custom deck.gl layer above the image.
+- [ ] `SpatialCanvas` UI controls do not appear inside MDV.
+- [ ] MDV controls view state, and existing chart linking still works for pan/zoom.
+- [ ] A labels or shapes layer renders above the image with constant styling.
+- [ ] Hover/pick returns enough information to identify a label id or shape feature.
+- [ ] The old `VivMdvRegionReact` path remains available during rollout.
+
+## Existing migration checklist
+
+- [ ] Replace local `src/react/components/avivatorish/` with **`@spatialdata/avivatorish`** where doing so does not destabilize MDV.
+- [ ] Replace **`viv_loader_cache.ts`** with **`createLoader`** / **`loadOmeZarrMultiscalesData`** from this repo. Optional shared caching can be reintroduced later; shared loader code should remain MobX-free.
+- [ ] **`SpatialLayer` naming:** MDV today uses `@/webgl/SpatialLayer`; this repo exports a **`SpatialLayer` `CompositeLayer`** from **`@spatialdata/layers`**. Converge names or use a temporary alias such as `SpatialDataCompositeLayer`.
+- [ ] **`VivScatterComponent` / `scatter_state`:** keep view-id conventions (`getVivId`) and metadata hooks compatible. Long term, scatter props should accept table-backed descriptions aligned with **`@spatialdata/core`** `TableElement`.
+- [ ] **`contour_state`:** Phase 1: extract pure functions (columnar data + view params -> contour / deck extension props) into **`@spatialdata/layers`**; leave MobX + MDV GUI in MDV. Phase 2: optional MobX-free hooks in **`vis`**.
 
 ## References (upstream)
 
 - [`VivScatterComponent.tsx`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/components/VivScatterComponent.tsx)
+- [`VivMDVReact.tsx`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/components/VivMDVReact.tsx)
+- [`spatial_context.tsx`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/spatial_context.tsx)
 - [`scatter_state.ts`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/scatter_state.ts)
 - [`contour_state.ts`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/contour_state.ts)
 - [`viv_loader_cache.ts`](https://github.com/Taylor-CCB-Group/MDV/blob/main/src/react/viv_loader_cache.ts)
