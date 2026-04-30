@@ -116,6 +116,39 @@ function getVarPath(arrPath?: string) {
   return `${getTableElementPath(arrPath)}/var`;
 }
 
+function getParquetCandidatePaths(parquetPath: string) {
+  return [parquetPath, `${parquetPath}/part.0.parquet`];
+}
+
+function toUint8Array(bytes: ArrayBuffer | ArrayBufferView | null | undefined): Uint8Array | null {
+  if (!bytes) {
+    return null;
+  }
+  if (ArrayBuffer.isView(bytes)) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  return new Uint8Array(bytes);
+}
+
+function hasParquetMagic(bytes: Uint8Array, offset: number) {
+  return (
+    offset >= 0 &&
+    offset + 4 <= bytes.length &&
+    bytes[offset] === 0x50 &&
+    bytes[offset + 1] === 0x41 &&
+    bytes[offset + 2] === 0x52 &&
+    bytes[offset + 3] === 0x31
+  );
+}
+
+function isParquetFileBytes(bytes: Uint8Array) {
+  return bytes.length >= 8 && hasParquetMagic(bytes, 0) && hasParquetMagic(bytes, bytes.length - 4);
+}
+
+function hasParquetTailMagic(bytes: Uint8Array) {
+  return bytes.length >= 8 && hasParquetMagic(bytes, bytes.length - 4);
+}
+
 /**
  * This class is a parent class for tables, shapes, and points.
  * This is because these share functionality, for example:
@@ -229,27 +262,24 @@ export default class SpatialDataTableSource extends AnnDataSource {
       // Return the cached bytes.
       return this.parquetTableBytes[parquetPath];
     }
-    try {
-      // PJT: this doesn't return falsey - if it fails, it throws.
-      const parquetBytes = await this.storeRoot.store.get(`/${parquetPath}`);
-      if (parquetBytes) {
-        // Cache the parquet bytes.
-        this.parquetTableBytes[parquetPath] = parquetBytes;
-      }
-      return parquetBytes;
-    } catch {
-      // This may be a directory with multiple parts.
-      // Could we establish that from metadata rather than having to catch?
-      const part0Path = `${parquetPath}/part.0.parquet`;
-      const parquetBytes = await this.storeRoot.store.get(`/${part0Path}`);
 
-      // TODO: support loading multiple parts.
-      if (parquetBytes) {
+    for (const candidatePath of getParquetCandidatePaths(parquetPath)) {
+      try {
+        // Some servers return an HTML directory listing for multipart parquet
+        // directories, so validate the bytes before caching or parsing them.
+        const parquetBytes = await this.storeRoot.store.get(`/${candidatePath}`);
+        const normalizedBytes = toUint8Array(parquetBytes);
+        if (!normalizedBytes || !isParquetFileBytes(normalizedBytes)) {
+          continue;
+        }
         // Cache the parquet bytes.
-        this.parquetTableBytes[parquetPath] = parquetBytes;
+        this.parquetTableBytes[parquetPath] = normalizedBytes;
+        return normalizedBytes;
+      } catch {
+        // Keep probing candidate parquet paths.
       }
-      return parquetBytes;
     }
+    return null;
   }
 
   /**
@@ -272,39 +302,48 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (store.getRange) {
       // Step 1: Fetch last 8 bytes to get footer length and magic number
       const TAIL_LENGTH = 8;
-      let partZeroPath = parquetPath;
-      let tailBytes = await store.getRange(`/${partZeroPath}`, {
-        suffixLength: TAIL_LENGTH,
-      });
-      if (!tailBytes) {
-        // This may be a directory with multiple parts.
-        partZeroPath = `${parquetPath}/part.0.parquet`;
-        tailBytes = await store.getRange(`/${partZeroPath}`, {
-          suffixLength: TAIL_LENGTH,
-        });
-      }
-      if (!tailBytes || tailBytes.length < TAIL_LENGTH) {
-        throw new Error(`Failed to load parquet footerLength for ${parquetPath}`);
-      }
-      // Step 2: Extract footer length and magic number
-      // little-endian
-      const footerLength = new DataView(tailBytes.buffer).getInt32(0, true);
-      const magic = new TextDecoder().decode(tailBytes.slice(4, 8));
+      let lastError: Error | null = null;
 
-      if (magic !== 'PAR1') {
-        throw new Error('Invalid Parquet file: missing PAR1 magic number');
+      for (const candidatePath of getParquetCandidatePaths(parquetPath)) {
+        try {
+          const tailBytes = await store.getRange(`/${candidatePath}`, {
+            suffixLength: TAIL_LENGTH,
+          });
+          const normalizedTailBytes = toUint8Array(tailBytes);
+          if (!normalizedTailBytes || !hasParquetTailMagic(normalizedTailBytes)) {
+            continue;
+          }
+
+          // Step 2: Extract footer length and magic number
+          // little-endian
+          const footerLength = new DataView(
+            normalizedTailBytes.buffer,
+            normalizedTailBytes.byteOffset,
+            normalizedTailBytes.byteLength
+          ).getInt32(0, true);
+
+          // Step 3. Fetch the full footer bytes
+          const footerBytes = await store.getRange(`/${candidatePath}`, {
+            suffixLength: footerLength + TAIL_LENGTH,
+          });
+          const normalizedFooterBytes = toUint8Array(footerBytes);
+          if (
+            !normalizedFooterBytes ||
+            normalizedFooterBytes.length !== footerLength + TAIL_LENGTH ||
+            !hasParquetTailMagic(normalizedFooterBytes)
+          ) {
+            lastError = new Error(`Failed to load parquet footer bytes for ${parquetPath}`);
+            continue;
+          }
+
+          // Step 4: Return the footer bytes
+          return normalizedFooterBytes;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+        }
       }
 
-      // Step 3. Fetch the full footer bytes
-      const footerBytes = await store.getRange(`/${partZeroPath}`, {
-        suffixLength: footerLength + TAIL_LENGTH,
-      });
-      if (!footerBytes || footerBytes.length !== footerLength + TAIL_LENGTH) {
-        throw new Error(`Failed to load parquet footer bytes for ${parquetPath}`);
-      }
-
-      // Step 4: Return the footer bytes
-      return footerBytes;
+      throw lastError ?? new Error(`Failed to load parquet footerLength for ${parquetPath}`);
     }
     // Store does not support getRange.
     return null;
