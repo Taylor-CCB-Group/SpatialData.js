@@ -1,0 +1,386 @@
+import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
+import { useMeasure } from '@uidotdev/usehooks';
+import type { DeckGLProps, Layer, PickingInfo } from 'deck.gl';
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { createPortal } from 'react-dom';
+import {
+  type SpatialCanvasTooltipRenderProps,
+  SpatialFeatureTooltip,
+  type SpatialFeatureTooltipData,
+} from './SpatialFeatureTooltip';
+import { SpatialViewer } from './SpatialViewer';
+import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
+import type { ElementsByType, LayerConfig, ViewState } from './types';
+import { useLayerData } from './useLayerData';
+import { getAvailableElements } from './utils';
+
+export type SpatialCanvasViewerRenderTooltip =
+  | false
+  | ((props: SpatialCanvasTooltipRenderProps) => ReactNode);
+
+export interface SpatialCanvasViewerProps {
+  spatialData?: SpatialData | null;
+  coordinateSystem: string | null;
+  layers: Record<string, LayerConfig>;
+  layerOrder: string[];
+  viewState: ViewState | null;
+  onViewStateChange: (viewState: ViewState) => void;
+  deckLayers?: Layer[];
+  deckProps?: Partial<DeckGLProps>;
+  onHover?: (info: PickingInfo) => void;
+  onClick?: (info: PickingInfo) => void;
+  renderTooltip?: SpatialCanvasViewerRenderTooltip;
+  tooltipContainer?: HTMLElement | null;
+  showLoadingOverlay?: boolean;
+  autoFit?: boolean;
+  style?: CSSProperties;
+}
+
+interface AutoFitInput {
+  autoFit: boolean;
+  hasEnabledLayers: boolean;
+  width: number;
+  height: number;
+  isBlocking: boolean;
+  viewState: ViewState | null;
+}
+
+export function shouldAutoFitSpatialView({
+  autoFit,
+  hasEnabledLayers,
+  width,
+  height,
+  isBlocking,
+  viewState,
+}: AutoFitInput): boolean {
+  return (
+    autoFit && hasEnabledLayers && width > 0 && height > 0 && !isBlocking && viewState === null
+  );
+}
+
+export function composeSpatialDeckLayers(
+  generatedLayers: Layer[],
+  externalLayers: Layer[] = []
+): Layer[] {
+  return [...generatedLayers.filter(Boolean), ...externalLayers.filter(Boolean)];
+}
+
+export function getEmptyElementsByType(): ElementsByType {
+  return { images: [], shapes: [], points: [], labels: [] };
+}
+
+export function shouldRenderInternalTooltip(
+  renderTooltip: SpatialCanvasViewerRenderTooltip | undefined
+): boolean {
+  return renderTooltip !== false;
+}
+
+export interface UseSpatialCanvasRendererOptions {
+  spatialData?: SpatialData | null;
+  coordinateSystem: string | null;
+  layers: Record<string, LayerConfig>;
+  layerOrder: string[];
+  viewState: ViewState | null;
+  onViewStateChange: (viewState: ViewState) => void;
+  width: number;
+  height: number;
+  deckLayers?: Layer[];
+  autoFit?: boolean;
+}
+
+export function useSpatialCanvasRenderer({
+  spatialData,
+  coordinateSystem,
+  layers,
+  layerOrder,
+  viewState,
+  onViewStateChange,
+  width,
+  height,
+  deckLayers: externalDeckLayers,
+  autoFit = true,
+}: UseSpatialCanvasRendererOptions) {
+  const availableElements = useMemo(() => {
+    if (!spatialData || !coordinateSystem) {
+      return getEmptyElementsByType();
+    }
+    return getAvailableElements(spatialData, coordinateSystem);
+  }, [spatialData, coordinateSystem]);
+
+  const layerData = useLayerData(
+    layers,
+    layerOrder,
+    availableElements,
+    coordinateSystem,
+    spatialData ?? undefined
+  );
+
+  const generatedDeckLayers = layerData.getLayers();
+  const deckLayers = useMemo(
+    () => composeSpatialDeckLayers(generatedDeckLayers, externalDeckLayers),
+    [generatedDeckLayers, externalDeckLayers]
+  );
+  const vivLayerProps = layerData.getVivLayerProps();
+
+  const enabledLayerIds = useMemo(() => {
+    return new Set(layerOrder.filter((id) => layers[id]?.visible));
+  }, [layers, layerOrder]);
+  const hasEnabledLayers = enabledLayerIds.size > 0;
+  const hasExternalDeckLayers = (externalDeckLayers?.length ?? 0) > 0;
+  const hasRenderableInputs = hasEnabledLayers || hasExternalDeckLayers;
+  const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
+
+  useEffect(() => {
+    if (
+      !shouldAutoFitSpatialView({
+        autoFit,
+        hasEnabledLayers,
+        width,
+        height,
+        isBlocking: layerData.isBlocking,
+        viewState,
+      })
+    ) {
+      return;
+    }
+    const bounds = layerData.getWorldBoundsForVisibleLayers();
+    onViewStateChange(
+      bounds ? viewStateFromBounds(bounds, width, height) : { target: [0, 0], zoom: 0 }
+    );
+  }, [
+    autoFit,
+    hasEnabledLayers,
+    height,
+    layerData.isBlocking,
+    layerData.getWorldBoundsForVisibleLayers,
+    onViewStateChange,
+    viewState,
+    width,
+  ]);
+
+  return {
+    ...layerData,
+    availableElements,
+    deckLayers,
+    enabledLayerIds,
+    generatedDeckLayers,
+    hasEnabledLayers,
+    hasExternalDeckLayers,
+    hasLayersDrawn,
+    hasRenderableInputs,
+    vivLayerProps,
+  };
+}
+
+const viewerRootStyle: CSSProperties = {
+  width: '100%',
+  height: '100%',
+  minHeight: 0,
+  minWidth: 0,
+  position: 'relative',
+  overflow: 'hidden',
+};
+
+const placeholderStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: '100%',
+  color: '#666',
+  fontSize: '14px',
+};
+
+const overlayStyle: CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  right: 8,
+  padding: '4px 8px',
+  backgroundColor: 'rgba(0,0,0,0.7)',
+  color: '#fff',
+  fontSize: '11px',
+  borderRadius: 4,
+};
+
+function SpatialCanvasViewerInner({
+  spatialData,
+  coordinateSystem,
+  layers,
+  layerOrder,
+  viewState,
+  onViewStateChange,
+  deckLayers: externalDeckLayers,
+  deckProps,
+  onHover,
+  onClick,
+  renderTooltip,
+  tooltipContainer,
+  showLoadingOverlay = true,
+  autoFit = true,
+  style,
+}: SpatialCanvasViewerProps) {
+  const [measureRef, { width, height }] = useMeasure();
+  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
+  const [hoverTooltip, setHoverTooltip] = useState<{
+    x: number;
+    y: number;
+    title?: string;
+    items: Array<{ label: string; value: string }>;
+  } | null>(null);
+
+  const vw = width ?? 0;
+  const vh = height ?? 0;
+  const renderer = useSpatialCanvasRenderer({
+    spatialData,
+    coordinateSystem,
+    layers,
+    layerOrder,
+    viewState,
+    onViewStateChange,
+    width: vw,
+    height: vh,
+    deckLayers: externalDeckLayers,
+    autoFit,
+  });
+
+  const handleHover = useCallback(
+    (info: PickingInfo) => {
+      onHover?.(info);
+      if (!shouldRenderInternalTooltip(renderTooltip)) {
+        return;
+      }
+      if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
+        setHoverTooltip(null);
+        return;
+      }
+      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const tooltip = renderer.getFeatureTooltip(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (!tooltip) {
+        setHoverTooltip(null);
+        return;
+      }
+      setHoverTooltip({
+        x: info.x,
+        y: info.y,
+        ...tooltip,
+      });
+    },
+    [onHover, renderTooltip, renderer.getFeatureTooltip]
+  );
+
+  const handleViewerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      viewerContainerRef.current = node;
+      measureRef(node);
+    },
+    [measureRef]
+  );
+
+  const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
+  const tooltipClientPosition =
+    hoverTooltip && viewerRect
+      ? {
+          x: viewerRect.left + hoverTooltip.x,
+          y: viewerRect.top + hoverTooltip.y,
+        }
+      : null;
+
+  const tooltipPayload: SpatialFeatureTooltipData | null =
+    hoverTooltip && tooltipClientPosition
+      ? {
+          title: hoverTooltip.title,
+          items: hoverTooltip.items,
+        }
+      : null;
+
+  const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
+  const tooltipPortal =
+    shouldRenderInternalTooltip(renderTooltip) &&
+    tooltipPayload &&
+    tooltipClientPosition &&
+    portalTarget &&
+    createPortal(
+      renderTooltip ? (
+        renderTooltip({
+          clientX: tooltipClientPosition.x,
+          clientY: tooltipClientPosition.y,
+          tooltip: tooltipPayload,
+        })
+      ) : (
+        <SpatialFeatureTooltip
+          x={tooltipClientPosition.x}
+          y={tooltipClientPosition.y}
+          tooltip={tooltipPayload}
+          position="fixed"
+        />
+      ),
+      portalTarget
+    );
+
+  return (
+    <>
+      <div ref={handleViewerRef} style={{ ...viewerRootStyle, ...style }}>
+        {!spatialData && !renderer.hasRenderableInputs ? (
+          <div style={placeholderStyle}>No spatial data available</div>
+        ) : !renderer.hasRenderableInputs ? (
+          <div style={placeholderStyle}>
+            {coordinateSystem ? 'No layers to display' : 'No coordinate system selected'}
+          </div>
+        ) : viewState === null && renderer.hasEnabledLayers ? (
+          <div style={placeholderStyle}>
+            {renderer.isBlocking ? 'Loading layer data...' : 'Framing view...'}
+          </div>
+        ) : (
+          <>
+            <SpatialViewer
+              width={vw}
+              height={vh}
+              viewState={viewState}
+              onViewStateChange={onViewStateChange}
+              layers={renderer.deckLayers}
+              vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
+              onHover={handleHover}
+              onClick={onClick}
+              deckProps={deckProps}
+            />
+            {showLoadingOverlay && renderer.isBlocking && (
+              <div style={overlayStyle}>Loading layer data...</div>
+            )}
+            {showLoadingOverlay && renderer.isLoading && !renderer.isBlocking && (
+              <div style={{ ...overlayStyle, backgroundColor: 'rgba(20,20,20,0.78)' }}>
+                Refreshing layer metadata...
+              </div>
+            )}
+            {!renderer.hasLayersDrawn && !renderer.isBlocking && (
+              <div style={{ ...placeholderStyle, position: 'absolute', inset: 0 }}>
+                No layers to display
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      {tooltipPortal}
+    </>
+  );
+}
+
+export function SpatialCanvasViewer(props: SpatialCanvasViewerProps) {
+  return (
+    <VivLoaderRegistryProvider>
+      <SpatialCanvasViewerInner {...props} />
+    </VivLoaderRegistryProvider>
+  );
+}
+
+export default SpatialCanvasViewer;

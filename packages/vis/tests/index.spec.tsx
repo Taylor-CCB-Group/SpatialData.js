@@ -6,6 +6,8 @@ describe('@spatialdata/vis', () => {
     // SpatialCanvas is exported as a named export, not default
     expect(VisExports.SpatialCanvas).toBeDefined();
     expect(typeof VisExports.SpatialCanvas).toBe('function');
+    expect(VisExports.SpatialCanvasViewer).toBeDefined();
+    expect(typeof VisExports.SpatialCanvasViewer).toBe('function');
   });
 
   it('should export named components', () => {
@@ -25,6 +27,8 @@ describe('@spatialdata/vis', () => {
     expect(VisExports.createSpatialCanvasStore).toBeDefined();
     expect(VisExports.useSpatialViewState).toBeDefined();
     expect(VisExports.useViewStateUrl).toBeDefined();
+    expect(VisExports.composeSpatialDeckLayers).toBeDefined();
+    expect(VisExports.shouldAutoFitSpatialView).toBeDefined();
   });
 
   it('should have all expected exports', () => {

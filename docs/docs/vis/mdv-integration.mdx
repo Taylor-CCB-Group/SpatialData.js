@@ -24,6 +24,10 @@ The blocker for MDV use is mostly API shape. `SpatialCanvas` currently owns a fu
 
 The top priority is a headless viewer path. Before MDV or Vitessce integration work gets clever, this repository should prove that the renderer can be driven by external state and external controls.
 
+The first implementation should use a **bridge path** rather than a full layers-first rewrite: expose a public React `SpatialCanvasViewer` that reuses the existing Viv/deck rendering stack, accepts externally controlled state, and composes caller-provided deck.gl layers above SpatialData-rendered layers. This keeps MDV progress unblocked while preserving a migration path toward `@spatialdata/layers`.
+
+The layers-first direction is still likely the cleaner long-term architecture, especially for MDV and Vitessce. For now, `@spatialdata/layers` should mature through narrow renderer slices rather than becoming the blocking path for headless mode: the current `SpatialLayer` package defines a schema/contract, but real image, labels, shapes, and points sublayer factories still need to be ported deliberately.
+
 Useful in-repo validation demos:
 
 - [ ] `demo/headless-basic`: render a fixed SpatialData image/labels/shapes stack with all props owned by the demo component, no `SpatialCanvas` sidebars.
