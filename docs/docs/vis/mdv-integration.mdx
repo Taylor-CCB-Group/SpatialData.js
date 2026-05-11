@@ -4,6 +4,8 @@ sidebar_position: 3
 
 # MDV integration roadmap
 
+This page explains architecture and phased context. For the branch-level shipping checklist, see [MDV release checklist](./mdv-release-checklist).
+
 This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Group/MDV)** and **[Vitessce](https://vitessce.io/)** so both projects can render SpatialData images, labels, shapes, and points from shared packages instead of relying on diverging local implementations.
 
 The near-term target is not a full replacement for every MDV spatial feature. The target is a baseline `SpatialCanvas`-backed MDV chart that can stand in for `VivScatterComponent` where appropriate, accept MDV-controlled state, compose MDV custom deck.gl layers, and avoid showing this repo's demo/editor UI inside MDV. MDV is the first "use it in anger" sanity check; Vitessce compatibility remains a priority design target rather than a later afterthought.
