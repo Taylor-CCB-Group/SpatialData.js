@@ -23,34 +23,73 @@ A version is MDV-ready when MDV can embed `SpatialCanvasViewer` as a headless re
 
 ## Integration contract for this release
 
-Use this as the contract boundary between this repo and MDV:
+Use this as the contract boundary between this repo and MDV.
 
-- `@spatialdata/vis` owns:
-  - SpatialData-backed layer discovery/loading
-  - Viv image + labels rendering path
-  - composition of SpatialData-generated deck layers
-  - optional composition hook for caller-provided deck layers (`deckProps.layers`)
-- MDV owns:
-  - chart config and MobX/zustand app state
-  - scatter/gates/contours/selection overlays
-  - view/linking behavior (`useViewStateLink`)
-  - tooltip portal behavior (`useOuterContainerDeckTooltip`)
-  - filtering/highlighting semantics from MDV datastore
+### MDV-controlled state (primary model)
 
-## Bespoke layer extension path (app-owned)
+MDV is the **source of truth** for viewer state. `SpatialCanvasViewer` is a **controlled renderer**: it accepts MDV state and produces deck/Viv output; it does not own chart config or selection semantics.
 
-This release should make the custom-layer story explicit: applications add bespoke deck layers without forking `SpatialCanvas` internals.
+MDV passes and updates (from chart / datastore / MobX):
 
-- Primary extension point: pass app layers through `deckProps.layers` (or equivalent `deckLayers` composition input) on `SpatialCanvasViewer`.
-- Composition guarantee: SpatialData-rendered layers stay in the viewer pipeline, and app-provided layers are composed in a predictable order for overlays.
-- Ownership split:
-  - this repo provides SpatialData/Viv/deck integration primitives
-  - app code (for example MDV `spatial_context.ts`) builds and owns custom layers for selection/gating/contours/annotations
-- `SpatialLayer.ts` naming differences do not block integration as long as adapter code maps app layer factories into plain deck layer instances passed to the viewer.
+- `spatialData`, `coordinateSystem`
+- `layers` (`Record<string, LayerConfig>`) — visibility, opacity, per-layer style, and (for shapes v1) filter/colour driven by table rows
+- `layerOrder`
+- `viewState` + `onViewStateChange`
+- optional `deckLayers` / `deckProps` for overlays MDV builds directly
 
-Practical check for this branch:
+When MDV selection or colour mappings change, MDV updates `layers` (and/or `deckLayers`) and React re-renders the viewer. This repo loads SpatialData geometry/images and maps **MDV’s layer config** to deck.gl layers.
 
-- [ ] An MDV-style custom layer produced from `spatial_context.ts` can be supplied to `SpatialCanvasViewer` without importing private `packages/vis/src/*` internals.
+### What `@spatialdata/vis` owns
+
+- SpatialData-backed discovery and async loading (images, shapes, labels)
+- Viv image path and labels bitmask path
+- Turning **caller-supplied** `LayerConfig` into deck layers (`useLayerData` / renderers)
+- Composing generated layers with caller `deckLayers` / `deckProps.layers`
+- Stable picking/tooltip hooks keyed by layer id (for MDV tooltip portals)
+
+### What MDV owns (v1)
+
+- Chart config and app state (MobX / zustand)
+- Filtering and highlighting semantics (same as table rows today)
+- Scatter, gates, contours, ROI JSON, and other bespoke deck layers
+- View linking (`useViewStateLink`), outer tooltip (`useOuterContainerDeckTooltip`)
+- Viv **extensions** on image channels (passed through layer config / `deckProps`; regressions here are bugs)
+
+### v1 layer scope
+
+| Layer kind | v1 |
+|------------|----|
+| Images | Yes (Viv) |
+| Shapes | Yes — MDV drives style/filter via `layers` state |
+| Labels | Render when configured; segmentation vs shapes experiment is not a release gate |
+| Points | v1.1 |
+
+### Custom deck layers (additive, not a replacement for state)
+
+MDV can still pass layers it constructs entirely in app code (for example from `spatial_context.ts`) via `deckLayers` or `deckProps.layers`. Those sit **above** SpatialData-generated layers in the composed stack.
+
+Over time, patterns that repeat in MDV (shared shape styling, common overlays) may move into `@spatialdata/vis` or `@spatialdata/layers`; v1 does not require that migration.
+
+### Shapes v1: filter and colour via `layers` state
+
+For v1, shapes must support the same *effect* as MDV table-row colouring/filtering, without MDV re-implementing SpatialData loading:
+
+- [ ] `ShapesLayerConfig` accepts MDV-driven per-feature style (accessors or equivalent state on the config object MDV updates when selection changes)
+- [ ] Feature index / `instance_key` alignment with the associated table is stable for picking and styling (same join used for tooltips)
+- [ ] Document that MDV updates `layers[layerId]` when datastore selection or colour columns change
+
+Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; not required if config-driven styling is sufficient.
+
+### Bespoke layer extension path
+
+- Primary extension for **state-owned** SpatialData layers: MDV-controlled `layers` + `layerOrder`
+- Primary extension for **fully custom** deck layers: `deckLayers` / `deckProps.layers` on `SpatialCanvasViewer`
+- Composition order: SpatialData-generated layers, then MDV `deckLayers`, with scale bar last (see `composeSpatialDeckLayers`)
+
+Practical checks for this branch:
+
+- [ ] MDV can drive a shapes layer only by updating `layers` props (no `SpatialCanvas` zustand store)
+- [ ] An MDV-style custom layer from `spatial_context.ts` can be supplied via `deckLayers` without importing `packages/vis/src/*` internals
 
 ## Release checklist (this branch)
 
@@ -146,4 +185,20 @@ After this MDV-ready release, pursue incremental improvements in separate PRs:
 - broaden feature-property contract beyond tooltip fields
 - improve points styling/filtering parity with MDV needs
 - evaluate optional Arrow-friendly data paths without forcing deck dependencies into `core`
+
+## Future consideration: editable layers and write support
+
+**Not in v1.** v1 keeps selection/annotation as **MDV-owned deck layers** passed through `deckLayers` (for example editable ROI / lasso layers from `spatial_context.ts`), with this repo focused on **read** paths into SpatialData.
+
+Later, consider implementing here (and/or in `@spatialdata/core`) when write APIs exist:
+
+- **Editable overlay layers** — drawing, editing vertices, selection geometries synced with chart state (today MDV implements these; candidates to lift into `@spatialdata/vis` if the interaction model stabilizes).
+- **Annotation persistence** — round-trip edits to SpatialData-compatible stores (shapes tables, labels, or sidecar layers), not only ephemeral deck state.
+- **General write support** — align with `@spatialdata/core` moving beyond read-only (see [core overview](../core/overview.mdx)); vis would expose mutation helpers only once core defines safe, tested write contracts.
+
+Design constraints to decide before building:
+
+- Whether edits target **Zarr/SpatialData on disk**, **in-memory session state**, or **MDV’s own project files**.
+- How editable layers share **picking ids** and **coordinate systems** with read-only SpatialData layers.
+- Whether Vitessce/MDV both need the same editable-layer API or app-specific extensions remain sufficient.
 
