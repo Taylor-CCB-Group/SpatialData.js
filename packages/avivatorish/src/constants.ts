@@ -1,4 +1,5 @@
-export const MAX_CHANNELS = 6;
+/** Upper bound for multi-channel UI and defaults; tracks Viv (`@vivjs/constants`). */
+export { MAX_CHANNELS } from '@hms-dbmi/viv';
 export const DEFAULT_OVERVIEW = {
   margin: 25,
   scale: 0.15,

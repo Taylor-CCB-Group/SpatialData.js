@@ -13,6 +13,8 @@ export type PixelSource = OME_TIFF | OME_ZARR;
 // --- copied straight from Avivator's code::: with notes / changes for MDV (and now SpatialData.js) ---
 import { RENDERING_MODES } from '@hms-dbmi/viv';
 
+import { MAX_CHANNELS } from './constants';
+
 const capitalize = (string: string) => string.charAt(0).toUpperCase() + string.slice(1);
 
 // typing for generateToggles... not the most useful ones to have, but it's a start.
@@ -354,8 +356,8 @@ export const useMetadata = (): Metadata | undefined | null => {
 export const applyDefaultChannelState = (config: Partial<VivConfig>) => {
   // return config as VivConfig;
   const newConfig = config as VivConfig;
-  //seemed like simplest way to deal with viv's fixed number of channels, but doesn't work after manipulation
-  const n = 6; //newConfig.channelsStore.channelsVisible.length;
+  // Pad serialized configs to Viv's current max channel slots when arrays were omitted.
+  const n = MAX_CHANNELS;
   if (!newConfig.channelsStore) newConfig.channelsStore = {};
   for (const [k, v] of Object.entries(DEFAUlT_CHANNEL_VALUES)) {
     if (k === 'ids') continue;

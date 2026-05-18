@@ -4,18 +4,18 @@ packages:
 
 catalog:
   '@zarrita/storage': ^0.2.0
-  '@deck.gl/core': ~9.1.15
-  '@luma.gl/core': ~9.1.10
+  '@deck.gl/core': ~9.2.9
+  '@luma.gl/core': ~9.2.6
   '@math.gl/core': ^4.1.0
   '@types/node': ^22.10.5
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^6.0.1
-  '@hms-dbmi/viv': ^0.20.1
-  '@vivjs/views': 0.20.1
+  '@hms-dbmi/viv': ^0.21.0
+  '@vivjs/views': 0.21.0
   anndata.js: ^0.0.2
   apache-arrow: ^17.0.0
-  deck.gl: ~9.1.15
+  deck.gl: ~9.2.9
   parquet-wasm: ^0.6.1
   react: ^19.2.1
   react-dom: ^19.2.1

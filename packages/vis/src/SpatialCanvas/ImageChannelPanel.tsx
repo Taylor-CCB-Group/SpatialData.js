@@ -1,9 +1,7 @@
 import type { CSSProperties } from 'react';
-import { clampVivSelectionsToAxes } from '@spatialdata/avivatorish';
+import { clampVivSelectionsToAxes, MAX_CHANNELS } from '@spatialdata/avivatorish';
 import type { ChannelConfig, ImageLayerConfig } from './types';
 import type { ImageLoaderData } from './useLayerData';
-
-const MAX_CHANNELS = 6;
 
 const inputStyle: CSSProperties = {
   width: '100%',
