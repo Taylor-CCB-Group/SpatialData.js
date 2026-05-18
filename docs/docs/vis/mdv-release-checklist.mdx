@@ -1,0 +1,204 @@
+---
+sidebar_position: 4
+---
+
+# MDV release checklist
+
+Goal for this PR branch: release a `@spatialdata/vis` version that MDV can consume now, without replacing Viv, but using this in-place where possible.
+
+Scope constraints:
+
+- keep Viv as the raster/image foundation
+- keep this repo focused on SpatialData-oriented rendering/library contracts
+- ensure MDV can compose its own deck layers and state cleanly alongside this library
+- avoid app-specific abstractions leaking into `@spatialdata/*` packages
+
+## What "ready for MDV" means
+
+A version is MDV-ready when MDV can embed `SpatialCanvasViewer` as a headless renderer while preserving existing chart behavior from:
+
+- `~/code/www/MDV/src/react/components/VivScatterComponent.tsx`
+- `~/code/www/MDV/src/react/scatter_state.ts`
+- `~/code/www/MDV/src/react/spatial_context.tsx` (current replacement for expected `SpatialLayers.ts`)
+
+## Integration contract for this release
+
+Use this as the contract boundary between this repo and MDV.
+
+### MDV-controlled state (primary model)
+
+MDV is the **source of truth** for viewer state. `SpatialCanvasViewer` is a **controlled renderer**: it accepts MDV state and produces deck/Viv output; it does not own chart config or selection semantics.
+
+MDV passes and updates (from chart / datastore / MobX):
+
+- `spatialData`, `coordinateSystem`
+- `layers` (`Record<string, LayerConfig>`) — visibility, opacity, per-layer style, and (for shapes v1) filter/colour driven by table rows
+- `layerOrder`
+- `viewState` + `onViewStateChange`
+- optional `deckLayers` / `deckProps` for overlays MDV builds directly
+
+When MDV selection or colour mappings change, MDV updates `layers` (and/or `deckLayers`) and React re-renders the viewer. This repo loads SpatialData geometry/images and maps **MDV’s layer config** to deck.gl layers.
+
+### What `@spatialdata/vis` owns
+
+- SpatialData-backed discovery and async loading (images, shapes, labels)
+- Viv image path and labels bitmask path
+- Turning **caller-supplied** `LayerConfig` into deck layers (`useLayerData` / renderers)
+- Composing generated layers with caller `deckLayers` / `deckProps.layers`
+- Stable picking/tooltip hooks keyed by layer id (for MDV tooltip portals)
+
+### What MDV owns (v1)
+
+- Chart config and app state (MobX / zustand)
+- Filtering and highlighting semantics (same as table rows today)
+- Scatter, gates, contours, ROI JSON, and other bespoke deck layers
+- View linking (`useViewStateLink`), outer tooltip (`useOuterContainerDeckTooltip`)
+- Viv **extensions** on image channels (passed through layer config / `deckProps`; regressions here are bugs)
+
+### v1 layer scope
+
+| Layer kind | v1 |
+|------------|----|
+| Images | Yes (Viv) |
+| Shapes | Yes — MDV drives style/filter via `layers` state |
+| Labels | Render when configured; segmentation vs shapes experiment is not a release gate |
+| Points | v1.1 |
+
+### Custom deck layers (additive, not a replacement for state)
+
+MDV can still pass layers it constructs entirely in app code (for example from `spatial_context.ts`) via `deckLayers` or `deckProps.layers`. Those sit **above** SpatialData-generated layers in the composed stack.
+
+Over time, patterns that repeat in MDV (shared shape styling, common overlays) may move into `@spatialdata/vis` or `@spatialdata/layers`; v1 does not require that migration.
+
+### Shapes v1: filter and colour via `layers` state
+
+For v1, shapes must support the same *effect* as MDV table-row colouring/filtering, without MDV re-implementing SpatialData loading:
+
+- [ ] `ShapesLayerConfig` accepts MDV-driven per-feature style (accessors or equivalent state on the config object MDV updates when selection changes)
+- [ ] Feature index / `instance_key` alignment with the associated table is stable for picking and styling (same join used for tooltips)
+- [ ] Document that MDV updates `layers[layerId]` when datastore selection or colour columns change
+
+Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; not required if config-driven styling is sufficient.
+
+### Bespoke layer extension path
+
+- Primary extension for **state-owned** SpatialData layers: MDV-controlled `layers` + `layerOrder`
+- Primary extension for **fully custom** deck layers: `deckLayers` / `deckProps.layers` on `SpatialCanvasViewer`
+- Composition order: SpatialData-generated layers, then MDV `deckLayers`, with scale bar last (see `composeSpatialDeckLayers`)
+
+Practical checks for this branch:
+
+- [ ] MDV can drive a shapes layer only by updating `layers` props (no `SpatialCanvas` zustand store)
+- [ ] An MDV-style custom layer from `spatial_context.ts` can be supplied via `deckLayers` without importing `packages/vis/src/*` internals
+
+## Release checklist (this branch)
+
+### 1) API and export sanity
+
+- [ ] `@spatialdata/vis` exports `SpatialCanvasViewer` as public API.
+- [ ] Viewer helper exports are public and documented:
+  - `useSpatialCanvasRenderer`
+  - `composeSpatialDeckLayers`
+  - `shouldAutoFitSpatialView`
+  - `shouldRenderInternalTooltip`
+- [ ] `SpatialViewer` supports passthrough `deckProps` safely.
+- [ ] No MDV integration requires importing from `packages/vis/src/...` internals.
+
+### 2) Headless behavior parity checks
+
+- [ ] `SpatialCanvasViewer` renders with externally controlled:
+  - `coordinateSystem`
+  - `layers`
+  - `layerOrder`
+  - `viewState`
+- [ ] It composes caller deck layers above SpatialData-rendered layers.
+- [ ] It allows MDV-owned tooltip flow (internal tooltip disabled or overridden).
+- [ ] It supports MDV-owned controller settings through `deckProps`.
+
+### 3) MDV touchpoint checks
+
+- [ ] `VivScatterComponent.tsx` style embedding is possible without sidebars/editor UI from `SpatialCanvas`.
+- [ ] `scatter_state.ts`-style scatter/filter/highlight layers can be passed as external deck layers.
+- [ ] `spatial_context.tsx`-style selection and editable overlay layers can be passed through unchanged.
+- [ ] View ID and layer ID conventions remain compatible with MDV filtering assumptions (current `getVivId(...)` patterns).
+
+### 4) Version and packaging hygiene
+
+- [ ] `pnpm -r --filter @spatialdata/vis test` passes.
+- [ ] package build succeeds for `@spatialdata/vis` and dependent workspace packages.
+- [ ] produce installable package(s) for MDV testing (pack or prerelease).
+- [ ] smoke-test install in MDV workspace and verify viewer renders.
+
+### 5) Non-goals (explicit)
+
+- [ ] No attempt to replace Viv in this release.
+- [ ] No in-repo implementation of broad GIS support in this release.
+- [ ] No hard coupling of `core` API to deck-specific loaders for this release.
+
+## Viv extensions and near-term Viv upgrade
+
+With Viv PR [#924](https://github.com/hms-dbmi/viv/pull/924) merged in `@hms-dbmi/viv@0.21.0` (deck.gl `9.2.9`, uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts), we should treat extension compatibility as a release gate when adopting that stack.
+
+### Why this matters now
+
+- MDV relies on Viv extensions and deck composition behavior today.
+- Extension breakage can look subtle (missing colormap behavior, stale shader props, or dropped extension props during cloning/spreading).
+- The move from deprecated uniform paths to shader-input paths can break custom layers/extensions if we do not audit deliberately.
+
+### Branch checklist for Viv-upgrade readiness
+
+- [ ] Audit `@spatialdata/vis` Viv paths for extension prop preservation:
+  - `packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`
+  - ensure layer cloning/composition does not drop non-enumerable extension/default props.
+- [ ] Audit channel-count assumptions and constants:
+  - `packages/avivatorish/src/constants.ts`
+  - `packages/vis/src/SpatialCanvas/ImageChannelPanel.tsx`
+  - `packages/vis/src/SpatialCanvas/LabelsChannelPanel.tsx`
+  - ensure behavior is coherent if Viv supports wider channel ranges.
+- [ ] Audit shader/uniform update paths in custom deck/Viv-adjacent layers:
+  - `packages/layers/src/LabelsBitmaskTileLayer.ts`
+  - confirm `shaderInputs.setProps(...)` path is primary and any `setUniforms(...)` usage is fallback-only.
+- [ ] Verify app-level extension passthrough remains intact with `deckProps` and `SpatialCanvasViewer`.
+- [ ] Run visual smoke tests with extension-heavy image views (2D at minimum) before publishing package versions.
+
+### Fast acceptance criteria
+
+- [ ] No regression in extension-driven rendering for image layers (including opacity/channel state updates).
+- [ ] No regression in composed app overlays when Viv layers are present.
+- [ ] No obvious channel-limit regressions introduced by mismatched constants.
+- [ ] No hard dependency on deprecated uniform-only update patterns in custom layers/extensions.
+
+## Suggested MDV smoke-test sequence
+
+1. Install branch build of `@spatialdata/vis` into MDV.
+2. Add a minimal wrapper chart that renders `SpatialCanvasViewer` with existing MDV view state.
+3. Pass current MDV overlays from `VivScatterComponent.tsx` as `deckProps.layers`.
+4. Route tooltip through MDV's outer-container tooltip path only.
+5. Validate pan/zoom linking and selection behavior parity.
+6. Validate at least one labels/shapes overlay above image.
+
+## Follow-up work after release
+
+After this MDV-ready release, pursue incremental improvements in separate PRs:
+
+- formalize stable layer identity contract for cross-layer picking/highlighting
+- broaden feature-property contract beyond tooltip fields
+- improve points styling/filtering parity with MDV needs
+- evaluate optional Arrow-friendly data paths without forcing deck dependencies into `core`
+
+## Future consideration: editable layers and write support
+
+**Not in v1.** v1 keeps selection/annotation as **MDV-owned deck layers** passed through `deckLayers` (for example editable ROI / lasso layers from `spatial_context.ts`), with this repo focused on **read** paths into SpatialData.
+
+Later, consider implementing here (and/or in `@spatialdata/core`) when write APIs exist:
+
+- **Editable overlay layers** — drawing, editing vertices, selection geometries synced with chart state (today MDV implements these; candidates to lift into `@spatialdata/vis` if the interaction model stabilizes).
+- **Annotation persistence** — round-trip edits to SpatialData-compatible stores (shapes tables, labels, or sidecar layers), not only ephemeral deck state.
+- **General write support** — align with `@spatialdata/core` moving beyond read-only (see [core overview](../core/overview.mdx)); vis would expose mutation helpers only once core defines safe, tested write contracts.
+
+Design constraints to decide before building:
+
+- Whether edits target **Zarr/SpatialData on disk**, **in-memory session state**, or **MDV’s own project files**.
+- How editable layers share **picking ids** and **coordinate systems** with read-only SpatialData layers.
+- Whether Vitessce/MDV both need the same editable-layer API or app-specific extensions remain sufficient.
+

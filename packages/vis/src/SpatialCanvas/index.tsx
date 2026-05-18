@@ -22,21 +22,21 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
-import { LayerOrderList } from './LayerOrderList';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
-import { TooltipFieldsPanel } from './TooltipFieldsPanel';
+import { LayerOrderList } from './LayerOrderList';
+import { useSpatialCanvasRenderer } from './SpatialCanvasViewer';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
   type SpatialFeatureTooltipData,
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
+import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
-import { useLayerData } from './useLayerData';
-import { generateLayerId, getAllCoordinateSystems, getAvailableElements } from './utils';
+import { generateLayerId, getAllCoordinateSystems } from './utils';
 
 export {
   SpatialFeatureTooltip,
@@ -58,6 +58,17 @@ export type { SpatialCanvasStoreApi } from './stores';
 export type * from './types';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
 export { VivSpatialViewer } from './VivSpatialViewer';
+export {
+  SpatialCanvasViewer,
+  composeSpatialDeckLayers,
+  shouldRenderInternalTooltip,
+  shouldAutoFitSpatialView,
+  useSpatialCanvasRenderer,
+} from './SpatialCanvasViewer';
+export type {
+  SpatialCanvasViewerProps,
+  SpatialCanvasViewerRenderTooltip,
+} from './SpatialCanvasViewer';
 export type { ImageLayerConfig as VivImageLayerConfig } from './useLayerData';
 
 // ============================================
@@ -252,35 +263,6 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     return getAllCoordinateSystems(spatialData);
   }, [spatialData]);
 
-  const availableElements = useMemo(() => {
-    if (!spatialData || !coordinateSystem) {
-      return { images: [], shapes: [], points: [], labels: [] } satisfies ElementsByType;
-    }
-    return getAvailableElements(spatialData, coordinateSystem);
-  }, [spatialData, coordinateSystem]);
-
-  const {
-    getLayers,
-    getVivLayerProps,
-    getImageLayerLoadedData,
-    getLabelsLayerLoadedData,
-    getLayerLoadState,
-    hasRenderableLayerData,
-    getFeatureTooltip,
-    isLoading,
-    isBlocking,
-    getWorldBoundsForLayer,
-    getWorldBoundsForVisibleLayers,
-  } = useLayerData(
-    layers,
-    layerOrder,
-    availableElements,
-    coordinateSystem,
-    spatialData ?? undefined
-  );
-
-  const deckLayers = getLayers();
-  const vivLayerProps = getVivLayerProps();
   const handleViewStateChange = useCallback(
     (vs: ViewState) => {
       actions.setViewState(vs);
@@ -288,24 +270,34 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     [actions]
   );
 
-  const enabledLayerIds = useMemo(() => {
-    return new Set(layerOrder.filter((id) => layers[id]?.visible));
-  }, [layers, layerOrder]);
-
   const vw = width ?? 0;
   const vh = height ?? 0;
-  const hasEnabledLayers = enabledLayerIds.size > 0;
-
-  useEffect(() => {
-    if (!hasEnabledLayers || vw <= 0 || vh <= 0 || isBlocking || viewState !== null) {
-      return;
-    }
-    const bounds = getWorldBoundsForVisibleLayers();
-    const next = bounds
-      ? viewStateFromBounds(bounds, vw, vh)
-      : { target: [0, 0] as [number, number], zoom: 0 };
-    actions.setViewState(next);
-  }, [hasEnabledLayers, vw, vh, isBlocking, viewState, getWorldBoundsForVisibleLayers, actions]);
+  const {
+    availableElements,
+    deckLayers,
+    enabledLayerIds,
+    getFeatureTooltip,
+    getImageLayerLoadedData,
+    getLabelsLayerLoadedData,
+    getLayerLoadState,
+    getWorldBoundsForLayer,
+    getWorldBoundsForVisibleLayers,
+    hasEnabledLayers,
+    hasLayersDrawn,
+    hasRenderableLayerData,
+    isBlocking,
+    isLoading,
+    vivLayerProps,
+  } = useSpatialCanvasRenderer({
+    spatialData,
+    coordinateSystem,
+    layers,
+    layerOrder,
+    viewState,
+    onViewStateChange: handleViewStateChange,
+    width: vw,
+    height: vh,
+  });
 
   useEffect(() => {
     if (
@@ -382,7 +374,6 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     [layers, actions]
   );
 
-  const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
   const selectedConfig = selectedLayerId ? layers[selectedLayerId] : undefined;
   const associatedTable =
     selectedConfig?.type === 'shapes'
@@ -392,22 +383,12 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
         : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
 
-  /** Avoid recomputing polygon/image bounds on every pan (viewState) — only when layer data / CS / selection changes. */
-  const selectedLayerWorldBounds = useMemo(() => {
+  const selectedLayerWorldBounds = (() => {
     const id = selectedConfig?.id;
     if (!id) return null;
     if (!hasRenderableLayerData(id)) return null;
     return getWorldBoundsForLayer(id);
-  }, [
-    selectedConfig?.id,
-    selectedLayerLoadState,
-    coordinateSystem,
-    layerOrder,
-    layers,
-    availableElements,
-    getWorldBoundsForLayer,
-    hasRenderableLayerData,
-  ]);
+  })();
 
   // we probably want to see more than obs columns here... but I also don't understand what subset of those we end up with.
   // why not allow instanceKey & regionKey...

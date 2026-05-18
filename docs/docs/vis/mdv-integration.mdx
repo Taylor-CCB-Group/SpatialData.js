@@ -4,6 +4,8 @@ sidebar_position: 3
 
 # MDV integration roadmap
 
+This page explains architecture and phased context. For the branch-level shipping checklist, see [MDV release checklist](./mdv-release-checklist).
+
 This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Group/MDV)** and **[Vitessce](https://vitessce.io/)** so both projects can render SpatialData images, labels, shapes, and points from shared packages instead of relying on diverging local implementations.
 
 The near-term target is not a full replacement for every MDV spatial feature. The target is a baseline `SpatialCanvas`-backed MDV chart that can stand in for `VivScatterComponent` where appropriate, accept MDV-controlled state, compose MDV custom deck.gl layers, and avoid showing this repo's demo/editor UI inside MDV. MDV is the first "use it in anger" sanity check; Vitessce compatibility remains a priority design target rather than a later afterthought.
@@ -23,6 +25,10 @@ The blocker for MDV use is mostly API shape. `SpatialCanvas` currently owns a fu
 ## Priority: headless first
 
 The top priority is a headless viewer path. Before MDV or Vitessce integration work gets clever, this repository should prove that the renderer can be driven by external state and external controls.
+
+The first implementation should use a **bridge path** rather than a full layers-first rewrite: expose a public React `SpatialCanvasViewer` that reuses the existing Viv/deck rendering stack, accepts externally controlled state, and composes caller-provided deck.gl layers above SpatialData-rendered layers. This keeps MDV progress unblocked while preserving a migration path toward `@spatialdata/layers`.
+
+The layers-first direction is still likely the cleaner long-term architecture, especially for MDV and Vitessce. For now, `@spatialdata/layers` should mature through narrow renderer slices rather than becoming the blocking path for headless mode: the current `SpatialLayer` package defines a schema/contract, but real image, labels, shapes, and points sublayer factories still need to be ported deliberately.
 
 Useful in-repo validation demos:
 
@@ -44,7 +50,7 @@ Acceptance signal: the demos should import the same public API that MDV would us
   - optional: `@spatialdata/avivatorish`
 - [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
 - [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
-- [ ] Track the next Viv/deck upgrade as a first-class migration. Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924) is currently open and targets deck.gl `9.2.9`, uniform-buffer-backed shader props, `model.shaderInputs`, and variable channel counts.
+- [ ] Track upgrading to `@hms-dbmi/viv@0.21.0` / deck.gl `9.2.9` as a first-class migration. Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924) is merged there (uniform-buffer-backed shader props, `model.shaderInputs`, and variable channel counts).
 - [ ] Update shader extensions here and in MDV in the same wave:
   - replace deprecated `setUniforms` paths with `model.shaderInputs.setProps(...)`
   - prefer `updateState()` for shader input updates where appropriate
@@ -365,7 +371,7 @@ Open questions:
 ## Compatibility risks
 
 - **Viv/deck version skew:** MDV uses Viv `0.19.x`; this repo uses Viv `0.20.x`. Mixed deck/luma packages can fail in subtle WebGL ways.
-- **Upcoming Viv/deck migration:** Viv PR `924` moves shader props toward UBOs and `model.shaderInputs` while targeting deck.gl `9.2.9`. Custom shader extensions in this repo and MDV should be migrated deliberately, not patched piecemeal.
+- **Viv/deck migration (Viv `0.21.0` / PR `#924`):** Merged upstream in `@hms-dbmi/viv@0.21.0` with deck.gl `9.2.9`; shader props use UBOs and `model.shaderInputs`. This repo and MDV still need to adopt that stack and migrate custom shader extensions deliberately, not piecemeal.
 - **Arrow/Parquet churn:** loaders.gl Parquet and deck.gl-community Arrow layers are promising but still moving targets. We should avoid locking public `core` APIs to one loader implementation too early.
 - **Raster backend churn:** `deck.gl-raster` may absorb image/Zarr responsibilities that currently sit in Viv or custom labels layers. Public props should leave room for a backend swap.
 - **Image format/codecs uncertainty:** OME-TIFF, JP2K-compressed TIFF, OME-Zarr, SpatialData Zarr, and future Zarr image codecs may all matter. Avoid encoding one storage format too deeply into viewer props.

@@ -12,9 +12,9 @@
 
 import { DetailView } from '@hms-dbmi/viv';
 import { DeckGL } from 'deck.gl';
-import type { Layer, PickingInfo } from 'deck.gl';
+import type { DeckGLProps, Layer, PickingInfo } from 'deck.gl';
 import { useCallback, useId, useMemo } from 'react';
-import VivSpatialViewer from './VivSpatialViewer';
+import VivSpatialViewer, { normalizeVivLayers } from './VivSpatialViewer';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -35,6 +35,8 @@ export interface SpatialViewerProps {
   onHover?: (info: PickingInfo) => void;
   /** Optional: Callback on click */
   onClick?: (info: PickingInfo) => void;
+  /** Optional: Additional deck.gl props */
+  deckProps?: Partial<DeckGLProps>;
 }
 
 /**
@@ -53,6 +55,7 @@ export function SpatialViewer({
   vivLayerProps,
   onHover,
   onClick,
+  deckProps,
 }: SpatialViewerProps) {
   const hasImageLayers = vivLayerProps && vivLayerProps.length > 0;
 
@@ -68,6 +71,7 @@ export function SpatialViewer({
         extraLayers={layers}
         onHover={onHover}
         onClick={onClick}
+        deckProps={deckProps}
       />
     );
   }
@@ -82,6 +86,7 @@ export function SpatialViewer({
       layers={layers}
       onHover={onHover}
       onClick={onClick}
+      deckProps={deckProps}
     />
   );
 }
@@ -97,6 +102,7 @@ function SpatialViewerSimple({
   layers,
   onHover,
   onClick,
+  deckProps,
 }: Omit<SpatialViewerProps, 'vivLayerProps'>) {
   const viewId = useId();
   const detailViewId = useMemo(() => `spatial-${viewId}`, [viewId]);
@@ -156,8 +162,8 @@ function SpatialViewerSimple({
 
   // Filter out any null/undefined layers
   const composedLayers = useMemo(() => {
-    return layers.filter(Boolean);
-  }, [layers]);
+    return [...layers.filter(Boolean), ...normalizeVivLayers(deckProps?.layers ?? [])];
+  }, [deckProps?.layers, layers]);
 
   // Don't render if dimensions are invalid
   if (width <= 0 || height <= 0) {
@@ -168,6 +174,7 @@ function SpatialViewerSimple({
 
   return (
     <DeckGL
+      {...(deckProps ?? {})}
       width={width}
       height={height}
       views={deckGLView}
@@ -176,9 +183,9 @@ function SpatialViewerSimple({
       layers={composedLayers}
       onHover={onHover}
       onClick={onClick}
-      controller={true}
+      controller={deckProps?.controller ?? true}
       getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
-      style={{ backgroundColor: '#111' }}
+      style={{ backgroundColor: '#111', ...deckProps?.style }}
     />
   );
 }

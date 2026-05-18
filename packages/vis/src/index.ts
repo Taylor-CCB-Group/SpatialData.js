@@ -15,6 +15,7 @@ export { default as Table } from './Table';
 // SpatialCanvas - composable spatial layers viewer
 export { default as SpatialCanvas } from './SpatialCanvas';
 export {
+  SpatialCanvasViewer,
   SpatialCanvasProvider,
   useSpatialCanvasStore,
   useSpatialCanvasActions,
@@ -22,6 +23,10 @@ export {
   createSpatialCanvasStore,
   useSpatialViewState,
   useViewStateUrl,
+  composeSpatialDeckLayers,
+  shouldRenderInternalTooltip,
+  shouldAutoFitSpatialView,
+  useSpatialCanvasRenderer,
 } from './SpatialCanvas';
 export type {
   SpatialCanvasStoreApi,
@@ -34,6 +39,8 @@ export type {
   AvailableElement,
   ElementsByType,
   SpatialCanvasProps,
+  SpatialCanvasViewerProps,
+  SpatialCanvasViewerRenderTooltip,
   SpatialFeatureTooltipData,
   SpatialFeatureTooltipItem,
   SpatialCanvasTooltipRenderProps,
