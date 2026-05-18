@@ -1,13 +1,15 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import SpatialDataTree from '../Tree';
 import Table from '../Table';
 import ImageView from '../ImageView';
 import Transforms from '../Transforms';
 import SpatialCanvas from '../SpatialCanvas';
-
-const defaultUrl =
-  'https://storage.googleapis.com/vitessce-demo-data/spatialdata-august-2025/visium_hd_3.0.0.spatialdata.zarr';
+import {
+  DEFAULT_DEMO_SPATIALDATA_URL,
+  buildDemoPageHref,
+  getSpatialDataUrlFromSearchParams,
+} from './demoUrl';
 
 const dataSourceBarStyle: CSSProperties = {
   flexShrink: 0,
@@ -16,21 +18,53 @@ const dataSourceBarStyle: CSSProperties = {
   background: '#1e1e1e',
 };
 
+function getInitialDemoUrl(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_DEMO_SPATIALDATA_URL;
+  }
+  return getSpatialDataUrlFromSearchParams(new URLSearchParams(window.location.search));
+}
+
 function DataSource({ children }: React.PropsWithChildren) {
-  const [url, setUrl] = useState(defaultUrl);
+  const [url, setUrl] = useState(getInitialDemoUrl);
+
+  useEffect(() => {
+    const nextHref = buildDemoPageHref(url);
+    if (window.location.href !== nextHref) {
+      window.history.replaceState(null, '', nextHref);
+    }
+  }, [url]);
+
+  const shareHref =
+    typeof window !== 'undefined'
+      ? buildDemoPageHref(url, `${window.location.origin}${window.location.pathname}`)
+      : '';
+
+  const source = url.trim() || DEFAULT_DEMO_SPATIALDATA_URL;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={dataSourceBarStyle}>
-        <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>SpatialData URL</div>
+        <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+          SpatialData URL <span style={{ color: '#666' }}>(or open with ?url=…)</span>
+        </div>
         <input
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px' }}
         />
+        {shareHref ? (
+          <a
+            href={shareHref}
+            style={{ display: 'inline-block', marginTop: 6, fontSize: 11, color: '#8af' }}
+          >
+            Link to this dataset
+          </a>
+        ) : null}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        <SpatialDataProvider source={url}>{children}</SpatialDataProvider>
+        <SpatialDataProvider source={source}>{children}</SpatialDataProvider>
       </div>
     </div>
   );
