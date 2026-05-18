@@ -50,7 +50,7 @@ Acceptance signal: the demos should import the same public API that MDV would us
   - optional: `@spatialdata/avivatorish`
 - [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
 - [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
-- [ ] Track the next Viv/deck upgrade as a first-class migration. Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924) is currently open and targets deck.gl `9.2.9`, uniform-buffer-backed shader props, `model.shaderInputs`, and variable channel counts.
+- [ ] Track upgrading to `@hms-dbmi/viv@0.21.0` / deck.gl `9.2.9` as a first-class migration. Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924) is merged there (uniform-buffer-backed shader props, `model.shaderInputs`, and variable channel counts).
 - [ ] Update shader extensions here and in MDV in the same wave:
   - replace deprecated `setUniforms` paths with `model.shaderInputs.setProps(...)`
   - prefer `updateState()` for shader input updates where appropriate
@@ -371,7 +371,7 @@ Open questions:
 ## Compatibility risks
 
 - **Viv/deck version skew:** MDV uses Viv `0.19.x`; this repo uses Viv `0.20.x`. Mixed deck/luma packages can fail in subtle WebGL ways.
-- **Upcoming Viv/deck migration:** Viv PR `924` moves shader props toward UBOs and `model.shaderInputs` while targeting deck.gl `9.2.9`. Custom shader extensions in this repo and MDV should be migrated deliberately, not patched piecemeal.
+- **Viv/deck migration (Viv `0.21.0` / PR `#924`):** Merged upstream in `@hms-dbmi/viv@0.21.0` with deck.gl `9.2.9`; shader props use UBOs and `model.shaderInputs`. This repo and MDV still need to adopt that stack and migrate custom shader extensions deliberately, not piecemeal.
 - **Arrow/Parquet churn:** loaders.gl Parquet and deck.gl-community Arrow layers are promising but still moving targets. We should avoid locking public `core` APIs to one loader implementation too early.
 - **Raster backend churn:** `deck.gl-raster` may absorb image/Zarr responsibilities that currently sit in Viv or custom labels layers. Public props should leave room for a backend swap.
 - **Image format/codecs uncertainty:** OME-TIFF, JP2K-compressed TIFF, OME-Zarr, SpatialData Zarr, and future Zarr image codecs may all matter. Avoid encoding one storage format too deeply into viewer props.
