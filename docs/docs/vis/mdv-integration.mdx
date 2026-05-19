@@ -140,15 +140,15 @@ MDV needs feature-aware styling:
 
 Required changes:
 
-- [ ] Define a stable feature identity model for shapes and labels.
-  - shapes need row/feature ids preserved through `loadPolygonShapes()`
+- [x] Define a stable feature identity model for shapes and labels.
+  - shapes now preserve row/feature ids in a render-oriented core payload and expose them through shared layers picking/styling helpers
   - labels need label ids mapped to associated table rows
-- [ ] Extend layer configs with accessor-style props or precomputed style buffers.
+- [x] Extend layer configs with feature-state props keyed by stable feature id.
 - [ ] Decide where MDV-specific filtering is evaluated:
   - MDV computes style arrays and passes them in
   - or shared package accepts filter/highlight sets and evaluates them
-- [ ] Add picking metadata that MDV can map back to datasource rows.
-- [ ] Add tests for picked shape/label id -> associated table row.
+- [x] Add picking metadata that MDV can map back to datasource rows.
+- [x] Add tests for picked shape/label id -> associated table row.
 - [ ] Add a fast path for large tables and many polygons. Avoid per-feature MobX reads in deck.gl accessors.
 
 Suggested first design:
@@ -162,7 +162,7 @@ type FeatureStyleState = {
 };
 ```
 
-MDV can compute this state from its datastore and filters, while `@spatialdata/vis` turns it into deck.gl accessors or binary attributes.
+MDV can compute this state from its datastore and filters, while `@spatialdata/layers` now owns the deck-facing shapes implementation and `@spatialdata/vis` consumes that shared path.
 
 ## Phase 4: nicer GUI in MDV
 
@@ -200,13 +200,13 @@ For now, the Vitessce note should be treated as an API pressure test and a succe
 
 ## Arrow, Parquet, and deck.gl boundaries
 
-We should track upstream deck.gl / loaders.gl / deck.gl-community work around Arrow, GeoArrow, and GeoParquet carefully. This is likely to affect where the boundary sits between `@spatialdata/core`, `@spatialdata/vis`, deck loaders, and app-specific adapters.
+We should track upstream deck.gl / loaders.gl / deck.gl-community work around Arrow, GeoArrow, and GeoParquet carefully. This affects the boundary between `@spatialdata/core`, `@spatialdata/layers`, `@spatialdata/vis`, deck loaders, and app-specific adapters.
 
 Current local state:
 
 - `@spatialdata/core` currently loads Parquet bytes/tables through `parquet-wasm` in `VTableSource`, inherited by points and shapes sources.
 - points currently return an ndarray-ish `{ shape, data }` object with axis columns loaded from Parquet.
-- shapes currently decode WKB geometry into JavaScript polygon arrays before handing them to deck.gl `PolygonLayer`.
+- shapes currently expose a render-oriented core payload with stable feature ids and a polygon fallback path; the shipping backend still uses decoded polygons, but the deck-facing implementation now lives in `@spatialdata/layers`.
 - labels are still their own image/tile rendering path.
 - Vitessce-derived code already has more advanced point handling in places, including tiled point loading, viewport filtering, feature-index filtering, and `DataFilterExtension` use.
 
@@ -242,11 +242,11 @@ Recommended direction for now:
 - [ ] Keep `@spatialdata/core` free of deck.gl dependencies.
 - [ ] Align `@spatialdata/core`'s points and shapes support with Vitessce's SpatialData-derived loaders so we do not fall behind format coverage while the rendering backend evolves.
 - [ ] Move toward `core` exposing Arrow-ish columnar primitives for points/shapes/tables, while preserving convenience methods for simple JS arrays.
-- [ ] Make `@spatialdata/vis` responsible for choosing the rendering backend:
-  - deck.gl binary attributes for stable built-in layers
-  - deck.gl-community Arrow layers when they are mature enough
-  - current JS-array fallback for compatibility
-- [ ] Keep feature identity, table association, coordinate transforms, and metadata interpretation in `core`; keep GPU filtering, tiling, layer construction, and picking/render props in `vis`.
+- [ ] Make `@spatialdata/layers` responsible for choosing the rendering backend:
+  - current polygon fallback for compatibility
+  - `deck.gl-geoarrow` as the intended near-term fast path when the core payload supports it cleanly
+  - future Arrow/community-layer backends without changing the public shapes config
+- [x] Keep feature identity, table association, coordinate transforms, and metadata interpretation in `core`; keep GPU filtering, tiling, layer construction, and picking/render props in `layers`.
 - [ ] Avoid baking `parquet-wasm` as the only long-term path. Treat it as the current implementation behind a replaceable interface.
 - [ ] Treat Vitessce parity tests as compatibility fixtures: when Vitessce supports a points/shapes SpatialData layout, `core` should either support it too or document why not.
 - [ ] Add a small compatibility matrix for points and shapes:

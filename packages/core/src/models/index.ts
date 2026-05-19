@@ -27,6 +27,7 @@ import {
 } from '../schemas';
 import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
 import SpatialDataPointsSource from './VPointsSource';
+import type { ShapesRenderData } from '../shapes';
 
 /**
  * Parameters for creating element instances.
@@ -80,10 +81,12 @@ abstract class AbstractElement<T extends ElementName> {
   readonly key: string;
   readonly path: string;
   readonly url?: string;
+  protected readonly sdata: SDataProps;
   protected readonly rawAttrs: ZAttrsAny;
   protected readonly parsed: ZarrTree | LazyZarrArray<zarr.DataType>;
 
   constructor({ sdata, name, key }: ElementParams<T>) {
+    this.sdata = sdata;
     this.kind = name;
     this.key = key;
     this.path = `${name}/${key}`;
@@ -498,6 +501,10 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
    */
   async loadFeatureIds() {
     return this.vShapes.loadShapesIndex(`shapes/${this.key}`);
+  }
+
+  async loadRenderData(): Promise<ShapesRenderData> {
+    return this.vShapes.loadShapesRenderData(`shapes/${this.key}`);
   }
 }
 

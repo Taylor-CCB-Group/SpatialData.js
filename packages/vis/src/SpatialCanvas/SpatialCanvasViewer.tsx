@@ -1,4 +1,5 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
+import type { ShapeFeatureRenderDatum } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, Layer, PickingInfo } from 'deck.gl';
 import {
@@ -18,7 +19,7 @@ import {
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
-import type { ElementsByType, LayerConfig, ViewState } from './types';
+import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import { useLayerData } from './useLayerData';
 import { getAvailableElements } from './utils';
 
@@ -37,6 +38,8 @@ export interface SpatialCanvasViewerProps {
   deckProps?: Partial<DeckGLProps>;
   onHover?: (info: PickingInfo) => void;
   onClick?: (info: PickingInfo) => void;
+  onShapeHover?: (event: ShapesLayerPickEvent) => void;
+  onShapeClick?: (event: ShapesLayerPickEvent) => void;
   renderTooltip?: SpatialCanvasViewerRenderTooltip;
   tooltipContainer?: HTMLElement | null;
   showLoadingOverlay?: boolean;
@@ -220,6 +223,8 @@ function SpatialCanvasViewerInner({
   deckProps,
   onHover,
   onClick,
+  onShapeHover,
+  onShapeClick,
   renderTooltip,
   tooltipContainer,
   showLoadingOverlay = true,
@@ -253,15 +258,27 @@ function SpatialCanvasViewerInner({
   const handleHover = useCallback(
     (info: PickingInfo) => {
       onHover?.(info);
-      if (!shouldRenderInternalTooltip(renderTooltip)) {
-        return;
-      }
       if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
         setHoverTooltip(null);
         return;
       }
       const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
       const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (shapePickEvent) {
+        onShapeHover?.({
+          ...shapePickEvent,
+          object: shapePickEvent.object as ShapeFeatureRenderDatum,
+          coordinateSystem,
+          pickInfo: info,
+        });
+      }
+      if (!shouldRenderInternalTooltip(renderTooltip)) {
+        return;
+      }
       const tooltip = renderer.getFeatureTooltip(normalizedLayerId, {
         index: info.index,
         object: info.object,
@@ -276,7 +293,31 @@ function SpatialCanvasViewerInner({
         ...tooltip,
       });
     },
-    [onHover, renderTooltip, renderer.getFeatureTooltip]
+    [coordinateSystem, onHover, onShapeHover, renderTooltip, renderer]
+  );
+
+  const handleClick = useCallback(
+    (info: PickingInfo) => {
+      onClick?.(info);
+      if (!info.picked) {
+        return;
+      }
+      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (shapePickEvent) {
+        onShapeClick?.({
+          ...shapePickEvent,
+          object: shapePickEvent.object as ShapeFeatureRenderDatum,
+          coordinateSystem,
+          pickInfo: info,
+        });
+      }
+    },
+    [coordinateSystem, onClick, onShapeClick, renderer]
   );
 
   const handleViewerRef = useCallback(
@@ -351,7 +392,7 @@ function SpatialCanvasViewerInner({
               layers={renderer.deckLayers}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={handleHover}
-              onClick={onClick}
+              onClick={handleClick}
               deckProps={deckProps}
             />
             {showLoadingOverlay && renderer.isBlocking && (

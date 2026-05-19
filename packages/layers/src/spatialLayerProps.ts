@@ -8,6 +8,8 @@ const sublayerBase = z.object({
   visible: z.boolean().optional().default(true),
 });
 
+const rgbaColorSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
 export const spatialImageSublayerSchema = sublayerBase.extend({
   kind: z.literal('image'),
   /** OME-Zarr or other URL understood by Viv loaders (integrator-defined). */
@@ -20,7 +22,20 @@ export const spatialScatterSublayerSchema = sublayerBase.extend({
 
 export const spatialShapesSublayerSchema = sublayerBase.extend({
   kind: z.literal('shapes'),
+  elementKey: z.string(),
   tooltipFields: z.array(z.string()).optional(),
+  defaultFillColor: rgbaColorSchema.optional(),
+  defaultStrokeColor: rgbaColorSchema.optional(),
+  defaultStrokeWidth: z.number().optional(),
+  featureState: z
+    .object({
+      fillColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
+      strokeColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
+      hiddenFeatureIds: z.array(z.string()).optional(),
+      fadedFeatureIds: z.array(z.string()).optional(),
+      filteredOpacityMultiplier: z.number().min(0).max(1).optional(),
+    })
+    .optional(),
 });
 
 export const spatialLabelsSublayerSchema = sublayerBase.extend({
@@ -38,6 +53,7 @@ export const spatialSublayerSchema = z.discriminatedUnion('kind', [
 ]);
 
 export type SpatialSublayer = z.infer<typeof spatialSublayerSchema>;
+export type SpatialShapesSublayer = z.infer<typeof spatialShapesSublayerSchema>;
 
 export const spatialLayerPropsSchema = z.object({
   schemaVersion: z

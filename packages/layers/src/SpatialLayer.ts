@@ -1,4 +1,9 @@
 import { CompositeLayer, type LayersList, type Layer } from 'deck.gl';
+import {
+  createShapesDeckLayer,
+  type ShapesLayerPickEvent,
+  type ShapesRenderDataLike,
+} from './shapesLayer';
 import type { SpatialLayerProps } from './spatialLayerProps';
 import { spatialLayerPropsSchema } from './spatialLayerProps';
 
@@ -10,11 +15,18 @@ const defaultProps: Partial<SpatialLayerProps> = {
   sublayers: [],
 };
 
+export interface SpatialLayerRuntimeProps extends SpatialLayerProps {
+  shapeRenderData?: Record<string, ShapesRenderDataLike>;
+  spatialCoordinateSystem?: string | null;
+  onShapeHover?: (event: ShapesLayerPickEvent) => void;
+  onShapeClick?: (event: ShapesLayerPickEvent) => void;
+}
+
 /**
  * Top-level deck.gl CompositeLayer for orchestrating spatial sublayers (image, scatter, shapes, …).
  * Sublayer factories are added incrementally; today this layer validates props and returns an empty stack when no deck sublayers are registered.
  */
-export class SpatialLayer extends CompositeLayer<SpatialLayerProps> {
+export class SpatialLayer extends CompositeLayer<SpatialLayerRuntimeProps> {
   static layerName = 'SpatialLayer';
   static defaultProps = defaultProps;
 
@@ -23,7 +35,23 @@ export class SpatialLayer extends CompositeLayer<SpatialLayerProps> {
     if (!validated.sublayers?.length) {
       return [];
     }
-    // Future: map validated.sublayers to Viv / Scatterplot / GeoJsonLayer instances via @spatialdata/avivatorish + core adapters.
-    throw new Error('received sublayers, but sublayer factories not implemented yet');
+    return validated.sublayers
+      .map((sublayer, sublayerIndex) => {
+        if (sublayer.kind !== 'shapes') {
+          return null;
+        }
+        const renderData = this.props.shapeRenderData?.[sublayer.elementKey];
+        if (!renderData) {
+          return null;
+        }
+        return createShapesDeckLayer(renderData, sublayer, {
+          id: sublayer.id ?? `shapes-${sublayer.elementKey}-${sublayerIndex}`,
+          visible: sublayer.visible,
+          spatialCoordinateSystem: this.props.spatialCoordinateSystem,
+          onShapeHover: this.props.onShapeHover,
+          onShapeClick: this.props.onShapeClick,
+        });
+      })
+      .filter(Boolean);
   }
 }

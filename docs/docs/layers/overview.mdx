@@ -26,4 +26,10 @@ See also the [visualization overview](../vis/overview): deck-only integrators ca
 
 ## Status
 
-`SpatialLayer` currently validates **`SpatialLayerProps`** and returns an empty sublayer stack until image/scatter/shapes factories are wired through this package.
+`SpatialLayer` now includes the first shared **shapes** path:
+
+- shapes rendering is owned primarily at the `@spatialdata/layers` tier rather than `@spatialdata/vis`
+- the current shipping backend is a polygon fallback path driven by feature identity and feature-state props
+- the public shapes config stays representation-agnostic so a future `deck.gl-geoarrow` backend can slot in without changing saved props
+
+For shapes, the important contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.

@@ -27,6 +27,7 @@ import type { TypedArray as ZarrTypedArray, Chunk, NumberDataType } from 'zarrit
 import type { Table as ArrowTable } from 'apache-arrow';
 import type { Vector } from 'apache-arrow/vector';
 import SpatialDataTableSource from './VTableSource';
+import type { ShapesRenderData } from '../shapes';
 export type PolygonShape = Array<Array<[number, number]>>;
 //nb, not totally happy with this type.
 export type ZarrNumericArray = ZarrTypedArray<NumberDataType> | BigInt64Array | Array<number>;
@@ -289,6 +290,29 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       };
     }
     throw new Error('Unexpected encoding type for polygons, currently only WKB is supported');
+  }
+
+  async loadShapesRenderData(elementPath: string): Promise<ShapesRenderData> {
+    const formatVersion = await this.getShapesFormatVersion(elementPath);
+    const [featureIdsRaw, polygonResult] = await Promise.all([
+      this.loadShapesIndex(elementPath),
+      this.loadPolygonShapes(`${elementPath}/geometry`),
+    ]);
+    const featureIds = featureIdsRaw
+      ? Array.from(featureIdsRaw, (value: unknown) => String(value))
+      : [];
+    const polygons = polygonResult.data;
+    if (featureIds.length !== polygons.length) {
+      throw new Error(
+        `Feature id count (${featureIds.length}) did not match polygon count (${polygons.length}) for ${elementPath}`
+      );
+    }
+    return {
+      kind: formatVersion === '0.1' ? 'js-polygons' : 'wkb-parquet',
+      elementKey: getShapesElementPath(elementPath).replace(/^shapes\//, ''),
+      featureIds,
+      polygons,
+    };
   }
 
   /**

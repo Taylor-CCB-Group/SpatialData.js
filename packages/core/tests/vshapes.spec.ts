@@ -46,4 +46,48 @@ describe('SpatialDataShapesSource', () => {
     expect(loadColumnSpy).toHaveBeenCalledWith('shapes/cells/Index');
     expect(loadParquetTableIndexSpy).not.toHaveBeenCalled();
   });
+
+  it('loads render data with aligned feature ids and polygons', async () => {
+    const source = new SpatialDataShapesSource({
+      store: {} as any,
+      fileType: '.zarr',
+    });
+
+    vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.2');
+    vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['cell-1', 'cell-2']);
+    vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
+      shape: [2, null],
+      data: [
+        [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+        [[[2, 2], [3, 2], [3, 3], [2, 2]]],
+      ],
+    });
+
+    await expect(source.loadShapesRenderData('shapes/cells')).resolves.toMatchObject({
+      kind: 'wkb-parquet',
+      elementKey: 'cells',
+      featureIds: ['cell-1', 'cell-2'],
+    });
+  });
+
+  it('fails clearly when feature ids and polygons are misaligned', async () => {
+    const source = new SpatialDataShapesSource({
+      store: {} as any,
+      fileType: '.zarr',
+    });
+
+    vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.2');
+    vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['cell-1']);
+    vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
+      shape: [2, null],
+      data: [
+        [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+        [[[2, 2], [3, 2], [3, 3], [2, 2]]],
+      ],
+    });
+
+    await expect(source.loadShapesRenderData('shapes/cells')).rejects.toThrow(
+      /Feature id count \(1\) did not match polygon count \(2\)/
+    );
+  });
 });

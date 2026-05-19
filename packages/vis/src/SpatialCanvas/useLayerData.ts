@@ -23,6 +23,7 @@ import {
   type LabelsElement,
   type PointsElement,
   type ShapesElement,
+  type ShapesRenderData,
   type LabelsTooltipMetadata,
   type ShapesTooltipMetadata,
   type SpatialFeatureTooltipData,
@@ -61,7 +62,7 @@ export interface ImageLoaderData {
 }
 
 interface LoadedShapesData extends ShapesTooltipMetadata {
-  polygons: Array<Array<Array<[number, number]>>>;
+  renderData: ShapesRenderData;
 }
 
 interface LoadedData {
@@ -121,6 +122,20 @@ interface UseLayerDataResult {
     layerId: string,
     pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
   ) => SpatialFeatureTooltipData | undefined;
+  /** Resolve stable shape feature metadata from a picked deck object. */
+  getShapePickEvent: (
+    layerId: string,
+    pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+  ) =>
+    | {
+        layerId: string;
+        elementKey: string;
+        featureId: string;
+        featureIndex: number;
+        rowIndex?: number;
+        object: unknown;
+      }
+    | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
@@ -139,9 +154,9 @@ function getLayerTooltipSignature(config: LayerConfig | undefined): string {
 
 async function loadShapesLayerData(
   element: ShapesElement
-): Promise<Pick<LoadedShapesData, 'polygons'>> {
-  const polygons = await loadShapesData(element);
-  return { polygons };
+): Promise<Pick<LoadedShapesData, 'renderData'>> {
+  const renderData = await loadShapesData(element);
+  return { renderData };
 }
 
 /**
@@ -683,8 +698,8 @@ export function useLayerData(
         const loaded = loadedDataRef.current;
         if (elem.type === 'shapes') {
           const shapeData = loaded.shapes.get(elem.key);
-          if (!shapeData?.polygons?.length) return null;
-          return boundsFromPolygons(shapeData.polygons, elem.transform);
+          if (!shapeData?.renderData.polygons?.length) return null;
+          return boundsFromPolygons(shapeData.renderData.polygons, elem.transform);
         }
         if (elem.type === 'points') {
           const pointData = loaded.points.get(elem.key);
@@ -754,7 +769,8 @@ export function useLayerData(
             fillColor: config.fillColor,
             strokeColor: config.strokeColor,
             strokeWidth: config.strokeWidth,
-            polygonData: shapeData.polygons,
+            featureState: config.featureState,
+            renderData: shapeData.renderData,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -898,7 +914,7 @@ export function useLayerData(
 
       const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
       if (
-        !loadedShapeData?.featureIds ||
+        !loadedShapeData?.renderData.featureIds ||
         !loadedShapeData.tooltipFields ||
         !loadedShapeData.tooltipColumns
       ) {
@@ -910,19 +926,24 @@ export function useLayerData(
         return undefined;
       }
 
-      const objectIndex = pickInfo.index;
-      if (typeof objectIndex !== 'number' || objectIndex < 0) {
+      const pickedObject = pickInfo.object as
+        | { featureId?: string; featureIndex?: number; rowIndex?: number }
+        | undefined;
+      const featureIndex = pickedObject?.featureIndex;
+      if (typeof featureIndex !== 'number' || featureIndex < 0) {
         return undefined;
       }
 
-      const featureId = loadedShapeData.featureIds[objectIndex];
+      const featureId = pickedObject?.featureId ?? loadedShapeData.renderData.featureIds[featureIndex];
       if (!featureId) {
         return undefined;
       }
 
-      const rowIndex = loadedShapeData.tooltipRowIndices
-        ? loadedShapeData.tooltipRowIndices[objectIndex]
-        : objectIndex;
+      const rowIndex =
+        pickedObject?.rowIndex ??
+        (loadedShapeData.tooltipRowIndices
+          ? loadedShapeData.tooltipRowIndices[featureIndex]
+          : featureIndex);
       if (rowIndex === undefined || rowIndex < 0) {
         return undefined;
       }
@@ -940,6 +961,33 @@ export function useLayerData(
       return {
         title: featureId,
         items,
+      };
+    },
+    []
+  );
+
+  const getShapePickEvent = useCallback(
+    (
+      layerId: string,
+      pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+    ) => {
+      const elem = elementMap.current.get(layerId);
+      if (!elem || elem.type !== 'shapes') {
+        return undefined;
+      }
+      const pickedObject = pickInfo.object as
+        | { featureId?: string; featureIndex?: number; rowIndex?: number }
+        | undefined;
+      if (!pickedObject?.featureId || typeof pickedObject.featureIndex !== 'number') {
+        return undefined;
+      }
+      return {
+        layerId,
+        elementKey: elem.key,
+        featureId: pickedObject.featureId,
+        featureIndex: pickedObject.featureIndex,
+        rowIndex: pickedObject.rowIndex,
+        object: pickedObject,
       };
     },
     []
@@ -1031,6 +1079,7 @@ export function useLayerData(
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
+    getShapePickEvent,
     isLoading,
     isBlocking,
     reloadElement,
