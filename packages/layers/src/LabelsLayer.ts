@@ -3,14 +3,24 @@ import { getImageSize } from '@hms-dbmi/viv';
 import { CompositeLayer, TileLayer, type Layer, type LayersList } from 'deck.gl';
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
 
-export const MAX_LABEL_CHANNELS = 7 as const;
+/** One instance-ID raster per labels element (see `LabelsBitmaskTileLayer`). */
+export const MAX_LABEL_CHANNELS = 1 as const;
 const MIN_LABELS_DISPLAY_ZOOM = -20;
 
 export type LabelsSelection = Partial<{ z: number; c: number; t: number }>;
 
+function firstSelection(selections: LabelsSelection[] | undefined): LabelsSelection {
+  return selections?.[0] ?? {};
+}
+
+function stylePlane<T>(arr: T[] | undefined, fallback: T): [T] {
+  return [arr?.[0] ?? fallback];
+}
+
 export interface LabelsLayerProps {
   id: string;
   loader: unknown;
+  /** Only the first entry is used (one Z/C/T plane of instance IDs). */
   selections: LabelsSelection[];
   visible?: boolean;
   opacity?: number;
@@ -57,26 +67,26 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
     this.setState({ abortController });
 
     const { signal } = abortController;
-    const getRaster = (selection: any) => props.loader.getRaster({ selection, signal });
-    const dataPromises = (props.selections ?? []).map(getRaster);
+    const selection = firstSelection(props.selections);
+    const getRaster = (props.loader as any).getRaster.bind(props.loader);
 
-    Promise.all(dataPromises)
-      .then((rasters) => {
+    getRaster({ selection, signal })
+      .then((raster0: { data: unknown; width: number; height: number }) => {
         if (signal.aborted) {
           return;
         }
         const raster = {
-          data: rasters.map((rasterData) => rasterData.data),
-          width: rasters[0]?.width,
-          height: rasters[0]?.height,
+          data: [raster0.data],
+          width: raster0.width,
+          height: raster0.height,
         };
         if (typeof props.onViewportLoad === 'function') {
           props.onViewportLoad(raster);
         }
         this.setState(raster);
       })
-      .catch((error) => {
-        if (signal.aborted || error?.name === 'AbortError') {
+      .catch((error: unknown) => {
+        if (signal.aborted || (error as { name?: string } | null)?.name === 'AbortError') {
           return;
         }
         throw error;
@@ -88,14 +98,21 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
       id,
       onClick,
       onHover,
-      channelColors,
-      channelsVisible,
-      channelOpacities,
-      channelOutlineOpacities,
-      channelsFilled,
-      channelStrokeWidths,
-      selections,
+      channelColors: channelColorsProp,
+      channelsVisible: channelsVisibleProp,
+      channelOpacities: channelOpacitiesProp,
+      channelOutlineOpacities: channelOutlineOpacitiesProp,
+      channelsFilled: channelsFilledProp,
+      channelStrokeWidths: channelStrokeWidthsProp,
+      selections: selectionsProp,
     } = this.props;
+    const selections = [firstSelection(selectionsProp)];
+    const channelColors = stylePlane(channelColorsProp, [255, 255, 255]);
+    const channelsVisible = stylePlane(channelsVisibleProp, true);
+    const channelOpacities = stylePlane(channelOpacitiesProp, 0.18);
+    const channelOutlineOpacities = stylePlane(channelOutlineOpacitiesProp, 0.95);
+    const channelsFilled = stylePlane(channelsFilledProp, true);
+    const channelStrokeWidths = stylePlane(channelStrokeWidthsProp, 1.5);
     const { width, height, data } = this.state as {
       width?: number;
       height?: number;
@@ -210,7 +227,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
   renderLayers(): Layer | null | LayersList {
     const {
       loader,
-      selections,
+      selections: selectionsProp,
       visible = true,
       opacity = 1,
       modelMatrix,
@@ -228,18 +245,19 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       return null;
     }
 
+    const selections = [firstSelection(selectionsProp)];
     const nextLoader = Array.isArray(loader) && loader.length === 1 ? loader[0] : loader;
     const commonProps = {
       loader: nextLoader,
       selections,
       modelMatrix,
       opacity,
-      channelsVisible,
-      channelColors,
-      channelOpacities,
-      channelOutlineOpacities,
-      channelsFilled,
-      channelStrokeWidths,
+      channelsVisible: stylePlane(channelsVisible, true),
+      channelColors: stylePlane(channelColors, [255, 255, 255]),
+      channelOpacities: stylePlane(channelOpacities, 0.18),
+      channelOutlineOpacities: stylePlane(channelOutlineOpacities, 0.95),
+      channelsFilled: stylePlane(channelsFilled, true),
+      channelStrokeWidths: stylePlane(channelStrokeWidths, 1.5),
     } as const;
     const interactionProps = {
       ...(typeof onClick === 'function' ? { onClick } : {}),
@@ -258,20 +276,19 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
         index: { x: number; y: number; z: number };
         signal: AbortSignal;
       }) => {
-        if (!selections || selections.length === 0) {
-          return null;
-        }
-
         const resolution = Math.max(0, Math.min(loader.length - 1, Math.round(-z)));
-        const getTile = (selection: LabelsSelection) =>
-          (loader[resolution] as any).getTile({ x, y, selection, signal });
+        const selection = firstSelection(selections);
+        const getTile = (loader[resolution] as any).getTile.bind(loader[resolution]);
 
         try {
-          const tiles = await Promise.all(selections.map(getTile));
+          const tile = await getTile({ x, y, selection, signal });
+          if (!tile) {
+            return null;
+          }
           return {
-            data: tiles.map((tile) => tile.data),
-            width: tiles[0]?.width,
-            height: tiles[0]?.height,
+            data: [tile.data],
+            width: tile.width,
+            height: tile.height,
           };
         } catch (error) {
           if (

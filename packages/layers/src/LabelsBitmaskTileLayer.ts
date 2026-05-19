@@ -4,20 +4,6 @@ import { Matrix4 } from '@math.gl/core';
 import { XRLayer } from '@hms-dbmi/viv';
 import { fs, labelsBitmaskUniforms, vs } from './labelsBitmaskLayerShaders';
 
-const MAX_LABEL_CHANNELS = 7;
-
-function padWithDefault<T>(
-  arr: readonly T[] | undefined,
-  defaultValue: T,
-  targetLength: number
-): T[] {
-  const next = arr ? [...arr] : [];
-  while (next.length < targetLength) {
-    next.push(defaultValue);
-  }
-  return next;
-}
-
 function getNormalizedColor(color?: readonly number[]): [number, number, number] {
   if (!color || color.length < 3) {
     return [0, 0, 0];
@@ -51,58 +37,27 @@ function getLabelCoordinate(
   }
 }
 
-function getTopmostLabelAtPixel(
+function getLabelAtPixel(
   props: any,
   pixelX: number,
   pixelY: number
-): { channelIndex: number; labelId: number; selection?: unknown } | null {
-  const {
-    channelData,
-    channelsVisible,
-    selections,
-    channelColors,
-    channelOpacities,
-    channelOutlineOpacities,
-    channelsFilled,
-    channelStrokeWidths,
-  } = props;
-  const channelArrays = channelData?.data;
+): { labelId: number; selection?: unknown } | null {
+  const { channelData, channelsVisible, selections } = props;
+  const plane = channelData?.data?.[0];
   const width = channelData?.width;
   const height = channelData?.height;
-  if (!channelArrays?.length || !width || !height) {
+  if (!plane?.length || !width || !height) {
     return null;
   }
-
-  const actualChannelCount = Math.max(
-    1,
-    Math.min(
-      MAX_LABEL_CHANNELS,
-      channelArrays.length ??
-        selections?.length ??
-        channelColors?.length ??
-        channelsVisible?.length ??
-        channelOpacities?.length ??
-        channelOutlineOpacities?.length ??
-        channelsFilled?.length ??
-        channelStrokeWidths?.length ??
-        1
-    )
-  );
-  const pixelIndex = pixelY * width + pixelX;
-  for (let channelIndex = actualChannelCount - 1; channelIndex >= 0; channelIndex--) {
-    if (!(channelsVisible?.[channelIndex] ?? true)) {
-      continue;
-    }
-    const labelValue = Number(channelArrays[channelIndex]?.[pixelIndex] ?? 0);
-    if (Number.isFinite(labelValue) && labelValue > 0) {
-      return {
-        channelIndex,
-        labelId: labelValue,
-        selection: selections?.[channelIndex],
-      };
-    }
+  if (!(channelsVisible?.[0] ?? true)) {
+    return null;
   }
-  return null;
+  const pixelIndex = pixelY * width + pixelX;
+  const labelValue = Number(plane[pixelIndex] ?? 0);
+  if (!Number.isFinite(labelValue) || labelValue <= 0) {
+    return null;
+  }
+  return { labelId: labelValue, selection: selections?.[0] };
 }
 
 type LabelsBitmaskTileLayerProps = {
@@ -135,11 +90,17 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     super(...args);
   }
 
+  /** One instance-ID plane; matches SpatialData labels + `get_table_keys` contract. */
+  getNumChannels(): number {
+    return 1;
+  }
+
   getShaders(): any {
     return {
       fs,
       vs,
       modules: [project32, picking, labelsBitmaskUniforms],
+      defines: { NUM_CHANNELS: '1' },
     };
   }
 
@@ -180,7 +141,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
 
     const pixelX = Math.max(0, Math.min(width - 1, Math.floor(u * width)));
     const pixelY = Math.max(0, Math.min(height - 1, Math.floor(v * height)));
-    const pickedLabel = getTopmostLabelAtPixel(this.props, pixelX, pixelY);
+    const pickedLabel = getLabelAtPixel(this.props, pixelX, pixelY);
     if (!pickedLabel) {
       info.object = null;
       return info;
@@ -188,9 +149,10 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
 
     info.object = {
       ...pickedLabel,
+      channelIndex: 0,
       pixel: [pixelX, pixelY] as const,
     };
-    info.index = pickedLabel.channelIndex;
+    info.index = 0;
     return info;
   }
 
@@ -211,17 +173,8 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     });
   }
 
-  // Override the parent implementation to support up to seven label channels.
   loadChannelTextures(channelData: { data?: unknown[]; width: number; height: number }) {
-    const textures: Record<string, unknown> = {
-      channel0: null,
-      channel1: null,
-      channel2: null,
-      channel3: null,
-      channel4: null,
-      channel5: null,
-      channel6: null,
-    };
+    const textures: Record<string, unknown> = { channel0: null };
 
     if (this.state.textures) {
       Object.values(this.state.textures as Record<string, { delete?: () => void } | null>).forEach(
@@ -231,25 +184,9 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       );
     }
 
-    if (channelData?.data?.length) {
-      channelData.data.forEach((data, index) => {
-        if (index >= MAX_LABEL_CHANNELS) {
-          return;
-        }
-        textures[`channel${index}`] = this.dataToTexture(
-          data,
-          channelData.width,
-          channelData.height
-        );
-      });
-      for (const key of Object.keys(textures)) {
-        if (!textures.channel0) {
-          throw new Error('Bad labels texture state.');
-        }
-        if (!textures[key]) {
-          textures[key] = textures.channel0;
-        }
-      }
+    const plane = channelData?.data?.[0];
+    if (plane && channelData.width && channelData.height) {
+      textures.channel0 = this.dataToTexture(plane, channelData.width, channelData.height);
       (this as any)._setNewTexturesFromLoadThisFrame?.(textures);
       this.setState({ textures });
       return;
@@ -282,61 +219,22 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       maxZoom,
       opacity = 1,
       zoom,
-      channelData,
-      selections,
     } = this.props;
 
-    const actualChannelCount = Math.max(
-      1,
-      Math.min(
-        MAX_LABEL_CHANNELS,
-        channelData?.data?.length ??
-          selections?.length ??
-          channelColors?.length ??
-          channelsVisible?.length ??
-          channelOpacities?.length ??
-          channelOutlineOpacities?.length ??
-          channelsFilled?.length ??
-          channelStrokeWidths?.length ??
-          1
-      )
-    );
-
-    const normalizedColors = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
-      getNormalizedColor(
-        index < actualChannelCount ? (channelColors?.[index] ?? [255, 255, 255]) : [255, 255, 255]
-      )
-    );
-
+    const color = getNormalizedColor(channelColors?.[0] ?? [255, 255, 255]);
     const zoomDelta = typeof zoom === 'number' && typeof maxZoom === 'number' ? maxZoom - zoom : 0;
     const scaleFactor = 1 / 2 ** zoomDelta;
 
-    const filled = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
-      index < actualChannelCount ? (channelsFilled?.[index] ?? true) : false
-    );
-    const opacities = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
-      index < actualChannelCount ? (channelOpacities?.[index] ?? 0.18) : 0
-    );
-    const outlineOpacities = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
-      index < actualChannelCount ? (channelOutlineOpacities?.[index] ?? 0.95) : 0
-    );
-    const visible = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
-      index < actualChannelCount ? (channelsVisible?.[index] ?? true) : false
-    );
-    const strokeWidths = Array.from({ length: MAX_LABEL_CHANNELS }, (_, index) =>
-      index < actualChannelCount ? (channelStrokeWidths?.[index] ?? 1.5) : 1
-    );
-
-    const labelsBitmask = Object.fromEntries([
-      ...normalizedColors.map((color, index) => [`color${index}`, [...color, 1] as const]),
-      ...filled.map((value, index) => [`channelFilled${index}`, value ? 1 : 0]),
-      ...opacities.map((value, index) => [`channelOpacity${index}`, value]),
-      ...outlineOpacities.map((value, index) => [`channelOutlineOpacity${index}`, value]),
-      ...visible.map((value, index) => [`channelVisible${index}`, value ? 1 : 0]),
-      ...strokeWidths.map((value, index) => [`channelStrokeWidth${index}`, value]),
-      ['scaleFactor', scaleFactor],
-      ['labelOpacity', opacity],
-    ]);
+    const labelsBitmask = {
+      color0: [...color, 1] as const,
+      channelFilled0: (channelsFilled?.[0] ?? true) ? 1 : 0,
+      channelOpacity0: channelOpacities?.[0] ?? 0.18,
+      channelOutlineOpacity0: channelOutlineOpacities?.[0] ?? 0.95,
+      channelVisible0: (channelsVisible?.[0] ?? true) ? 1 : 0,
+      channelStrokeWidth0: channelStrokeWidths?.[0] ?? 1.5,
+      scaleFactor,
+      labelOpacity: opacity,
+    };
 
     model.shaderInputs?.setProps({ labelsBitmask });
     model.setUniforms?.(_opts.uniforms ?? {}, { disableWarnings: false });

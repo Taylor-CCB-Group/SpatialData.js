@@ -1,13 +1,16 @@
-const CHANNEL_INDICES = [0, 1, 2, 3, 4, 5, 6] as const;
+/**
+ * Single instance-ID raster plane (`channel0` + one `labelsBitmask` style slot).
+ * Not expanded via `expandShaderModule` — SpatialData labels are one plane, not Viv multi-channel stacks.
+ */
 
 const labelsUniformBlock = `\
 uniform labelsBitmaskUniforms {
-${CHANNEL_INDICES.map((index) => `  vec4 color${index};`).join('\n')}
-${CHANNEL_INDICES.map((index) => `  float channelOpacity${index};`).join('\n')}
-${CHANNEL_INDICES.map((index) => `  float channelOutlineOpacity${index};`).join('\n')}
-${CHANNEL_INDICES.map((index) => `  float channelStrokeWidth${index};`).join('\n')}
-${CHANNEL_INDICES.map((index) => `  float channelVisible${index};`).join('\n')}
-${CHANNEL_INDICES.map((index) => `  float channelFilled${index};`).join('\n')}
+  vec4 color0;
+  float channelOpacity0;
+  float channelOutlineOpacity0;
+  float channelStrokeWidth0;
+  float channelVisible0;
+  float channelFilled0;
   float scaleFactor;
   float labelOpacity;
 } labelsBitmask;
@@ -16,16 +19,16 @@ ${CHANNEL_INDICES.map((index) => `  float channelFilled${index};`).join('\n')}
 export const labelsBitmaskUniforms = {
   name: 'labelsBitmask',
   fs: labelsUniformBlock,
-  uniformTypes: Object.fromEntries([
-    ...CHANNEL_INDICES.map((index) => [`color${index}`, 'vec4<f32>']),
-    ...CHANNEL_INDICES.map((index) => [`channelOpacity${index}`, 'f32']),
-    ...CHANNEL_INDICES.map((index) => [`channelOutlineOpacity${index}`, 'f32']),
-    ...CHANNEL_INDICES.map((index) => [`channelStrokeWidth${index}`, 'f32']),
-    ...CHANNEL_INDICES.map((index) => [`channelVisible${index}`, 'f32']),
-    ...CHANNEL_INDICES.map((index) => [`channelFilled${index}`, 'f32']),
-    ['scaleFactor', 'f32'],
-    ['labelOpacity', 'f32'],
-  ]),
+  uniformTypes: {
+    color0: 'vec4<f32>',
+    channelOpacity0: 'f32',
+    channelOutlineOpacity0: 'f32',
+    channelStrokeWidth0: 'f32',
+    channelVisible0: 'f32',
+    channelFilled0: 'f32',
+    scaleFactor: 'f32',
+    labelOpacity: 'f32',
+  },
 } as const;
 
 export const vs = `#version 300 es
@@ -43,23 +46,19 @@ void main(void) {
   geometry.uv = texCoords;
   geometry.pickingColor = instancePickingColors;
   gl_Position = project_position_to_clipspace(positions, positions64Low, vec3(0.0), geometry.position);
-  picking_setPickingAttribute(gl_Position.z / gl_Position.w);
+  DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
   vTexCoord = texCoords;
-  picking_setPickingColor(geometry.pickingColor);
+  vec4 color = vec4(0.0);
+  DECKGL_FILTER_COLOR(color, geometry);
 }
 `;
 
 export const fs = `#version 300 es
 #define SHADER_NAME labels-bitmask-layer-fragment-shader
 precision highp float;
+precision highp int;
 
 uniform sampler2D channel0;
-uniform sampler2D channel1;
-uniform sampler2D channel2;
-uniform sampler2D channel3;
-uniform sampler2D channel4;
-uniform sampler2D channel5;
-uniform sampler2D channel6;
 
 in vec2 vTexCoord;
 
@@ -152,47 +151,14 @@ vec4 dataToColor(
   return vec4(outRgb, outAlpha);
 }
 
-vec4 blendOver(vec4 baseColor, vec4 overlayColor) {
-  if (overlayColor.a <= 0.0) {
-    return baseColor;
-  }
-  return vec4(
-    mix(baseColor.rgb, overlayColor.rgb, overlayColor.a),
-    max(baseColor.a, overlayColor.a)
-  );
-}
-
 void main() {
   vec4 dat0 = sampleAndGetData(channel0, vTexCoord, labelsBitmask.channelFilled0, labelsBitmask.channelStrokeWidth0, labelsBitmask.channelVisible0);
-  vec4 dat1 = sampleAndGetData(channel1, vTexCoord, labelsBitmask.channelFilled1, labelsBitmask.channelStrokeWidth1, labelsBitmask.channelVisible1);
-  vec4 dat2 = sampleAndGetData(channel2, vTexCoord, labelsBitmask.channelFilled2, labelsBitmask.channelStrokeWidth2, labelsBitmask.channelVisible2);
-  vec4 dat3 = sampleAndGetData(channel3, vTexCoord, labelsBitmask.channelFilled3, labelsBitmask.channelStrokeWidth3, labelsBitmask.channelVisible3);
-  vec4 dat4 = sampleAndGetData(channel4, vTexCoord, labelsBitmask.channelFilled4, labelsBitmask.channelStrokeWidth4, labelsBitmask.channelVisible4);
-  vec4 dat5 = sampleAndGetData(channel5, vTexCoord, labelsBitmask.channelFilled5, labelsBitmask.channelStrokeWidth5, labelsBitmask.channelVisible5);
-  vec4 dat6 = sampleAndGetData(channel6, vTexCoord, labelsBitmask.channelFilled6, labelsBitmask.channelStrokeWidth6, labelsBitmask.channelVisible6);
 
-  if (
-    dat0.x == 0.0 && dat1.x == 0.0 && dat2.x == 0.0 && dat3.x == 0.0 &&
-    dat4.x == 0.0 && dat5.x == 0.0 && dat6.x == 0.0
-  ) {
+  if (dat0.x == 0.0) {
     discard;
   }
 
-  vec4 val0 = dataToColor(dat0, labelsBitmask.color0, labelsBitmask.channelOpacity0, labelsBitmask.channelOutlineOpacity0, labelsBitmask.channelFilled0);
-  vec4 val1 = dataToColor(dat1, labelsBitmask.color1, labelsBitmask.channelOpacity1, labelsBitmask.channelOutlineOpacity1, labelsBitmask.channelFilled1);
-  vec4 val2 = dataToColor(dat2, labelsBitmask.color2, labelsBitmask.channelOpacity2, labelsBitmask.channelOutlineOpacity2, labelsBitmask.channelFilled2);
-  vec4 val3 = dataToColor(dat3, labelsBitmask.color3, labelsBitmask.channelOpacity3, labelsBitmask.channelOutlineOpacity3, labelsBitmask.channelFilled3);
-  vec4 val4 = dataToColor(dat4, labelsBitmask.color4, labelsBitmask.channelOpacity4, labelsBitmask.channelOutlineOpacity4, labelsBitmask.channelFilled4);
-  vec4 val5 = dataToColor(dat5, labelsBitmask.color5, labelsBitmask.channelOpacity5, labelsBitmask.channelOutlineOpacity5, labelsBitmask.channelFilled5);
-  vec4 val6 = dataToColor(dat6, labelsBitmask.color6, labelsBitmask.channelOpacity6, labelsBitmask.channelOutlineOpacity6, labelsBitmask.channelFilled6);
-
-  fragColor = val0;
-  fragColor = blendOver(fragColor, val1);
-  fragColor = blendOver(fragColor, val2);
-  fragColor = blendOver(fragColor, val3);
-  fragColor = blendOver(fragColor, val4);
-  fragColor = blendOver(fragColor, val5);
-  fragColor = blendOver(fragColor, val6);
+  fragColor = dataToColor(dat0, labelsBitmask.color0, labelsBitmask.channelOpacity0, labelsBitmask.channelOutlineOpacity0, labelsBitmask.channelFilled0);
   fragColor.a = fragColor.a * labelsBitmask.labelOpacity;
 
   fragColor = picking_filterHighlightColor(fragColor);
