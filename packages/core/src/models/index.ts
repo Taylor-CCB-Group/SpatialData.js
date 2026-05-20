@@ -28,6 +28,8 @@ import {
 import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
 import SpatialDataPointsSource from './VPointsSource';
 import type { ShapesRenderData } from '../shapes';
+import { loadFeatureRowIndexByFeatureIndex } from '../tableAssociations';
+import type { SpatialData } from '../store';
 
 /**
  * Parameters for creating element instances.
@@ -504,7 +506,15 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
   }
 
   async loadRenderData(): Promise<ShapesRenderData> {
-    return this.vShapes.loadShapesRenderData(`shapes/${this.key}`);
+    const renderData = await this.vShapes.loadShapesRenderData(`shapes/${this.key}`);
+    const spatialData = this.sdata as SpatialData | undefined;
+    renderData.rowIndexByFeatureIndex = await loadFeatureRowIndexByFeatureIndex({
+      spatialData,
+      kind: 'shapes',
+      key: this.key,
+      featureIds: renderData.featureIds,
+    });
+    return renderData;
   }
 }
 

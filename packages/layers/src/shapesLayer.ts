@@ -11,7 +11,18 @@ export interface ShapesRenderDataLike {
   elementKey: string;
   featureIds: string[];
   polygons?: ShapePolygon[];
-  rowIndexByFeatureIndex?: Int32Array;
+  rowIndexByFeatureIndex: Int32Array;
+  geometryTable?: GeoarrowTableLike;
+  geometryColumnName?: string;
+}
+
+interface GeoarrowVectorLike {
+  get(index: number): unknown;
+}
+
+export interface GeoarrowTableLike {
+  numRows: number;
+  getChild(name: string): GeoarrowVectorLike | null | undefined;
 }
 
 export interface ShapeFeatureStateRuntime {
@@ -38,6 +49,26 @@ export interface ShapesLayerPickEvent {
   rowIndex?: number;
   object: ShapeFeatureRenderDatum;
   pickInfo: PickingInfo;
+}
+
+export interface ShapeTooltipRuntimeData {
+  tooltipFields?: string[];
+  tooltipColumns?: Array<ArrayLike<unknown> | undefined>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isShapeFeatureRenderDatum(value: unknown): value is ShapeFeatureRenderDatum {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.featureId === 'string' &&
+    typeof value.featureIndex === 'number' &&
+    isShapePolygon(value.polygon)
+  );
 }
 
 export interface CreateShapesDeckLayerOptions {
@@ -101,6 +132,48 @@ function buildRenderedFeatures(
   return features;
 }
 
+function isShapePolygon(value: unknown): value is ShapePolygon {
+  return Array.isArray(value);
+}
+
+function buildGeoarrowRenderedFeatures(
+  renderData: ShapesRenderDataLike,
+  sublayer: SpatialShapesSublayer
+): ShapeFeatureRenderDatum[] {
+  const geometryTable = renderData.geometryTable;
+  const geometryColumnName = renderData.geometryColumnName;
+  if (!geometryTable || !geometryColumnName) {
+    return [];
+  }
+  const geometryColumn = geometryTable.getChild(geometryColumnName);
+  if (!geometryColumn) {
+    return [];
+  }
+  const featureState = normalizeShapeFeatureState(sublayer.featureState);
+  const count = Math.min(geometryTable.numRows, renderData.featureIds.length);
+  const features: ShapeFeatureRenderDatum[] = [];
+
+  for (let featureIndex = 0; featureIndex < count; featureIndex++) {
+    const featureId = renderData.featureIds[featureIndex];
+    if (!featureId || featureState.hiddenFeatureIds.has(featureId)) {
+      continue;
+    }
+    const polygon = geometryColumn.get(featureIndex);
+    if (!isShapePolygon(polygon)) {
+      continue;
+    }
+    const rowIndex = renderData.rowIndexByFeatureIndex[featureIndex];
+    features.push({
+      featureId,
+      featureIndex,
+      polygon,
+      rowIndex: rowIndex >= 0 ? rowIndex : undefined,
+    });
+  }
+
+  return features;
+}
+
 function createPickHandler(
   layerId: string,
   elementKey: string,
@@ -112,7 +185,7 @@ function createPickHandler(
   }
 
   return (pickInfo: PickingInfo) => {
-    const object = pickInfo.object as ShapeFeatureRenderDatum | undefined;
+    const object = resolveShapeFeatureFromPickInfo(pickInfo);
     if (!object?.featureId) {
       return;
     }
@@ -129,6 +202,55 @@ function createPickHandler(
   };
 }
 
+export function resolveShapeFeatureFromPickInfo(
+  pickInfo: Pick<{ object?: unknown }, 'object'>
+): ShapeFeatureRenderDatum | undefined {
+  const object = pickInfo.object;
+  if (!isShapeFeatureRenderDatum(object)) {
+    return undefined;
+  }
+  return object;
+}
+
+export function resolveShapeTooltipFromPickInfo(
+  renderData: ShapeTooltipRuntimeData,
+  pickInfo: Pick<{ object?: unknown }, 'object'>
+): { title: string; items: Array<{ label: string; value: string }> } | undefined {
+  const feature = resolveShapeFeatureFromPickInfo(pickInfo);
+  if (!feature) {
+    return undefined;
+  }
+  const rowIndex = feature.rowIndex;
+  if (
+    rowIndex === undefined ||
+    rowIndex < 0 ||
+    !renderData.tooltipFields ||
+    !renderData.tooltipColumns
+  ) {
+    return undefined;
+  }
+
+  const items = renderData.tooltipFields
+    .map((field, fieldIndex) => {
+      const column = renderData.tooltipColumns?.[fieldIndex];
+      const value = column?.[rowIndex];
+      return {
+        label: field,
+        value: value === null || value === undefined ? '' : String(value),
+      };
+    })
+    .filter((item) => item.value !== '');
+
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return {
+    title: feature.featureId,
+    items,
+  };
+}
+
 export function createShapesDeckLayer(
   renderData: ShapesRenderDataLike,
   sublayer: SpatialShapesSublayer,
@@ -138,11 +260,10 @@ export function createShapesDeckLayer(
     return null;
   }
 
-  if (renderData.kind === 'geoarrow-table') {
-    return null;
-  }
-
-  const data = buildRenderedFeatures(renderData, sublayer);
+  const data =
+    renderData.kind === 'geoarrow-table'
+      ? buildGeoarrowRenderedFeatures(renderData, sublayer)
+      : buildRenderedFeatures(renderData, sublayer);
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
   const defaultStrokeColor = sublayer.defaultStrokeColor ?? [255, 255, 255, 255];

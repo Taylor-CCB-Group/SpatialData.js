@@ -10,4 +10,5 @@ export * from './store/index.js';
 export * from './models/index.js';
 export * from './spatialViewFit.js';
 export * from './shapes.js';
+export * from './tableAssociations.js';
 export * from './tooltip.js';

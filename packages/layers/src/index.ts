@@ -6,9 +6,13 @@ export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';
 export {
   createShapesDeckLayer,
   normalizeShapeFeatureState,
+  resolveShapeFeatureFromPickInfo,
+  resolveShapeTooltipFromPickInfo,
   type ShapesLayerPickEvent,
   type ShapeFeatureRenderDatum,
   type ShapesRenderDataLike,
+  type ShapeTooltipRuntimeData,
+  type GeoarrowTableLike,
 } from './shapesLayer';
 export {
   spatialLayerPropsSchema,

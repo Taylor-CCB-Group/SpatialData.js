@@ -29,7 +29,8 @@ See also the [visualization overview](../vis/overview): deck-only integrators ca
 `SpatialLayer` now includes the first shared **shapes** path:
 
 - shapes rendering is owned primarily at the `@spatialdata/layers` tier rather than `@spatialdata/vis`
-- the current shipping backend is a polygon fallback path driven by feature identity and feature-state props
-- the public shapes config stays representation-agnostic so a future `deck.gl-geoarrow` backend can slot in without changing saved props
+- the current shipping path is mixed-mode: polygon fallback for JS/WKB payloads and a shared columnar backend branch for `geoarrow-table` runtime data
+- row alignment, picking, and tooltip resolution are now driven by stable feature identity plus shared row-index metadata
+- the public shapes config stays representation-agnostic so a stronger future `deck.gl-geoarrow` backend can slot in without changing saved props
 
 For shapes, the important contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.

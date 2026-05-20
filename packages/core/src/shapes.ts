@@ -10,5 +10,6 @@ export interface ShapesRenderData {
   featureIds: string[];
   polygons?: ShapePolygon[];
   geometryTable?: ArrowTable;
-  rowIndexByFeatureIndex?: Int32Array;
+  geometryColumnName?: string;
+  rowIndexByFeatureIndex: Int32Array;
 }

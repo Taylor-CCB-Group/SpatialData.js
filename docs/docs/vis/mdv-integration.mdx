@@ -162,7 +162,9 @@ type FeatureStyleState = {
 };
 ```
 
-MDV can compute this state from its datastore and filters, while `@spatialdata/layers` now owns the deck-facing shapes implementation and `@spatialdata/vis` consumes that shared path.
+MDV can compute this state from its datastore and filters, while `@spatialdata/layers` now owns the deck-facing shapes implementation, pick/tooltip resolution, and backend choice. `@spatialdata/vis` consumes that shared path.
+
+For the adapter boundary, MDV should be able to own only serialized `featureState`, layer order/visibility, and any precomputed style/filter values keyed by stable `featureId`, without needing to know which shapes backend is active underneath.
 
 ## Phase 4: nicer GUI in MDV
 
@@ -206,7 +208,7 @@ Current local state:
 
 - `@spatialdata/core` currently loads Parquet bytes/tables through `parquet-wasm` in `VTableSource`, inherited by points and shapes sources.
 - points currently return an ndarray-ish `{ shape, data }` object with axis columns loaded from Parquet.
-- shapes currently expose a render-oriented core payload with stable feature ids and a polygon fallback path; the shipping backend still uses decoded polygons, but the deck-facing implementation now lives in `@spatialdata/layers`.
+- shapes currently expose a render-oriented core payload with stable feature ids, shared row-index alignment, and a mixed backend path in `@spatialdata/layers`.
 - labels are still their own image/tile rendering path.
 - Vitessce-derived code already has more advanced point handling in places, including tiled point loading, viewport filtering, feature-index filtering, and `DataFilterExtension` use.
 
@@ -216,6 +218,11 @@ Upstream signals to monitor:
 - `@loaders.gl/parquet` / `GeoParquetLoader` exists but is documented as experimental/beta, with important limitations around large files and partial filtering.
 - deck.gl-community's Arrow layers accept Apache Arrow / GeoArrow tables directly and use deck.gl's binary data interface to avoid intermediate JS objects.
 - GeoParquet and GeoArrow are closely related but not identical. GeoParquet commonly stores geometry as WKB today; GeoArrow-native encodings are the direction to watch.
+- Foundational work on deck.gl v10, loaders.gl v5, and luma.gl v10 points even more strongly toward native Arrow / GeoArrow handling as a first-class direction:
+  - deck.gl v10 is expected to rely more heavily on shared columnar GPU data handling rather than bespoke per-layer CPU-side mapping
+  - loaders.gl v5 is introducing optimized Arrow / GeoArrow load paths across loaders
+  - luma.gl v10 is exploring Arrow-like GPU-side data structures, batched GPU data, and GPU-side column transformations so full binary uploads can stay columnar even when raw Arrow blocks do not match GPU attribute/storage-buffer layouts directly
+  - the practical implication for us is that representation-agnostic public APIs matter even more: we want our contracts to survive a shift from today’s fallback/bespoke handling to more native Arrow-to-GPU paths later
 
 Boundary options:
 
@@ -244,10 +251,13 @@ Recommended direction for now:
 - [ ] Move toward `core` exposing Arrow-ish columnar primitives for points/shapes/tables, while preserving convenience methods for simple JS arrays.
 - [ ] Make `@spatialdata/layers` responsible for choosing the rendering backend:
   - current polygon fallback for compatibility
-  - `deck.gl-geoarrow` as the intended near-term fast path when the core payload supports it cleanly
+  - current `geoarrow-table` runtime branch for shared columnar payloads
+  - `deck.gl-geoarrow` as the intended stronger near-term fast path when the external dependency is adopted cleanly
   - future Arrow/community-layer backends without changing the public shapes config
 - [x] Keep feature identity, table association, coordinate transforms, and metadata interpretation in `core`; keep GPU filtering, tiling, layer construction, and picking/render props in `layers`.
 - [ ] Avoid baking `parquet-wasm` as the only long-term path. Treat it as the current implementation behind a replaceable interface.
+
+One more API-design note to preserve: the current table-association helpers are still `obs`-oriented and string-column-oriented because that is enough for the first feature-id join path. A future revision should widen the shared contract so style/filter inputs can come coherently from all of the AnnData surfaces we care about: `obs`, `var`, selected `X` columns for chosen `var` rows, `obsm`, potential future `obsp` graph/network data, and `uns`, without forcing integrators to encode everything as ad hoc string column lookups. In principle, many of those richer access patterns should likely be pushed upstream into `anndata.js` rather than duplicated forever in SpatialData.js.
 - [ ] Treat Vitessce parity tests as compatibility fixtures: when Vitessce supports a points/shapes SpatialData layout, `core` should either support it too or document why not.
 - [ ] Add a small compatibility matrix for points and shapes:
   - WKB GeoParquet -> JS fallback

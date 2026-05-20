@@ -294,9 +294,11 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
 
   async loadShapesRenderData(elementPath: string): Promise<ShapesRenderData> {
     const formatVersion = await this.getShapesFormatVersion(elementPath);
-    const [featureIdsRaw, polygonResult] = await Promise.all([
+    const parquetPath = getParquetPath(elementPath);
+    const [featureIdsRaw, polygonResult, geometryTable] = await Promise.all([
       this.loadShapesIndex(elementPath),
       this.loadPolygonShapes(`${elementPath}/geometry`),
+      formatVersion === '0.1' ? Promise.resolve(undefined) : this.loadParquetTable(parquetPath),
     ]);
     const featureIds = featureIdsRaw
       ? Array.from(featureIdsRaw, (value: unknown) => String(value))
@@ -312,6 +314,9 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       elementKey: getShapesElementPath(elementPath).replace(/^shapes\//, ''),
       featureIds,
       polygons,
+      geometryTable,
+      geometryColumnName: 'geometry',
+      rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
     };
   }
 

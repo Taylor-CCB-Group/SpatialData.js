@@ -38,6 +38,10 @@ import {
   resolveTooltipItems,
   unionBoundsList,
 } from '@spatialdata/core';
+import {
+  resolveShapeFeatureFromPickInfo,
+  resolveShapeTooltipFromPickInfo,
+} from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
@@ -912,56 +916,22 @@ export function useLayerData(
         return undefined;
       }
 
+      const config = layersRef.current[layerId];
       const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
       if (
-        !loadedShapeData?.renderData.featureIds ||
-        !loadedShapeData.tooltipFields ||
-        !loadedShapeData.tooltipColumns
+        !loadedShapeData?.tooltipFields ||
+        !loadedShapeData.tooltipColumns ||
+        getLayerTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')
       ) {
         return undefined;
       }
-
-      const config = layersRef.current[layerId];
-      if (getLayerTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
-        return undefined;
-      }
-
-      const pickedObject = pickInfo.object as
-        | { featureId?: string; featureIndex?: number; rowIndex?: number }
-        | undefined;
-      const featureIndex = pickedObject?.featureIndex;
-      if (typeof featureIndex !== 'number' || featureIndex < 0) {
-        return undefined;
-      }
-
-      const featureId = pickedObject?.featureId ?? loadedShapeData.renderData.featureIds[featureIndex];
-      if (!featureId) {
-        return undefined;
-      }
-
-      const rowIndex =
-        pickedObject?.rowIndex ??
-        (loadedShapeData.tooltipRowIndices
-          ? loadedShapeData.tooltipRowIndices[featureIndex]
-          : featureIndex);
-      if (rowIndex === undefined || rowIndex < 0) {
-        return undefined;
-      }
-
-      const items = resolveTooltipItems(
-        loadedShapeData.tooltipFields,
-        loadedShapeData.tooltipColumns,
-        rowIndex
+      return resolveShapeTooltipFromPickInfo(
+        {
+          tooltipFields: loadedShapeData.tooltipFields,
+          tooltipColumns: loadedShapeData.tooltipColumns,
+        },
+        pickInfo
       );
-
-      if (items.length === 0) {
-        return undefined;
-      }
-
-      return {
-        title: featureId,
-        items,
-      };
     },
     []
   );
@@ -975,19 +945,17 @@ export function useLayerData(
       if (!elem || elem.type !== 'shapes') {
         return undefined;
       }
-      const pickedObject = pickInfo.object as
-        | { featureId?: string; featureIndex?: number; rowIndex?: number }
-        | undefined;
-      if (!pickedObject?.featureId || typeof pickedObject.featureIndex !== 'number') {
+      const feature = resolveShapeFeatureFromPickInfo(pickInfo);
+      if (!feature) {
         return undefined;
       }
       return {
         layerId,
         elementKey: elem.key,
-        featureId: pickedObject.featureId,
-        featureIndex: pickedObject.featureIndex,
-        rowIndex: pickedObject.rowIndex,
-        object: pickedObject,
+        featureId: feature.featureId,
+        featureIndex: feature.featureIndex,
+        rowIndex: feature.rowIndex,
+        object: feature,
       };
     },
     []

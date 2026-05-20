@@ -101,6 +101,7 @@ export async function loadShapesData(element: ShapesElement): Promise<ShapesRend
       elementKey: element.key,
       featureIds: [],
       polygons: [],
+      rowIndexByFeatureIndex: new Int32Array(0),
     };
   }
 }

@@ -55,6 +55,10 @@ describe('SpatialDataShapesSource', () => {
 
     vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.2');
     vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['cell-1', 'cell-2']);
+    vi.spyOn(source, 'loadParquetTable').mockResolvedValue({
+      numRows: 2,
+      getChild: () => undefined,
+    } as any);
     vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
       shape: [2, null],
       data: [
@@ -78,6 +82,10 @@ describe('SpatialDataShapesSource', () => {
 
     vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.2');
     vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['cell-1']);
+    vi.spyOn(source, 'loadParquetTable').mockResolvedValue({
+      numRows: 2,
+      getChild: () => undefined,
+    } as any);
     vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
       shape: [2, null],
       data: [
