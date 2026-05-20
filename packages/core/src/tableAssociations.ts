@@ -27,6 +27,14 @@ function tableRegionMatches(kind: SpatialAssociationKind, regionValue: string, k
   return regionValue === key || regionValue === `${kind}/${key}`;
 }
 
+export function isSpatialData(value: unknown): value is SpatialData {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as SpatialData).getAssociatedTable === 'function'
+  );
+}
+
 export async function loadAssociatedTableFeatureRows({
   spatialData,
   kind,
@@ -59,7 +67,15 @@ export async function loadAssociatedTableFeatureRows({
 
   const [, table] = associated;
   const { regionKey } = table.getTableKeys();
-  const requestedColumns = Array.from(new Set([regionKey, ...extraColumnNames]));
+  const seenExtra = new Set<string>();
+  const uniqueExtra = extraColumnNames.filter((name) => {
+    if (name === regionKey || seenExtra.has(name)) {
+      return false;
+    }
+    seenExtra.add(name);
+    return true;
+  });
+  const requestedColumns = [regionKey, ...uniqueExtra];
   const rowIds = await table.loadObsIndex();
   const columns = await table.loadObsColumns(requestedColumns);
   const regionColumn = columns[0];

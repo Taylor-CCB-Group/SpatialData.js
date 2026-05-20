@@ -8,7 +8,13 @@ const sublayerBase = z.object({
   visible: z.boolean().optional().default(true),
 });
 
-const rgbaColorSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+const rgbaChannelSchema = z.number().min(0).max(255);
+const rgbaColorSchema = z.tuple([
+  rgbaChannelSchema,
+  rgbaChannelSchema,
+  rgbaChannelSchema,
+  rgbaChannelSchema,
+]);
 
 export const spatialImageSublayerSchema = sublayerBase.extend({
   kind: z.literal('image'),
@@ -26,7 +32,7 @@ export const spatialShapesSublayerSchema = sublayerBase.extend({
   tooltipFields: z.array(z.string()).optional(),
   defaultFillColor: rgbaColorSchema.optional(),
   defaultStrokeColor: rgbaColorSchema.optional(),
-  defaultStrokeWidth: z.number().optional(),
+  defaultStrokeWidth: z.number().min(0).optional(),
   featureState: z
     .object({
       fillColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),

@@ -39,6 +39,7 @@ import {
   unionBoundsList,
 } from '@spatialdata/core';
 import {
+  type ShapeFeatureRenderDatum,
   resolveShapeFeatureFromPickInfo,
   resolveShapeTooltipFromPickInfo,
 } from '@spatialdata/layers';
@@ -137,7 +138,7 @@ interface UseLayerDataResult {
         featureId: string;
         featureIndex: number;
         rowIndex?: number;
-        object: unknown;
+        object: ShapeFeatureRenderDatum;
       }
     | undefined;
   /** Whether any layers are currently loading */

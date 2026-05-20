@@ -1,5 +1,4 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
-import type { ShapeFeatureRenderDatum } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, Layer, PickingInfo } from 'deck.gl';
 import {
@@ -271,7 +270,6 @@ function SpatialCanvasViewerInner({
       if (shapePickEvent) {
         onShapeHover?.({
           ...shapePickEvent,
-          object: shapePickEvent.object as ShapeFeatureRenderDatum,
           coordinateSystem,
           pickInfo: info,
         });
@@ -311,7 +309,6 @@ function SpatialCanvasViewerInner({
       if (shapePickEvent) {
         onShapeClick?.({
           ...shapePickEvent,
-          object: shapePickEvent.object as ShapeFeatureRenderDatum,
           coordinateSystem,
           pickInfo: info,
         });

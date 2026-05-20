@@ -47,6 +47,27 @@ describe('SpatialDataShapesSource', () => {
     expect(loadParquetTableIndexSpy).not.toHaveBeenCalled();
   });
 
+  it('loads render data for legacy 0.1 shapes without parquet geometry loading', async () => {
+    const source = new SpatialDataShapesSource({
+      store: {} as any,
+      fileType: '.zarr',
+    });
+
+    vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.1');
+    vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['legacy-1', 'legacy-2']);
+    const loadPolygonShapesSpy = vi.spyOn(source, 'loadPolygonShapes');
+    const loadParquetTableSpy = vi.spyOn(source, 'loadParquetTable');
+
+    await expect(source.loadShapesRenderData('shapes/cells')).resolves.toMatchObject({
+      kind: 'js-polygons',
+      elementKey: 'cells',
+      featureIds: ['legacy-1', 'legacy-2'],
+      polygons: [],
+    });
+    expect(loadPolygonShapesSpy).not.toHaveBeenCalled();
+    expect(loadParquetTableSpy).not.toHaveBeenCalled();
+  });
+
   it('loads render data with aligned feature ids and polygons', async () => {
     const source = new SpatialDataShapesSource({
       store: {} as any,
