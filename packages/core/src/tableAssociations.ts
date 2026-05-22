@@ -23,8 +23,17 @@ function normalizeCellValue(value: TableColumnData | undefined, rowIndex: number
   return String(row);
 }
 
-function tableRegionMatches(kind: SpatialAssociationKind, regionValue: string, key: string) {
-  return regionValue === key || regionValue === `${kind}/${key}`;
+function buildAcceptedRegionValues(
+  kind: SpatialAssociationKind,
+  key: string,
+  tableRegions: string[]
+): Set<string> {
+  const accepted = new Set<string>([key, `${kind}/${key}`]);
+  for (const regionName of tableRegions) {
+    accepted.add(regionName);
+    accepted.add(`${kind}/${regionName}`);
+  }
+  return accepted;
 }
 
 export function isSpatialData(value: unknown): value is SpatialData {
@@ -66,7 +75,8 @@ export async function loadAssociatedTableFeatureRows({
   }
 
   const [, table] = associated;
-  const { regionKey } = table.getTableKeys();
+  const { region: tableRegions, regionKey } = table.getTableKeys();
+  const acceptedRegionValues = buildAcceptedRegionValues(kind, key, tableRegions);
   const seenExtra = new Set<string>();
   const uniqueExtra = extraColumnNames.filter((name) => {
     if (name === regionKey || seenExtra.has(name)) {
@@ -85,12 +95,22 @@ export async function loadAssociatedTableFeatureRows({
 
   for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex++) {
     const regionValue = normalizeCellValue(regionColumn, rowIndex);
-    if (regionValue && !tableRegionMatches(kind, regionValue, key)) {
+    if (regionValue && !acceptedRegionValues.has(regionValue)) {
       continue;
     }
     const rowId = String(rowIds[rowIndex]);
     filteredRowIds.push(rowId);
     rowIndexByFeatureId.set(rowId, rowIndex);
+  }
+
+  // Shared tables (e.g. Xenium cell_circles + cells) may tag every row with a
+  // sibling region such as "cells" while still annotating this shapes element.
+  if (rowIndexByFeatureId.size === 0 && rowIds.length > 0) {
+    for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex++) {
+      const rowId = String(rowIds[rowIndex]);
+      filteredRowIds.push(rowId);
+      rowIndexByFeatureId.set(rowId, rowIndex);
+    }
   }
 
   return {

@@ -43,7 +43,7 @@ import {
   type ShapeFeatureRenderDatum,
   type ShapesPrebuiltData,
   buildShapesPrebuiltData,
-  resolveShapeFeatureFromPickInfo,
+  resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
@@ -417,10 +417,28 @@ export function useLayerData(
                     if (latestDesired !== requestedSignature) {
                       return;
                     }
-                    loadedDataRef.current.shapes.set(element.key, {
+                    const mergedShapeData = {
                       ...current,
                       ...tooltipData,
-                    } as LoadedShapesData);
+                    } as LoadedShapesData;
+                    if (tooltipData.tooltipRowIndices) {
+                      mergedShapeData.renderData = {
+                        ...mergedShapeData.renderData,
+                        rowIndexByFeatureIndex: tooltipData.tooltipRowIndices,
+                      };
+                      const hiddenIds =
+                        layersRef.current[layerId]?.type === 'shapes'
+                          ? layersRef.current[layerId].featureState?.hiddenFeatureIds
+                          : undefined;
+                      loadedDataRef.current.shapePrebuiltData.set(layerId, {
+                        prebuilt: buildShapesPrebuiltData(
+                          mergedShapeData.renderData,
+                          hiddenIds
+                        ),
+                        signature: serializeHiddenIds(hiddenIds),
+                      });
+                    }
+                    loadedDataRef.current.shapes.set(element.key, mergedShapeData);
                     setLayerResourceStatus(
                       layerId,
                       'tooltip',
@@ -434,6 +452,7 @@ export function useLayerData(
                       tooltipFields: [],
                       tooltipColumns: undefined,
                       tooltipRowIndices: undefined,
+                      tooltipRowIndexByFeatureId: undefined,
                     } as LoadedShapesData);
                     setLayerResourceStatus(layerId, 'tooltip', 'idle');
                   }
@@ -1001,7 +1020,13 @@ export function useLayerData(
           tooltipFields: loadedShapeData.tooltipFields,
           tooltipColumns: loadedShapeData.tooltipColumns,
         },
-        pickInfo
+        pickInfo,
+        {
+          tooltipRowIndexByFeatureId: loadedShapeData.tooltipRowIndexByFeatureId,
+          tooltipRowIndices: loadedShapeData.tooltipRowIndices,
+          rowIndexByFeatureIndex: loadedShapeData.renderData.rowIndexByFeatureIndex,
+        },
+        loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt
       );
     },
     []
@@ -1016,16 +1041,23 @@ export function useLayerData(
       if (!elem || elem.type !== 'shapes') {
         return undefined;
       }
-      const feature = resolveShapeFeatureFromPickInfo(pickInfo);
+      const feature = resolveShapeFeatureFromPick(
+        pickInfo,
+        loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt
+      );
       if (!feature) {
         return undefined;
       }
+      const rowIndex =
+        loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndexByFeatureId?.get(
+          feature.featureId
+        ) ?? feature.rowIndex;
       return {
         layerId,
         elementKey: elem.key,
         featureId: feature.featureId,
         featureIndex: feature.featureIndex,
-        rowIndex: feature.rowIndex,
+        rowIndex,
         object: feature,
       };
     },

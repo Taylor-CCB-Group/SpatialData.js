@@ -362,15 +362,64 @@ export function resolveShapeFeatureFromPickInfo(
   return object;
 }
 
+export interface ShapeTooltipRowIndexAlignment {
+  tooltipRowIndexByFeatureId?: Map<string, number>;
+  tooltipRowIndices?: Int32Array;
+  rowIndexByFeatureIndex?: Int32Array;
+}
+
+export function resolveShapeTooltipRowIndex(
+  feature: ShapeFeatureRenderDatum,
+  alignment?: ShapeTooltipRowIndexAlignment
+): number | undefined {
+  const fromFeatureId = alignment?.tooltipRowIndexByFeatureId?.get(feature.featureId);
+  if (fromFeatureId !== undefined && fromFeatureId >= 0) {
+    return fromFeatureId;
+  }
+
+  if (feature.rowIndex !== undefined && feature.rowIndex >= 0) {
+    return feature.rowIndex;
+  }
+
+  const fromTooltip = alignment?.tooltipRowIndices?.[feature.featureIndex];
+  if (fromTooltip !== undefined && fromTooltip >= 0) {
+    return fromTooltip;
+  }
+
+  const fromRender = alignment?.rowIndexByFeatureIndex?.[feature.featureIndex];
+  if (fromRender !== undefined && fromRender >= 0) {
+    return fromRender;
+  }
+
+  return undefined;
+}
+
+export function resolveShapeFeatureFromPick(
+  pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>,
+  prebuilt?: ShapesPrebuiltData
+): ShapeFeatureRenderDatum | undefined {
+  const fromObject = resolveShapeFeatureFromPickInfo(pickInfo);
+  if (fromObject) {
+    return fromObject;
+  }
+  if (!prebuilt || typeof pickInfo.index !== 'number' || pickInfo.index < 0) {
+    return undefined;
+  }
+  const datum = prebuilt.data[pickInfo.index];
+  return isShapeFeatureRenderDatum(datum) ? datum : undefined;
+}
+
 export function resolveShapeTooltipFromPickInfo(
   renderData: ShapeTooltipRuntimeData,
-  pickInfo: Pick<{ object?: unknown }, 'object'>
+  pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>,
+  alignment?: ShapeTooltipRowIndexAlignment,
+  prebuilt?: ShapesPrebuiltData
 ): { title: string; items: Array<{ label: string; value: string }> } | undefined {
-  const feature = resolveShapeFeatureFromPickInfo(pickInfo);
+  const feature = resolveShapeFeatureFromPick(pickInfo, prebuilt);
   if (!feature) {
     return undefined;
   }
-  const rowIndex = feature.rowIndex;
+  const rowIndex = resolveShapeTooltipRowIndex(feature, alignment);
   if (
     rowIndex === undefined ||
     rowIndex < 0 ||

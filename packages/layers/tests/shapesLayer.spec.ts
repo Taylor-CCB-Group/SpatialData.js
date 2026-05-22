@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { SpatialLayer } from '../src/SpatialLayer';
 import {
   createShapesDeckLayer,
+  buildShapesPrebuiltData,
+  resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
+  resolveShapeTooltipRowIndex,
   type GeoarrowTableLike,
   type ShapesRenderDataLike,
 } from '../src/shapesLayer';
@@ -194,7 +197,7 @@ describe('createShapesDeckLayer', () => {
       { id: 'tooltip-shapes' }
     );
     const picked = (layer!.props.data as any[])[0];
-    picked.rowIndex = 0;
+    delete picked.rowIndex;
 
     expect(
       resolveShapeTooltipFromPickInfo(
@@ -202,7 +205,8 @@ describe('createShapesDeckLayer', () => {
           tooltipFields: ['gene', 'score'],
           tooltipColumns: [['a', 'b', 'c'], [1, 2, 3]],
         },
-        { object: picked }
+        { object: picked },
+        { rowIndexByFeatureIndex: new Int32Array([0, 1, 2]) }
       )
     ).toEqual({
       title: 'cell-1',
@@ -210,6 +214,90 @@ describe('createShapesDeckLayer', () => {
         { label: 'gene', value: 'a' },
         { label: 'score', value: '1' },
       ],
+    });
+  });
+
+  it('falls back to tooltipRowIndices when pick objects lack rowIndex', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+      },
+      { id: 'tooltip-shapes-fallback' }
+    );
+    const picked = (layer!.props.data as any[])[0];
+    delete picked.rowIndex;
+
+    expect(
+      resolveShapeTooltipFromPickInfo(
+        {
+          tooltipFields: ['gene'],
+          tooltipColumns: [['a', 'b', 'c']],
+        },
+        { object: picked },
+        { tooltipRowIndices: new Int32Array([0, 1, 2]) }
+      )
+    ).toEqual({
+      title: 'cell-1',
+      items: [{ label: 'gene', value: 'a' }],
+    });
+  });
+
+  it('resolves circle tooltips by stable feature id', () => {
+    const circleRenderData: ShapesRenderDataLike = {
+      kind: 'wkb-parquet',
+      geometryKind: 'circle',
+      elementKey: 'cell_circles',
+      featureIds: ['cell-1', 'cell-2'],
+      circles: {
+        positions: [new Float32Array([0, 3]), new Float32Array([0, 3])],
+        radii: new Float32Array([1, 2]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([-1, -1]),
+    };
+    const prebuilt = buildShapesPrebuiltData(circleRenderData);
+
+    expect(
+      resolveShapeTooltipFromPickInfo(
+        {
+          tooltipFields: ['area'],
+          tooltipColumns: [['10.5', '20.5']],
+        },
+        { index: 0 },
+        {
+          tooltipRowIndexByFeatureId: new Map([
+            ['cell-1', 0],
+            ['cell-2', 1],
+          ]),
+        },
+        prebuilt
+      )
+    ).toEqual({
+      title: 'cell-1',
+      items: [{ label: 'area', value: '10.5' }],
+    });
+  });
+
+  it('prefers feature-id table lookup over geometry feature index', () => {
+    expect(
+      resolveShapeTooltipRowIndex(
+        { featureId: 'cell-1', featureIndex: 5, polygon: renderData.polygons![0] },
+        {
+          tooltipRowIndexByFeatureId: new Map([['cell-1', 2]]),
+          rowIndexByFeatureIndex: new Int32Array([0, 1, 2]),
+        }
+      )
+    ).toBe(2);
+  });
+
+  it('falls back to prebuilt pick data when deck omits pick objects', () => {
+    const prebuilt = buildShapesPrebuiltData(renderData);
+    const feature = resolveShapeFeatureFromPick({ index: 1 }, prebuilt);
+    expect(feature).toMatchObject({
+      featureId: 'cell-2',
+      featureIndex: 1,
     });
   });
 });

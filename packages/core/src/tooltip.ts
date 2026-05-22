@@ -25,6 +25,8 @@ interface BaseTooltipMetadata {
 export interface ShapesTooltipMetadata extends BaseTooltipMetadata {
   featureIds?: string[];
   tooltipRowIndices?: Int32Array;
+  /** Table row index keyed by picked shape feature id (same contract as labels tooltips). */
+  tooltipRowIndexByFeatureId?: Map<string, number>;
 }
 
 export interface LabelsTooltipMetadata extends BaseTooltipMetadata {
@@ -172,6 +174,7 @@ export async function loadShapesTooltipMetadata(
     tooltipFields: associated.tooltipFields,
     tooltipColumns: associated.tooltipColumns,
     tooltipRowIndices,
+    tooltipRowIndexByFeatureId: associated.rowIndexByFeatureId,
   };
 }
 
