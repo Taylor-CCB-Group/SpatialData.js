@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ZOOM_BACK_OFF,
   boundsFromPoints,
+  boundsFromCircles,
   boundsFromPolygons,
   unionBounds,
   unionBoundsList,
@@ -105,6 +106,20 @@ describe('boundsFromPolygons', () => {
     expect(() => boundsFromPolygons(messy, m)).not.toThrow();
     const b = boundsFromPolygons(messy, m);
     expect(b).toBeNull();
+  });
+});
+
+describe('boundsFromCircles', () => {
+  it('expands circle centers by radius in world space', () => {
+    const m = new Matrix4().translate([10, 20, 0]);
+    const b = boundsFromCircles(
+      {
+        positions: [new Float32Array([0, 2]), new Float32Array([0, 2])],
+        radii: new Float32Array([1, 1]),
+      },
+      m
+    );
+    expect(b).toEqual({ minX: 9, minY: 19, maxX: 13, maxY: 23 });
   });
 });
 

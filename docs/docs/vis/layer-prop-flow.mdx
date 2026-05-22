@@ -1,0 +1,157 @@
+---
+sidebar_position: 5
+---
+
+# Layer prop flow and identity stability
+
+This is an architecture note for anyone working on layer rendering inside
+`@spatialdata/vis` or writing extension layers that plug into `SpatialCanvas`.
+It exists because we have repeatedly tried to "fix" cosmetic-prop-triggered
+network activity by adding bespoke caches, global stores, and visual-vs-structural
+enumerations — all of which were the wrong answer. This page documents the
+right answer once.
+
+## TL;DR
+
+1. **Layers are pure functions of their props.** `renderLayers()` constructs
+   layer instances from props; it never does async work, never reads globals,
+   never maintains side-channel state.
+2. **Identity stability is the producer's job.** `useLayerData` must hand the
+   same object reference for `loader`, `selections`, etc. across renders when
+   the value hasn't changed. Cosmetic prop identity may churn freely.
+3. **`updateTriggers` is the only mechanism that declares "structural".** When
+   a prop's change should invalidate downstream async work (tile fetching,
+   re-loading data), it goes into `updateTriggers` on the layer that owns the
+   side effect. There is no parallel registry.
+
+If you follow those three rules, deck.gl's existing layer matching + prop
+diffing handles the rest. Cosmetic prop tweaks repaint without touching the
+tileset cache; structural changes invalidate via `updateTriggers` and refetch.
+Nothing more is needed.
+
+## Why this matters
+
+`TileLayer.updateState` in deck.gl only calls `tileset.reloadAll()` when
+`changeFlags.dataChanged` is true, and `dataChanged` is computed **only** from
+`changeFlags.updateTriggersChanged.getTileData` (or the `data` prop changing
+its `dataComparator`-equality). Every other prop change at most clears
+`tile.layers` so the lightweight sub-layer wrappers regenerate — the tileset
+itself, and all its cached tile data, is preserved.
+
+This means cosmetic prop changes already "just work" — *provided* the producer
+is not feeding deck a fresh `loader` reference or fresh `selections` array on
+every render. When it is, deck sees the structural prop change and dutifully
+refetches. The fix is upstream stability, not downstream caching.
+
+## The contract
+
+### For `useLayerData` (the producer)
+
+- `loader`: same object reference until the underlying element changes.
+- `selections`: same array reference until the selected values change. Memoize
+  with `useMemo` keyed on a stable signature of the selection values.
+- Cosmetic props (`colors`, `contrastLimits`, `channelsVisible`, `opacity`,
+  per-channel arrays, `modelMatrix`): identity may churn freely. Deck diffs
+  them efficiently and updates uniforms without disturbing tile loading.
+- Channel control values that are derived from `LayerConfig.channels` and a
+  loaded fallback should still be memoized to keep render output cheap, but
+  identity stability is not required for correctness.
+
+### For layer authors (`LabelsLayer`, future custom layers)
+
+- Pass cosmetic props through `getSubLayerProps`; do not enumerate them by
+  name in a "visual props" helper.
+- Declare structural dependencies on the tile-loading sublayer with
+  `updateTriggers: { getTileData: [loader, selectionsKey] }`. This is the
+  single, declarative source of truth for "what counts as structural here."
+- Do not maintain module-level caches keyed by stringified layer ids.
+- Do not override `initializeState` / `finalizeState` / `updateState` /
+  `getSubLayerPropsByTile` to read from globals. Cosmetic state flows through
+  React → layer props → deck diff, end of story.
+- Accept arbitrary extra sub-layer overrides via the standard deck.gl
+  `_subLayerProps` escape hatch. New extension props "just work" without
+  changes to the layer or the producer.
+
+### For `VivSpatialViewer`
+
+- Composes `vivLayerProps` and `extraLayers` from the producer.
+- Adds the Viv viewport-id suffix to layer ids for the layer-filter machinery.
+  That is the only structural change it should make to incoming layers.
+- Must not extract, classify, or re-route props by name. The viewer is
+  transparent to whatever props the producer or extensions chose to pass.
+- The only legitimate viewer-local cache is for the layer instances that Viv's
+  `detailView.getLayers()` itself constructs on each call (because Viv's API
+  does not return stable references). Cache key is the producer-side
+  `(loader, selectionsRef)` tuple; visual updates go through the deck-native
+  `layer.clone(props)` of *all* incoming props, not a hand-picked subset.
+
+## Anti-patterns (do not reintroduce)
+
+These have been tried, do not work, and add design debt that obscures the
+actual problem. If you see yourself reaching for any of them, stop.
+
+| Anti-pattern | Why it's wrong |
+|---|---|
+| `layerPropGroups.ts`-style files enumerating "visual" vs "structural" props | Hand-rolled; silently breaks for any new prop a user-supplied extension might add. |
+| Global stores keyed by layer id (e.g. `labelsVisualStore`) | Bypasses React/deck; two SpatialCanvases sharing the same data can't have independent state; lifetimes become unmanageable. |
+| Module-level Maps caching `getTileData`, layer instances, or tile shells | Singletons across all canvases; memory leaks; racy cleanup; keyed by ad-hoc strings like `[object Object]\x00...`. |
+| Hand-rolled layer matchers in viewer components | Reimplements `LayerManager._transferLayerState`. |
+| Lifecycle overrides reading from globals | Not idiomatic deck; couples layer correctness to module-level state. |
+| Cache-key unit tests in place of behavioral tests | They keep passing while the user still sees network activity. |
+
+## Behavioral test pattern
+
+The acceptance criterion for any change in this area is **runtime evidence**,
+not cache-hit counts. Set up a mock loader that increments a counter on
+`getTile`, render the canvas, drive a cosmetic prop change (opacity slider,
+channel color), and assert the counter did not change.
+
+```ts
+const fetchCount = { value: 0 };
+const mockLoader = makeMockMultiscaleLoader({
+  onGetTile: () => { fetchCount.value += 1; },
+});
+const { rerender } = render(<SpatialCanvas {...propsWithLoader(mockLoader)} />);
+await waitForTilesLoaded();
+const before = fetchCount.value;
+rerender(<SpatialCanvas {...propsWithLoader(mockLoader, { opacity: 0.5 })} />);
+await flushUpdates();
+expect(fetchCount.value).toBe(before);
+```
+
+One such test per layer type (`image`, `labels`, future custom layers) is
+enough to keep the contract honest.
+
+## Migration plan
+
+> This section is tactical and should be removed once the follow-up PR
+> implementing the redesign has merged.
+
+The cosmetic-prop performance bug exists on `main` at the time of writing.
+The redesign that fixes it lives in a follow-up branch. Sequence:
+
+1. **Diagnostic round.** Instrument `useLayerData.getVivLayerProps()` and the
+   labels branch with one-shot identity-stability logging — for each render,
+   record which fields' identity changed. Confirm whether the culprit is
+   `loader`, `selections`, `getTileData`, or all three.
+2. **Restore identity stability in `useLayerData`.** Memoize the offending
+   fields. Do *not* add any new caches outside `useLayerData`.
+3. **Simplify `VivSpatialViewer`.** Remove all bespoke per-extra-layer caches.
+   Keep the minimal image-layer cache only if `detailView.getLayers()` still
+   requires it; key it on `(loader, selectionsRef)` only.
+4. **Simplify `LabelsLayer`.** Plain CompositeLayer that passes props through
+   via `getSubLayerProps` and declares `updateTriggers.getTileData` on the
+   inner tile layer. No module caches, no lifecycle overrides for state.
+5. **Add the behavioral test** described above for both image and labels.
+
+Acceptance: opacity slider drag and channel-color edit on a labels layer
+produce zero new `getTile` calls in the test harness; manual DevTools Network
+panel during cosmetic drags stays empty.
+
+## See also
+
+- [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts)
+- [`packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx)
+- [`packages/layers/src/LabelsLayer.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/LabelsLayer.ts)
+- deck.gl `TileLayer` source — `updateState` is the canonical reference for
+  what counts as `dataChanged`.

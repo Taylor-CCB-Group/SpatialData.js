@@ -23,12 +23,14 @@ import {
   type LabelsElement,
   type PointsElement,
   type ShapesElement,
+  type ShapesRenderData,
   type LabelsTooltipMetadata,
   type ShapesTooltipMetadata,
   type SpatialFeatureTooltipData,
   type SpatialData,
   boundsFromImagePixelExtents,
   boundsFromPoints,
+  boundsFromCircles,
   boundsFromPolygons,
   getTooltipSignature,
   getPhysicalSizeScalingMatrixFromMeta,
@@ -37,6 +39,13 @@ import {
   resolveTooltipItems,
   unionBoundsList,
 } from '@spatialdata/core';
+import {
+  type ShapeFeatureRenderDatum,
+  type ShapesPrebuiltData,
+  buildShapesPrebuiltData,
+  resolveShapeFeatureFromPick,
+  resolveShapeTooltipFromPickInfo,
+} from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
@@ -61,7 +70,13 @@ export interface ImageLoaderData {
 }
 
 interface LoadedShapesData extends ShapesTooltipMetadata {
-  polygons: Array<Array<Array<[number, number]>>>;
+  renderData: ShapesRenderData;
+}
+
+interface ShapePrebuiltEntry {
+  prebuilt: ShapesPrebuiltData;
+  /** Serialised, sorted `hiddenFeatureIds` — used to detect when a rebuild is needed. */
+  signature: string;
 }
 
 interface LoadedData {
@@ -69,6 +84,13 @@ interface LoadedData {
   points: Map<string, PointData>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
   labels: Map<string, LabelsLoaderData>;
+  /**
+   * Pre-built deck.gl `data` arrays keyed by **layer id** (not element key).
+   * Each entry holds the O(n-features) array produced by `buildShapesPrebuiltData`
+   * so that `getLayers()` never has to allocate it.  Invalidated only when
+   * `hiddenFeatureIds` changes.
+   */
+  shapePrebuiltData: Map<string, ShapePrebuiltEntry>;
 }
 
 type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -121,6 +143,20 @@ interface UseLayerDataResult {
     layerId: string,
     pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
   ) => SpatialFeatureTooltipData | undefined;
+  /** Resolve stable shape feature metadata from a picked deck object. */
+  getShapePickEvent: (
+    layerId: string,
+    pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+  ) =>
+    | {
+        layerId: string;
+        elementKey: string;
+        featureId: string;
+        featureIndex: number;
+        rowIndex?: number;
+        object: ShapeFeatureRenderDatum;
+      }
+    | undefined;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
@@ -137,11 +173,17 @@ function getLayerTooltipSignature(config: LayerConfig | undefined): string {
   return config && 'tooltipFields' in config ? getTooltipSignature(config.tooltipFields) : '';
 }
 
+/** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */
+function serializeHiddenIds(ids?: string[]): string {
+  if (!ids || ids.length === 0) return '';
+  return ids.slice().sort().join('\x00');
+}
+
 async function loadShapesLayerData(
   element: ShapesElement
-): Promise<Pick<LoadedShapesData, 'polygons'>> {
-  const polygons = await loadShapesData(element);
-  return { polygons };
+): Promise<Pick<LoadedShapesData, 'renderData'>> {
+  const renderData = await loadShapesData(element);
+  return { renderData };
 }
 
 /**
@@ -168,6 +210,7 @@ export function useLayerData(
     points: new Map(),
     images: new Map(),
     labels: new Map(),
+    shapePrebuiltData: new Map(),
   });
 
   const layersRef = useRef(layers);
@@ -210,6 +253,30 @@ export function useLayerData(
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
     const loadData = async () => {
+      const loaded = loadedDataRef.current;
+
+      // ── Synchronous prebuilt invalidation ──────────────────────────────────
+      // Rebuild the pre-filtered feature arrays when hiddenFeatureIds changes.
+      // This is O(n-features) CPU work on already-loaded geometry; no IO.
+      for (const layerId of layerOrder) {
+        const config = layers[layerId];
+        if (!config?.visible || config.type !== 'shapes') continue;
+        const elem = elementMap.current.get(layerId);
+        if (!elem) continue;
+        const loadedShapes = loaded.shapes.get(elem.key);
+        if (!loadedShapes) continue;
+        const hiddenIds = config.featureState?.hiddenFeatureIds;
+        const sig = serializeHiddenIds(hiddenIds);
+        const cached = loaded.shapePrebuiltData.get(layerId);
+        if (!cached || cached.signature !== sig) {
+          loaded.shapePrebuiltData.set(layerId, {
+            prebuilt: buildShapesPrebuiltData(loadedShapes.renderData, hiddenIds),
+            signature: sig,
+          });
+        }
+      }
+      // ── Async IO loads ─────────────────────────────────────────────────────
+
       const toLoad: Array<{
         layerId: string;
         element: AvailableElement;
@@ -227,8 +294,6 @@ export function useLayerData(
         const elem = elementMap.current.get(layerId);
         if (!elem) continue;
 
-        // Check if we need to load data
-        const loaded = loadedDataRef.current;
         if (config.type === 'shapes') {
           const loadedShapes = loaded.shapes.get(elem.key);
           const tooltipSignature = getLayerTooltipSignature(config);
@@ -309,6 +374,16 @@ export function useLayerData(
                     ...geometryData,
                   });
                   setLayerResourceStatus(layerId, 'geometry', 'ready');
+                  // Build the initial prebuilt data for this layer.
+                  const curConfig = layersRef.current[layerId];
+                  const hiddenIds =
+                    curConfig?.type === 'shapes'
+                      ? curConfig.featureState?.hiddenFeatureIds
+                      : undefined;
+                  loadedDataRef.current.shapePrebuiltData.set(layerId, {
+                    prebuilt: buildShapesPrebuiltData(geometryData.renderData, hiddenIds),
+                    signature: serializeHiddenIds(hiddenIds),
+                  });
                 } catch (error) {
                   setLayerResourceStatus(layerId, 'geometry', 'error');
                   console.error(`Failed to load shapes geometry for ${layerId}:`, error);
@@ -342,10 +417,28 @@ export function useLayerData(
                     if (latestDesired !== requestedSignature) {
                       return;
                     }
-                    loadedDataRef.current.shapes.set(element.key, {
+                    const mergedShapeData = {
                       ...current,
                       ...tooltipData,
-                    } as LoadedShapesData);
+                    } as LoadedShapesData;
+                    if (tooltipData.tooltipRowIndices) {
+                      mergedShapeData.renderData = {
+                        ...mergedShapeData.renderData,
+                        rowIndexByFeatureIndex: tooltipData.tooltipRowIndices,
+                      };
+                      const hiddenIds =
+                        layersRef.current[layerId]?.type === 'shapes'
+                          ? layersRef.current[layerId].featureState?.hiddenFeatureIds
+                          : undefined;
+                      loadedDataRef.current.shapePrebuiltData.set(layerId, {
+                        prebuilt: buildShapesPrebuiltData(
+                          mergedShapeData.renderData,
+                          hiddenIds
+                        ),
+                        signature: serializeHiddenIds(hiddenIds),
+                      });
+                    }
+                    loadedDataRef.current.shapes.set(element.key, mergedShapeData);
                     setLayerResourceStatus(
                       layerId,
                       'tooltip',
@@ -359,6 +452,7 @@ export function useLayerData(
                       tooltipFields: [],
                       tooltipColumns: undefined,
                       tooltipRowIndices: undefined,
+                      tooltipRowIndexByFeatureId: undefined,
                     } as LoadedShapesData);
                     setLayerResourceStatus(layerId, 'tooltip', 'idle');
                   }
@@ -646,6 +740,12 @@ export function useLayerData(
     const loaded = loadedDataRef.current;
     if (type === 'shapes') {
       loaded.shapes.delete(key);
+      // Clear prebuilt data for every layer that maps to this element key.
+      for (const [lId, elem] of elementMap.current) {
+        if (elem.key === key && elem.type === 'shapes') {
+          loaded.shapePrebuiltData.delete(lId);
+        }
+      }
     } else if (type === 'points') {
       loaded.points.delete(key);
     } else if (type === 'image') {
@@ -683,8 +783,16 @@ export function useLayerData(
         const loaded = loadedDataRef.current;
         if (elem.type === 'shapes') {
           const shapeData = loaded.shapes.get(elem.key);
-          if (!shapeData?.polygons?.length) return null;
-          return boundsFromPolygons(shapeData.polygons, elem.transform);
+          if (!shapeData) return null;
+          const { renderData } = shapeData;
+          if (
+            (renderData.geometryKind === 'circle' || renderData.geometryKind === 'point') &&
+            renderData.circles
+          ) {
+            return boundsFromCircles(renderData.circles, elem.transform);
+          }
+          if (!renderData.polygons?.length) return null;
+          return boundsFromPolygons(renderData.polygons, elem.transform);
         }
         if (elem.type === 'points') {
           const pointData = loaded.points.get(elem.key);
@@ -754,7 +862,9 @@ export function useLayerData(
             fillColor: config.fillColor,
             strokeColor: config.strokeColor,
             strokeWidth: config.strokeWidth,
-            polygonData: shapeData.polygons,
+            featureState: config.featureState,
+            renderData: shapeData.renderData,
+            prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -896,50 +1006,59 @@ export function useLayerData(
         return undefined;
       }
 
+      const config = layersRef.current[layerId];
       const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
       if (
-        !loadedShapeData?.featureIds ||
-        !loadedShapeData.tooltipFields ||
-        !loadedShapeData.tooltipColumns
+        !loadedShapeData?.tooltipFields ||
+        !loadedShapeData.tooltipColumns ||
+        getLayerTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')
       ) {
         return undefined;
       }
-
-      const config = layersRef.current[layerId];
-      if (getLayerTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')) {
-        return undefined;
-      }
-
-      const objectIndex = pickInfo.index;
-      if (typeof objectIndex !== 'number' || objectIndex < 0) {
-        return undefined;
-      }
-
-      const featureId = loadedShapeData.featureIds[objectIndex];
-      if (!featureId) {
-        return undefined;
-      }
-
-      const rowIndex = loadedShapeData.tooltipRowIndices
-        ? loadedShapeData.tooltipRowIndices[objectIndex]
-        : objectIndex;
-      if (rowIndex === undefined || rowIndex < 0) {
-        return undefined;
-      }
-
-      const items = resolveTooltipItems(
-        loadedShapeData.tooltipFields,
-        loadedShapeData.tooltipColumns,
-        rowIndex
+      return resolveShapeTooltipFromPickInfo(
+        {
+          tooltipFields: loadedShapeData.tooltipFields,
+          tooltipColumns: loadedShapeData.tooltipColumns,
+        },
+        pickInfo,
+        {
+          tooltipRowIndexByFeatureId: loadedShapeData.tooltipRowIndexByFeatureId,
+          tooltipRowIndices: loadedShapeData.tooltipRowIndices,
+          rowIndexByFeatureIndex: loadedShapeData.renderData.rowIndexByFeatureIndex,
+        },
+        loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt
       );
+    },
+    []
+  );
 
-      if (items.length === 0) {
+  const getShapePickEvent = useCallback(
+    (
+      layerId: string,
+      pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+    ) => {
+      const elem = elementMap.current.get(layerId);
+      if (!elem || elem.type !== 'shapes') {
         return undefined;
       }
-
+      const feature = resolveShapeFeatureFromPick(
+        pickInfo,
+        loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt
+      );
+      if (!feature) {
+        return undefined;
+      }
+      const rowIndex =
+        loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndexByFeatureId?.get(
+          feature.featureId
+        ) ?? feature.rowIndex;
       return {
-        title: featureId,
-        items,
+        layerId,
+        elementKey: elem.key,
+        featureId: feature.featureId,
+        featureIndex: feature.featureIndex,
+        rowIndex,
+        object: feature,
       };
     },
     []
@@ -1031,6 +1150,7 @@ export function useLayerData(
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
+    getShapePickEvent,
     isLoading,
     isBlocking,
     reloadElement,

@@ -59,19 +59,32 @@ async function getParquetModule() {
  * In the future, this may not be needed if more metadata is included in the Zarr Attributes.
  * Reference: https://github.com/scverse/spatialdata/issues/958
  */
-function tableToIndexColumnName(arrowTable: ArrowTable) {
+export function tableToIndexColumnName(arrowTable: ArrowTable): string | undefined {
   const pandasMetadata = arrowTable.schema.metadata.get('pandas');
-  if (pandasMetadata) {
-    const pandasMetadataJson = JSON.parse(pandasMetadata);
-    if (
-      Array.isArray(pandasMetadataJson.index_columns) &&
-      pandasMetadataJson.index_columns.length === 1
-    ) {
-      return pandasMetadataJson.index_columns?.[0] as string;
-    }
+  if (!pandasMetadata) {
+    return undefined;
+  }
+
+  const pandasMetadataJson = JSON.parse(pandasMetadata) as {
+    index_columns?: unknown[];
+  };
+  const indexColumns = pandasMetadataJson.index_columns;
+  if (!Array.isArray(indexColumns) || indexColumns.length !== 1) {
     throw new Error('Expected a single index column in the pandas metadata.');
   }
-  return; //changing this to return undefined rather than null, better fits uses elsewhere.
+
+  const indexCol = indexColumns[0];
+
+  if (typeof indexCol === 'string') {
+    return indexCol;
+  }
+
+  // GeoPandas ≥1.1 / pandas RangeIndex: no materialized parquet column.
+  if (typeof indexCol === 'object' && indexCol !== null && 'kind' in indexCol) {
+    return undefined;
+  }
+
+  throw new Error(`Unexpected pandas index_columns entry: ${JSON.stringify(indexCol)}`);
 }
 
 // If the array path starts with table/something/rest
@@ -165,6 +178,14 @@ export default class SpatialDataTableSource extends AnnDataSource {
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
   parquetTableBytes: Record<string, Uint8Array>;
+  /**
+   * Cache of fully-parsed Arrow tables for paths requested without a column
+   * filter.  Avoids repeating the WASM `readParquet` + `tableFromIPC` decode
+   * when the same parquet file is needed by multiple callers in sequence (e.g.
+   * `inferShapesGeometryKindFromParquet`, `loadShapesIndex`, and
+   * `loadPolygonShapes` all target the same file).
+   */
+  parquetTableCache: Record<string, Promise<ArrowTable>>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -184,6 +205,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
     // TODO: change to column-specific storage.
     this.parquetTableBytes = {};
+    this.parquetTableCache = {};
 
     // Table-specific properties
     this.obsIndices = {};
@@ -355,8 +377,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * @returns A promise for a column, or null.
    */
   async loadParquetTableIndex(parquetPath: string) {
-    const columns: string[] = [];
-    const arrowTable = await this.loadParquetTable(parquetPath, columns);
+    const arrowTable = await this.loadParquetTable(parquetPath);
     const indexColumnName = tableToIndexColumnName(arrowTable);
     if (!indexColumnName) {
       return null;
@@ -372,7 +393,23 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * @param columns An optional list of column names to load.
    * @returns
    */
-  async loadParquetTable(parquetPath: string, columns?: string[]) {
+  async loadParquetTable(parquetPath: string, columns?: string[]): Promise<ArrowTable> {
+    // When no column filter is requested, return a shared promise so that
+    // concurrent or sequential callers for the same file share one WASM decode.
+    if (!columns?.length && parquetPath in this.parquetTableCache) {
+      return this.parquetTableCache[parquetPath];
+    }
+
+    const tablePromise = this._loadParquetTableUncached(parquetPath, columns);
+
+    if (!columns?.length) {
+      this.parquetTableCache[parquetPath] = tablePromise;
+    }
+
+    return tablePromise;
+  }
+
+  private async _loadParquetTableUncached(parquetPath: string, columns?: string[]): Promise<ArrowTable> {
     const { readParquet, readSchema } = await SpatialDataTableSource.parquetModulePromise;
 
     const options = {
@@ -381,7 +418,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
     let indexColumnName: string | undefined;
 
-    if (columns) {
+    if (columns?.length) {
       // If columns are specified, we also want to ensure that the index column is included.
       // Otherwise, the user wants the full table anyway.
 
@@ -422,7 +459,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
       parquetBytes = new Uint8Array(parquetBytes);
     }
 
-    if (columns && !indexColumnName) {
+    if (columns?.length && !indexColumnName) {
       // The user requested specific columns, but we did not load the schema bytes
       // to successfully get the index column name.
       // Here we try again to get the index column name, but this
@@ -433,7 +470,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
       indexColumnName = tableToIndexColumnName(arrowTableForSchema);
     }
 
-    if (options.columns && indexColumnName) {
+    if (options.columns?.length && indexColumnName) {
       options.columns = [...options.columns, indexColumnName];
     }
 

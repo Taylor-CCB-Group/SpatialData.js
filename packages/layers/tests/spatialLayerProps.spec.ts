@@ -39,4 +39,28 @@ describe('migrateSpatialLayerProps', () => {
     expect(spatialLayerPropsSchema.safeParse(out).success).toBe(true);
     expect(out.sublayers).toEqual([]);
   });
+
+  it('parses shapes feature-state props', () => {
+    const out = migrateSpatialLayerProps({
+      schemaVersion: SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
+      sublayers: [
+        {
+          kind: 'shapes',
+          elementKey: 'cells',
+          defaultFillColor: [1, 2, 3, 4],
+          featureState: {
+            fillColorByFeatureId: { 'cell-1': [5, 6, 7, 8] },
+            hiddenFeatureIds: ['cell-2'],
+            fadedFeatureIds: ['cell-3'],
+            filteredOpacityMultiplier: 0.2,
+          },
+        },
+      ],
+    });
+    expect(out.sublayers[0]).toMatchObject({
+      kind: 'shapes',
+      elementKey: 'cells',
+      defaultFillColor: [1, 2, 3, 4],
+    });
+  });
 });

@@ -1,12 +1,14 @@
 /**
- * Shapes layer renderer using deck.gl PolygonLayer
+ * Transitional shapes renderer.
  *
- * Renders GeoParquet-style polygon/multipolygon data from SpatialData shapes elements.
+ * The authoritative deck-facing styling/filtering logic now lives in
+ * `@spatialdata/layers`. This adapter keeps SpatialCanvas consuming the shared
+ * layer contract while the rest of the viewer migrates.
  */
 
-import { PolygonLayer } from 'deck.gl';
 import type { Matrix4 } from '@math.gl/core';
-import type { ShapesElement, SpatialFeatureTooltipData } from '@spatialdata/core';
+import type { ShapesElement, ShapesRenderData, SpatialFeatureTooltipData } from '@spatialdata/core';
+import { createShapesDeckLayer, type ShapesPrebuiltData } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 
 export type ShapeTooltipDatum = SpatialFeatureTooltipData;
@@ -22,14 +24,26 @@ export interface ShapesLayerRenderConfig {
   opacity: number;
   /** Whether layer is visible */
   visible: boolean;
-  /** Fill color [r, g, b, a] (0-255) */
+  /** Fallback fill color [r, g, b, a] (0-255) */
   fillColor?: [number, number, number, number];
-  /** Stroke color [r, g, b, a] (0-255) */
+  /** Fallback stroke color [r, g, b, a] (0-255) */
   strokeColor?: [number, number, number, number];
-  /** Stroke width in pixels */
+  /** Fallback stroke width in pixels */
   strokeWidth?: number;
-  /** Pre-loaded polygon data (optional - if not provided, will need to be loaded) */
-  polygonData?: Array<Array<Array<[number, number]>>>;
+  featureState?: {
+    fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+    strokeColorByFeatureId?: Record<string, [number, number, number, number]>;
+    hiddenFeatureIds?: string[];
+    fadedFeatureIds?: string[];
+    filteredOpacityMultiplier?: number;
+  };
+  renderData?: ShapesRenderData;
+  /**
+   * Pre-built data array from the load-path cache.
+   * When provided, `createShapesDeckLayer` skips all O(n-features) data
+   * construction and acts as a pure descriptor assembler.
+   */
+  prebuilt?: ShapesPrebuiltData;
 }
 
 /**
@@ -40,7 +54,6 @@ export interface ShapesLayerRenderConfig {
  */
 export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null {
   const {
-    element,
     id,
     modelMatrix,
     opacity,
@@ -48,55 +61,53 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
     fillColor = [100, 100, 200, 180],
     strokeColor = [255, 255, 255, 255],
     strokeWidth = 1,
-    polygonData,
+    featureState,
+    renderData,
+    prebuilt,
   } = config;
 
   if (!visible) return null;
-
-  if (!polygonData) {
-    // Data not loaded yet
-    console.debug(
-      `[ShapesRenderer] No polygon data for layer "${id}" from ${element.url ?? element.path}`
-    );
+  if (!renderData) {
     return null;
   }
 
-  return new PolygonLayer({
-    id,
-    data: polygonData,
-    getPolygon: (d: Array<Array<[number, number]>>) => d,
-    getFillColor: fillColor,
-    getLineColor: strokeColor,
-    getLineWidth: strokeWidth,
-    lineWidthUnits: 'pixels',
-    filled: true,
-    stroked: true,
-    opacity,
-    // Apply coordinate transformation
-    modelMatrix,
-    // Picking
-    pickable: true,
-    autoHighlight: true,
-    highlightColor: [255, 255, 0, 128],
-  });
+  return createShapesDeckLayer(
+    renderData,
+    {
+      kind: 'shapes',
+      elementKey: renderData.elementKey,
+      visible,
+      defaultFillColor: fillColor,
+      defaultStrokeColor: strokeColor,
+      defaultStrokeWidth: strokeWidth,
+      featureState,
+    },
+    {
+      id,
+      visible,
+      opacity,
+      modelMatrix,
+    },
+    prebuilt
+  );
 }
 
 /**
  * Load polygon data from a shapes element.
  * This is async and should be called during component setup.
  */
-export async function loadShapesData(
-  element: ShapesElement
-): Promise<Array<Array<Array<[number, number]>>>> {
+export async function loadShapesData(element: ShapesElement): Promise<ShapesRenderData> {
   try {
-    const result = await element.loadPolygonShapes();
-    // loadPolygonShapes returns { shape: [n, null], data: polygons[] }
-    return result.data;
+    return await element.loadRenderData();
   } catch (error) {
     console.warn(
       `[ShapesRenderer] Failed to load shapes from ${element.url ?? element.path}:`,
       error
     );
-    return [];
+    throw error instanceof Error
+      ? error
+      : new Error(
+          `[ShapesRenderer] Failed to load shapes from ${element.url ?? element.path}: ${String(error)}`
+        );
   }
 }

@@ -121,8 +121,9 @@ Shapes represent vector geometries like polygons and circles.
 const shapes = sdata.shapes?.['cell_boundaries'];
 
 // Load geometry data
-const polygons = await shapes.loadPolygonShapes();  // For polygon geometries
-const circles = await shapes.loadCircleShapes();    // For circle/point geometries
+const renderData = await shapes.loadRenderData();   // Auto-detects polygons, circles (cell_circles), points (xenium_landmarks)
+const polygons = await shapes.loadPolygonShapes();  // For polygon geometries only
+const circles = await shapes.loadCircleShapes();    // For circle/point geometries only
 const featureIds = await shapes.loadFeatureIds();
 
 // Access metadata
@@ -192,9 +193,24 @@ AnnData access.
 
 Planned API evolution:
 the current `loadObsColumns()` helper is optimized for association / tooltip
-lookups and should be treated as a convenience API. We expect to add a more
-explicit typed dataframe-column API later, while keeping value-to-string
-formatting at the rendering boundary rather than in the query layer.
+lookups and should be treated as a convenience API. We expect the coherent
+AnnData access story here to grow beyond `obs` columns:
+
+- typed access to `obs` and `var` columns
+- access to selected `X` columns for chosen `var` rows
+- access to `obsm` entries
+- access to `obsp` entries for future graph/network-style visualisation
+- access to `uns`
+
+In principle, the richer APIs here should probably live in `anndata.js`
+rather than becoming a permanently separate query surface in this package.
+If we find `anndata.js` is currently inadequate or awkward for these use cases, we
+should treat that as upstream pressure and try to clarify or improve it there.
+For now, the intent is still that SpatialData.js should expose coherent access
+patterns for these AnnData surfaces without forcing integrators to drop
+immediately to `getAnnDataJS()` or encode everything as ad hoc string column
+lookups. Value-to-string formatting should still remain at the rendering
+boundary rather than in the query layer.
 
 ### Attributes Schema
 

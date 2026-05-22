@@ -1,6 +1,10 @@
 import type { LabelsElement, ShapesElement } from './models';
 import type { SpatialData } from './store';
 import type { TableColumnData } from './types';
+import {
+  loadAssociatedTableFeatureRows,
+  loadFeatureRowIndexByFeatureIndex,
+} from './tableAssociations';
 
 export type SpatialFeatureTooltipItem = {
   label: string;
@@ -21,6 +25,8 @@ interface BaseTooltipMetadata {
 export interface ShapesTooltipMetadata extends BaseTooltipMetadata {
   featureIds?: string[];
   tooltipRowIndices?: Int32Array;
+  /** Table row index keyed by picked shape feature id (same contract as labels tooltips). */
+  tooltipRowIndexByFeatureId?: Map<string, number>;
 }
 
 export interface LabelsTooltipMetadata extends BaseTooltipMetadata {
@@ -60,10 +66,6 @@ export function resolveTooltipItems(
       value: normalizeTooltipValue(tooltipColumns[fieldIndex], rowIndex),
     }))
     .filter((item) => item.value !== '');
-}
-
-function tableRegionMatches(kind: 'shapes' | 'labels', regionValue: string, key: string) {
-  return regionValue === key || regionValue === `${kind}/${key}`;
 }
 
 async function loadAssociatedTableTooltipData({
@@ -109,33 +111,33 @@ async function loadAssociatedTableTooltipData({
   }
 
   const tooltipSignature = getTooltipSignature(tooltipFields);
-  const [, table] = associated;
-  const { regionKey } = table.getTableKeys();
-  const requestedColumns = Array.from(new Set([regionKey, ...tooltipFields]));
-  const rowIds = await table.loadObsIndex();
-  const columns = await table.loadObsColumns(requestedColumns);
-  const regionColumn = columns[0];
-  const tooltipColumns = columns.slice(1);
-  const filteredRowIds: string[] = [];
-  const rowIndexByFeatureId = new Map<string, number>();
-
-  for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex++) {
-    const regionValue = normalizeTooltipValue(regionColumn, rowIndex);
-    if (regionValue && !tableRegionMatches(kind, regionValue, key)) {
-      continue;
-    }
-    const rowId = String(rowIds[rowIndex]);
-    filteredRowIds.push(rowId);
-    rowIndexByFeatureId.set(rowId, rowIndex);
-  }
+  const associatedRows = await loadAssociatedTableFeatureRows({
+    spatialData,
+    kind,
+    key,
+    extraColumnNames: tooltipFields,
+  });
 
   return {
     tooltipSignature,
     tooltipFields,
-    tooltipColumns,
-    rowIds: filteredRowIds,
-    rowIndexByFeatureId,
+    tooltipColumns: associatedRows.extraColumns,
+    rowIds: associatedRows.rowIds,
+    rowIndexByFeatureId: associatedRows.rowIndexByFeatureId,
   };
+}
+
+export async function loadShapesRowIndexByFeatureIndex(
+  spatialData: SpatialData | undefined,
+  key: string,
+  featureIds: string[]
+): Promise<Int32Array> {
+  return loadFeatureRowIndexByFeatureIndex({
+    spatialData,
+    kind: 'shapes',
+    key,
+    featureIds,
+  });
 }
 
 export async function loadShapesTooltipMetadata(
@@ -162,14 +164,7 @@ export async function loadShapesTooltipMetadata(
       associated.rowIds.every((rowId, index) => rowId === featureIds[index]);
 
     if (!isDirectlyAligned) {
-      tooltipRowIndices = new Int32Array(featureIds.length);
-      tooltipRowIndices.fill(-1);
-      for (const [featureIndex, featureId] of featureIds.entries()) {
-        const matchedRowIndex = associated.rowIndexByFeatureId.get(featureId);
-        if (matchedRowIndex !== undefined) {
-          tooltipRowIndices[featureIndex] = matchedRowIndex;
-        }
-      }
+      tooltipRowIndices = await loadShapesRowIndexByFeatureIndex(spatialData, element.key, featureIds);
     }
   }
 
@@ -179,6 +174,7 @@ export async function loadShapesTooltipMetadata(
     tooltipFields: associated.tooltipFields,
     tooltipColumns: associated.tooltipColumns,
     tooltipRowIndices,
+    tooltipRowIndexByFeatureId: associated.rowIndexByFeatureId,
   };
 }
 

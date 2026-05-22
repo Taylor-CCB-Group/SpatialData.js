@@ -27,6 +27,7 @@ import type { TypedArray as ZarrTypedArray, Chunk, NumberDataType } from 'zarrit
 import type { Table as ArrowTable } from 'apache-arrow';
 import type { Vector } from 'apache-arrow/vector';
 import SpatialDataTableSource from './VTableSource';
+import type { ShapesGeometryKind, ShapesRenderData } from '../shapes';
 export type PolygonShape = Array<Array<[number, number]>>;
 //nb, not totally happy with this type.
 export type ZarrNumericArray = ZarrTypedArray<NumberDataType> | BigInt64Array | Array<number>;
@@ -69,6 +70,109 @@ function getParquetPath(arrPath?: string) {
  * @param input - The typed array to convert.
  * @returns The converted or original Float32Array.
  */
+/** GeoPandas parquet metadata stored under Arrow schema key `geo`. */
+export interface GeopandasGeoParquetMetadata {
+  primary_column?: string;
+  columns?: Record<
+    string,
+    {
+      encoding?: string;
+      geometry_types?: string[];
+    }
+  >;
+}
+
+/** WKB geometry type names that decode to a single [x, y] per feature row. */
+const POINT_ONLY_WKB_GEOMETRY_TYPES = new Set(['Point']);
+
+function normalizeGeometryTypes(value: unknown): string[] | null {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const types = value.filter((item): item is string => typeof item === 'string');
+  return types.length > 0 ? types : null;
+}
+
+function parseGeopandasGeoParquetMetadata(raw: unknown): GeopandasGeoParquetMetadata | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const primaryColumn = record.primary_column;
+  if (typeof primaryColumn !== 'string') {
+    return null;
+  }
+  const columns = record.columns;
+  if (typeof columns !== 'object' || columns === null) {
+    return null;
+  }
+  const columnMeta = (columns as Record<string, unknown>)[primaryColumn];
+  if (typeof columnMeta !== 'object' || columnMeta === null) {
+    return null;
+  }
+  const geometryTypes = normalizeGeometryTypes(
+    (columnMeta as Record<string, unknown>).geometry_types
+  );
+  if (!geometryTypes) {
+    return null;
+  }
+  const encoding = (columnMeta as Record<string, unknown>).encoding;
+  return {
+    primary_column: primaryColumn,
+    columns: {
+      [primaryColumn]: {
+        ...(typeof encoding === 'string' ? { encoding } : {}),
+        geometry_types: geometryTypes,
+      },
+    },
+  };
+}
+
+export function readGeopandasGeoParquetMetadata(
+  arrowTable: ArrowTable
+): GeopandasGeoParquetMetadata | null {
+  const raw = arrowTable.schema.metadata.get('geo');
+  if (!raw) {
+    return null;
+  }
+  try {
+    return parseGeopandasGeoParquetMetadata(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function inferShapesGeometryKindFromParquet(arrowTable: ArrowTable): ShapesGeometryKind {
+  if (arrowTable.schema.fields.some((field) => field.name === 'radius')) {
+    return 'circle';
+  }
+
+  const geo = readGeopandasGeoParquetMetadata(arrowTable);
+  const primaryColumn = geo?.primary_column ?? 'geometry';
+  const geometryTypes = geo?.columns?.[primaryColumn]?.geometry_types ?? [];
+  if (
+    geometryTypes.length > 0 &&
+    geometryTypes.every((type) => POINT_ONLY_WKB_GEOMETRY_TYPES.has(type))
+  ) {
+    return 'point';
+  }
+
+  return 'polygon';
+}
+
+function featureIdsFromIndex(
+  indexRaw: ArrayLike<unknown> | null | undefined,
+  rowCount: number
+): string[] {
+  if (indexRaw) {
+    return Array.from(indexRaw, (value: unknown) => String(value));
+  }
+  return Array.from({ length: rowCount }, (_, index) => String(index));
+}
+
 function toFloat32Array(input: ZarrNumericArray): Float32Array {
   if (input instanceof Float32Array) {
     return input; // Already a Float32Array
@@ -129,6 +233,27 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     // high-level API contract we care about is "can we load stable feature
     // ids?", not "does the metadata version string equal one exact value?".
     return '0.2';
+  }
+
+  /**
+   * Whether this shapes element stores polygons, circles (point + radius), or point landmarks.
+   */
+  async getShapesGeometryKind(elementPath: string): Promise<ShapesGeometryKind> {
+    const formatVersion = await this.getShapesFormatVersion(elementPath);
+    if (formatVersion === '0.1') {
+      const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+      const geos = zattrs.spatialdata_attrs?.geos || {};
+      if (geos.name === 'POINT' && geos.type === 0) {
+        return 'point';
+      }
+      throw new Error(
+        `Unsupported legacy shapes geometry for ${elementPath}: ${JSON.stringify(geos)}`
+      );
+    }
+
+    const parquetPath = getParquetPath(elementPath);
+    const arrowTable = await this.loadParquetTable(parquetPath);
+    return inferShapesGeometryKindFromParquet(arrowTable);
   }
 
   /**
@@ -216,12 +341,12 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
   _decodeWkbColumnFlat(geometryColumn: Vector): Array<[number, number]> {
     const wkb = new WKB();
     const arr = geometryColumn.toArray();
-    return arr.map((geom: ArrayBuffer) =>
-      wkb
-    .readGeometry(geom)
-        // @ts-expect-error - getFlatCoordinates is not a method of Geometry, check this<<<
-        .getFlatCoordinates()
-    );
+    return arr.map((geom: ArrayBuffer) => {
+      const coords = (
+        wkb.readGeometry(geom) as unknown as { getFlatCoordinates: () => Array<number | bigint> }
+      ).getFlatCoordinates();
+      return [Number(coords[0]), Number(coords[1])] as [number, number];
+    });
   }
 
   /**
@@ -289,6 +414,92 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       };
     }
     throw new Error('Unexpected encoding type for polygons, currently only WKB is supported');
+  }
+
+  async loadShapesRenderData(elementPath: string): Promise<ShapesRenderData> {
+    const formatVersion = await this.getShapesFormatVersion(elementPath);
+    const elementKey = getShapesElementPath(elementPath).replace(/^shapes\//, '');
+
+    if (formatVersion === '0.1') {
+      const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+      const geos = zattrs.spatialdata_attrs?.geos || {};
+      if (geos.name === 'POINT' && geos.type === 0) {
+        throw new Error(
+          `Legacy ngff:shapes 0.1 point geometry is unsupported for render loading at ${elementPath}. Migrate to parquet-backed shapes (0.2+).`
+        );
+      }
+      throw new Error(
+        `Unsupported legacy shapes geometry for ${elementPath}: ${JSON.stringify(geos)}`
+      );
+    }
+
+    const parquetPath = getParquetPath(elementPath);
+    // loadParquetTable caches the parsed Arrow table, so the three calls below
+    // (here, inside loadShapesIndex, inside loadPolygonShapes / loadCircleShapes)
+    // share one WASM decode.
+    const geometryTable = await this.loadParquetTable(parquetPath);
+    const geometryKind = inferShapesGeometryKindFromParquet(geometryTable);
+
+    if (geometryKind === 'circle' || geometryKind === 'point') {
+      const [featureIdsRaw, circleResult] = await Promise.all([
+        this.loadShapesIndex(elementPath),
+        this.loadCircleShapes(`${elementPath}/geometry`),
+      ]);
+      const [xs, ys] = circleResult.data;
+      const featureIds = featureIdsFromIndex(featureIdsRaw, xs.length);
+      if (featureIds.length !== xs.length || featureIds.length !== ys.length) {
+        throw new Error(
+          `Feature id count (${featureIds.length}) did not match point geometry count (${xs.length}) for ${elementPath}`
+        );
+      }
+
+      let radii: Float32Array | undefined;
+      if (geometryKind === 'circle') {
+        const radiiResult = await this.loadNumeric(`${elementPath}/radius`);
+        radii = toFloat32Array(radiiResult.data);
+        if (featureIds.length !== radii.length) {
+          throw new Error(
+            `Feature id count (${featureIds.length}) did not match radius count (${radii.length}) for ${elementPath}`
+          );
+        }
+      }
+
+      // geometryTable is not retained in the return value for wkb-parquet paths:
+      // all geometry has been decoded into typed arrays above, and keeping a
+      // second copy of the full Arrow table would waste heap memory.
+      return {
+        kind: 'wkb-parquet',
+        geometryKind,
+        elementKey,
+        featureIds,
+        circles: { positions: [xs, ys], radii },
+        geometryColumnName: 'geometry',
+        rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
+      };
+    }
+
+    const [featureIdsRaw, polygonResult] = await Promise.all([
+      this.loadShapesIndex(elementPath),
+      this.loadPolygonShapes(`${elementPath}/geometry`),
+    ]);
+    const polygons = polygonResult.data;
+    const featureIds = featureIdsFromIndex(featureIdsRaw, polygons.length);
+    if (featureIds.length !== polygons.length) {
+      throw new Error(
+        `Feature id count (${featureIds.length}) did not match polygon count (${polygons.length}) for ${elementPath}`
+      );
+    }
+
+    // geometryTable is not retained for the same reason as the circle path above.
+    return {
+      kind: 'wkb-parquet',
+      geometryKind: 'polygon',
+      elementKey,
+      featureIds,
+      polygons,
+      geometryColumnName: 'geometry',
+      rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
+    };
   }
 
   /**

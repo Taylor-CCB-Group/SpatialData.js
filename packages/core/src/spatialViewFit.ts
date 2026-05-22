@@ -4,6 +4,7 @@
  */
 
 import { Matrix4 } from '@math.gl/core';
+import type { ShapeCircleColumnar } from './shapes.js';
 
 /** Axis-aligned rectangle in world / target coordinate space. */
 export type AxisAlignedBounds = {
@@ -144,6 +145,63 @@ export function boundsFromPolygons(
   modelMatrix: Matrix4
 ): AxisAlignedBounds | null {
   return accumulatePolygonBounds(polygons, modelMatrix, 0);
+}
+
+/**
+ * Axis-aligned bounds for circle shapes (center + radius in store coordinates).
+ */
+export function boundsFromCircles(
+  circles: ShapeCircleColumnar,
+  modelMatrix: Matrix4
+): AxisAlignedBounds | null {
+  const [xs, ys] = circles.positions;
+  const radii = circles.radii;
+  const n = Math.min(xs.length, ys.length, radii?.length ?? xs.length);
+  if (n === 0) return null;
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let any = false;
+
+  const addXY = (x: number, y: number) => {
+    try {
+      const p = modelMatrix.transformPoint([x, y, 0]);
+      if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
+      any = true;
+      minX = Math.min(minX, p[0]);
+      maxX = Math.max(maxX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxY = Math.max(maxY, p[1]);
+    } catch {
+      // ignore bad transform
+    }
+  };
+
+  for (let i = 0; i < n; i++) {
+    const x = xs[i];
+    const y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    const r = radii?.[i];
+    if (r === undefined || !Number.isFinite(r) || r < 0) {
+      addXY(x, y);
+      continue;
+    }
+    const corners: [number, number][] = [
+      [x - r, y - r],
+      [x + r, y - r],
+      [x - r, y + r],
+      [x + r, y + r],
+    ];
+    for (const [cx, cy] of corners) {
+      addXY(cx, cy);
+    }
+  }
+
+  return any ? { minX, minY, maxX, maxY } : null;
 }
 
 export function boundsFromPoints(

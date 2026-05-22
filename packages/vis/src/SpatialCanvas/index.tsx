@@ -10,7 +10,7 @@
 import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
-import type { PickingInfo } from 'deck.gl';
+import type { Layer, PickingInfo } from 'deck.gl';
 import {
   type CSSProperties,
   type ReactNode,
@@ -24,7 +24,8 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
-import { useSpatialCanvasRenderer } from './SpatialCanvasViewer';
+import { shouldAutoFitSpatialView, useSpatialCanvasRenderer } from './SpatialCanvasViewer';
+import type { ImageLayerConfig } from './useLayerData';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -223,6 +224,158 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
 }
 
 // ============================================
+// Viewer section — subscribes to viewState only
+// ============================================
+
+/**
+ * Isolated sub-component that is the sole subscriber to `viewState` from the
+ * Zustand store.  By confining the viewState subscription here, pan events only
+ * cause this lightweight wrapper and `SpatialViewer` to re-render; the heavier
+ * `SpatialCanvasInner` (sidebars, layer list, renderer hook) stays untouched.
+ */
+interface ViewerSectionProps {
+  deckLayers: Layer[];
+  vivLayerProps: ImageLayerConfig[];
+  hasEnabledLayers: boolean;
+  isBlocking: boolean;
+  isLoading: boolean;
+  hasLayersDrawn: boolean;
+  getWorldBoundsForVisibleLayers: () => import('@spatialdata/core').AxisAlignedBounds | null;
+  vw: number;
+  vh: number;
+  onHover: (info: PickingInfo) => void;
+  coordinateSystem: string | null;
+}
+
+function ViewerSection({
+  deckLayers,
+  vivLayerProps,
+  hasEnabledLayers,
+  isBlocking,
+  isLoading,
+  hasLayersDrawn,
+  getWorldBoundsForVisibleLayers,
+  vw,
+  vh,
+  onHover,
+  coordinateSystem,
+}: ViewerSectionProps) {
+  const viewState = useSpatialCanvasStore((s) => s.viewState);
+  const actions = useSpatialCanvasActions();
+
+  const handleViewStateChange = useCallback(
+    (vs: ViewState) => {
+      actions.setViewState(vs);
+    },
+    [actions]
+  );
+
+  // Auto-fit: fires once when viewState is null and layers become renderable.
+  useEffect(() => {
+    if (
+      !shouldAutoFitSpatialView({
+        autoFit: true,
+        hasEnabledLayers,
+        width: vw,
+        height: vh,
+        isBlocking,
+        viewState,
+      })
+    ) {
+      return;
+    }
+    const bounds = getWorldBoundsForVisibleLayers();
+    handleViewStateChange(
+      bounds ? viewStateFromBounds(bounds, vw, vh) : { target: [0, 0], zoom: 0 }
+    );
+  }, [
+    hasEnabledLayers,
+    vh,
+    vw,
+    isBlocking,
+    getWorldBoundsForVisibleLayers,
+    handleViewStateChange,
+    viewState,
+  ]);
+
+  if (!hasEnabledLayers) {
+    return (
+      <div style={placeholderStyle}>
+        {coordinateSystem ? 'Select layers to display' : 'Select a coordinate system'}
+      </div>
+    );
+  }
+
+  if (viewState === null) {
+    return (
+      <div style={placeholderStyle}>
+        {isBlocking ? 'Loading layer data...' : 'Framing view...'}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ width: vw, height: vh, position: 'relative' }}>
+      <SpatialViewer
+        width={vw}
+        height={vh}
+        viewState={viewState}
+        onViewStateChange={handleViewStateChange}
+        layers={deckLayers}
+        vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
+        onHover={onHover}
+      />
+      {isBlocking && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            padding: '4px 8px',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            color: '#fff',
+            fontSize: '11px',
+            borderRadius: 4,
+          }}
+        >
+          Loading layer data...
+        </div>
+      )}
+      {isLoading && !isBlocking && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            padding: '4px 8px',
+            backgroundColor: 'rgba(20,20,20,0.78)',
+            color: '#d5d5d5',
+            fontSize: '11px',
+            borderRadius: 4,
+          }}
+        >
+          Refreshing layer metadata...
+        </div>
+      )}
+      {!hasLayersDrawn && !isBlocking && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            color: '#666',
+            fontSize: '13px',
+          }}
+        >
+          No layers to display
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
 // Inner Canvas (connected to store)
 // ============================================
 
@@ -253,7 +406,8 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
   const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
   const layers = useSpatialCanvasStore((s) => s.layers);
   const layerOrder = useSpatialCanvasStore((s) => s.layerOrder);
-  const viewState = useSpatialCanvasStore((s) => s.viewState);
+  // viewState is intentionally NOT subscribed here.  It is consumed only by
+  // ViewerSection, which is the sole component that re-renders on every pan.
   const selectedLayerId = useSpatialCanvasStore((s) => s.selectedLayerId);
 
   const actions = useSpatialCanvasActions();
@@ -262,13 +416,6 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     if (!spatialData) return [];
     return getAllCoordinateSystems(spatialData);
   }, [spatialData]);
-
-  const handleViewStateChange = useCallback(
-    (vs: ViewState) => {
-      actions.setViewState(vs);
-    },
-    [actions]
-  );
 
   const vw = width ?? 0;
   const vh = height ?? 0;
@@ -293,8 +440,8 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     coordinateSystem,
     layers,
     layerOrder,
-    viewState,
-    onViewStateChange: handleViewStateChange,
+    // viewState and onViewStateChange are omitted: auto-fit and pan handling
+    // are managed entirely by ViewerSection so this hook never re-runs on pan.
     width: vw,
     height: vh,
   });
@@ -559,75 +706,19 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
           </aside>
 
           <div ref={handleViewerRef} style={viewerContainerStyle}>
-            {hasEnabledLayers ? (
-              viewState === null ? (
-                <div style={placeholderStyle}>
-                  {isBlocking ? 'Loading layer data...' : 'Framing view...'}
-                </div>
-              ) : (
-                <div style={{ width: vw, height: vh, position: 'relative' }}>
-                  <SpatialViewer
-                    width={vw}
-                    height={vh}
-                    viewState={viewState}
-                    onViewStateChange={handleViewStateChange}
-                    layers={deckLayers}
-                    vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
-                    onHover={handleHover}
-                  />
-                  {isBlocking && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 8,
-                        right: 8,
-                        padding: '4px 8px',
-                        backgroundColor: 'rgba(0,0,0,0.7)',
-                        color: '#fff',
-                        fontSize: '11px',
-                        borderRadius: 4,
-                      }}
-                    >
-                      Loading layer data...
-                    </div>
-                  )}
-                  {isLoading && !isBlocking && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 8,
-                        right: 8,
-                        padding: '4px 8px',
-                        backgroundColor: 'rgba(20,20,20,0.78)',
-                        color: '#d5d5d5',
-                        fontSize: '11px',
-                        borderRadius: 4,
-                      }}
-                    >
-                      Refreshing layer metadata...
-                    </div>
-                  )}
-                  {!hasLayersDrawn && !isBlocking && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        color: '#666',
-                        fontSize: '13px',
-                      }}
-                    >
-                      No layers to display
-                    </div>
-                  )}
-                </div>
-              )
-            ) : (
-              <div style={placeholderStyle}>
-                {coordinateSystem ? 'Select layers to display' : 'Select a coordinate system'}
-              </div>
-            )}
+            <ViewerSection
+              deckLayers={deckLayers}
+              vivLayerProps={vivLayerProps}
+              hasEnabledLayers={hasEnabledLayers}
+              isBlocking={isBlocking}
+              isLoading={isLoading}
+              hasLayersDrawn={hasLayersDrawn}
+              getWorldBoundsForVisibleLayers={getWorldBoundsForVisibleLayers}
+              vw={vw}
+              vh={vh}
+              onHover={handleHover}
+              coordinateSystem={coordinateSystem}
+            />
           </div>
 
           <aside style={{ ...sidebarStyle, width: 300, borderLeft: '1px solid #333' }}>

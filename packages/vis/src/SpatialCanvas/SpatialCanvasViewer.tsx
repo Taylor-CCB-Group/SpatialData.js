@@ -18,7 +18,7 @@ import {
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
-import type { ElementsByType, LayerConfig, ViewState } from './types';
+import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import { useLayerData } from './useLayerData';
 import { getAvailableElements } from './utils';
 
@@ -37,6 +37,8 @@ export interface SpatialCanvasViewerProps {
   deckProps?: Partial<DeckGLProps>;
   onHover?: (info: PickingInfo) => void;
   onClick?: (info: PickingInfo) => void;
+  onShapeHover?: (event: ShapesLayerPickEvent) => void;
+  onShapeClick?: (event: ShapesLayerPickEvent) => void;
   renderTooltip?: SpatialCanvasViewerRenderTooltip;
   tooltipContainer?: HTMLElement | null;
   showLoadingOverlay?: boolean;
@@ -88,8 +90,17 @@ export interface UseSpatialCanvasRendererOptions {
   coordinateSystem: string | null;
   layers: Record<string, LayerConfig>;
   layerOrder: string[];
-  viewState: ViewState | null;
-  onViewStateChange: (viewState: ViewState) => void;
+  /**
+   * Current view state.  When `undefined` the auto-fit effect is skipped
+   * entirely, letting the caller manage auto-fit externally (e.g. in a
+   * child component that subscribes to `viewState` independently so that
+   * pan frames don't cause this hook to re-run).
+   */
+  viewState?: ViewState | null;
+  /**
+   * Required if `viewState` is provided and auto-fit is desired.
+   */
+  onViewStateChange?: (viewState: ViewState) => void;
   width: number;
   height: number;
   deckLayers?: Layer[];
@@ -139,6 +150,8 @@ export function useSpatialCanvasRenderer({
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
 
   useEffect(() => {
+    // Skip auto-fit when viewState is not managed by this hook (caller handles it).
+    if (viewState === undefined || !onViewStateChange) return;
     if (
       !shouldAutoFitSpatialView({
         autoFit,
@@ -220,6 +233,8 @@ function SpatialCanvasViewerInner({
   deckProps,
   onHover,
   onClick,
+  onShapeHover,
+  onShapeClick,
   renderTooltip,
   tooltipContainer,
   showLoadingOverlay = true,
@@ -253,15 +268,26 @@ function SpatialCanvasViewerInner({
   const handleHover = useCallback(
     (info: PickingInfo) => {
       onHover?.(info);
-      if (!shouldRenderInternalTooltip(renderTooltip)) {
-        return;
-      }
       if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
         setHoverTooltip(null);
         return;
       }
       const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
       const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (shapePickEvent) {
+        onShapeHover?.({
+          ...shapePickEvent,
+          coordinateSystem,
+          pickInfo: info,
+        });
+      }
+      if (!shouldRenderInternalTooltip(renderTooltip)) {
+        return;
+      }
       const tooltip = renderer.getFeatureTooltip(normalizedLayerId, {
         index: info.index,
         object: info.object,
@@ -276,7 +302,30 @@ function SpatialCanvasViewerInner({
         ...tooltip,
       });
     },
-    [onHover, renderTooltip, renderer.getFeatureTooltip]
+    [coordinateSystem, onHover, onShapeHover, renderTooltip, renderer]
+  );
+
+  const handleClick = useCallback(
+    (info: PickingInfo) => {
+      onClick?.(info);
+      if (!info.picked) {
+        return;
+      }
+      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (shapePickEvent) {
+        onShapeClick?.({
+          ...shapePickEvent,
+          coordinateSystem,
+          pickInfo: info,
+        });
+      }
+    },
+    [coordinateSystem, onClick, onShapeClick, renderer]
   );
 
   const handleViewerRef = useCallback(
@@ -351,7 +400,7 @@ function SpatialCanvasViewerInner({
               layers={renderer.deckLayers}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={handleHover}
-              onClick={onClick}
+              onClick={handleClick}
               deckProps={deckProps}
             />
             {showLoadingOverlay && renderer.isBlocking && (

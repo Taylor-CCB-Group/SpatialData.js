@@ -4,6 +4,7 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import type { SpatialElement, AnyElement } from '@spatialdata/core';
+import type { ShapesLayerPickEvent } from '@spatialdata/layers';
 
 // ============================================
 // View State Types
@@ -62,13 +63,18 @@ export interface ImageLayerConfig extends BaseLayerConfig {
 
 export interface ShapesLayerConfig extends BaseLayerConfig {
   type: 'shapes';
-  // Shapes-specific settings
-  // TODO: these should be accessors for getFillColor etc based on picked feature identity
   fillColor?: [number, number, number, number];
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
   /** Table obs columns to display for a picked feature in this shapes layer. */
   tooltipFields?: string[];
+  featureState?: {
+    fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+    strokeColorByFeatureId?: Record<string, [number, number, number, number]>;
+    hiddenFeatureIds?: string[];
+    fadedFeatureIds?: string[];
+    filteredOpacityMultiplier?: number;
+  };
 }
 
 export interface PointsLayerConfig extends BaseLayerConfig {
@@ -119,6 +125,8 @@ export interface ElementsByType {
   points: AvailableElement[];
   labels: AvailableElement[];
 }
+
+export type { ShapesLayerPickEvent };
 
 // ============================================
 // Store State Types (framework-agnostic)
