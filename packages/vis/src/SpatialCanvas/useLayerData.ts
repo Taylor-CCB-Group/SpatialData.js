@@ -21,19 +21,19 @@ import {
   type AxisAlignedBounds,
   type ImageElement,
   type LabelsElement,
+  type LabelsTooltipMetadata,
   type PointsElement,
   type ShapesElement,
   type ShapesRenderData,
-  type LabelsTooltipMetadata,
   type ShapesTooltipMetadata,
-  type SpatialFeatureTooltipData,
   type SpatialData,
+  type SpatialFeatureTooltipData,
+  boundsFromCircles,
   boundsFromImagePixelExtents,
   boundsFromPoints,
-  boundsFromCircles,
   boundsFromPolygons,
-  getTooltipSignature,
   getPhysicalSizeScalingMatrixFromMeta,
+  getTooltipSignature,
   loadLabelsTooltipMetadata,
   loadShapesTooltipMetadata,
   resolveTooltipItems,
@@ -54,8 +54,8 @@ import {
   applyPerChannelFallbackWithoutOmero,
 } from './imageLoaderChannelDefaults';
 import { createImageLoader } from './renderers/imageRenderer';
-import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
+import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig } from './types';
 
@@ -94,6 +94,7 @@ interface LoadedData {
 }
 
 type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+type RasterSelection = Partial<{ z: number; c: number; t: number }>;
 
 export interface LayerLoadState {
   geometry?: ResourceLoadStatus;
@@ -179,6 +180,12 @@ function serializeHiddenIds(ids?: string[]): string {
   return ids.slice().sort().join('\x00');
 }
 
+function serializeRasterSelections(selections: RasterSelection[]): string {
+  return selections
+    .map((selection) => `z:${selection.z ?? ''}|c:${selection.c ?? ''}|t:${selection.t ?? ''}`)
+    .join('\x00');
+}
+
 async function loadShapesLayerData(
   element: ShapesElement
 ): Promise<Pick<LoadedShapesData, 'renderData'>> {
@@ -212,6 +219,9 @@ export function useLayerData(
     labels: new Map(),
     shapePrebuiltData: new Map(),
   });
+  const stableSelectionArraysRef = useRef<
+    Map<string, { signature: string; value: RasterSelection[] }>
+  >(new Map());
 
   const layersRef = useRef(layers);
   layersRef.current = layers;
@@ -431,10 +441,7 @@ export function useLayerData(
                           ? layersRef.current[layerId].featureState?.hiddenFeatureIds
                           : undefined;
                       loadedDataRef.current.shapePrebuiltData.set(layerId, {
-                        prebuilt: buildShapesPrebuiltData(
-                          mergedShapeData.renderData,
-                          hiddenIds
-                        ),
+                        prebuilt: buildShapesPrebuiltData(mergedShapeData.renderData, hiddenIds),
                         signature: serializeHiddenIds(hiddenIds),
                       });
                     }
@@ -639,29 +646,26 @@ export function useLayerData(
                         shape: loaderObj.shape,
                       }),
                       axisSizes
-                    ).slice(0, 7);
-                    const channelCount = Math.max(selections.length, 1);
+                    ).slice(0, 1);
                     const metadataChannels = (element.element as LabelsElement).attrs.omero
                       ?.channels;
 
-                    const colors = Array.from(
-                      { length: channelCount },
-                      (_, index): [number, number, number] => {
-                        const rgb = tryParseOmeroHexColor(metadataChannels?.[index]?.color);
-                        const palette = COLOR_PALLETE[index % COLOR_PALLETE.length];
-                        return rgb ?? [palette[0], palette[1], palette[2]];
-                      }
-                    );
+                    const rgb = tryParseOmeroHexColor(metadataChannels?.[0]?.color);
+                    const palette = COLOR_PALLETE[0];
+                    const color: [number, number, number] = rgb ?? [
+                      palette[0],
+                      palette[1],
+                      palette[2],
+                    ];
+
                     labelsData.selectionAxisSizes = axisSizes;
                     labelsData.selections = selections.length > 0 ? selections : [{}];
-                    labelsData.colors = colors;
-                    labelsData.channelsVisible = colors.map(
-                      (_, index) => metadataChannels?.[index]?.active ?? true
-                    );
-                    labelsData.channelOpacities = colors.map(() => 0.18);
-                    labelsData.channelOutlineOpacities = colors.map(() => 0.95);
-                    labelsData.channelsFilled = colors.map(() => true);
-                    labelsData.channelStrokeWidths = colors.map(() => 1.5);
+                    labelsData.colors = [color];
+                    labelsData.channelsVisible = [metadataChannels?.[0]?.active ?? true];
+                    labelsData.channelOpacities = [0.18];
+                    labelsData.channelOutlineOpacities = [0.95];
+                    labelsData.channelsFilled = [true];
+                    labelsData.channelStrokeWidths = [1.5];
                   }
 
                   loadedDataRef.current.labels.set(element.key, {
@@ -754,6 +758,17 @@ export function useLayerData(
       loaded.labels.delete(key);
     }
     // The useEffect will pick up the missing data and reload
+  }, []);
+
+  const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
+    const signature = serializeRasterSelections(selections);
+    const cached = stableSelectionArraysRef.current.get(key);
+    if (cached?.signature === signature) {
+      return cached.value;
+    }
+    const value = selections.map((selection) => ({ ...selection }));
+    stableSelectionArraysRef.current.set(key, { signature, value });
+    return value;
   }, []);
 
   const hasRenderableLayerData = useCallback((layerId: string): boolean => {
@@ -893,6 +908,7 @@ export function useLayerData(
             labelsData.selectionAxisSizes !== undefined
               ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
               : rawSelections;
+          const stableSelections = getStableSelections(`labels:${layerId}`, selections);
 
           const layer = renderLabelsLayer({
             id: layerId,
@@ -921,7 +937,7 @@ export function useLayerData(
               ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
                 ? ch.channelStrokeWidths
                 : labelsData.channelStrokeWidths,
-            selections,
+            selections: stableSelections,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -930,7 +946,7 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder]);
+  }, [layers, layerOrder, getStableSelections]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = elementMap.current.get(layerId);
@@ -1033,10 +1049,7 @@ export function useLayerData(
   );
 
   const getShapePickEvent = useCallback(
-    (
-      layerId: string,
-      pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
-    ) => {
+    (layerId: string, pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>) => {
       const elem = elementMap.current.get(layerId);
       if (!elem || elem.type !== 'shapes') {
         return undefined;
@@ -1049,9 +1062,9 @@ export function useLayerData(
         return undefined;
       }
       const rowIndex =
-        loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndexByFeatureId?.get(
-          feature.featureId
-        ) ?? feature.rowIndex;
+        loadedDataRef.current.shapes
+          .get(elem.key)
+          ?.tooltipRowIndexByFeatureId?.get(feature.featureId) ?? feature.rowIndex;
       return {
         layerId,
         elementKey: elem.key,
@@ -1096,6 +1109,7 @@ export function useLayerData(
         axisSizes !== undefined
           ? clampVivSelectionsToAxes(rawSelections, axisSizes)
           : rawSelections;
+      const stableSelections = getStableSelections(`image:${layerId}`, selections);
 
       vivProps.push({
         id: config.id,
@@ -1103,7 +1117,7 @@ export function useLayerData(
         colors,
         contrastLimits,
         channelsVisible,
-        selections,
+        selections: stableSelections,
         modelMatrix: elem.transform, // Apply coordinate transformation
         opacity: config.opacity,
         visible: config.visible,
@@ -1111,7 +1125,7 @@ export function useLayerData(
     }
 
     return vivProps;
-  }, [layers, layerOrder]);
+  }, [layers, layerOrder, getStableSelections]);
 
   const isLoading = useMemo(
     () =>

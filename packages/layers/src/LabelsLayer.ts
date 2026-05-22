@@ -1,6 +1,12 @@
-import type { Matrix4 } from '@math.gl/core';
 import { getImageSize } from '@hms-dbmi/viv';
-import { CompositeLayer, TileLayer, type Layer, type LayersList } from 'deck.gl';
+import type { Matrix4 } from '@math.gl/core';
+import {
+  CompositeLayer,
+  type CompositeLayerProps,
+  type Layer,
+  type LayersList,
+  TileLayer,
+} from 'deck.gl';
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
 
 /** One instance-ID raster per labels element (see `LabelsBitmaskTileLayer`). */
@@ -11,6 +17,14 @@ export type LabelsSelection = Partial<{ z: number; c: number; t: number }>;
 
 function firstSelection(selections: LabelsSelection[] | undefined): LabelsSelection {
   return selections?.[0] ?? {};
+}
+
+function selectionKey(selection: LabelsSelection): string {
+  return `z:${selection.z ?? ''}|c:${selection.c ?? ''}|t:${selection.t ?? ''}`;
+}
+
+function labelsSelectionKey(selections: LabelsSelection[] | undefined): string {
+  return selectionKey(firstSelection(selections));
 }
 
 function stylePlane<T>(arr: T[] | undefined, fallback: T): [T] {
@@ -33,6 +47,7 @@ export interface LabelsLayerProps {
   channelStrokeWidths?: number[];
   onClick?: (info: unknown) => void;
   onHover?: (info: unknown) => void;
+  _subLayerProps?: CompositeLayerProps['_subLayerProps'];
 }
 
 const VIV_SIGNAL_ABORTED = '__vivSignalAborted';
@@ -56,7 +71,7 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
 
   updateState({ props, oldProps }: { props: any; oldProps: any }): void {
     const loaderChanged = props.loader !== oldProps.loader;
-    const selectionsChanged = props.selections !== oldProps.selections;
+    const selectionsChanged = props.labelsSelectionKey !== oldProps.labelsSelectionKey;
 
     if (!loaderChanged && !selectionsChanged) {
       return;
@@ -158,8 +173,49 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
 class MultiscaleLabelsTileLayer extends UntypedTileLayer {
   static layerName = 'MultiscaleLabelsTileLayer';
 
+  // biome-ignore lint/complexity/noUselessConstructor: TileLayer's public types reject the Viv-style constructor overload used here.
   constructor(...args: any[]) {
     super(...args);
+  }
+
+  async getTileData({
+    index: { x, y, z },
+    signal,
+  }: {
+    index: { x: number; y: number; z: number };
+    signal: AbortSignal;
+  }) {
+    const loader = this.props.loader;
+    const loaders = Array.isArray(loader) ? loader : [loader];
+    const resolution = Math.max(0, Math.min(loaders.length - 1, Math.round(-z)));
+    const selection = firstSelection(this.props.selections);
+    const tileLoader = loaders[resolution] as any;
+    const getTile = tileLoader?.getTile?.bind(tileLoader);
+
+    if (!getTile) {
+      return null;
+    }
+
+    try {
+      const tile = await getTile({ x, y, selection, signal });
+      if (!tile) {
+        return null;
+      }
+      return {
+        data: [tile.data],
+        width: tile.width,
+        height: tile.height,
+      };
+    } catch (error) {
+      if (
+        error === VIV_SIGNAL_ABORTED ||
+        signal.aborted ||
+        (error as { name?: string } | null)?.name === 'AbortError'
+      ) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   _updateTileset(): void {
@@ -246,10 +302,12 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     }
 
     const selections = [firstSelection(selectionsProp)];
+    const structuralSelectionKey = labelsSelectionKey(selections);
     const nextLoader = Array.isArray(loader) && loader.length === 1 ? loader[0] : loader;
     const commonProps = {
       loader: nextLoader,
       selections,
+      labelsSelectionKey: structuralSelectionKey,
       modelMatrix,
       opacity,
       channelsVisible: stylePlane(channelsVisible, true),
@@ -269,55 +327,25 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       const { height, width } = getImageSize(baseLoader);
       const tileSize = baseLoader.tileSize;
       const zoomOffset = Math.round(Math.log2(modelMatrix ? modelMatrix.getScale()[0] : 1));
-      const getTileData = async ({
-        index: { x, y, z },
-        signal,
-      }: {
-        index: { x: number; y: number; z: number };
-        signal: AbortSignal;
-      }) => {
-        const resolution = Math.max(0, Math.min(loader.length - 1, Math.round(-z)));
-        const selection = firstSelection(selections);
-        const getTile = (loader[resolution] as any).getTile.bind(loader[resolution]);
-
-        try {
-          const tile = await getTile({ x, y, selection, signal });
-          if (!tile) {
-            return null;
-          }
-          return {
-            data: [tile.data],
-            width: tile.width,
-            height: tile.height,
-          };
-        } catch (error) {
-          if (
-            error === VIV_SIGNAL_ABORTED ||
-            signal.aborted ||
-            (error as { name?: string } | null)?.name === 'AbortError'
-          ) {
-            return null;
-          }
-          throw error;
-        }
-      };
 
       return new MultiscaleLabelsTileLayer(
         this.getSubLayerProps({
           id: 'labels',
           pickable: true,
           visible,
+          updateTriggers: {
+            getTileData: [nextLoader, structuralSelectionKey],
+          },
         }),
         {
           ...commonProps,
           ...interactionProps,
-          getTileData,
           tileSize,
           extent: [0, 0, width, height],
           zoomOffset,
           minZoom: MIN_LABELS_DISPLAY_ZOOM,
           maxZoom: 0,
-          refinementStrategy: opacity === 1 ? 'best-available' : 'no-overlap',
+          refinementStrategy: 'best-available',
           onTileError: baseLoader.onTileError,
           renderSubLayers: renderSubBitmaskLayers,
         } as any
