@@ -178,6 +178,14 @@ export default class SpatialDataTableSource extends AnnDataSource {
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
   parquetTableBytes: Record<string, Uint8Array>;
+  /**
+   * Cache of fully-parsed Arrow tables for paths requested without a column
+   * filter.  Avoids repeating the WASM `readParquet` + `tableFromIPC` decode
+   * when the same parquet file is needed by multiple callers in sequence (e.g.
+   * `inferShapesGeometryKindFromParquet`, `loadShapesIndex`, and
+   * `loadPolygonShapes` all target the same file).
+   */
+  parquetTableCache: Record<string, Promise<ArrowTable>>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -197,6 +205,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
     // TODO: change to column-specific storage.
     this.parquetTableBytes = {};
+    this.parquetTableCache = {};
 
     // Table-specific properties
     this.obsIndices = {};
@@ -384,7 +393,23 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * @param columns An optional list of column names to load.
    * @returns
    */
-  async loadParquetTable(parquetPath: string, columns?: string[]) {
+  async loadParquetTable(parquetPath: string, columns?: string[]): Promise<ArrowTable> {
+    // When no column filter is requested, return a shared promise so that
+    // concurrent or sequential callers for the same file share one WASM decode.
+    if (!columns?.length && parquetPath in this.parquetTableCache) {
+      return this.parquetTableCache[parquetPath];
+    }
+
+    const tablePromise = this._loadParquetTableUncached(parquetPath, columns);
+
+    if (!columns?.length) {
+      this.parquetTableCache[parquetPath] = tablePromise;
+    }
+
+    return tablePromise;
+  }
+
+  private async _loadParquetTableUncached(parquetPath: string, columns?: string[]): Promise<ArrowTable> {
     const { readParquet, readSchema } = await SpatialDataTableSource.parquetModulePromise;
 
     const options = {

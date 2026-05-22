@@ -41,6 +41,8 @@ import {
 } from '@spatialdata/core';
 import {
   type ShapeFeatureRenderDatum,
+  type ShapesPrebuiltData,
+  buildShapesPrebuiltData,
   resolveShapeFeatureFromPickInfo,
   resolveShapeTooltipFromPickInfo,
 } from '@spatialdata/layers';
@@ -71,11 +73,24 @@ interface LoadedShapesData extends ShapesTooltipMetadata {
   renderData: ShapesRenderData;
 }
 
+interface ShapePrebuiltEntry {
+  prebuilt: ShapesPrebuiltData;
+  /** Serialised, sorted `hiddenFeatureIds` — used to detect when a rebuild is needed. */
+  signature: string;
+}
+
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
   labels: Map<string, LabelsLoaderData>;
+  /**
+   * Pre-built deck.gl `data` arrays keyed by **layer id** (not element key).
+   * Each entry holds the O(n-features) array produced by `buildShapesPrebuiltData`
+   * so that `getLayers()` never has to allocate it.  Invalidated only when
+   * `hiddenFeatureIds` changes.
+   */
+  shapePrebuiltData: Map<string, ShapePrebuiltEntry>;
 }
 
 type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -158,6 +173,12 @@ function getLayerTooltipSignature(config: LayerConfig | undefined): string {
   return config && 'tooltipFields' in config ? getTooltipSignature(config.tooltipFields) : '';
 }
 
+/** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */
+function serializeHiddenIds(ids?: string[]): string {
+  if (!ids || ids.length === 0) return '';
+  return ids.slice().sort().join('\x00');
+}
+
 async function loadShapesLayerData(
   element: ShapesElement
 ): Promise<Pick<LoadedShapesData, 'renderData'>> {
@@ -189,6 +210,7 @@ export function useLayerData(
     points: new Map(),
     images: new Map(),
     labels: new Map(),
+    shapePrebuiltData: new Map(),
   });
 
   const layersRef = useRef(layers);
@@ -231,6 +253,30 @@ export function useLayerData(
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
     const loadData = async () => {
+      const loaded = loadedDataRef.current;
+
+      // ── Synchronous prebuilt invalidation ──────────────────────────────────
+      // Rebuild the pre-filtered feature arrays when hiddenFeatureIds changes.
+      // This is O(n-features) CPU work on already-loaded geometry; no IO.
+      for (const layerId of layerOrder) {
+        const config = layers[layerId];
+        if (!config?.visible || config.type !== 'shapes') continue;
+        const elem = elementMap.current.get(layerId);
+        if (!elem) continue;
+        const loadedShapes = loaded.shapes.get(elem.key);
+        if (!loadedShapes) continue;
+        const hiddenIds = config.featureState?.hiddenFeatureIds;
+        const sig = serializeHiddenIds(hiddenIds);
+        const cached = loaded.shapePrebuiltData.get(layerId);
+        if (!cached || cached.signature !== sig) {
+          loaded.shapePrebuiltData.set(layerId, {
+            prebuilt: buildShapesPrebuiltData(loadedShapes.renderData, hiddenIds),
+            signature: sig,
+          });
+        }
+      }
+      // ── Async IO loads ─────────────────────────────────────────────────────
+
       const toLoad: Array<{
         layerId: string;
         element: AvailableElement;
@@ -248,8 +294,6 @@ export function useLayerData(
         const elem = elementMap.current.get(layerId);
         if (!elem) continue;
 
-        // Check if we need to load data
-        const loaded = loadedDataRef.current;
         if (config.type === 'shapes') {
           const loadedShapes = loaded.shapes.get(elem.key);
           const tooltipSignature = getLayerTooltipSignature(config);
@@ -330,6 +374,16 @@ export function useLayerData(
                     ...geometryData,
                   });
                   setLayerResourceStatus(layerId, 'geometry', 'ready');
+                  // Build the initial prebuilt data for this layer.
+                  const curConfig = layersRef.current[layerId];
+                  const hiddenIds =
+                    curConfig?.type === 'shapes'
+                      ? curConfig.featureState?.hiddenFeatureIds
+                      : undefined;
+                  loadedDataRef.current.shapePrebuiltData.set(layerId, {
+                    prebuilt: buildShapesPrebuiltData(geometryData.renderData, hiddenIds),
+                    signature: serializeHiddenIds(hiddenIds),
+                  });
                 } catch (error) {
                   setLayerResourceStatus(layerId, 'geometry', 'error');
                   console.error(`Failed to load shapes geometry for ${layerId}:`, error);
@@ -667,6 +721,12 @@ export function useLayerData(
     const loaded = loadedDataRef.current;
     if (type === 'shapes') {
       loaded.shapes.delete(key);
+      // Clear prebuilt data for every layer that maps to this element key.
+      for (const [lId, elem] of elementMap.current) {
+        if (elem.key === key && elem.type === 'shapes') {
+          loaded.shapePrebuiltData.delete(lId);
+        }
+      }
     } else if (type === 'points') {
       loaded.points.delete(key);
     } else if (type === 'image') {
@@ -785,6 +845,7 @@ export function useLayerData(
             strokeWidth: config.strokeWidth,
             featureState: config.featureState,
             renderData: shapeData.renderData,
+            prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
           });
           if (layer) deckLayers.push(layer);
         }

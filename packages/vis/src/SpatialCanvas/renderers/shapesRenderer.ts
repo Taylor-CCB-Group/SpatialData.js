@@ -8,7 +8,7 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import type { ShapesElement, ShapesRenderData, SpatialFeatureTooltipData } from '@spatialdata/core';
-import { createShapesDeckLayer } from '@spatialdata/layers';
+import { createShapesDeckLayer, type ShapesPrebuiltData } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 
 export type ShapeTooltipDatum = SpatialFeatureTooltipData;
@@ -38,6 +38,12 @@ export interface ShapesLayerRenderConfig {
     filteredOpacityMultiplier?: number;
   };
   renderData?: ShapesRenderData;
+  /**
+   * Pre-built data array from the load-path cache.
+   * When provided, `createShapesDeckLayer` skips all O(n-features) data
+   * construction and acts as a pure descriptor assembler.
+   */
+  prebuilt?: ShapesPrebuiltData;
 }
 
 /**
@@ -57,6 +63,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
     strokeWidth = 1,
     featureState,
     renderData,
+    prebuilt,
   } = config;
 
   if (!visible) return null;
@@ -80,7 +87,8 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
       visible,
       opacity,
       modelMatrix,
-    }
+    },
+    prebuilt
   );
 }
 

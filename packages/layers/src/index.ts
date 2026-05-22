@@ -5,6 +5,7 @@ export { LabelsLayer, MAX_LABEL_CHANNELS } from './LabelsLayer';
 export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';
 export {
   createShapesDeckLayer,
+  buildShapesPrebuiltData,
   normalizeShapeFeatureState,
   resolveShapeFeatureFromPickInfo,
   resolveShapeTooltipFromPickInfo,
@@ -12,6 +13,7 @@ export {
   type ShapeCircleRenderDatum,
   type ShapeFeatureRenderDatum,
   type ShapePolygonRenderDatum,
+  type ShapesPrebuiltData,
   type ShapesRenderDataLike,
   type ShapeTooltipRuntimeData,
   type GeoarrowTableLike,

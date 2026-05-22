@@ -78,6 +78,47 @@ export interface ShapeTooltipRuntimeData {
   tooltipColumns?: Array<ArrayLike<unknown> | undefined>;
 }
 
+/**
+ * Pre-built deck.gl data arrays for a shapes layer.
+ *
+ * These are computed once after geometry loads (and after each `hiddenFeatureIds` change)
+ * and stored in the load cache. `createShapesDeckLayer` uses them directly when provided,
+ * avoiding the O(n-features) allocation on every `getLayers()` call.
+ */
+export interface ShapesPrebuiltData {
+  geometryKind: ShapesGeometryKind;
+  data: ShapePolygonRenderDatum[] | ShapeCircleRenderDatum[];
+}
+
+/** Cache normalised featureState runtimes by object identity. */
+const normalizeCache = new WeakMap<object, ShapeFeatureStateRuntime>();
+
+/** Singleton for the common case of no featureState at all. */
+const EMPTY_FEATURE_STATE_RUNTIME = Object.freeze({
+  fillColorByFeatureId: new Map(),
+  strokeColorByFeatureId: new Map(),
+  hiddenFeatureIds: new Set(),
+  fadedFeatureIds: new Set(),
+  filteredOpacityMultiplier: 0.35,
+} satisfies ShapeFeatureStateRuntime);
+
+export function normalizeShapeFeatureState(
+  featureState: SpatialShapesSublayer['featureState']
+): ShapeFeatureStateRuntime {
+  if (!featureState) return EMPTY_FEATURE_STATE_RUNTIME;
+  const cached = normalizeCache.get(featureState);
+  if (cached) return cached;
+  const result: ShapeFeatureStateRuntime = {
+    fillColorByFeatureId: new Map(Object.entries(featureState.fillColorByFeatureId ?? {})),
+    strokeColorByFeatureId: new Map(Object.entries(featureState.strokeColorByFeatureId ?? {})),
+    hiddenFeatureIds: new Set(featureState.hiddenFeatureIds ?? []),
+    fadedFeatureIds: new Set(featureState.fadedFeatureIds ?? []),
+    filteredOpacityMultiplier: featureState.filteredOpacityMultiplier ?? 0.35,
+  };
+  normalizeCache.set(featureState, result);
+  return result;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -127,18 +168,6 @@ export interface CreateShapesDeckLayerOptions {
   onShapeClick?: (event: ShapesLayerPickEvent) => void;
 }
 
-export function normalizeShapeFeatureState(
-  featureState: SpatialShapesSublayer['featureState']
-): ShapeFeatureStateRuntime {
-  return {
-    fillColorByFeatureId: new Map(Object.entries(featureState?.fillColorByFeatureId ?? {})),
-    strokeColorByFeatureId: new Map(Object.entries(featureState?.strokeColorByFeatureId ?? {})),
-    hiddenFeatureIds: new Set(featureState?.hiddenFeatureIds ?? []),
-    fadedFeatureIds: new Set(featureState?.fadedFeatureIds ?? []),
-    filteredOpacityMultiplier: featureState?.filteredOpacityMultiplier ?? 0.35,
-  };
-}
-
 function multiplyAlpha(
   color: [number, number, number, number],
   multiplier: number
@@ -163,17 +192,16 @@ function resolveGeometryKind(renderData: ShapesRenderDataLike): ShapesGeometryKi
 
 function buildPolygonRenderedFeatures(
   renderData: ShapesRenderDataLike,
-  sublayer: SpatialShapesSublayer
+  hiddenFeatureIds: Set<string>
 ): ShapePolygonRenderDatum[] {
   const polygons = renderData.polygons ?? [];
   const count = Math.min(renderData.featureIds.length, polygons.length);
-  const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const features: ShapePolygonRenderDatum[] = [];
 
   for (let featureIndex = 0; featureIndex < count; featureIndex++) {
     const featureId = renderData.featureIds[featureIndex];
     const polygon = polygons[featureIndex];
-    if (!featureId || !polygon || featureState.hiddenFeatureIds.has(featureId)) {
+    if (!featureId || !polygon || hiddenFeatureIds.has(featureId)) {
       continue;
     }
     const rowIndex = renderData.rowIndexByFeatureIndex?.[featureIndex];
@@ -190,7 +218,7 @@ function buildPolygonRenderedFeatures(
 
 function buildCircleRenderedFeatures(
   renderData: ShapesRenderDataLike,
-  sublayer: SpatialShapesSublayer
+  hiddenFeatureIds: Set<string>
 ): ShapeCircleRenderDatum[] {
   const circles = renderData.circles;
   if (!circles) {
@@ -205,12 +233,11 @@ function buildCircleRenderedFeatures(
     ys.length,
     usePerFeatureRadius ? radii.length : xs.length
   );
-  const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const features: ShapeCircleRenderDatum[] = [];
 
   for (let featureIndex = 0; featureIndex < count; featureIndex++) {
     const featureId = renderData.featureIds[featureIndex];
-    if (!featureId || featureState.hiddenFeatureIds.has(featureId)) {
+    if (!featureId || hiddenFeatureIds.has(featureId)) {
       continue;
     }
     const x = xs[featureIndex];
@@ -236,7 +263,7 @@ function buildCircleRenderedFeatures(
 
 function buildGeoarrowRenderedFeatures(
   renderData: ShapesRenderDataLike,
-  sublayer: SpatialShapesSublayer
+  hiddenFeatureIds: Set<string>
 ): ShapePolygonRenderDatum[] {
   const geometryTable = renderData.geometryTable;
   const geometryColumnName = renderData.geometryColumnName;
@@ -247,13 +274,12 @@ function buildGeoarrowRenderedFeatures(
   if (!geometryColumn) {
     return [];
   }
-  const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const count = Math.min(geometryTable.numRows, renderData.featureIds.length);
   const features: ShapePolygonRenderDatum[] = [];
 
   for (let featureIndex = 0; featureIndex < count; featureIndex++) {
     const featureId = renderData.featureIds[featureIndex];
-    if (!featureId || featureState.hiddenFeatureIds.has(featureId)) {
+    if (!featureId || hiddenFeatureIds.has(featureId)) {
       continue;
     }
     const polygon = geometryColumn.get(featureIndex);
@@ -270,6 +296,32 @@ function buildGeoarrowRenderedFeatures(
   }
 
   return features;
+}
+
+/**
+ * Pre-build the deck.gl `data` array for a shapes layer.
+ *
+ * Call this once after geometry loads and after each `hiddenFeatureIds` change,
+ * then pass the result to `createShapesDeckLayer` via the `prebuilt` parameter.
+ * This keeps the O(n-features) allocation out of the per-frame render path.
+ */
+export function buildShapesPrebuiltData(
+  renderData: ShapesRenderDataLike,
+  hiddenFeatureIds?: string[]
+): ShapesPrebuiltData {
+  const geometryKind = resolveGeometryKind(renderData);
+  const hiddenSet = new Set(hiddenFeatureIds ?? []);
+
+  if (geometryKind === 'circle' || geometryKind === 'point') {
+    return { geometryKind, data: buildCircleRenderedFeatures(renderData, hiddenSet) };
+  }
+
+  const data =
+    renderData.kind === 'geoarrow-table'
+      ? buildGeoarrowRenderedFeatures(renderData, hiddenSet)
+      : buildPolygonRenderedFeatures(renderData, hiddenSet);
+
+  return { geometryKind: 'polygon', data };
 }
 
 function createPickHandler(
@@ -441,19 +493,51 @@ function createCircleDeckLayer(
   });
 }
 
+/**
+ * Create a deck.gl layer for shapes data.
+ *
+ * When `prebuilt` is provided the function acts as a pure descriptor assembler:
+ * it skips all O(n-features) data construction and just creates the layer with
+ * the stable pre-built `data` reference.  Pass `prebuilt` from the load-path
+ * cache (`buildShapesPrebuiltData`) to keep the per-frame render path free of
+ * allocations.
+ *
+ * Without `prebuilt` the function falls back to building the data inline, which
+ * preserves backward compatibility for external callers and tests.
+ */
 export function createShapesDeckLayer(
   renderData: ShapesRenderDataLike,
   sublayer: SpatialShapesSublayer,
-  options: CreateShapesDeckLayerOptions
+  options: CreateShapesDeckLayerOptions,
+  prebuilt?: ShapesPrebuiltData
 ): Layer | null {
   if ((options.visible ?? sublayer.visible ?? true) === false) {
     return null;
   }
 
+  if (prebuilt) {
+    if (prebuilt.data.length === 0) return null;
+    if (prebuilt.geometryKind === 'circle' || prebuilt.geometryKind === 'point') {
+      return createCircleDeckLayer(
+        prebuilt.data as ShapeCircleRenderDatum[],
+        prebuilt.geometryKind,
+        sublayer,
+        options
+      );
+    }
+    return createPolygonDeckLayer(
+      prebuilt.data as ShapePolygonRenderDatum[],
+      sublayer,
+      options
+    );
+  }
+
+  // Fallback: build data inline (backward-compatible path for external callers).
   const geometryKind = resolveGeometryKind(renderData);
+  const featureState = normalizeShapeFeatureState(sublayer.featureState);
 
   if (geometryKind === 'circle' || geometryKind === 'point') {
-    const data = buildCircleRenderedFeatures(renderData, sublayer);
+    const data = buildCircleRenderedFeatures(renderData, featureState.hiddenFeatureIds);
     if (data.length === 0) {
       return null;
     }
@@ -462,8 +546,8 @@ export function createShapesDeckLayer(
 
   const data =
     renderData.kind === 'geoarrow-table'
-      ? buildGeoarrowRenderedFeatures(renderData, sublayer)
-      : buildPolygonRenderedFeatures(renderData, sublayer);
+      ? buildGeoarrowRenderedFeatures(renderData, featureState.hiddenFeatureIds)
+      : buildPolygonRenderedFeatures(renderData, featureState.hiddenFeatureIds);
   if (data.length === 0) {
     return null;
   }

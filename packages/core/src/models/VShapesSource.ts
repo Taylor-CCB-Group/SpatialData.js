@@ -396,6 +396,9 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     }
 
     const parquetPath = getParquetPath(elementPath);
+    // loadParquetTable caches the parsed Arrow table, so the three calls below
+    // (here, inside loadShapesIndex, inside loadPolygonShapes / loadCircleShapes)
+    // share one WASM decode.
     const geometryTable = await this.loadParquetTable(parquetPath);
     const geometryKind = inferShapesGeometryKindFromParquet(geometryTable);
 
@@ -423,13 +426,15 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
         }
       }
 
+      // geometryTable is not retained in the return value for wkb-parquet paths:
+      // all geometry has been decoded into typed arrays above, and keeping a
+      // second copy of the full Arrow table would waste heap memory.
       return {
         kind: 'wkb-parquet',
         geometryKind,
         elementKey,
         featureIds,
         circles: { positions: [xs, ys], radii },
-        geometryTable,
         geometryColumnName: 'geometry',
         rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
       };
@@ -446,13 +451,14 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
         `Feature id count (${featureIds.length}) did not match polygon count (${polygons.length}) for ${elementPath}`
       );
     }
+
+    // geometryTable is not retained for the same reason as the circle path above.
     return {
       kind: 'wkb-parquet',
       geometryKind: 'polygon',
       elementKey,
       featureIds,
       polygons,
-      geometryTable,
       geometryColumnName: 'geometry',
       rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
     };

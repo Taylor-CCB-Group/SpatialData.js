@@ -90,8 +90,17 @@ export interface UseSpatialCanvasRendererOptions {
   coordinateSystem: string | null;
   layers: Record<string, LayerConfig>;
   layerOrder: string[];
-  viewState: ViewState | null;
-  onViewStateChange: (viewState: ViewState) => void;
+  /**
+   * Current view state.  When `undefined` the auto-fit effect is skipped
+   * entirely, letting the caller manage auto-fit externally (e.g. in a
+   * child component that subscribes to `viewState` independently so that
+   * pan frames don't cause this hook to re-run).
+   */
+  viewState?: ViewState | null;
+  /**
+   * Required if `viewState` is provided and auto-fit is desired.
+   */
+  onViewStateChange?: (viewState: ViewState) => void;
   width: number;
   height: number;
   deckLayers?: Layer[];
@@ -141,6 +150,8 @@ export function useSpatialCanvasRenderer({
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
 
   useEffect(() => {
+    // Skip auto-fit when viewState is not managed by this hook (caller handles it).
+    if (viewState === undefined || !onViewStateChange) return;
     if (
       !shouldAutoFitSpatialView({
         autoFit,
