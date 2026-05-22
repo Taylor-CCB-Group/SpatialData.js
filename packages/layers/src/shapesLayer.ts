@@ -185,7 +185,7 @@ function resolveGeometryKind(renderData: ShapesRenderDataLike): ShapesGeometryKi
     return renderData.geometryKind;
   }
   if (renderData.circles) {
-    return renderData.circles.radii ? 'circle' : 'point';
+    return renderData.circles.radii !== undefined ? 'circle' : 'point';
   }
   return 'polygon';
 }

@@ -82,7 +82,54 @@ export interface GeopandasGeoParquetMetadata {
   >;
 }
 
-const POINT_WKB_GEOMETRY_TYPES = new Set(['Point', 'MultiPoint']);
+/** WKB geometry type names that decode to a single [x, y] per feature row. */
+const POINT_ONLY_WKB_GEOMETRY_TYPES = new Set(['Point']);
+
+function normalizeGeometryTypes(value: unknown): string[] | null {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const types = value.filter((item): item is string => typeof item === 'string');
+  return types.length > 0 ? types : null;
+}
+
+function parseGeopandasGeoParquetMetadata(raw: unknown): GeopandasGeoParquetMetadata | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const primaryColumn = record.primary_column;
+  if (typeof primaryColumn !== 'string') {
+    return null;
+  }
+  const columns = record.columns;
+  if (typeof columns !== 'object' || columns === null) {
+    return null;
+  }
+  const columnMeta = (columns as Record<string, unknown>)[primaryColumn];
+  if (typeof columnMeta !== 'object' || columnMeta === null) {
+    return null;
+  }
+  const geometryTypes = normalizeGeometryTypes(
+    (columnMeta as Record<string, unknown>).geometry_types
+  );
+  if (!geometryTypes) {
+    return null;
+  }
+  const encoding = (columnMeta as Record<string, unknown>).encoding;
+  return {
+    primary_column: primaryColumn,
+    columns: {
+      [primaryColumn]: {
+        ...(typeof encoding === 'string' ? { encoding } : {}),
+        geometry_types: geometryTypes,
+      },
+    },
+  };
+}
 
 export function readGeopandasGeoParquetMetadata(
   arrowTable: ArrowTable
@@ -92,9 +139,7 @@ export function readGeopandasGeoParquetMetadata(
     return null;
   }
   try {
-    // We could validate against a schema here; intentionally parse-only for now while
-    // geometry metadata moves toward upstream geoarrow / geoarrow-wasm handling.
-    return JSON.parse(raw) as GeopandasGeoParquetMetadata;
+    return parseGeopandasGeoParquetMetadata(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -110,7 +155,7 @@ export function inferShapesGeometryKindFromParquet(arrowTable: ArrowTable): Shap
   const geometryTypes = geo?.columns?.[primaryColumn]?.geometry_types ?? [];
   if (
     geometryTypes.length > 0 &&
-    geometryTypes.every((type) => POINT_WKB_GEOMETRY_TYPES.has(type))
+    geometryTypes.every((type) => POINT_ONLY_WKB_GEOMETRY_TYPES.has(type))
   ) {
     return 'point';
   }
@@ -376,23 +421,16 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     const elementKey = getShapesElementPath(elementPath).replace(/^shapes\//, '');
 
     if (formatVersion === '0.1') {
-      const featureIdsRaw = await this.loadShapesIndex(elementPath);
-      const featureIds = featureIdsFromIndex(featureIdsRaw, featureIdsRaw?.length ?? 0);
       const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
       const geos = zattrs.spatialdata_attrs?.geos || {};
-      if (!(geos.name === 'POINT' && geos.type === 0)) {
+      if (geos.name === 'POINT' && geos.type === 0) {
         throw new Error(
-          `Unsupported legacy shapes geometry for ${elementPath}: ${JSON.stringify(geos)}`
+          `Legacy ngff:shapes 0.1 point geometry is unsupported for render loading at ${elementPath}. Migrate to parquet-backed shapes (0.2+).`
         );
       }
-      return {
-        kind: 'js-polygons',
-        geometryKind: 'point',
-        elementKey,
-        featureIds,
-        polygons: [],
-        rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
-      };
+      throw new Error(
+        `Unsupported legacy shapes geometry for ${elementPath}: ${JSON.stringify(geos)}`
+      );
     }
 
     const parquetPath = getParquetPath(elementPath);

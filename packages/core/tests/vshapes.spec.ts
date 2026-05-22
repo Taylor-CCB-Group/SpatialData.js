@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import SpatialDataShapesSource, {
   inferShapesGeometryKindFromParquet,
+  readGeopandasGeoParquetMetadata,
 } from '../src/models/VShapesSource.js';
 
 describe('SpatialDataShapesSource', () => {
@@ -49,7 +50,7 @@ describe('SpatialDataShapesSource', () => {
     expect(loadParquetTableIndexSpy).not.toHaveBeenCalled();
   });
 
-  it('loads render data for legacy 0.1 shapes without parquet geometry loading', async () => {
+  it('rejects legacy 0.1 point shapes for render loading', async () => {
     const source = new SpatialDataShapesSource({
       store: {} as any,
       fileType: '.zarr',
@@ -61,17 +62,12 @@ describe('SpatialDataShapesSource', () => {
         geos: { name: 'POINT', type: 0 },
       },
     });
-    vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['legacy-1', 'legacy-2']);
     const loadPolygonShapesSpy = vi.spyOn(source, 'loadPolygonShapes');
     const loadParquetTableSpy = vi.spyOn(source, 'loadParquetTable');
 
-    await expect(source.loadShapesRenderData('shapes/cells')).resolves.toMatchObject({
-      kind: 'js-polygons',
-      geometryKind: 'point',
-      elementKey: 'cells',
-      featureIds: ['legacy-1', 'legacy-2'],
-      polygons: [],
-    });
+    await expect(source.loadShapesRenderData('shapes/cells')).rejects.toThrow(
+      /Legacy ngff:shapes 0\.1 point geometry is unsupported/
+    );
     expect(loadPolygonShapesSpy).not.toHaveBeenCalled();
     expect(loadParquetTableSpy).not.toHaveBeenCalled();
   });
@@ -138,6 +134,62 @@ describe('SpatialDataShapesSource', () => {
         radii: new Float32Array([1, 1.5]),
       },
     });
+  });
+
+  it('does not classify MultiPoint geopandas metadata as point landmarks', async () => {
+    const geoMetadata = JSON.stringify({
+      primary_column: 'geometry',
+      columns: {
+        geometry: {
+          encoding: 'WKB',
+          geometry_types: ['MultiPoint'],
+        },
+      },
+    });
+
+    const arrowTable = {
+      schema: {
+        fields: [{ name: 'geometry' }],
+        metadata: new Map([['geo', geoMetadata]]),
+      },
+    } as any;
+
+    expect(inferShapesGeometryKindFromParquet(arrowTable)).toBe('polygon');
+  });
+
+  it('validates geopandas geo parquet metadata before use', () => {
+    const validTable = {
+      schema: {
+        metadata: new Map([
+          [
+            'geo',
+            JSON.stringify({
+              primary_column: 'geometry',
+              columns: {
+                geometry: { geometry_types: 'Point' },
+              },
+            }),
+          ],
+        ]),
+      },
+    } as any;
+
+    expect(readGeopandasGeoParquetMetadata(validTable)).toEqual({
+      primary_column: 'geometry',
+      columns: {
+        geometry: { geometry_types: ['Point'] },
+      },
+    });
+
+    const invalidTable = {
+      schema: {
+        metadata: new Map([
+          ['geo', JSON.stringify({ primary_column: 123, columns: {} })],
+        ]),
+      },
+    } as any;
+
+    expect(readGeopandasGeoParquetMetadata(invalidTable)).toBeNull();
   });
 
   it('detects point landmarks from geopandas geo parquet metadata', async () => {

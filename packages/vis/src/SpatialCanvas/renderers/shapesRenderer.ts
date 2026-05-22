@@ -104,13 +104,10 @@ export async function loadShapesData(element: ShapesElement): Promise<ShapesRend
       `[ShapesRenderer] Failed to load shapes from ${element.url ?? element.path}:`,
       error
     );
-    return {
-      kind: 'js-polygons',
-      geometryKind: 'polygon',
-      elementKey: element.key,
-      featureIds: [],
-      polygons: [],
-      rowIndexByFeatureIndex: new Int32Array(0),
-    };
+    throw error instanceof Error
+      ? error
+      : new Error(
+          `[ShapesRenderer] Failed to load shapes from ${element.url ?? element.path}: ${String(error)}`
+        );
   }
 }
