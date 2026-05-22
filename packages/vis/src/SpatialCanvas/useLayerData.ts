@@ -646,29 +646,26 @@ export function useLayerData(
                         shape: loaderObj.shape,
                       }),
                       axisSizes
-                    ).slice(0, 7);
-                    const channelCount = Math.max(selections.length, 1);
+                    ).slice(0, 1);
                     const metadataChannels = (element.element as LabelsElement).attrs.omero
                       ?.channels;
 
-                    const colors = Array.from(
-                      { length: channelCount },
-                      (_, index): [number, number, number] => {
-                        const rgb = tryParseOmeroHexColor(metadataChannels?.[index]?.color);
-                        const palette = COLOR_PALLETE[index % COLOR_PALLETE.length];
-                        return rgb ?? [palette[0], palette[1], palette[2]];
-                      }
-                    );
+                    const rgb = tryParseOmeroHexColor(metadataChannels?.[0]?.color);
+                    const palette = COLOR_PALLETE[0];
+                    const color: [number, number, number] = rgb ?? [
+                      palette[0],
+                      palette[1],
+                      palette[2],
+                    ];
+
                     labelsData.selectionAxisSizes = axisSizes;
                     labelsData.selections = selections.length > 0 ? selections : [{}];
-                    labelsData.colors = colors;
-                    labelsData.channelsVisible = colors.map(
-                      (_, index) => metadataChannels?.[index]?.active ?? true
-                    );
-                    labelsData.channelOpacities = colors.map(() => 0.18);
-                    labelsData.channelOutlineOpacities = colors.map(() => 0.95);
-                    labelsData.channelsFilled = colors.map(() => true);
-                    labelsData.channelStrokeWidths = colors.map(() => 1.5);
+                    labelsData.colors = [color];
+                    labelsData.channelsVisible = [metadataChannels?.[0]?.active ?? true];
+                    labelsData.channelOpacities = [0.18];
+                    labelsData.channelOutlineOpacities = [0.95];
+                    labelsData.channelsFilled = [true];
+                    labelsData.channelStrokeWidths = [1.5];
                   }
 
                   loadedDataRef.current.labels.set(element.key, {

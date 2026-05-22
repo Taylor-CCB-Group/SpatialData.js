@@ -1,9 +1,9 @@
-import type { CSSProperties } from 'react';
 import { clampVivSelectionsToAxes } from '@spatialdata/avivatorish';
+import type { CSSProperties } from 'react';
 import type { LabelsLayerConfig } from './types';
 import type { LabelsLoaderData } from './useLayerData';
 
-const MAX_CHANNELS = 7;
+const LABEL_PLANE_COUNT = 1;
 
 const inputStyle: CSSProperties = {
   width: '100%',
@@ -134,19 +134,7 @@ function mergeForDisplay(
         )
       : baseSelections.map((selection) => mergeSelectionRow(undefined, selection, axisSizes));
 
-  const channelCount = Math.min(
-    MAX_CHANNELS,
-    Math.max(
-      colors.length,
-      channelsVisible.length,
-      channelOpacities.length,
-      channelOutlineOpacities.length,
-      channelsFilled.length,
-      channelStrokeWidths.length,
-      selections.length,
-      1
-    )
-  );
+  const channelCount = LABEL_PLANE_COUNT;
 
   const fillSelection = emptySelectionRow(axisSizes);
   const channelIds = Array.from(
@@ -199,9 +187,7 @@ export function LabelsChannelPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ color: '#ccc', fontSize: '12px', fontWeight: 600 }}>
-        Labels channels (max {MAX_CHANNELS})
-      </div>
+      <div style={{ color: '#ccc', fontSize: '12px', fontWeight: 600 }}>Labels</div>
       {Array.from({ length: m.channelCount }, (_, i) => (
         <div
           key={m.channelIds[i] ?? `${layerId}:labels:${i}`}
@@ -214,7 +200,7 @@ export function LabelsChannelPanel({
             gap: 8,
           }}
         >
-          <span style={{ color: '#666', fontSize: '11px' }}>Channel {i + 1}</span>
+          <span style={{ color: '#666', fontSize: '11px' }}>Style</span>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input
@@ -242,7 +228,7 @@ export function LabelsChannelPanel({
             </label>
           </div>
           <div>
-            <span style={labelStyle}>RGB</span>
+            <span style={labelStyle}>Color</span>
             <div style={{ display: 'flex', gap: 4 }}>
               {(
                 [
