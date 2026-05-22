@@ -1,16 +1,28 @@
 import type { Matrix4 } from '@math.gl/core';
-import { PolygonLayer, type Layer, type PickingInfo } from 'deck.gl';
+import { PolygonLayer, ScatterplotLayer, type Layer, type PickingInfo } from 'deck.gl';
 import type { SpatialShapesSublayer } from './spatialLayerProps';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
 
+export type ShapesGeometryKind = 'polygon' | 'circle' | 'point';
+
+/** Default marker radius for point landmarks (pixels). */
+export const DEFAULT_SHAPE_POINT_RADIUS_PX = 8;
+
 export type ShapesGeometryRepresentationKind = 'js-polygons' | 'wkb-parquet' | 'geoarrow-table';
+
+export interface ShapeCircleColumnarLike {
+  positions: [Float32Array, Float32Array];
+  radii?: Float32Array;
+}
 
 export interface ShapesRenderDataLike {
   kind: ShapesGeometryRepresentationKind;
+  geometryKind?: ShapesGeometryKind;
   elementKey: string;
   featureIds: string[];
   polygons?: ShapePolygon[];
+  circles?: ShapeCircleColumnarLike;
   rowIndexByFeatureIndex: Int32Array;
   geometryTable?: GeoarrowTableLike;
   geometryColumnName?: string;
@@ -33,12 +45,22 @@ export interface ShapeFeatureStateRuntime {
   filteredOpacityMultiplier: number;
 }
 
-export interface ShapeFeatureRenderDatum {
+export interface ShapePolygonRenderDatum {
   featureId: string;
   featureIndex: number;
   polygon: ShapePolygon;
   rowIndex?: number;
 }
+
+export interface ShapeCircleRenderDatum {
+  featureId: string;
+  featureIndex: number;
+  position: [number, number];
+  radius: number;
+  rowIndex?: number;
+}
+
+export type ShapeFeatureRenderDatum = ShapePolygonRenderDatum | ShapeCircleRenderDatum;
 
 export interface ShapesLayerPickEvent {
   layerId: string;
@@ -60,7 +82,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isShapeFeatureRenderDatum(value: unknown): value is ShapeFeatureRenderDatum {
+function isShapePolygon(value: unknown): value is ShapePolygon {
+  return Array.isArray(value);
+}
+
+function isShapePolygonRenderDatum(value: unknown): value is ShapePolygonRenderDatum {
   if (!isRecord(value)) {
     return false;
   }
@@ -69,6 +95,26 @@ function isShapeFeatureRenderDatum(value: unknown): value is ShapeFeatureRenderD
     typeof value.featureIndex === 'number' &&
     isShapePolygon(value.polygon)
   );
+}
+
+function isShapeCircleRenderDatum(value: unknown): value is ShapeCircleRenderDatum {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const position = value.position;
+  return (
+    typeof value.featureId === 'string' &&
+    typeof value.featureIndex === 'number' &&
+    typeof value.radius === 'number' &&
+    Array.isArray(position) &&
+    position.length >= 2 &&
+    typeof position[0] === 'number' &&
+    typeof position[1] === 'number'
+  );
+}
+
+function isShapeFeatureRenderDatum(value: unknown): value is ShapeFeatureRenderDatum {
+  return isShapePolygonRenderDatum(value) || isShapeCircleRenderDatum(value);
 }
 
 export interface CreateShapesDeckLayerOptions {
@@ -105,14 +151,24 @@ function multiplyAlpha(
   ];
 }
 
-function buildRenderedFeatures(
+function resolveGeometryKind(renderData: ShapesRenderDataLike): ShapesGeometryKind {
+  if (renderData.geometryKind) {
+    return renderData.geometryKind;
+  }
+  if (renderData.circles) {
+    return renderData.circles.radii ? 'circle' : 'point';
+  }
+  return 'polygon';
+}
+
+function buildPolygonRenderedFeatures(
   renderData: ShapesRenderDataLike,
   sublayer: SpatialShapesSublayer
-): ShapeFeatureRenderDatum[] {
+): ShapePolygonRenderDatum[] {
   const polygons = renderData.polygons ?? [];
   const count = Math.min(renderData.featureIds.length, polygons.length);
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
-  const features: ShapeFeatureRenderDatum[] = [];
+  const features: ShapePolygonRenderDatum[] = [];
 
   for (let featureIndex = 0; featureIndex < count; featureIndex++) {
     const featureId = renderData.featureIds[featureIndex];
@@ -132,14 +188,56 @@ function buildRenderedFeatures(
   return features;
 }
 
-function isShapePolygon(value: unknown): value is ShapePolygon {
-  return Array.isArray(value);
+function buildCircleRenderedFeatures(
+  renderData: ShapesRenderDataLike,
+  sublayer: SpatialShapesSublayer
+): ShapeCircleRenderDatum[] {
+  const circles = renderData.circles;
+  if (!circles) {
+    return [];
+  }
+  const [xs, ys] = circles.positions;
+  const radii = circles.radii;
+  const usePerFeatureRadius = radii !== undefined;
+  const count = Math.min(
+    renderData.featureIds.length,
+    xs.length,
+    ys.length,
+    usePerFeatureRadius ? radii.length : xs.length
+  );
+  const featureState = normalizeShapeFeatureState(sublayer.featureState);
+  const features: ShapeCircleRenderDatum[] = [];
+
+  for (let featureIndex = 0; featureIndex < count; featureIndex++) {
+    const featureId = renderData.featureIds[featureIndex];
+    if (!featureId || featureState.hiddenFeatureIds.has(featureId)) {
+      continue;
+    }
+    const x = xs[featureIndex];
+    const y = ys[featureIndex];
+    const radius = usePerFeatureRadius
+      ? radii[featureIndex]
+      : DEFAULT_SHAPE_POINT_RADIUS_PX;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius < 0) {
+      continue;
+    }
+    const rowIndex = renderData.rowIndexByFeatureIndex?.[featureIndex];
+    features.push({
+      featureId,
+      featureIndex,
+      position: [x, y],
+      radius,
+      rowIndex: rowIndex !== undefined && rowIndex >= 0 ? rowIndex : undefined,
+    });
+  }
+
+  return features;
 }
 
 function buildGeoarrowRenderedFeatures(
   renderData: ShapesRenderDataLike,
   sublayer: SpatialShapesSublayer
-): ShapeFeatureRenderDatum[] {
+): ShapePolygonRenderDatum[] {
   const geometryTable = renderData.geometryTable;
   const geometryColumnName = renderData.geometryColumnName;
   if (!geometryTable || !geometryColumnName) {
@@ -151,7 +249,7 @@ function buildGeoarrowRenderedFeatures(
   }
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const count = Math.min(geometryTable.numRows, renderData.featureIds.length);
-  const features: ShapeFeatureRenderDatum[] = [];
+  const features: ShapePolygonRenderDatum[] = [];
 
   for (let featureIndex = 0; featureIndex < count; featureIndex++) {
     const featureId = renderData.featureIds[featureIndex];
@@ -251,25 +349,17 @@ export function resolveShapeTooltipFromPickInfo(
   };
 }
 
-export function createShapesDeckLayer(
-  renderData: ShapesRenderDataLike,
+function createPolygonDeckLayer(
+  data: ShapePolygonRenderDatum[],
   sublayer: SpatialShapesSublayer,
   options: CreateShapesDeckLayerOptions
-): Layer | null {
-  if ((options.visible ?? sublayer.visible ?? true) === false) {
-    return null;
-  }
-
-  const data =
-    renderData.kind === 'geoarrow-table'
-      ? buildGeoarrowRenderedFeatures(renderData, sublayer)
-      : buildRenderedFeatures(renderData, sublayer);
+): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
   const defaultStrokeColor = sublayer.defaultStrokeColor ?? [255, 255, 255, 255];
   const defaultStrokeWidth = sublayer.defaultStrokeWidth ?? 1;
 
-  return new PolygonLayer<ShapeFeatureRenderDatum>({
+  return new PolygonLayer<ShapePolygonRenderDatum>({
     id: options.id,
     data,
     getPolygon: (d) => d.polygon,
@@ -307,4 +397,75 @@ export function createShapesDeckLayer(
       options.onShapeClick
     ),
   });
+}
+
+function createCircleDeckLayer(
+  data: ShapeCircleRenderDatum[],
+  geometryKind: 'circle' | 'point',
+  sublayer: SpatialShapesSublayer,
+  options: CreateShapesDeckLayerOptions
+): Layer {
+  const featureState = normalizeShapeFeatureState(sublayer.featureState);
+  const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
+  const radiusUnits = geometryKind === 'point' ? 'pixels' : 'common';
+
+  return new ScatterplotLayer<ShapeCircleRenderDatum>({
+    id: options.id,
+    data,
+    getPosition: (d) => d.position,
+    getRadius: (d) => d.radius,
+    radiusUnits,
+    getFillColor: (d) => {
+      const base = featureState.fillColorByFeatureId.get(d.featureId) ?? defaultFillColor;
+      return featureState.fadedFeatureIds.has(d.featureId)
+        ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
+        : base;
+    },
+    opacity: options.opacity ?? 1,
+    modelMatrix: options.modelMatrix,
+    pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 255, 0, 128],
+    onHover: createPickHandler(
+      options.id,
+      sublayer.elementKey,
+      options.spatialCoordinateSystem,
+      options.onShapeHover
+    ),
+    onClick: createPickHandler(
+      options.id,
+      sublayer.elementKey,
+      options.spatialCoordinateSystem,
+      options.onShapeClick
+    ),
+  });
+}
+
+export function createShapesDeckLayer(
+  renderData: ShapesRenderDataLike,
+  sublayer: SpatialShapesSublayer,
+  options: CreateShapesDeckLayerOptions
+): Layer | null {
+  if ((options.visible ?? sublayer.visible ?? true) === false) {
+    return null;
+  }
+
+  const geometryKind = resolveGeometryKind(renderData);
+
+  if (geometryKind === 'circle' || geometryKind === 'point') {
+    const data = buildCircleRenderedFeatures(renderData, sublayer);
+    if (data.length === 0) {
+      return null;
+    }
+    return createCircleDeckLayer(data, geometryKind, sublayer, options);
+  }
+
+  const data =
+    renderData.kind === 'geoarrow-table'
+      ? buildGeoarrowRenderedFeatures(renderData, sublayer)
+      : buildPolygonRenderedFeatures(renderData, sublayer);
+  if (data.length === 0) {
+    return null;
+  }
+  return createPolygonDeckLayer(data, sublayer, options);
 }

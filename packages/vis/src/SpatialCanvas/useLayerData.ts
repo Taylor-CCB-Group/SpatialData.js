@@ -30,6 +30,7 @@ import {
   type SpatialData,
   boundsFromImagePixelExtents,
   boundsFromPoints,
+  boundsFromCircles,
   boundsFromPolygons,
   getTooltipSignature,
   getPhysicalSizeScalingMatrixFromMeta,
@@ -703,8 +704,16 @@ export function useLayerData(
         const loaded = loadedDataRef.current;
         if (elem.type === 'shapes') {
           const shapeData = loaded.shapes.get(elem.key);
-          if (!shapeData?.renderData.polygons?.length) return null;
-          return boundsFromPolygons(shapeData.renderData.polygons, elem.transform);
+          if (!shapeData) return null;
+          const { renderData } = shapeData;
+          if (
+            (renderData.geometryKind === 'circle' || renderData.geometryKind === 'point') &&
+            renderData.circles
+          ) {
+            return boundsFromCircles(renderData.circles, elem.transform);
+          }
+          if (!renderData.polygons?.length) return null;
+          return boundsFromPolygons(renderData.polygons, elem.transform);
         }
         if (elem.type === 'points') {
           const pointData = loaded.points.get(elem.key);

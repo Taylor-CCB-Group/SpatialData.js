@@ -10,5 +10,11 @@ export * from './store/index.js';
 export * from './models/index.js';
 export * from './spatialViewFit.js';
 export * from './shapes.js';
+export {
+  inferShapesGeometryKindFromParquet,
+  readGeopandasGeoParquetMetadata,
+  type GeopandasGeoParquetMetadata,
+} from './models/VShapesSource.js';
+export { tableToIndexColumnName } from './models/VTableSource.js';
 export * from './tableAssociations.js';
 export * from './tooltip.js';

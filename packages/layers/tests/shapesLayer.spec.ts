@@ -9,6 +9,7 @@ import {
 
 const renderData: ShapesRenderDataLike = {
   kind: 'wkb-parquet',
+  geometryKind: 'polygon',
   elementKey: 'cells',
   featureIds: ['cell-1', 'cell-2', 'cell-3'],
   polygons: [
@@ -21,6 +22,7 @@ const renderData: ShapesRenderDataLike = {
 
 const geoarrowRenderData: ShapesRenderDataLike = {
   kind: 'geoarrow-table',
+  geometryKind: 'polygon',
   elementKey: 'cells',
   featureIds: ['cell-1', 'cell-2'],
   geometryColumnName: 'geometry',
@@ -100,6 +102,66 @@ describe('createShapesDeckLayer', () => {
         rowIndex: 10,
       })
     );
+  });
+
+  it('renders point landmarks with pixel-sized ScatterplotLayer markers', () => {
+    const pointRenderData: ShapesRenderDataLike = {
+      kind: 'wkb-parquet',
+      geometryKind: 'point',
+      elementKey: 'xenium_landmarks',
+      featureIds: ['landmark-a'],
+      circles: {
+        positions: [new Float32Array([100]), new Float32Array([50])],
+      },
+      rowIndexByFeatureIndex: new Int32Array([0]),
+    };
+
+    const layer = createShapesDeckLayer(
+      pointRenderData,
+      {
+        kind: 'shapes',
+        elementKey: 'xenium_landmarks',
+        visible: true,
+      },
+      { id: 'landmark-shapes' }
+    );
+
+    expect(layer).not.toBeNull();
+    const props = layer!.props as any;
+    expect(props.radiusUnits).toBe('pixels');
+    expect((props.getRadius as (d: { radius: number }) => number)(props.data[0])).toBe(8);
+  });
+
+  it('renders circle shapes with ScatterplotLayer', () => {
+    const circleRenderData: ShapesRenderDataLike = {
+      kind: 'wkb-parquet',
+      geometryKind: 'circle',
+      elementKey: 'cell_circles',
+      featureIds: ['cell-1', 'cell-2'],
+      circles: {
+        positions: [new Float32Array([0, 3]), new Float32Array([0, 3])],
+        radii: new Float32Array([1, 2]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+    };
+
+    const layer = createShapesDeckLayer(
+      circleRenderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cell_circles',
+        visible: true,
+      },
+      { id: 'circle-shapes' }
+    );
+
+    expect(layer).not.toBeNull();
+    const props = layer!.props as any;
+    expect(props.radiusUnits).toBe('common');
+    expect((props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)).toEqual(
+      ['cell-1', 'cell-2']
+    );
+    expect((props.getRadius as (d: { radius: number }) => number)(props.data[1])).toBe(2);
   });
 
   it('renders geoarrow-table data through the shared backend branch', () => {

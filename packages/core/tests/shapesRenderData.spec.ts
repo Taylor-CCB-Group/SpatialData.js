@@ -68,6 +68,7 @@ describe('loadFeatureRowIndexByFeatureIndex', () => {
     table.loadObsColumns = async () => [['cells', 'cells']];
     shapeElement.vShapes.loadShapesRenderData = async () => ({
       kind: 'wkb-parquet',
+      geometryKind: 'polygon',
       elementKey: 'cells',
       featureIds: ['cell-1', 'cell-2'],
       polygons: [

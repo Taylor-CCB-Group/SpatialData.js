@@ -98,6 +98,7 @@ export async function loadShapesData(element: ShapesElement): Promise<ShapesRend
     );
     return {
       kind: 'js-polygons',
+      geometryKind: 'polygon',
       elementKey: element.key,
       featureIds: [],
       polygons: [],

@@ -121,8 +121,9 @@ Shapes represent vector geometries like polygons and circles.
 const shapes = sdata.shapes?.['cell_boundaries'];
 
 // Load geometry data
-const polygons = await shapes.loadPolygonShapes();  // For polygon geometries
-const circles = await shapes.loadCircleShapes();    // For circle/point geometries
+const renderData = await shapes.loadRenderData();   // Auto-detects polygons, circles (cell_circles), points (xenium_landmarks)
+const polygons = await shapes.loadPolygonShapes();  // For polygon geometries only
+const circles = await shapes.loadCircleShapes();    // For circle/point geometries only
 const featureIds = await shapes.loadFeatureIds();
 
 // Access metadata
