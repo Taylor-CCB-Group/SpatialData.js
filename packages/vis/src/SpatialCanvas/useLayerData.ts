@@ -186,6 +186,19 @@ function serializeRasterSelections(selections: RasterSelection[]): string {
     .join('\x00');
 }
 
+function getElementMapKey(config: Pick<LayerConfig, 'type' | 'elementKey'>): string {
+  return `${config.type}:${config.elementKey}`;
+}
+
+export function resolveLayerElement(
+  layerId: string,
+  config: LayerConfig | undefined,
+  elementMap: Map<string, AvailableElement>
+): AvailableElement | undefined {
+  if (!config) return undefined;
+  return elementMap.get(getElementMapKey(config)) ?? elementMap.get(layerId);
+}
+
 async function loadShapesLayerData(
   element: ShapesElement
 ): Promise<Pick<LoadedShapesData, 'renderData'>> {
@@ -271,7 +284,7 @@ export function useLayerData(
       for (const layerId of layerOrder) {
         const config = layers[layerId];
         if (!config?.visible || config.type !== 'shapes') continue;
-        const elem = elementMap.current.get(layerId);
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
         if (!elem) continue;
         const loadedShapes = loaded.shapes.get(elem.key);
         if (!loadedShapes) continue;
@@ -301,7 +314,7 @@ export function useLayerData(
         const config = layers[layerId];
         if (!config?.visible) continue;
 
-        const elem = elementMap.current.get(layerId);
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
         if (!elem) continue;
 
         if (config.type === 'shapes') {
@@ -745,9 +758,9 @@ export function useLayerData(
     if (type === 'shapes') {
       loaded.shapes.delete(key);
       // Clear prebuilt data for every layer that maps to this element key.
-      for (const [lId, elem] of elementMap.current) {
-        if (elem.key === key && elem.type === 'shapes') {
-          loaded.shapePrebuiltData.delete(lId);
+      for (const [layerId, config] of Object.entries(layersRef.current)) {
+        if (config.type === 'shapes' && config.elementKey === key) {
+          loaded.shapePrebuiltData.delete(layerId);
         }
       }
     } else if (type === 'points') {
@@ -772,7 +785,7 @@ export function useLayerData(
   }, []);
 
   const hasRenderableLayerData = useCallback((layerId: string): boolean => {
-    const elem = elementMap.current.get(layerId);
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem) return false;
     if (elem.type === 'shapes') {
       return loadedDataRef.current.shapes.has(elem.key);
@@ -793,7 +806,7 @@ export function useLayerData(
     (layerId: string): AxisAlignedBounds | null => {
       try {
         const config = layers[layerId];
-        const elem = elementMap.current.get(layerId);
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
         if (!config?.visible || !elem) return null;
         const loaded = loadedDataRef.current;
         if (elem.type === 'shapes') {
@@ -862,7 +875,7 @@ export function useLayerData(
       const config = layers[layerId];
       if (!config?.visible) continue;
 
-      const elem = elementMap.current.get(layerId);
+      const elem = resolveLayerElement(layerId, config, elementMap.current);
       if (!elem) continue;
 
       if (config.type === 'shapes') {
@@ -949,13 +962,13 @@ export function useLayerData(
   }, [layers, layerOrder, getStableSelections]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
-    const elem = elementMap.current.get(layerId);
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem || elem.type !== 'image') return undefined;
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
   const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
-    const elem = elementMap.current.get(layerId);
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem || elem.type !== 'labels') return undefined;
     return loadedDataRef.current.labels.get(elem.key);
   }, []);
@@ -973,7 +986,7 @@ export function useLayerData(
       layerId: string,
       pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
     ): SpatialFeatureTooltipData | undefined => {
-      const elem = elementMap.current.get(layerId);
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem) {
         return undefined;
       }
@@ -1050,7 +1063,7 @@ export function useLayerData(
 
   const getShapePickEvent = useCallback(
     (layerId: string, pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>) => {
-      const elem = elementMap.current.get(layerId);
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem || elem.type !== 'shapes') {
         return undefined;
       }
@@ -1085,7 +1098,7 @@ export function useLayerData(
       const config = layers[layerId];
       if (!config?.visible || config.type !== 'image') continue;
 
-      const elem = elementMap.current.get(layerId);
+      const elem = resolveLayerElement(layerId, config, elementMap.current);
       if (!elem || elem.type !== 'image') continue;
 
       const imageData = loaded.images.get(elem.key);

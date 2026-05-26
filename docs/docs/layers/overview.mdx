@@ -34,3 +34,20 @@ See also the [visualization overview](../vis/overview): deck-only integrators ca
 - the public shapes config stays representation-agnostic so a stronger future `deck.gl-geoarrow` backend can slot in without changing saved props
 
 For shapes, the important contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.
+
+Points should follow the same package split before we make a GeoArrow migration
+load-bearing:
+
+- `@spatialdata/core` discovers SpatialData points stores and exposes coordinate
+  columns, stable point ids, row-index alignment, and Arrow batches/vectors when
+  available
+- `@spatialdata/layers` owns the deck-facing points renderer, including
+  filtering/styling feature state and backend choice
+- the initial backend can remain `ScatterplotLayer` over typed coordinate
+  arrays, but the public points config should be representation-agnostic enough
+  to add `@geoarrow/deck.gl-geoarrow` / `GeoArrowScatterplotLayer` when point
+  data is GeoArrow-encoded or cheaply adaptable
+
+The migration test is the same as shapes: MDV or Vitessce should be able to
+drive hide/fade/color/radius state without knowing whether the renderer used JS
+arrays, deck binary attributes, or GeoArrow batches underneath.

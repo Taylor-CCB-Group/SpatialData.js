@@ -18,6 +18,12 @@ sidebar_position: 1
 - **Single primary image** path in the Viv viewer composition (first enabled image layer drives `DetailView.getLayers`).
 - **View state** conversion between SpatialCanvas and Viv is still **2D-oriented**; full 3D orbit state is not fully round-tripped.
 - **`useLayerData`** prefers explicit `LayerConfig.channels` when arrays are non-empty; further **override flags** may still be useful for edge cases.
+- **Points are still a minimal scatter path:** `PointsElement.loadPoints()`
+  loads coordinate columns into an ndarray-ish object and
+  `@spatialdata/vis` renders them directly with `ScatterplotLayer`. There is
+  not yet stable point identity, table-backed feature state, viewport/row-group
+  filtering, progressive multi-file Parquet loading, or a GeoArrow-backed
+  renderer.
 
 ## Upstream Viv Follow-ups
 
@@ -49,6 +55,10 @@ sidebar_position: 1
 - Flesh out **`SpatialLayer`** sublayers (image, scatter, shapes, …) and keep **`SpatialLayerProps`** migrations honest as kinds grow.
 - Harden **`@spatialdata/avivatorish`** for MDV adoption (telemetry hooks, docs).
 - **MDV integration** checklist: replace vendored avivatorish, adopt shared layers, scatter/table-backed props, phased contour extraction.
+- **Points parity with shapes:** move point rendering into
+  `@spatialdata/layers`, add stable point ids plus hide/fade/color/radius
+  feature state, and make multi-file Parquet stores render progressively before
+  adopting GeoArrow as a fast-path adapter.
 - **GeoArrow / Parquet** paths for shapes and points; clarify **`@spatialdata/core`** vs deck-facing buffers.
 - **3D view mode** and **time (`t`)** in the public scene contract.
 

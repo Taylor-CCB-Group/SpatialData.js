@@ -23,8 +23,12 @@ right answer once.
    a prop's change should invalidate downstream async work (tile fetching,
    re-loading data), it goes into `updateTriggers` on the layer that owns the
    side effect. There is no parallel registry.
+4. **Viv image layers are an adapter boundary, not an exception.** Images still
+   follow the same deck rule. Viv constructs the actual image layers, and Viv
+   0.21's multiscale image tile layer declares `[loader, selections]` as the
+   `getTileData` trigger set.
 
-If you follow those three rules, deck.gl's existing layer matching + prop
+If you follow those rules, deck.gl's existing layer matching + prop
 diffing handles the rest. Cosmetic prop tweaks repaint without touching the
 tileset cache; structural changes invalidate via `updateTriggers` and refetch.
 Nothing more is needed.
@@ -57,6 +61,30 @@ refetches. The fix is upstream stability, not downstream caching.
   loaded fallback should still be memoized to keep render output cheap, but
   identity stability is not required for correctness.
 
+### For image layers through Viv
+
+SpatialCanvas image rendering currently routes through Viv
+`DetailView.getLayers()`, which creates Viv `ImageLayer` /
+`MultiscaleImageLayer` instances. That means `@spatialdata/vis` does not
+directly own the image tile layer class, but it still owns the props it passes
+to Viv.
+
+- Treat Viv's image layer as the tile-loading owner. In Viv 0.21,
+  `MultiscaleImageLayer` sets `updateTriggers.getTileData` to
+  `[loader, selections]`.
+- Keep `loader` and `selections` identity-stable in `useLayerData`. Cosmetic
+  image props (`colors`, `contrastLimits`, `channelsVisible`, `opacity`,
+  `modelMatrix`) can flow through as normal props.
+- `VivSpatialViewer` may call `detailView.getLayers()` on each render. The
+  important requirements are stable layer ids, passing the complete prop bag
+  into Viv/deck, and avoiding any viewer-local classification of prop names.
+- Do not patch Viv-created layers by spreading `layer.props` after creation.
+  Some Viv/deck props, including extension defaults, are not safe to preserve
+  with object spread. Pass props into Viv up front, then use `layer.clone()` only
+  for identity-neutral deck props such as the final layer id.
+- If a future Viv version changes the image tile trigger set, update this note
+  and add or adjust an image behavioral test in the same PR.
+
 ### For layer authors (`LabelsLayer`, future custom layers)
 
 - Pass cosmetic props through `getSubLayerProps`; do not enumerate them by
@@ -79,11 +107,11 @@ refetches. The fix is upstream stability, not downstream caching.
   That is the only structural change it should make to incoming layers.
 - Must not extract, classify, or re-route props by name. The viewer is
   transparent to whatever props the producer or extensions chose to pass.
-- The only legitimate viewer-local cache is for the layer instances that Viv's
-  `detailView.getLayers()` itself constructs on each call (because Viv's API
-  does not return stable references). Cache key is the producer-side
-  `(loader, selectionsRef)` tuple; visual updates go through the deck-native
-  `layer.clone(props)` of *all* incoming props, not a hand-picked subset.
+- It should not maintain viewer-local layer caches unless there is runtime
+  evidence that deck's layer matching cannot preserve the relevant Viv layer
+  state. If such a cache becomes necessary, the cache key must be structural
+  only (`loader`, `selectionsRef`, and any future Viv-declared tile trigger),
+  and cosmetic updates must still flow through deck-native props.
 
 ## Anti-patterns (do not reintroduce)
 
@@ -122,31 +150,22 @@ expect(fetchCount.value).toBe(before);
 One such test per layer type (`image`, `labels`, future custom layers) is
 enough to keep the contract honest.
 
-## Migration plan
+## Current audit checklist
 
-> This section is tactical and should be removed once the follow-up PR
-> implementing the redesign has merged.
+Use this checklist when changing images, labels, or future raster-like layers.
 
-The cosmetic-prop performance bug exists on `main` at the time of writing.
-The redesign that fixes it lives in a follow-up branch. Sequence:
-
-1. **Diagnostic round.** Instrument `useLayerData.getVivLayerProps()` and the
-   labels branch with one-shot identity-stability logging — for each render,
-   record which fields' identity changed. Confirm whether the culprit is
-   `loader`, `selections`, `getTileData`, or all three.
-2. **Restore identity stability in `useLayerData`.** Memoize the offending
-   fields. Do *not* add any new caches outside `useLayerData`.
-3. **Simplify `VivSpatialViewer`.** Remove all bespoke per-extra-layer caches.
-   Keep the minimal image-layer cache only if `detailView.getLayers()` still
-   requires it; key it on `(loader, selectionsRef)` only.
-4. **Simplify `LabelsLayer`.** Plain CompositeLayer that passes props through
-   via `getSubLayerProps` and declares `updateTriggers.getTileData` on the
-   inner tile layer. No module caches, no lifecycle overrides for state.
-5. **Add the behavioral test** described above for both image and labels.
-
-Acceptance: opacity slider drag and channel-color edit on a labels layer
-produce zero new `getTile` calls in the test harness; manual DevTools Network
-panel during cosmetic drags stays empty.
+1. **Identify the tile-loading owner.** For labels, that is
+   `LabelsLayer` / its inner `TileLayer`. For images, that is Viv's
+   `MultiscaleImageLayer`.
+2. **Read the owner's `updateTriggers.getTileData`.** The trigger list is the
+   structural contract. Mirror it in the producer's identity-stability work; do
+   not invent a second visual-vs-structural table.
+3. **Keep adapter components transparent.** Viewers may normalize ids and
+   compose layers, but should not sort props into structural and cosmetic
+   buckets.
+4. **Test behavior, not cache mechanics.** A cosmetic opacity/color/channel
+   change should not produce new tile reads. A real selection/loader change
+   should.
 
 ## See also
 
