@@ -189,6 +189,79 @@ Use this checklist when changing images, labels, shapes, or future layer types.
    should not call `getWorldBoundsForLayer()` unless they are executing a user
    command.
 
+## Shapes feature state and deck.gl performance
+
+Shapes layers can carry hundreds of thousands to millions of features. Most
+deck.gl update cost on large layers is **accessor re-execution** (see
+[deck.gl performance — optimize accessors](https://deck.gl/docs/developer-guide/performance#optimize-accessors)),
+not React reconciliation. Treat shapes rendering with the same discipline as
+tile layers: **minimize how often per-feature work runs**, and prefer uniform
+props (`opacity`, `radiusScale`, etc.) for cosmetic changes.
+
+### What is structural vs cosmetic for shapes
+
+| Change | Category | Expected work |
+|---|---|---|
+| `opacity`, `fillColor` / `strokeColor` defaults, stroke width clamps | Cosmetic | Deck uniform / attribute invalidation only; no geometry or feature-state rebuild |
+| `hiddenFeatureIds`, `fadedFeatureIds`, per-feature colour maps, table-driven fill column | Structural | Rebuild `shapePrebuiltData` and/or `ShapeFeatureStateRuntime` |
+| Geometry load, transform, element key | Structural | Reload / re-decode geometry |
+
+Cosmetic edits must **not** re-run `Record`→`Map` conversion, re-filter the
+feature list, or change `updateTriggers` keys that point at fresh objects every
+frame.
+
+### Producer contract (`useLayerData`)
+
+- **`shapePrebuiltData`** (keyed by layer id): built when geometry loads and when
+  `hiddenFeatureIds` changes — not on opacity tweaks.
+- **`stableShapeFeatureStateRef`** (keyed by layer id): holds a
+  `ShapeFeatureStateRuntime` (Maps/Sets) rebuilt only when the feature-state
+  signature changes (hidden/faded ids, opacity multiplier, manual colour record
+  identity, table fill-colour signature). Pass this into
+  `renderShapesLayer({ featureStateRuntime })` so `getLayers()` does not allocate
+  on every render.
+- **Merged feature-state objects must not be allocated each frame** when only
+  cosmetic layer props change. Table-driven fill colours are merged inside
+  `getStableShapeFeatureStateRuntime` only when the signature changes.
+
+### Layer contract (`@spatialdata/layers`)
+
+- **`buildShapeFeatureStateRuntime`**: converts serializable `featureState`
+  records to Maps/Sets once. Accepts an existing runtime and returns it
+  unchanged (`isShapeFeatureStateRuntime`).
+- **`normalizeShapeFeatureState`**: thin wrapper; use at layer boundaries when the
+  caller may still pass records (tests, `SpatialLayer`).
+- **`updateTriggers` for `getFillColor` / `getLineColor`**: list the specific
+  Maps/Sets/scalars that affect colour, not the whole `featureState` object.
+- Prefer **constant accessors** and layer `opacity` over per-feature callbacks
+  when the visual change is uniform.
+
+### Anti-patterns (shapes)
+
+| Anti-pattern | Why it's wrong |
+|---|---|
+| `new Map(Object.entries(fillColorByFeatureId))` on every `getLayers()` | O(n) allocation and GC pressure on large feature sets |
+| Spreading `featureState` each render for table fill colours | Defeats WeakMap identity caches; triggers full accessor rebuilds |
+| Putting `featureState` wholesale in `updateTriggers` | Any new object identity invalidates all colour attributes |
+| Per-feature accessors for layer-wide opacity | Use deck `opacity` on the layer instead |
+
+### Direction: binary attributes (not implemented)
+
+deck.gl's fastest path is **precomputed attribute buffers** (optionally built in
+a worker/WASM) passed via `data.attributes`, bypassing accessor calls entirely.
+Our shapes path still uses `PolygonLayer` / `ScatterplotLayer` with per-feature
+accessors for fill/stroke lookup by `featureId`. That is acceptable for current
+scale targets but is not the long-term ceiling.
+
+Future work (document-only for now):
+
+1. Columnar fill/stroke colours aligned with `featureIds` / `rowIndexByFeatureIndex`
+2. Push colours into typed arrays when encodings change, not when opacity changes
+3. Optional worker/WASM attribute generation for multi-million feature sets
+
+Until then, keep hot paths allocation-free across cosmetic renders and rebuild
+feature-state runtimes only when filtering or encodings actually change.
+
 ## Shape/table annotation controls
 
 Shape UI controls that expose table-backed values should not be limited to

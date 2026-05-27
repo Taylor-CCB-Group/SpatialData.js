@@ -14,6 +14,7 @@ import {
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
   type ShapeStrokeWidthUnits,
+  type ShapeFeatureStateRuntime,
   type ShapesPrebuiltData,
   createShapesDeckLayer,
 } from '@spatialdata/layers';
@@ -58,6 +59,11 @@ export interface ShapesLayerRenderConfig {
    * construction and acts as a pure descriptor assembler.
    */
   prebuilt?: ShapesPrebuiltData;
+  /**
+   * Pre-built Map/Set runtime from the load-path cache. When provided, deck
+   * layer assembly skips Record→Map conversion on every `getLayers()` call.
+   */
+  featureStateRuntime?: ShapeFeatureStateRuntime;
 }
 
 /**
@@ -79,6 +85,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
     strokeWidthMinPixels = DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
     strokeWidthMaxPixels = DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
     featureState,
+    featureStateRuntime,
     renderData,
     prebuilt,
   } = config;
@@ -100,7 +107,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
       defaultStrokeWidthUnits: strokeWidthUnits,
       defaultStrokeWidthMinPixels: strokeWidthMinPixels,
       defaultStrokeWidthMaxPixels: strokeWidthMaxPixels,
-      featureState,
+      featureState: featureStateRuntime ?? featureState,
     },
     {
       id,

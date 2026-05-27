@@ -95,11 +95,11 @@ export interface ShapesPrebuiltData {
   data: ShapePolygonRenderDatum[] | ShapeCircleRenderDatum[];
 }
 
-/** Cache normalised featureState runtimes by object identity. */
+/** Cache normalised featureState runtimes by plain-object identity. */
 const normalizeCache = new WeakMap<object, ShapeFeatureStateRuntime>();
 
 /** Singleton for the common case of no featureState at all. */
-const EMPTY_FEATURE_STATE_RUNTIME = Object.freeze({
+export const EMPTY_SHAPE_FEATURE_STATE_RUNTIME = Object.freeze({
   fillColorByFeatureId: new Map(),
   strokeColorByFeatureId: new Map(),
   hiddenFeatureIds: new Set(),
@@ -107,21 +107,81 @@ const EMPTY_FEATURE_STATE_RUNTIME = Object.freeze({
   filteredOpacityMultiplier: 0.35,
 } satisfies ShapeFeatureStateRuntime);
 
-export function normalizeShapeFeatureState(
-  featureState: SpatialShapesSublayer['featureState']
+export function isShapeFeatureStateRuntime(
+  value: unknown
+): value is ShapeFeatureStateRuntime {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value.fillColorByFeatureId instanceof Map &&
+    value.strokeColorByFeatureId instanceof Map &&
+    value.hiddenFeatureIds instanceof Set &&
+    value.fadedFeatureIds instanceof Set &&
+    typeof value.filteredOpacityMultiplier === 'number'
+  );
+}
+
+function recordToRgbaMap(
+  record: Record<string, [number, number, number, number]> | undefined
+): Map<string, [number, number, number, number]> {
+  if (!record) {
+    return new Map();
+  }
+  const map = new Map<string, [number, number, number, number]>();
+  for (const key in record) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      map.set(key, record[key]);
+    }
+  }
+  return map;
+}
+
+/**
+ * Build the Map/Set runtime used by deck accessors. Call once when feature-state
+ * content changes (filtering, table-driven colours), not on cosmetic prop churn.
+ */
+export function buildShapeFeatureStateRuntime(
+  featureState: NonNullable<SpatialShapesSublayer['featureState']>
 ): ShapeFeatureStateRuntime {
-  if (!featureState) return EMPTY_FEATURE_STATE_RUNTIME;
+  if (isShapeFeatureStateRuntime(featureState)) {
+    return featureState;
+  }
   const cached = normalizeCache.get(featureState);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
   const result: ShapeFeatureStateRuntime = {
-    fillColorByFeatureId: new Map(Object.entries(featureState.fillColorByFeatureId ?? {})),
-    strokeColorByFeatureId: new Map(Object.entries(featureState.strokeColorByFeatureId ?? {})),
+    fillColorByFeatureId: recordToRgbaMap(featureState.fillColorByFeatureId),
+    strokeColorByFeatureId: recordToRgbaMap(featureState.strokeColorByFeatureId),
     hiddenFeatureIds: new Set(featureState.hiddenFeatureIds ?? []),
     fadedFeatureIds: new Set(featureState.fadedFeatureIds ?? []),
     filteredOpacityMultiplier: featureState.filteredOpacityMultiplier ?? 0.35,
   };
   normalizeCache.set(featureState, result);
   return result;
+}
+
+export function normalizeShapeFeatureState(
+  featureState: SpatialShapesSublayer['featureState']
+): ShapeFeatureStateRuntime {
+  if (!featureState) {
+    return EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
+  }
+  return buildShapeFeatureStateRuntime(featureState);
+}
+
+function shapeFeatureColorUpdateTriggers(
+  featureState: ShapeFeatureStateRuntime,
+  defaultColor: [number, number, number, number]
+) {
+  return [
+    featureState.fillColorByFeatureId,
+    featureState.strokeColorByFeatureId,
+    featureState.fadedFeatureIds,
+    featureState.filteredOpacityMultiplier,
+    defaultColor,
+  ];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -511,7 +571,7 @@ function createPolygonDeckLayer(
       resolveFeatureColor(
         d.featureId,
         featureState.fillColorByFeatureId,
-        EMPTY_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
+        EMPTY_SHAPE_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
         defaultFillColor,
         featureState
       ),
@@ -528,8 +588,8 @@ function createPolygonDeckLayer(
     lineWidthMinPixels: defaultStrokeWidthMinPixels,
     lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
     updateTriggers: {
-      getFillColor: [featureState, defaultFillColor],
-      getLineColor: [featureState, defaultStrokeColor],
+      getFillColor: shapeFeatureColorUpdateTriggers(featureState, defaultFillColor),
+      getLineColor: shapeFeatureColorUpdateTriggers(featureState, defaultStrokeColor),
       getLineWidth: [defaultStrokeWidth],
     },
     filled: true,
@@ -577,7 +637,7 @@ function createCircleDeckLayer(
         : base;
     },
     updateTriggers: {
-      getFillColor: [featureState, defaultFillColor],
+      getFillColor: shapeFeatureColorUpdateTriggers(featureState, defaultFillColor),
     },
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,

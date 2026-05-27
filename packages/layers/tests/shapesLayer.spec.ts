@@ -6,8 +6,11 @@ import {
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
   type GeoarrowTableLike,
   type ShapesRenderDataLike,
+  buildShapeFeatureStateRuntime,
   buildShapesPrebuiltData,
   createShapesDeckLayer,
+  isShapeFeatureStateRuntime,
+  normalizeShapeFeatureState,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
@@ -85,6 +88,27 @@ const geoarrowRenderData: ShapesRenderDataLike = {
   rowIndexByFeatureIndex: new Int32Array([20, 21]),
 };
 
+describe('shape feature state runtime', () => {
+  it('reuses a pre-built runtime without reconverting records', () => {
+    const runtime = buildShapeFeatureStateRuntime({
+      fillColorByFeatureId: { a: [1, 2, 3, 255] },
+      hiddenFeatureIds: ['b'],
+    });
+    expect(isShapeFeatureStateRuntime(runtime)).toBe(true);
+    expect(buildShapeFeatureStateRuntime(runtime)).toBe(runtime);
+    expect(normalizeShapeFeatureState(runtime)).toBe(runtime);
+  });
+
+  it('caches record conversion by plain-object identity', () => {
+    const featureState = {
+      fillColorByFeatureId: { 'cell-1': [1, 2, 3, 255] as [number, number, number, number] },
+    };
+    expect(normalizeShapeFeatureState(featureState)).toBe(
+      normalizeShapeFeatureState(featureState)
+    );
+  });
+});
+
 describe('createShapesDeckLayer', () => {
   it('applies feature-state styling and filtering keyed by feature id', () => {
     const layer = createShapesDeckLayer(
@@ -153,8 +177,9 @@ describe('createShapesDeckLayer', () => {
     expect(props.lineWidthUnits).toBe(DEFAULT_SHAPE_STROKE_WIDTH_UNITS);
     expect(props.lineWidthMinPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS);
     expect(props.lineWidthMaxPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS);
-    expect(props.updateTriggers.getFillColor).toHaveLength(2);
-    expect(props.updateTriggers.getLineColor).toHaveLength(2);
+    expect(props.updateTriggers.getFillColor).toHaveLength(5);
+    expect(props.updateTriggers.getLineColor).toHaveLength(5);
+    expect(props.updateTriggers.getFillColor[0]).toBeInstanceOf(Map);
     expect(props.updateTriggers.getLineWidth).toEqual([1]);
     expect(props.getLineColor(props.data[0])).toEqual([1, 2, 3, 180]);
     expect(props.getLineColor(props.data[1])).toEqual([10, 20, 30, 180]);

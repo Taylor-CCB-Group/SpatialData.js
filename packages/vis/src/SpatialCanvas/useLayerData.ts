@@ -44,7 +44,10 @@ import {
 import {
   type ShapeFeatureRenderDatum,
   type ShapesPrebuiltData,
+  buildShapeFeatureStateRuntime,
   buildShapesPrebuiltData,
+  EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
+  type ShapeFeatureStateRuntime,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
@@ -302,7 +305,7 @@ async function loadShapeFillColorData({
   };
 }
 
-function getShapeFeatureStateForRender(
+function mergeShapeFeatureStateForRender(
   config: ShapesLayerConfig,
   fillColorEntry: ShapeFillColorEntry | undefined
 ): ShapesLayerConfig['featureState'] {
@@ -314,6 +317,43 @@ function getShapeFeatureStateForRender(
     fillColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
     strokeColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
   };
+}
+
+function getShapeFeatureStateSignature(
+  config: ShapesLayerConfig,
+  fillColorEntry: ShapeFillColorEntry | undefined
+): string {
+  const featureState = config.featureState;
+  const fillColors = featureState?.fillColorByFeatureId;
+  const strokeColors = featureState?.strokeColorByFeatureId;
+  return [
+    serializeHiddenIds(featureState?.hiddenFeatureIds),
+    serializeHiddenIds(featureState?.fadedFeatureIds),
+    String(featureState?.filteredOpacityMultiplier ?? ''),
+    fillColorEntry?.signature ?? '',
+    fillColors ? `\x02${Object.keys(fillColors).length}:${fillColors}` : '',
+    strokeColors ? `\x02${Object.keys(strokeColors).length}:${strokeColors}` : '',
+  ].join('\x01');
+}
+
+function getStableShapeFeatureStateRuntime(
+  layerId: string,
+  config: ShapesLayerConfig,
+  fillColorEntry: ShapeFillColorEntry | undefined,
+  cache: Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
+): ShapeFeatureStateRuntime {
+  const signature = getShapeFeatureStateSignature(config, fillColorEntry);
+  const cached = cache.get(layerId);
+  if (cached?.signature === signature) {
+    return cached.runtime;
+  }
+
+  const merged = mergeShapeFeatureStateForRender(config, fillColorEntry);
+  const runtime = merged
+    ? buildShapeFeatureStateRuntime(merged)
+    : EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
+  cache.set(layerId, { signature, runtime });
+  return runtime;
 }
 
 /**
@@ -346,6 +386,9 @@ export function useLayerData(
   });
   const stableSelectionArraysRef = useRef<
     Map<string, { signature: string; value: RasterSelection[] }>
+  >(new Map());
+  const stableShapeFeatureStateRef = useRef<
+    Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
   >(new Map());
 
   const layersRef = useRef(layers);
@@ -1102,9 +1145,11 @@ export function useLayerData(
             strokeWidthUnits: config.strokeWidthUnits,
             strokeWidthMinPixels: config.strokeWidthMinPixels,
             strokeWidthMaxPixels: config.strokeWidthMaxPixels,
-            featureState: getShapeFeatureStateForRender(
+            featureStateRuntime: getStableShapeFeatureStateRuntime(
+              layerId,
               config,
-              loaded.shapeFillColorData.get(layerId)
+              loaded.shapeFillColorData.get(layerId),
+              stableShapeFeatureStateRef.current
             ),
             renderData: shapeData.renderData,
             prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
