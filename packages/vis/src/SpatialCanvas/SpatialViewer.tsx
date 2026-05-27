@@ -29,6 +29,8 @@ export interface SpatialViewerProps {
   onViewStateChange: (vs: ViewState) => void;
   /** deck.gl layers to render (shapes, points, etc.) */
   layers: Layer[];
+  /** Global SpatialCanvas layer order, bottom to top. */
+  layerOrder?: string[];
   /** Optional: Viv layer props for image layers */
   vivLayerProps?: ImageLayerConfig[];
   /** Optional: Callback on hover */
@@ -52,6 +54,7 @@ export function SpatialViewer({
   viewState,
   onViewStateChange,
   layers,
+  layerOrder,
   vivLayerProps,
   onHover,
   onClick,
@@ -69,6 +72,7 @@ export function SpatialViewer({
         onViewStateChange={onViewStateChange}
         vivLayerProps={vivLayerProps}
         extraLayers={layers}
+        layerOrder={layerOrder}
         onHover={onHover}
         onClick={onClick}
         deckProps={deckProps}

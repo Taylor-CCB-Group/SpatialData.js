@@ -235,6 +235,7 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
  */
 interface ViewerSectionProps {
   deckLayers: Layer[];
+  layerOrder: string[];
   vivLayerProps: ImageLayerConfig[];
   hasEnabledLayers: boolean;
   isBlocking: boolean;
@@ -249,6 +250,7 @@ interface ViewerSectionProps {
 
 function ViewerSection({
   deckLayers,
+  layerOrder,
   vivLayerProps,
   hasEnabledLayers,
   isBlocking,
@@ -322,6 +324,7 @@ function ViewerSection({
         viewState={viewState}
         onViewStateChange={handleViewStateChange}
         layers={deckLayers}
+        layerOrder={layerOrder}
         vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
         onHover={onHover}
       />
@@ -708,6 +711,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
           <div ref={handleViewerRef} style={viewerContainerStyle}>
             <ViewerSection
               deckLayers={deckLayers}
+              layerOrder={layerOrder}
               vivLayerProps={vivLayerProps}
               hasEnabledLayers={hasEnabledLayers}
               isBlocking={isBlocking}

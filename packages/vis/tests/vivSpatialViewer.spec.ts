@@ -94,4 +94,53 @@ describe('VivSpatialViewer image composition', () => {
       expect(testViewer.layerFilter({ layer, viewport: { id: testViewer.viewId } })).toBe(true);
     }
   });
+
+  it('interleaves image and deck layers by SpatialCanvas layer order', () => {
+    const middleLayer = new ScatterplotLayer({
+      id: 'shapes:middle',
+      data: [],
+      getPosition: [0, 0],
+    });
+    const viewer = new VivSpatialViewer({
+      width: 512,
+      height: 512,
+      viewState: { target: [32, 32], zoom: 1 },
+      onViewStateChange: () => {},
+      layerOrder: ['image:first', 'shapes:middle', 'image:second'],
+      extraLayers: [middleLayer],
+      vivLayerProps: [
+        {
+          id: 'image:first',
+          loader: makeImageLoader(),
+          colors: [[255, 0, 0]],
+          contrastLimits: [[0, 255]],
+          channelsVisible: [true],
+          selections: [{}],
+          opacity: 0.5,
+          visible: true,
+        },
+        {
+          id: 'image:second',
+          loader: makeImageLoader(),
+          colors: [[0, 255, 0]],
+          contrastLimits: [[0, 255]],
+          channelsVisible: [true],
+          selections: [{}],
+          opacity: 0.5,
+          visible: true,
+        },
+      ],
+    });
+
+    const testViewer = viewer as unknown as {
+      _renderLayers: () => unknown;
+    };
+    const layers = normalizeVivLayers(testViewer._renderLayers());
+
+    expect(layers.map((layer) => layer.id)).toEqual([
+      expect.stringContaining('image:first'),
+      expect.stringContaining('shapes:middle'),
+      expect.stringContaining('image:second'),
+    ]);
+  });
 });
