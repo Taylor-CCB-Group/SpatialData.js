@@ -27,10 +27,6 @@ import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import { shouldAutoFitSpatialView, useSpatialCanvasRenderer } from './SpatialCanvasViewer';
 import {
-  getDeckFromDeckGlRef,
-  resolveHoverFeatureTooltip,
-} from './featureTooltipHover';
-import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
   type SpatialFeatureTooltipData,
@@ -39,44 +35,11 @@ import { SpatialViewer } from './SpatialViewer';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
+import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
-
-export {
-  SpatialFeatureTooltip,
-  type SpatialFeatureTooltipData,
-  type SpatialFeatureTooltipItem,
-  type SpatialFeatureTooltipSection,
-  type SpatialCanvasTooltipRenderProps,
-  type SpatialFeatureTooltipProps,
-} from './SpatialFeatureTooltip';
-
-// Re-export for external use
-export {
-  SpatialCanvasProvider,
-  useSpatialCanvasStore,
-  useSpatialCanvasActions,
-  useSpatialCanvasStoreApi,
-} from './context';
-export { createSpatialCanvasStore } from './stores';
-export type { SpatialCanvasStoreApi } from './stores';
-export type * from './types';
-export { useSpatialViewState, useViewStateUrl } from './hooks';
-export { VivSpatialViewer } from './VivSpatialViewer';
-export {
-  SpatialCanvasViewer,
-  composeSpatialDeckLayers,
-  shouldRenderInternalTooltip,
-  shouldAutoFitSpatialView,
-  useSpatialCanvasRenderer,
-} from './SpatialCanvasViewer';
-export type {
-  SpatialCanvasViewerProps,
-  SpatialCanvasViewerRenderTooltip,
-} from './SpatialCanvasViewer';
-export type { ImageLayerConfig as VivImageLayerConfig } from './useLayerData';
 
 // ============================================
 // Styles
@@ -570,7 +533,7 @@ function SpatialCanvasInner({
       });
       setHoverTooltip(tooltip);
     },
-    [aggregateHoverTooltips, deckRef, getFeatureTooltip]
+    [aggregateHoverTooltips, getFeatureTooltip]
   );
 
   const handleViewerRef = useCallback(
@@ -621,9 +584,8 @@ function SpatialCanvasInner({
     ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
     : { ...containerStyle, position: 'relative' };
 
-  const tooltipPayload: SpatialFeatureTooltipData | null = hoverTooltip && tooltipClientPosition
-    ? hoverTooltip
-    : null;
+  const tooltipPayload: SpatialFeatureTooltipData | null =
+    hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
 
   const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
 

@@ -50,6 +50,14 @@ export interface ShapeFeatureStateRuntime {
   filteredOpacityMultiplier: number;
 }
 
+export type ShapeFeatureStateInput =
+  | SpatialShapesSublayer['featureState']
+  | ShapeFeatureStateRuntime;
+
+export type SpatialShapesRuntimeSublayer = Omit<SpatialShapesSublayer, 'featureState'> & {
+  featureState?: ShapeFeatureStateInput;
+};
+
 export interface ShapePolygonRenderDatum {
   featureId: string;
   featureIndex: number;
@@ -107,9 +115,7 @@ export const EMPTY_SHAPE_FEATURE_STATE_RUNTIME = Object.freeze({
   filteredOpacityMultiplier: 0.35,
 } satisfies ShapeFeatureStateRuntime);
 
-export function isShapeFeatureStateRuntime(
-  value: unknown
-): value is ShapeFeatureStateRuntime {
+export function isShapeFeatureStateRuntime(value: unknown): value is ShapeFeatureStateRuntime {
   if (!isRecord(value)) {
     return false;
   }
@@ -142,7 +148,7 @@ function recordToRgbaMap(
  * content changes (filtering, table-driven colours), not on cosmetic prop churn.
  */
 export function buildShapeFeatureStateRuntime(
-  featureState: NonNullable<SpatialShapesSublayer['featureState']>
+  featureState: NonNullable<ShapeFeatureStateInput>
 ): ShapeFeatureStateRuntime {
   if (isShapeFeatureStateRuntime(featureState)) {
     return featureState;
@@ -163,7 +169,7 @@ export function buildShapeFeatureStateRuntime(
 }
 
 export function normalizeShapeFeatureState(
-  featureState: SpatialShapesSublayer['featureState']
+  featureState: ShapeFeatureStateInput
 ): ShapeFeatureStateRuntime {
   if (!featureState) {
     return EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
@@ -510,7 +516,8 @@ export function resolveShapeTooltipFromPickInfo(
         { label: 'feature_index', value: String(feature.featureIndex) },
         {
           label: 'table_row',
-          value: 'unmatched — shape index was not found in the associated table instance_key column',
+          value:
+            'unmatched — shape index was not found in the associated table instance_key column',
         },
       ],
     };
@@ -549,7 +556,7 @@ export function resolveShapeTooltipFromPickInfo(
 
 function createPolygonDeckLayer(
   data: ShapePolygonRenderDatum[],
-  sublayer: SpatialShapesSublayer,
+  sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
@@ -617,7 +624,7 @@ function createPolygonDeckLayer(
 function createCircleDeckLayer(
   data: ShapeCircleRenderDatum[],
   geometryKind: 'circle' | 'point',
-  sublayer: SpatialShapesSublayer,
+  sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
@@ -673,7 +680,7 @@ function createCircleDeckLayer(
  */
 export function createShapesDeckLayer(
   renderData: ShapesRenderDataLike,
-  sublayer: SpatialShapesSublayer,
+  sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions,
   prebuilt?: ShapesPrebuiltData
 ): Layer | null {
