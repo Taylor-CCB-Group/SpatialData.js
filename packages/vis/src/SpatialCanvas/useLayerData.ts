@@ -298,6 +298,7 @@ async function loadShapeFillColorData({
     fillColorByFeatureId: buildShapeFillColorByFeatureId({
       featureIds: renderData.featureIds,
       rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
+      rowIndexByFeatureId: rows.rowIndexByFeatureId,
       column: rows.extraColumns?.[0],
       mode: fillColorByColumn.mode,
       alpha: getShapeFillColorAlpha(config),
@@ -1358,13 +1359,14 @@ export function useLayerData(
       if (!feature) {
         return undefined;
       }
-      const rowIndex = resolveShapeTooltipRowIndex(feature, {
-        tooltipRowIndexByFeatureId: loadedDataRef.current.shapes.get(elem.key)
-          ?.tooltipRowIndexByFeatureId,
-        tooltipRowIndices: loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndices,
-        rowIndexByFeatureIndex: loadedDataRef.current.shapes.get(elem.key)?.renderData
-          .rowIndexByFeatureIndex,
-      }) ?? feature.rowIndex;
+      const rowIndex =
+        resolveShapeTooltipRowIndex(feature, {
+          tooltipRowIndexByFeatureId: loadedDataRef.current.shapes.get(elem.key)
+            ?.tooltipRowIndexByFeatureId,
+          tooltipRowIndices: loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndices,
+          rowIndexByFeatureIndex: loadedDataRef.current.shapes.get(elem.key)?.renderData
+            .rowIndexByFeatureIndex,
+        }) ?? feature.rowIndex;
       return {
         layerId,
         elementKey: elem.key,

@@ -40,6 +40,24 @@ describe('shape fill colour encoding', () => {
     });
   });
 
+  it('handles large numeric columns without spreading values into the call stack', () => {
+    const count = 150_000;
+    const featureIds = Array.from({ length: count }, (_, index) => `cell-${index}`);
+    const rowIndexByFeatureIndex = Int32Array.from({ length: count }, (_, index) => index);
+    const column = Array.from({ length: count }, (_, index) => index);
+
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds,
+      rowIndexByFeatureIndex,
+      column,
+      mode: 'continuous',
+      alpha: 180,
+    });
+
+    expect(colors['cell-0']).toEqual([0, 64, 255, 180]);
+    expect(colors[`cell-${count - 1}`]).toEqual([255, 220, 0, 180]);
+  });
+
   it('omits missing, unmatched, and empty values so defaults can render', () => {
     const colors = buildShapeFillColorByFeatureId({
       featureIds: ['empty', 'unmatched', 'nullish', 'present'],
@@ -50,6 +68,25 @@ describe('shape fill colour encoding', () => {
     });
 
     expect(Object.keys(colors).sort()).toEqual(['present']);
+  });
+
+  it('prefers feature-id table row mappings when render data row indices are unavailable', () => {
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds: ['circle-a', 'circle-b'],
+      rowIndexByFeatureIndex: new Int32Array([-1, -1]),
+      rowIndexByFeatureId: new Map([
+        ['circle-a', 1],
+        ['circle-b', 0],
+      ]),
+      column: ['type-x', 'type-y'],
+      mode: 'categorical',
+      alpha: 180,
+    });
+
+    expect(colors).toEqual({
+      'circle-a': [0, 0, 255, 180],
+      'circle-b': [0, 255, 0, 180],
+    });
   });
 
   it('treats mixed values as categorical in auto mode', () => {

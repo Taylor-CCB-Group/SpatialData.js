@@ -7,6 +7,7 @@ export type ShapeFillColorMode = NonNullable<ShapesLayerConfig['fillColorByColum
 export interface BuildShapeFillColorByFeatureIdOptions {
   featureIds: string[];
   rowIndexByFeatureIndex: Int32Array;
+  rowIndexByFeatureId?: Map<string, number>;
   column: TableColumnData | undefined;
   mode: ShapeFillColorMode;
   alpha: number;
@@ -46,6 +47,17 @@ function interpolateRgb(
   ];
 }
 
+function getFiniteExtent(values: Array<number | undefined>): [number, number] | undefined {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const value of values) {
+    if (value === undefined) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return min === Infinity ? undefined : [min, max];
+}
+
 export function resolveShapeFillColorMode(
   mode: ShapeFillColorMode,
   values: readonly string[]
@@ -57,6 +69,7 @@ export function resolveShapeFillColorMode(
 export function buildShapeFillColorByFeatureId({
   featureIds,
   rowIndexByFeatureIndex,
+  rowIndexByFeatureId,
   column,
   mode,
   alpha,
@@ -64,7 +77,7 @@ export function buildShapeFillColorByFeatureId({
   if (!column) return {};
 
   const valuesByFeature = featureIds.map((featureId, featureIndex) => {
-    const rowIndex = rowIndexByFeatureIndex[featureIndex];
+    const rowIndex = rowIndexByFeatureId?.get(featureId) ?? rowIndexByFeatureIndex[featureIndex];
     const value =
       rowIndex !== undefined && rowIndex >= 0 ? normalizeCellValue(column[rowIndex]) : '';
     return { featureId, value };
@@ -79,10 +92,9 @@ export function buildShapeFillColorByFeatureId({
 
   if (resolvedMode === 'continuous') {
     const numericValues = valuesByFeature.map(({ value }) => numericValue(value));
-    const finiteValues = numericValues.filter((value): value is number => value !== undefined);
-    if (finiteValues.length === 0) return {};
-    const min = Math.min(...finiteValues);
-    const max = Math.max(...finiteValues);
+    const extent = getFiniteExtent(numericValues);
+    if (!extent) return {};
+    const [min, max] = extent;
     const range = max - min;
 
     for (const [featureIndex, featureId] of featureIds.entries()) {
