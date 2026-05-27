@@ -36,6 +36,40 @@ function buildAcceptedRegionValues(
   return accepted;
 }
 
+function areZeroBasedSequentialFeatureIds(featureIds: readonly string[]): boolean {
+  return featureIds.every((featureId, index) => featureId === String(index));
+}
+
+function shouldAlignFeatureRowsByPosition(
+  featureIds: readonly string[],
+  filteredRowIds: readonly string[]
+): boolean {
+  if (featureIds.length !== filteredRowIds.length || featureIds.length === 0) {
+    return false;
+  }
+  if (filteredRowIds.every((rowId, index) => rowId === featureIds[index])) {
+    return false;
+  }
+  // Shapes whose ids are 0..n-1 carry parquet row positions, not table instance keys.
+  // When row counts match, align by row order rather than string id equality.
+  return areZeroBasedSequentialFeatureIds(featureIds);
+}
+
+function alignFeatureRowIndicesByPosition(
+  featureIds: readonly string[],
+  filteredRowIds: readonly string[],
+  rowIndexByFeatureId: Map<string, number>
+): Int32Array {
+  const rowIndexByFeatureIndex = createDefaultRowIndexByFeatureIndex(featureIds.length);
+  for (let featureIndex = 0; featureIndex < featureIds.length; featureIndex++) {
+    const rowIndex = rowIndexByFeatureId.get(filteredRowIds[featureIndex] ?? '');
+    if (rowIndex !== undefined) {
+      rowIndexByFeatureIndex[featureIndex] = rowIndex;
+    }
+  }
+  return rowIndexByFeatureIndex;
+}
+
 export function isSpatialData(value: unknown): value is SpatialData {
   return (
     typeof value === 'object' &&
@@ -147,8 +181,19 @@ export async function loadFeatureRowIndexByFeatureIndex({
     key,
   });
 
-  if (!associatedRows.rowIndexByFeatureId) {
+  if (!associatedRows.rowIndexByFeatureId || !associatedRows.rowIds) {
     return rowIndexByFeatureIndex;
+  }
+
+  const filteredRowIds = associatedRows.rowIds;
+  const usePositionalAlignment = shouldAlignFeatureRowsByPosition(featureIds, filteredRowIds);
+
+  if (usePositionalAlignment) {
+    return alignFeatureRowIndicesByPosition(
+      featureIds,
+      filteredRowIds,
+      associatedRows.rowIndexByFeatureId
+    );
   }
 
   for (const [featureIndex, featureId] of featureIds.entries()) {

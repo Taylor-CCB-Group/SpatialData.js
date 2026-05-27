@@ -436,13 +436,21 @@ export function resolveShapeTooltipFromPickInfo(
     return undefined;
   }
   const rowIndex = resolveShapeTooltipRowIndex(feature, alignment);
-  if (
-    rowIndex === undefined ||
-    rowIndex < 0 ||
-    !renderData.tooltipFields ||
-    !renderData.tooltipColumns
-  ) {
+  if (!renderData.tooltipFields || !renderData.tooltipColumns) {
     return undefined;
+  }
+  if (rowIndex === undefined || rowIndex < 0) {
+    return {
+      title: feature.featureId,
+      items: [
+        { label: 'feature_id', value: feature.featureId },
+        { label: 'feature_index', value: String(feature.featureIndex) },
+        {
+          label: 'table_row',
+          value: 'unmatched — shape index was not found in the associated table instance_key column',
+        },
+      ],
+    };
   }
 
   const items = renderData.tooltipFields
@@ -457,7 +465,17 @@ export function resolveShapeTooltipFromPickInfo(
     .filter((item) => item.value !== '');
 
   if (items.length === 0) {
-    return undefined;
+    return {
+      title: feature.featureId,
+      items: [
+        { label: 'feature_id', value: feature.featureId },
+        { label: 'table_row', value: String(rowIndex) },
+        {
+          label: 'tooltip',
+          value: 'matched table row has no non-empty values for the selected tooltip fields',
+        },
+      ],
+    };
   }
 
   return {
