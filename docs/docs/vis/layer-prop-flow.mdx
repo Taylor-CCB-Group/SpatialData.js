@@ -54,6 +54,11 @@ refetches. The fix is upstream stability, not downstream caching.
 - `loader`: same object reference until the underlying element changes.
 - `selections`: same array reference until the selected values change. Memoize
   with `useMemo` keyed on a stable signature of the selection values.
+- Layer caches for derived visual state must be keyed by layer identity when
+  the value can differ between two layers that point at the same element. A
+  single shapes element may appear in multiple layer configs with different
+  opacity, filtering, table-driven colour encodings, or other visual
+  properties.
 - Cosmetic props (`colors`, `contrastLimits`, `channelsVisible`, `opacity`,
   per-channel arrays, `modelMatrix`): identity may churn freely. Deck diffs
   them efficiently and updates uniforms without disturbing tile loading.
@@ -183,6 +188,19 @@ Use this checklist when changing images, labels, shapes, or future layer types.
 6. **Check render-time UI state for hidden geometry work.** Buttons and panels
    should not call `getWorldBoundsForLayer()` unless they are executing a user
    command.
+
+## Shape/table annotation controls
+
+Shape UI controls that expose table-backed values should not be limited to
+associated table `obs` columns forever. They should also be able to use extra
+annotation columns carried by the shapes element itself. Future work should
+extend the same concept to entries corresponding to `var` values in `X` /
+`layers`, once the core table/annotation API exposes those data sources
+cleanly.
+
+When adding these controls, keep the visual encoding layer-specific: choosing
+one fill-colour column for a shapes layer must not affect another layer that
+renders the same shapes element.
 
 ## See also
 
