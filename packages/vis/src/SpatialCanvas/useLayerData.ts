@@ -28,6 +28,7 @@ import {
   type ShapesTooltipMetadata,
   type SpatialData,
   type SpatialFeatureTooltipData,
+  attachTooltipElementContext,
   boundsFromCircles,
   boundsFromImagePixelExtents,
   boundsFromPoints,
@@ -1205,6 +1206,12 @@ export function useLayerData(
         return undefined;
       }
 
+      const elementContext = {
+        elementKey: elem.key,
+        elementType: elem.type,
+        layerId,
+      };
+
       if (elem.type === 'labels') {
         const pickedObject = pickInfo.object as
           | { labelId?: number | string; channelIndex?: number }
@@ -1217,7 +1224,6 @@ export function useLayerData(
 
         const loadedLabelData = loadedDataRef.current.labels.get(elem.key);
         const config = layersRef.current[layerId];
-        const title = labelId;
         const items: Array<{ label: string; value: string }> = [{ label: 'id', value: labelId }];
 
         if (
@@ -1239,10 +1245,13 @@ export function useLayerData(
           }
         }
 
-        return {
-          title,
-          items,
-        };
+        return attachTooltipElementContext(
+          {
+            title: labelId,
+            items,
+          },
+          elementContext
+        );
       }
 
       if (elem.type !== 'shapes') {
@@ -1251,25 +1260,41 @@ export function useLayerData(
 
       const config = layersRef.current[layerId];
       const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
-      if (
-        !loadedShapeData?.tooltipFields ||
-        !loadedShapeData.tooltipColumns ||
-        getLayerTooltipSignature(config) !== (loadedShapeData.tooltipSignature ?? '')
-      ) {
+      const prebuilt = loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt;
+      const feature = resolveShapeFeatureFromPick(pickInfo, prebuilt);
+      if (!feature) {
         return undefined;
       }
-      return resolveShapeTooltipFromPickInfo(
+
+      if (
+        loadedShapeData?.tooltipFields &&
+        loadedShapeData.tooltipColumns &&
+        getLayerTooltipSignature(config) === (loadedShapeData.tooltipSignature ?? '')
+      ) {
+        const tooltip = resolveShapeTooltipFromPickInfo(
+          {
+            tooltipFields: loadedShapeData.tooltipFields,
+            tooltipColumns: loadedShapeData.tooltipColumns,
+          },
+          pickInfo,
+          {
+            tooltipRowIndexByFeatureId: loadedShapeData.tooltipRowIndexByFeatureId,
+            tooltipRowIndices: loadedShapeData.tooltipRowIndices,
+            rowIndexByFeatureIndex: loadedShapeData.renderData.rowIndexByFeatureIndex,
+          },
+          prebuilt
+        );
+        if (tooltip) {
+          return attachTooltipElementContext(tooltip, elementContext);
+        }
+      }
+
+      return attachTooltipElementContext(
         {
-          tooltipFields: loadedShapeData.tooltipFields,
-          tooltipColumns: loadedShapeData.tooltipColumns,
+          title: feature.featureId,
+          items: [{ label: 'feature_id', value: feature.featureId }],
         },
-        pickInfo,
-        {
-          tooltipRowIndexByFeatureId: loadedShapeData.tooltipRowIndexByFeatureId,
-          tooltipRowIndices: loadedShapeData.tooltipRowIndices,
-          rowIndexByFeatureIndex: loadedShapeData.renderData.rowIndexByFeatureIndex,
-        },
-        loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt
+        elementContext
       );
     },
     []

@@ -1,6 +1,6 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
 import { useMeasure } from '@uidotdev/usehooks';
-import type { DeckGLProps, Layer, PickingInfo } from 'deck.gl';
+import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import {
   type CSSProperties,
   type ReactNode,
@@ -18,6 +18,7 @@ import {
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
+import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import { useLayerData } from './useLayerData';
 import { getAvailableElements } from './utils';
@@ -44,6 +45,10 @@ export interface SpatialCanvasViewerProps {
   showLoadingOverlay?: boolean;
   autoFit?: boolean;
   style?: CSSProperties;
+  /**
+   * When true (default), hover tooltips aggregate picks from all layers under the cursor.
+   */
+  aggregateHoverTooltips?: boolean;
 }
 
 interface AutoFitInput {
@@ -240,15 +245,14 @@ function SpatialCanvasViewerInner({
   showLoadingOverlay = true,
   autoFit = true,
   style,
+  aggregateHoverTooltips = true,
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
-  const [hoverTooltip, setHoverTooltip] = useState<{
-    x: number;
-    y: number;
-    title?: string;
-    items: Array<{ label: string; value: string }>;
-  } | null>(null);
+  const deckRef = useRef<DeckGLRef | null>(null);
+  const [hoverTooltip, setHoverTooltip] = useState<
+    (SpatialFeatureTooltipData & { x: number; y: number }) | null
+  >(null);
 
   const vw = width ?? 0;
   const vh = height ?? 0;
@@ -288,21 +292,13 @@ function SpatialCanvasViewerInner({
       if (!shouldRenderInternalTooltip(renderTooltip)) {
         return;
       }
-      const tooltip = renderer.getFeatureTooltip(normalizedLayerId, {
-        index: info.index,
-        object: info.object,
+      const tooltip = resolveHoverFeatureTooltip(info, renderer.getFeatureTooltip, {
+        aggregate: aggregateHoverTooltips,
+        deck: getDeckFromDeckGlRef(deckRef),
       });
-      if (!tooltip) {
-        setHoverTooltip(null);
-        return;
-      }
-      setHoverTooltip({
-        x: info.x,
-        y: info.y,
-        ...tooltip,
-      });
+      setHoverTooltip(tooltip);
     },
-    [coordinateSystem, onHover, onShapeHover, renderTooltip, renderer]
+    [aggregateHoverTooltips, coordinateSystem, deckRef, onHover, onShapeHover, renderTooltip, renderer]
   );
 
   const handleClick = useCallback(
@@ -346,12 +342,7 @@ function SpatialCanvasViewerInner({
       : null;
 
   const tooltipPayload: SpatialFeatureTooltipData | null =
-    hoverTooltip && tooltipClientPosition
-      ? {
-          title: hoverTooltip.title,
-          items: hoverTooltip.items,
-        }
-      : null;
+    hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
 
   const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
   const tooltipPortal =
@@ -403,6 +394,7 @@ function SpatialCanvasViewerInner({
               onHover={handleHover}
               onClick={handleClick}
               deckProps={deckProps}
+              deckRef={deckRef}
             />
             {showLoadingOverlay && renderer.isBlocking && (
               <div style={overlayStyle}>Loading layer data...</div>

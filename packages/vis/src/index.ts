@@ -43,6 +43,7 @@ export type {
   SpatialCanvasViewerRenderTooltip,
   SpatialFeatureTooltipData,
   SpatialFeatureTooltipItem,
+  SpatialFeatureTooltipSection,
   SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltipProps,
 } from './SpatialCanvas';

@@ -1,0 +1,63 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  normalizeDeckLayerId,
+  resolveHoverFeatureTooltip,
+} from '../src/SpatialCanvas/featureTooltipHover.js';
+
+describe('featureTooltipHover', () => {
+  it('normalizes viv-suffixed deck layer ids', () => {
+    expect(normalizeDeckLayerId('shapes:cells-#image-a#')).toBe('shapes:cells');
+  });
+
+  it('aggregates tooltips from multiple layer picks', () => {
+    const getFeatureTooltip = vi.fn((layerId: string) => {
+      if (layerId === 'shapes:cells') {
+        return {
+          elementKey: 'cells',
+          elementType: 'shapes',
+          layerId,
+          items: [{ label: 'element', value: 'shapes/cells' }],
+        };
+      }
+      if (layerId === 'labels:mask') {
+        return {
+          elementKey: 'mask',
+          elementType: 'labels',
+          layerId,
+          items: [{ label: 'element', value: 'labels/mask' }],
+        };
+      }
+      return undefined;
+    });
+
+    const deck = {
+      pickMultipleObjects: () => [
+        {
+          picked: true,
+          x: 10,
+          y: 20,
+          layer: { id: 'labels:mask' },
+          index: 0,
+          object: {},
+        },
+        {
+          picked: true,
+          x: 10,
+          y: 20,
+          layer: { id: 'shapes:cells' },
+          index: 1,
+          object: {},
+        },
+      ],
+    };
+
+    const result = resolveHoverFeatureTooltip(
+      { picked: true, x: 10, y: 20, layer: { id: 'shapes:cells' }, index: 1, object: {} },
+      getFeatureTooltip,
+      { deck: deck as never }
+    );
+
+    expect(result?.sections).toHaveLength(2);
+    expect(getFeatureTooltip).toHaveBeenCalledTimes(2);
+  });
+});

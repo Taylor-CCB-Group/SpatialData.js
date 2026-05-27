@@ -17,6 +17,7 @@ import { DetailView, ScaleBarView } from '@vivjs/views';
 import { DeckGL } from 'deck.gl';
 import type {
   DeckGLProps,
+  DeckGLRef,
   Layer,
   LayersList,
   OrbitViewState,
@@ -101,6 +102,8 @@ export interface VivSpatialViewerProps {
   onClick?: (info: PickingInfo) => void;
   /** Optional: Additional deck.gl props */
   deckProps?: Partial<DeckGLProps>;
+  /** Ref to the underlying Deck instance (for multi-layer tooltip picking). */
+  deckRef?: React.RefObject<DeckGLRef | null>;
 }
 
 interface VivSpatialViewerState {
@@ -466,7 +469,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
     return (
       <DeckGL
-        // ref={this.state.deckRef}
+        ref={this.props.deckRef}
         {...(deckProps ?? {})}
         layerFilter={this.layerFilter}
         layers={layers}
