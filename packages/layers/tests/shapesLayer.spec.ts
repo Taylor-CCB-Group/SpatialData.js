@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SpatialLayer } from '../src/SpatialLayer';
 import {
-  createShapesDeckLayer,
+  DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+  type GeoarrowTableLike,
+  type ShapesRenderDataLike,
   buildShapesPrebuiltData,
+  createShapesDeckLayer,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
-  type GeoarrowTableLike,
-  type ShapesRenderDataLike,
 } from '../src/shapesLayer';
 
 const renderData: ShapesRenderDataLike = {
@@ -16,9 +19,30 @@ const renderData: ShapesRenderDataLike = {
   elementKey: 'cells',
   featureIds: ['cell-1', 'cell-2', 'cell-3'],
   polygons: [
-    [[[0, 0], [1, 0], [1, 1], [0, 0]]],
-    [[[2, 2], [3, 2], [3, 3], [2, 2]]],
-    [[[4, 4], [5, 4], [5, 5], [4, 4]]],
+    [
+      [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0, 0],
+      ],
+    ],
+    [
+      [
+        [2, 2],
+        [3, 2],
+        [3, 3],
+        [2, 2],
+      ],
+    ],
+    [
+      [
+        [4, 4],
+        [5, 4],
+        [5, 5],
+        [4, 4],
+      ],
+    ],
   ],
   rowIndexByFeatureIndex: new Int32Array([10, 11, 12]),
 };
@@ -38,8 +62,22 @@ const geoarrowRenderData: ShapesRenderDataLike = {
       return {
         get(index: number) {
           return index === 0
-            ? [[[0, 0], [1, 0], [1, 1], [0, 0]]]
-            : [[[2, 2], [3, 2], [3, 3], [2, 2]]];
+            ? [
+                [
+                  [0, 0],
+                  [1, 0],
+                  [1, 1],
+                  [0, 0],
+                ],
+              ]
+            : [
+                [
+                  [2, 2],
+                  [3, 2],
+                  [3, 3],
+                  [2, 2],
+                ],
+              ];
         },
       };
     },
@@ -76,9 +114,72 @@ describe('createShapesDeckLayer', () => {
       'cell-3',
     ]);
     expect((props.getFillColor as (d: any) => number[])(props.data[0])).toEqual([1, 2, 3, 255]);
-    expect((props.getFillColor as (d: any) => number[])(props.data[1])).toEqual([
-      10, 20, 30, 128,
+    expect((props.getFillColor as (d: any) => number[])(props.data[1])).toEqual([10, 20, 30, 128]);
+    expect((props.getLineColor as (d: { featureId: string }) => number[])(props.data[0])).toEqual([
+      4, 5, 6, 255,
     ]);
+  });
+
+  it('uses fill colours for outlines by default with zoom-scaled stroke defaults', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+        defaultFillColor: [10, 20, 30, 180],
+        featureState: {
+          fillColorByFeatureId: { 'cell-1': [1, 2, 3, 180] },
+        },
+      },
+      { id: 'shapes-fill-stroke' }
+    );
+
+    if (!layer) {
+      throw new Error('Expected shapes layer to render');
+    }
+    const props = layer.props as unknown as {
+      data: Array<{ featureId: string }>;
+      getLineColor: (datum: { featureId: string }) => number[];
+      lineWidthUnits: string;
+      lineWidthMinPixels: number;
+      lineWidthMaxPixels: number;
+    };
+    expect(props.lineWidthUnits).toBe(DEFAULT_SHAPE_STROKE_WIDTH_UNITS);
+    expect(props.lineWidthMinPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS);
+    expect(props.lineWidthMaxPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS);
+    expect(props.getLineColor(props.data[0])).toEqual([1, 2, 3, 180]);
+    expect(props.getLineColor(props.data[1])).toEqual([10, 20, 30, 180]);
+  });
+
+  it('allows callers to configure polygon stroke width behavior', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+        defaultStrokeWidth: 3,
+        defaultStrokeWidthUnits: 'pixels',
+        defaultStrokeWidthMinPixels: 0.5,
+        defaultStrokeWidthMaxPixels: 2,
+      },
+      { id: 'shapes-configured-stroke' }
+    );
+
+    if (!layer) {
+      throw new Error('Expected shapes layer to render');
+    }
+    const props = layer.props as unknown as {
+      getLineWidth: number;
+      lineWidthUnits: string;
+      lineWidthMinPixels: number;
+      lineWidthMaxPixels: number;
+    };
+    expect(props.getLineWidth).toBe(3);
+    expect(props.lineWidthUnits).toBe('pixels');
+    expect(props.lineWidthMinPixels).toBe(0.5);
+    expect(props.lineWidthMaxPixels).toBe(2);
   });
 
   it('emits enriched pick callbacks', () => {
@@ -161,9 +262,9 @@ describe('createShapesDeckLayer', () => {
     expect(layer).not.toBeNull();
     const props = layer!.props as any;
     expect(props.radiusUnits).toBe('common');
-    expect((props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)).toEqual(
-      ['cell-1', 'cell-2']
-    );
+    expect(
+      (props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)
+    ).toEqual(['cell-1', 'cell-2']);
     expect((props.getRadius as (d: { radius: number }) => number)(props.data[1])).toBe(2);
   });
 
@@ -203,7 +304,10 @@ describe('createShapesDeckLayer', () => {
       resolveShapeTooltipFromPickInfo(
         {
           tooltipFields: ['gene', 'score'],
-          tooltipColumns: [['a', 'b', 'c'], [1, 2, 3]],
+          tooltipColumns: [
+            ['a', 'b', 'c'],
+            [1, 2, 3],
+          ],
         },
         { object: picked },
         { rowIndexByFeatureIndex: new Int32Array([0, 1, 2]) }

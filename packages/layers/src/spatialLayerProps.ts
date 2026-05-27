@@ -33,6 +33,9 @@ export const spatialShapesSublayerSchema = sublayerBase.extend({
   defaultFillColor: rgbaColorSchema.optional(),
   defaultStrokeColor: rgbaColorSchema.optional(),
   defaultStrokeWidth: z.number().min(0).optional(),
+  defaultStrokeWidthUnits: z.enum(['common', 'pixels']).optional(),
+  defaultStrokeWidthMinPixels: z.number().min(0).optional(),
+  defaultStrokeWidthMaxPixels: z.number().min(0).optional(),
   featureState: z
     .object({
       fillColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),

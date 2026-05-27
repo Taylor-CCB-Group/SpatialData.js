@@ -202,6 +202,13 @@ When adding these controls, keep the visual encoding layer-specific: choosing
 one fill-colour column for a shapes layer must not affect another layer that
 renders the same shapes element.
 
+Fill-colour encodings should normally control both polygon fill and outline
+colour. Polygon outlines should use the shared shape stroke defaults from
+`@spatialdata/layers`: common-coordinate line width, `lineWidthMinPixels: 0`,
+and a small max-pixel clamp. That keeps outlines from dominating when many
+shapes become tiny on screen, while still allowing headless callers to override
+stroke width, units, and min/max pixel clamps per layer.
+
 ## See also
 
 - [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts)

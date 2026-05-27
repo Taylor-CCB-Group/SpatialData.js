@@ -310,6 +310,7 @@ function getShapeFeatureStateForRender(
   return {
     ...config.featureState,
     fillColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
+    strokeColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
   };
 }
 
@@ -1096,6 +1097,9 @@ export function useLayerData(
             fillColor: config.fillColor,
             strokeColor: config.strokeColor,
             strokeWidth: config.strokeWidth,
+            strokeWidthUnits: config.strokeWidthUnits,
+            strokeWidthMinPixels: config.strokeWidthMinPixels,
+            strokeWidthMaxPixels: config.strokeWidthMaxPixels,
             featureState: getShapeFeatureStateForRender(
               config,
               loaded.shapeFillColorData.get(layerId)

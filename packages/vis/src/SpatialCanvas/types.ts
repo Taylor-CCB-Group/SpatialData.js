@@ -4,7 +4,7 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import type { AnyElement, SpatialElement } from '@spatialdata/core';
-import type { ShapesLayerPickEvent } from '@spatialdata/layers';
+import type { ShapeStrokeWidthUnits, ShapesLayerPickEvent } from '@spatialdata/layers';
 
 // ============================================
 // View State Types
@@ -70,6 +70,9 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
   };
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
+  strokeWidthUnits?: ShapeStrokeWidthUnits;
+  strokeWidthMinPixels?: number;
+  strokeWidthMaxPixels?: number;
   /** Table obs columns to display for a picked feature in this shapes layer. */
   tooltipFields?: string[];
   featureState?: {

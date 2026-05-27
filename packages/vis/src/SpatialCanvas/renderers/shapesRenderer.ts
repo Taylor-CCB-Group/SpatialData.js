@@ -8,7 +8,15 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import type { ShapesElement, ShapesRenderData, SpatialFeatureTooltipData } from '@spatialdata/core';
-import { createShapesDeckLayer, type ShapesPrebuiltData } from '@spatialdata/layers';
+import {
+  DEFAULT_SHAPE_STROKE_WIDTH,
+  DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+  type ShapeStrokeWidthUnits,
+  type ShapesPrebuiltData,
+  createShapesDeckLayer,
+} from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 
 export type ShapeTooltipDatum = SpatialFeatureTooltipData;
@@ -28,8 +36,14 @@ export interface ShapesLayerRenderConfig {
   fillColor?: [number, number, number, number];
   /** Fallback stroke color [r, g, b, a] (0-255) */
   strokeColor?: [number, number, number, number];
-  /** Fallback stroke width in pixels */
+  /** Fallback stroke width in `strokeWidthUnits` */
   strokeWidth?: number;
+  /** Units for polygon stroke width */
+  strokeWidthUnits?: ShapeStrokeWidthUnits;
+  /** Minimum rendered stroke width in screen pixels */
+  strokeWidthMinPixels?: number;
+  /** Maximum rendered stroke width in screen pixels */
+  strokeWidthMaxPixels?: number;
   featureState?: {
     fillColorByFeatureId?: Record<string, [number, number, number, number]>;
     strokeColorByFeatureId?: Record<string, [number, number, number, number]>;
@@ -59,8 +73,11 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
     opacity,
     visible,
     fillColor = [100, 100, 200, 180],
-    strokeColor = [255, 255, 255, 255],
-    strokeWidth = 1,
+    strokeColor,
+    strokeWidth = DEFAULT_SHAPE_STROKE_WIDTH,
+    strokeWidthUnits = DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+    strokeWidthMinPixels = DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
+    strokeWidthMaxPixels = DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
     featureState,
     renderData,
     prebuilt,
@@ -80,6 +97,9 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
       defaultFillColor: fillColor,
       defaultStrokeColor: strokeColor,
       defaultStrokeWidth: strokeWidth,
+      defaultStrokeWidthUnits: strokeWidthUnits,
+      defaultStrokeWidthMinPixels: strokeWidthMinPixels,
+      defaultStrokeWidthMaxPixels: strokeWidthMaxPixels,
       featureState,
     },
     {

@@ -1,5 +1,5 @@
 import type { Matrix4 } from '@math.gl/core';
-import { PolygonLayer, ScatterplotLayer, type Layer, type PickingInfo } from 'deck.gl';
+import { type Layer, type PickingInfo, PolygonLayer, ScatterplotLayer } from 'deck.gl';
 import type { SpatialShapesSublayer } from './spatialLayerProps';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
@@ -8,8 +8,13 @@ export type ShapesGeometryKind = 'polygon' | 'circle' | 'point';
 
 /** Default marker radius for point landmarks (pixels). */
 export const DEFAULT_SHAPE_POINT_RADIUS_PX = 8;
+export const DEFAULT_SHAPE_STROKE_WIDTH = 1;
+export const DEFAULT_SHAPE_STROKE_WIDTH_UNITS = 'common' as const;
+export const DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS = 0;
+export const DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS = 1;
 
 export type ShapesGeometryRepresentationKind = 'js-polygons' | 'wkb-parquet' | 'geoarrow-table';
+export type ShapeStrokeWidthUnits = 'common' | 'pixels';
 
 export interface ShapeCircleColumnarLike {
   positions: [Float32Array, Float32Array];
@@ -180,6 +185,19 @@ function multiplyAlpha(
   ];
 }
 
+function resolveFeatureColor(
+  featureId: string,
+  primaryColors: Map<string, [number, number, number, number]>,
+  fallbackColors: Map<string, [number, number, number, number]>,
+  defaultColor: [number, number, number, number],
+  featureState: ShapeFeatureStateRuntime
+): [number, number, number, number] {
+  const base = primaryColors.get(featureId) ?? fallbackColors.get(featureId) ?? defaultColor;
+  return featureState.fadedFeatureIds.has(featureId)
+    ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
+    : base;
+}
+
 function resolveGeometryKind(renderData: ShapesRenderDataLike): ShapesGeometryKind {
   if (renderData.geometryKind) {
     return renderData.geometryKind;
@@ -242,9 +260,7 @@ function buildCircleRenderedFeatures(
     }
     const x = xs[featureIndex];
     const y = ys[featureIndex];
-    const radius = usePerFeatureRadius
-      ? radii[featureIndex]
-      : DEFAULT_SHAPE_POINT_RADIUS_PX;
+    const radius = usePerFeatureRadius ? radii[featureIndex] : DEFAULT_SHAPE_POINT_RADIUS_PX;
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius < 0) {
       continue;
     }
@@ -457,27 +473,39 @@ function createPolygonDeckLayer(
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
-  const defaultStrokeColor = sublayer.defaultStrokeColor ?? [255, 255, 255, 255];
-  const defaultStrokeWidth = sublayer.defaultStrokeWidth ?? 1;
+  const defaultStrokeColor = sublayer.defaultStrokeColor ?? defaultFillColor;
+  const defaultStrokeWidth = sublayer.defaultStrokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
+  const defaultStrokeWidthUnits =
+    sublayer.defaultStrokeWidthUnits ?? DEFAULT_SHAPE_STROKE_WIDTH_UNITS;
+  const defaultStrokeWidthMinPixels =
+    sublayer.defaultStrokeWidthMinPixels ?? DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS;
+  const defaultStrokeWidthMaxPixels =
+    sublayer.defaultStrokeWidthMaxPixels ?? DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS;
 
   return new PolygonLayer<ShapePolygonRenderDatum>({
     id: options.id,
     data,
     getPolygon: (d) => d.polygon,
-    getFillColor: (d) => {
-      const base = featureState.fillColorByFeatureId.get(d.featureId) ?? defaultFillColor;
-      return featureState.fadedFeatureIds.has(d.featureId)
-        ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
-        : base;
-    },
-    getLineColor: (d) => {
-      const base = featureState.strokeColorByFeatureId.get(d.featureId) ?? defaultStrokeColor;
-      return featureState.fadedFeatureIds.has(d.featureId)
-        ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
-        : base;
-    },
+    getFillColor: (d) =>
+      resolveFeatureColor(
+        d.featureId,
+        featureState.fillColorByFeatureId,
+        EMPTY_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
+        defaultFillColor,
+        featureState
+      ),
+    getLineColor: (d) =>
+      resolveFeatureColor(
+        d.featureId,
+        featureState.strokeColorByFeatureId,
+        featureState.fillColorByFeatureId,
+        defaultStrokeColor,
+        featureState
+      ),
     getLineWidth: defaultStrokeWidth,
-    lineWidthUnits: 'pixels',
+    lineWidthUnits: defaultStrokeWidthUnits,
+    lineWidthMinPixels: defaultStrokeWidthMinPixels,
+    lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
     filled: true,
     stroked: true,
     opacity: options.opacity ?? 1,
@@ -574,11 +602,7 @@ export function createShapesDeckLayer(
         options
       );
     }
-    return createPolygonDeckLayer(
-      prebuilt.data as ShapePolygonRenderDatum[],
-      sublayer,
-      options
-    );
+    return createPolygonDeckLayer(prebuilt.data as ShapePolygonRenderDatum[], sublayer, options);
   }
 
   // Fallback: build data inline (backward-compatible path for external callers).

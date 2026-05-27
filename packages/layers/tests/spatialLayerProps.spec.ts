@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  migrateSpatialLayerProps,
   SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
+  migrateSpatialLayerProps,
   spatialLayerPropsSchema,
 } from '../src/spatialLayerProps';
 
@@ -48,6 +48,9 @@ describe('migrateSpatialLayerProps', () => {
           kind: 'shapes',
           elementKey: 'cells',
           defaultFillColor: [1, 2, 3, 4],
+          defaultStrokeWidthUnits: 'common',
+          defaultStrokeWidthMinPixels: 0,
+          defaultStrokeWidthMaxPixels: 1,
           featureState: {
             fillColorByFeatureId: { 'cell-1': [5, 6, 7, 8] },
             hiddenFeatureIds: ['cell-2'],
@@ -61,6 +64,9 @@ describe('migrateSpatialLayerProps', () => {
       kind: 'shapes',
       elementKey: 'cells',
       defaultFillColor: [1, 2, 3, 4],
+      defaultStrokeWidthUnits: 'common',
+      defaultStrokeWidthMinPixels: 0,
+      defaultStrokeWidthMaxPixels: 1,
     });
   });
 });

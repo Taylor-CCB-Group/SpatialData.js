@@ -6,6 +6,10 @@ export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';
 export {
   createShapesDeckLayer,
   buildShapesPrebuiltData,
+  DEFAULT_SHAPE_STROKE_WIDTH,
+  DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
   normalizeShapeFeatureState,
   resolveShapeFeatureFromPick,
   resolveShapeFeatureFromPickInfo,
@@ -17,6 +21,7 @@ export {
   type ShapePolygonRenderDatum,
   type ShapesPrebuiltData,
   type ShapesRenderDataLike,
+  type ShapeStrokeWidthUnits,
   type ShapeTooltipRuntimeData,
   type GeoarrowTableLike,
 } from './shapesLayer';
