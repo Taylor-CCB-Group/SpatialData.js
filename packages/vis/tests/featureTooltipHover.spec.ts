@@ -54,7 +54,7 @@ describe('featureTooltipHover', () => {
     const result = resolveHoverFeatureTooltip(
       { picked: true, x: 10, y: 20, layer: { id: 'shapes:cells' }, index: 1, object: {} },
       getFeatureTooltip,
-      { deck: deck as never }
+      { deck }
     );
 
     expect(result?.sections).toHaveLength(2);

@@ -223,6 +223,14 @@ function serializeHiddenIds(ids?: string[]): string {
   return ids.slice().sort().join('\x00');
 }
 
+function serializeColorByFeatureId(
+  colors?: Record<string, readonly [number, number, number, number]>
+): string {
+  if (!colors || Object.keys(colors).length === 0) return '';
+  const entries = Object.entries(colors).sort(([a], [b]) => a.localeCompare(b));
+  return `\x02${entries.length}:${JSON.stringify(entries)}`;
+}
+
 function serializeRasterSelections(selections: RasterSelection[]): string {
   return selections
     .map((selection) => `z:${selection.z ?? ''}|c:${selection.c ?? ''}|t:${selection.t ?? ''}`)
@@ -332,8 +340,8 @@ function getShapeFeatureStateSignature(
     serializeHiddenIds(featureState?.fadedFeatureIds),
     String(featureState?.filteredOpacityMultiplier ?? ''),
     fillColorEntry?.signature ?? '',
-    fillColors ? `\x02${Object.keys(fillColors).length}:${fillColors}` : '',
-    strokeColors ? `\x02${Object.keys(strokeColors).length}:${strokeColors}` : '',
+    serializeColorByFeatureId(fillColors),
+    serializeColorByFeatureId(strokeColors),
   ].join('\x01');
 }
 

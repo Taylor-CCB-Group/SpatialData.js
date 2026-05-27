@@ -8,7 +8,19 @@ import type { DeckGLRef, PickingInfo } from 'deck.gl';
 const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;
 
-export function getDeckFromDeckGlRef(deckRef: { current: DeckGLRef | null } | undefined): Deck | null {
+export interface PickMultipleObjectsCapable {
+  pickMultipleObjects(opts: {
+    x: number;
+    y: number;
+    radius?: number;
+    layerIds?: unknown[];
+    depth?: number;
+  }): PickingInfo[];
+}
+
+export function getDeckFromDeckGlRef(
+  deckRef: { current: DeckGLRef | null } | undefined
+): PickMultipleObjectsCapable | null {
   const deckGl = deckRef?.current;
   if (!deckGl) {
     return null;
@@ -28,14 +40,14 @@ export type FeatureTooltipResolver = (
 export interface ResolveHoverFeatureTooltipOptions {
   /** When true (default), query all pickable layers under the cursor via the Deck instance. */
   aggregate?: boolean;
-  deck?: Deck | null;
+  deck?: PickMultipleObjectsCapable | null;
   pickRadius?: number;
   pickDepth?: number;
 }
 
 function collectPicks(
   info: PickingInfo,
-  deck: Deck | null | undefined,
+  deck: PickMultipleObjectsCapable | null | undefined,
   aggregate: boolean,
   pickRadius: number,
   pickDepth: number

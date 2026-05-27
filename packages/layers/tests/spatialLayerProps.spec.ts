@@ -3,6 +3,7 @@ import {
   SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
   migrateSpatialLayerProps,
   spatialLayerPropsSchema,
+  spatialShapesSublayerSchema,
 } from '../src/spatialLayerProps';
 
 describe('migrateSpatialLayerProps', () => {
@@ -38,6 +39,21 @@ describe('migrateSpatialLayerProps', () => {
     const out = migrateSpatialLayerProps(null);
     expect(spatialLayerPropsSchema.safeParse(out).success).toBe(true);
     expect(out.sublayers).toEqual([]);
+  });
+
+  it('rejects shapes sublayer when stroke width min exceeds max', () => {
+    const result = spatialShapesSublayerSchema.safeParse({
+      kind: 'shapes',
+      elementKey: 'cells',
+      defaultStrokeWidthMinPixels: 5,
+      defaultStrokeWidthMaxPixels: 1,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes('must be <='))).toBe(
+        true
+      );
+    }
   });
 
   it('parses shapes feature-state props', () => {

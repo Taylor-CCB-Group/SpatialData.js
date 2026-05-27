@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useId, type CSSProperties } from 'react';
 import type { ShapesLayerConfig } from './types';
 
 const helperTextStyle: CSSProperties = {
@@ -33,15 +33,23 @@ export function ShapeFillColorPanel({
   noAssociatedTableMessage,
   noFieldsMessage = 'No eligible obs columns found on the associated table',
 }: ShapeFillColorPanelProps) {
+  const fillColorSelectId = useId();
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div>
-        <div style={{ color: '#ccc', fontSize: '12px', marginBottom: 4 }}>Fill colour</div>
+        <label
+          htmlFor={fillColorSelectId}
+          style={{ color: '#ccc', fontSize: '12px', marginBottom: 4, display: 'block' }}
+        >
+          Fill colour
+        </label>
         {tableName ? (
           <>
             <div style={helperTextStyle}>Table: {tableName}</div>
             {availableFields.length > 0 ? (
               <select
+                id={fillColorSelectId}
                 style={{ ...selectStyle, width: '100%' }}
                 value={selected?.columnName ?? ''}
                 onChange={(event) => {
