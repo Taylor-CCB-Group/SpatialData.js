@@ -24,8 +24,8 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import { shouldAutoFitSpatialView, useSpatialCanvasRenderer } from './SpatialCanvasViewer';
-import type { ImageLayerConfig } from './useLayerData';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -37,6 +37,7 @@ import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
+import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
 export {
@@ -836,6 +837,17 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                     config={selectedConfig}
                     defaults={getLabelsLayerLoadedData(selectedConfig.id)}
                     updateLayer={actions.updateLayer}
+                  />
+                )}
+                {selectedConfig.type === 'shapes' && (
+                  <ShapeFillColorPanel
+                    tableName={associatedTable?.key}
+                    availableFields={availableTooltipFields}
+                    selected={selectedConfig.fillColorByColumn}
+                    onChange={(fillColorByColumn) => {
+                      actions.updateLayer(selectedConfig.id, { fillColorByColumn });
+                    }}
+                    noAssociatedTableMessage="No associated table found for this shapes layer"
                   />
                 )}
                 {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (

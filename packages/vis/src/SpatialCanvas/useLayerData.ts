@@ -34,6 +34,7 @@ import {
   boundsFromPolygons,
   getPhysicalSizeScalingMatrixFromMeta,
   getTooltipSignature,
+  loadAssociatedTableFeatureRows,
   loadLabelsTooltipMetadata,
   loadShapesTooltipMetadata,
   resolveTooltipItems,
@@ -57,7 +58,8 @@ import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
-import type { AvailableElement, ElementsByType, LayerConfig } from './types';
+import { type ShapeFillColorMode, buildShapeFillColorByFeatureId } from './shapeColorEncoding';
+import type { AvailableElement, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
 
 export interface ImageLoaderData {
   loader: unknown;
@@ -79,6 +81,11 @@ interface ShapePrebuiltEntry {
   signature: string;
 }
 
+interface ShapeFillColorEntry {
+  fillColorByFeatureId: Record<string, [number, number, number, number]>;
+  signature: string;
+}
+
 export interface WorldBoundsCacheEntry {
   dataRef: unknown;
   transformRef: Matrix4;
@@ -97,6 +104,12 @@ interface LoadedData {
    * `hiddenFeatureIds` changes.
    */
   shapePrebuiltData: Map<string, ShapePrebuiltEntry>;
+  /**
+   * Per-layer table-column fill colour maps. Kept separate from element-keyed
+   * geometry because two layers may render the same shapes with different
+   * table columns.
+   */
+  shapeFillColorData: Map<string, ShapeFillColorEntry>;
   /**
    * World bounds keyed by element identity. Bounds depend on loaded geometry /
    * loader source and transform, not cosmetic layer props such as opacity.
@@ -185,6 +198,20 @@ function getLayerTooltipSignature(config: LayerConfig | undefined): string {
   return config && 'tooltipFields' in config ? getTooltipSignature(config.tooltipFields) : '';
 }
 
+function getShapeFillColorAlpha(config: ShapesLayerConfig): number {
+  return config.fillColor?.[3] ?? 180;
+}
+
+function getShapeFillColorSignature(config: LayerConfig | undefined): string {
+  if (!config || config.type !== 'shapes' || !config.fillColorByColumn?.columnName) {
+    return '';
+  }
+  const mode: ShapeFillColorMode = config.fillColorByColumn.mode;
+  return [config.fillColorByColumn.columnName, mode, String(getShapeFillColorAlpha(config))].join(
+    '\u0001'
+  );
+}
+
 /** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */
 function serializeHiddenIds(ids?: string[]): string {
   if (!ids || ids.length === 0) return '';
@@ -237,6 +264,55 @@ async function loadShapesLayerData(
   return { renderData };
 }
 
+async function loadShapeFillColorData({
+  spatialData,
+  element,
+  renderData,
+  config,
+}: {
+  spatialData: SpatialData | undefined;
+  element: ShapesElement;
+  renderData: ShapesRenderData;
+  config: ShapesLayerConfig;
+}): Promise<ShapeFillColorEntry> {
+  const fillColorByColumn = config.fillColorByColumn;
+  const signature = getShapeFillColorSignature(config);
+  if (!fillColorByColumn?.columnName) {
+    return { signature: '', fillColorByFeatureId: {} };
+  }
+
+  const rows = await loadAssociatedTableFeatureRows({
+    spatialData,
+    kind: 'shapes',
+    key: element.key,
+    extraColumnNames: [fillColorByColumn.columnName],
+  });
+
+  return {
+    signature,
+    fillColorByFeatureId: buildShapeFillColorByFeatureId({
+      featureIds: renderData.featureIds,
+      rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
+      column: rows.extraColumns?.[0],
+      mode: fillColorByColumn.mode,
+      alpha: getShapeFillColorAlpha(config),
+    }),
+  };
+}
+
+function getShapeFeatureStateForRender(
+  config: ShapesLayerConfig,
+  fillColorEntry: ShapeFillColorEntry | undefined
+): ShapesLayerConfig['featureState'] {
+  if (!config.fillColorByColumn?.columnName) {
+    return config.featureState;
+  }
+  return {
+    ...config.featureState,
+    fillColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
+  };
+}
+
 /**
  * Hook to manage async loading of layer data and produce deck.gl layers.
  *
@@ -262,6 +338,7 @@ export function useLayerData(
     images: new Map(),
     labels: new Map(),
     shapePrebuiltData: new Map(),
+    shapeFillColorData: new Map(),
     worldBounds: new Map(),
   });
   const stableSelectionArraysRef = useRef<
@@ -272,6 +349,11 @@ export function useLayerData(
   layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
+  const [, setLoadedDataRevision] = useState(0);
+
+  const notifyLoadedDataChanged = useCallback(() => {
+    setLoadedDataRevision((revision) => revision + 1);
+  }, []);
 
   // Build a map of element key -> AvailableElement for quick lookup
   const elementMap = useRef<Map<string, AvailableElement>>(new Map());
@@ -337,6 +419,7 @@ export function useLayerData(
         element: AvailableElement;
         loadGeometry: boolean;
         loadTooltip: boolean;
+        loadFillColor: boolean;
         loadImage: boolean;
         loadPoints: boolean;
         loadLabels: boolean;
@@ -352,14 +435,20 @@ export function useLayerData(
         if (config.type === 'shapes') {
           const loadedShapes = loaded.shapes.get(elem.key);
           const tooltipSignature = getLayerTooltipSignature(config);
+          const fillColorSignature = getShapeFillColorSignature(config);
+          const fillColorEntry = loaded.shapeFillColorData.get(layerId);
           const loadGeometry = !loadedShapes;
           const loadTooltip = !loadedShapes || loadedShapes.tooltipSignature !== tooltipSignature;
-          if (loadGeometry || loadTooltip) {
+          const loadFillColor = fillColorSignature
+            ? fillColorEntry?.signature !== fillColorSignature
+            : fillColorEntry !== undefined;
+          if (loadGeometry || loadTooltip || loadFillColor) {
             toLoad.push({
               layerId,
               element: elem,
               loadGeometry,
               loadTooltip,
+              loadFillColor,
               loadImage: false,
               loadPoints: false,
               loadLabels: false,
@@ -376,6 +465,7 @@ export function useLayerData(
               element: elem,
               loadGeometry: false,
               loadTooltip,
+              loadFillColor: false,
               loadImage: false,
               loadPoints: false,
               loadLabels,
@@ -387,6 +477,7 @@ export function useLayerData(
             element: elem,
             loadGeometry: false,
             loadTooltip: false,
+            loadFillColor: false,
             loadImage: false,
             loadPoints: true,
             loadLabels: false,
@@ -397,6 +488,7 @@ export function useLayerData(
             element: elem,
             loadGeometry: false,
             loadTooltip: false,
+            loadFillColor: false,
             loadImage: true,
             loadPoints: false,
             loadLabels: false,
@@ -414,6 +506,7 @@ export function useLayerData(
             element,
             loadGeometry,
             loadTooltip,
+            loadFillColor,
             loadImage,
             loadPoints,
             loadLabels,
@@ -511,6 +604,45 @@ export function useLayerData(
                 } catch (error) {
                   setLayerResourceStatus(layerId, 'tooltip', 'error');
                   console.error(`Failed to load shapes tooltip for ${layerId}:`, error);
+                }
+              }
+
+              if (loadFillColor) {
+                const shapeLayerConfig =
+                  layersRef.current[layerId]?.type === 'shapes'
+                    ? layersRef.current[layerId]
+                    : undefined;
+                const requestedSignature = getShapeFillColorSignature(shapeLayerConfig);
+                if (!shapeLayerConfig || !requestedSignature) {
+                  loadedDataRef.current.shapeFillColorData.delete(layerId);
+                  notifyLoadedDataChanged();
+                } else {
+                  try {
+                    const current = loadedDataRef.current.shapes.get(element.key);
+                    if (!current?.renderData) {
+                      return;
+                    }
+                    const fillColorData = await loadShapeFillColorData({
+                      spatialData,
+                      element: element.element as ShapesElement,
+                      renderData: current.renderData,
+                      config: shapeLayerConfig,
+                    });
+                    const latestDesired = getShapeFillColorSignature(
+                      layersRef.current[layerId]?.type === 'shapes'
+                        ? layersRef.current[layerId]
+                        : undefined
+                    );
+                    if (latestDesired !== requestedSignature) {
+                      return;
+                    }
+                    loadedDataRef.current.shapeFillColorData.set(layerId, fillColorData);
+                    notifyLoadedDataChanged();
+                  } catch (error) {
+                    loadedDataRef.current.shapeFillColorData.delete(layerId);
+                    notifyLoadedDataChanged();
+                    console.error(`Failed to load shapes fill colours for ${layerId}:`, error);
+                  }
                 }
               }
             } else if (element.type === 'points' && loadPoints) {
@@ -783,7 +915,14 @@ export function useLayerData(
     };
 
     loadData();
-  }, [layers, layerOrder, getOmeZarrMultiscalesData, spatialData, setLayerResourceStatus]);
+  }, [
+    layers,
+    layerOrder,
+    getOmeZarrMultiscalesData,
+    spatialData,
+    setLayerResourceStatus,
+    notifyLoadedDataChanged,
+  ]);
 
   const reloadElement = useCallback((type: string, key: string) => {
     const loaded = loadedDataRef.current;
@@ -794,6 +933,7 @@ export function useLayerData(
       for (const [layerId, config] of Object.entries(layersRef.current)) {
         if (config.type === 'shapes' && config.elementKey === key) {
           loaded.shapePrebuiltData.delete(layerId);
+          loaded.shapeFillColorData.delete(layerId);
         }
       }
     } else if (type === 'points') {
@@ -956,7 +1096,10 @@ export function useLayerData(
             fillColor: config.fillColor,
             strokeColor: config.strokeColor,
             strokeWidth: config.strokeWidth,
-            featureState: config.featureState,
+            featureState: getShapeFeatureStateForRender(
+              config,
+              loaded.shapeFillColorData.get(layerId)
+            ),
             renderData: shapeData.renderData,
             prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
           });
