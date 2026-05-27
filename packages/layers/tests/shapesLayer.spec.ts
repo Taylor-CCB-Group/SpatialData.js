@@ -392,7 +392,19 @@ describe('createShapesDeckLayer', () => {
     });
   });
 
-  it('prefers feature-id table lookup over geometry feature index', () => {
+  it('prefers feature-index alignment over instance-key map when both are present', () => {
+    expect(
+      resolveShapeTooltipRowIndex(
+        { featureId: '23816', featureIndex: 23816, rowIndex: 23816, polygon: renderData.polygons![0] },
+        {
+          tooltipRowIndexByFeatureId: new Map([['23816', 22271]]),
+          rowIndexByFeatureIndex: new Int32Array(49750).fill(-1),
+        }
+      )
+    ).toBe(23816);
+  });
+
+  it('prefers feature-id table lookup when feature-index alignment is unavailable', () => {
     expect(
       resolveShapeTooltipRowIndex(
         { featureId: 'cell-1', featureIndex: 5, polygon: renderData.polygons![0] },

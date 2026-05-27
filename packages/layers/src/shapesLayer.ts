@@ -389,22 +389,25 @@ export function resolveShapeTooltipRowIndex(
   alignment?: ShapeTooltipRowIndexAlignment
 ): number | undefined {
   const fromFeatureId = alignment?.tooltipRowIndexByFeatureId?.get(feature.featureId);
-  if (fromFeatureId !== undefined && fromFeatureId >= 0) {
-    return fromFeatureId;
-  }
-
-  if (feature.rowIndex !== undefined && feature.rowIndex >= 0) {
-    return feature.rowIndex;
-  }
-
+  const fromFeatureRowIndex =
+    feature.rowIndex !== undefined && feature.rowIndex >= 0 ? feature.rowIndex : undefined;
   const fromTooltip = alignment?.tooltipRowIndices?.[feature.featureIndex];
+  const fromRender = alignment?.rowIndexByFeatureIndex?.[feature.featureIndex];
+
+  if (fromFeatureRowIndex !== undefined) {
+    return fromFeatureRowIndex;
+  }
+
   if (fromTooltip !== undefined && fromTooltip >= 0) {
     return fromTooltip;
   }
 
-  const fromRender = alignment?.rowIndexByFeatureIndex?.[feature.featureIndex];
   if (fromRender !== undefined && fromRender >= 0) {
     return fromRender;
+  }
+
+  if (fromFeatureId !== undefined && fromFeatureId >= 0) {
+    return fromFeatureId;
   }
 
   return undefined;

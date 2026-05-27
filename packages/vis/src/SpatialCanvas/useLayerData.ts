@@ -46,6 +46,7 @@ import {
   buildShapesPrebuiltData,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
+  resolveShapeTooltipRowIndex,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1287,10 +1288,13 @@ export function useLayerData(
       if (!feature) {
         return undefined;
       }
-      const rowIndex =
-        loadedDataRef.current.shapes
-          .get(elem.key)
-          ?.tooltipRowIndexByFeatureId?.get(feature.featureId) ?? feature.rowIndex;
+      const rowIndex = resolveShapeTooltipRowIndex(feature, {
+        tooltipRowIndexByFeatureId: loadedDataRef.current.shapes.get(elem.key)
+          ?.tooltipRowIndexByFeatureId,
+        tooltipRowIndices: loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndices,
+        rowIndexByFeatureIndex: loadedDataRef.current.shapes.get(elem.key)?.renderData
+          .rowIndexByFeatureIndex,
+      }) ?? feature.rowIndex;
       return {
         layerId,
         elementKey: elem.key,
