@@ -79,6 +79,12 @@ interface ShapePrebuiltEntry {
   signature: string;
 }
 
+export interface WorldBoundsCacheEntry {
+  dataRef: unknown;
+  transformRef: Matrix4;
+  bounds: AxisAlignedBounds | null;
+}
+
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
@@ -91,6 +97,11 @@ interface LoadedData {
    * `hiddenFeatureIds` changes.
    */
   shapePrebuiltData: Map<string, ShapePrebuiltEntry>;
+  /**
+   * World bounds keyed by element identity. Bounds depend on loaded geometry /
+   * loader source and transform, not cosmetic layer props such as opacity.
+   */
+  worldBounds: Map<string, WorldBoundsCacheEntry>;
 }
 
 type ResourceLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -190,6 +201,10 @@ function getElementMapKey(config: Pick<LayerConfig, 'type' | 'elementKey'>): str
   return `${config.type}:${config.elementKey}`;
 }
 
+function getWorldBoundsCacheKey(elem: AvailableElement): string {
+  return `${elem.type}:${elem.key}`;
+}
+
 export function resolveLayerElement(
   layerId: string,
   config: LayerConfig | undefined,
@@ -197,6 +212,22 @@ export function resolveLayerElement(
 ): AvailableElement | undefined {
   if (!config) return undefined;
   return elementMap.get(getElementMapKey(config)) ?? elementMap.get(layerId);
+}
+
+export function getCachedWorldBounds(
+  cache: Map<string, WorldBoundsCacheEntry>,
+  key: string,
+  dataRef: unknown,
+  transformRef: Matrix4,
+  compute: () => AxisAlignedBounds | null
+): AxisAlignedBounds | null {
+  const cached = cache.get(key);
+  if (cached && cached.dataRef === dataRef && cached.transformRef === transformRef) {
+    return cached.bounds;
+  }
+  const bounds = compute();
+  cache.set(key, { dataRef, transformRef, bounds });
+  return bounds;
 }
 
 async function loadShapesLayerData(
@@ -231,6 +262,7 @@ export function useLayerData(
     images: new Map(),
     labels: new Map(),
     shapePrebuiltData: new Map(),
+    worldBounds: new Map(),
   });
   const stableSelectionArraysRef = useRef<
     Map<string, { signature: string; value: RasterSelection[] }>
@@ -757,6 +789,7 @@ export function useLayerData(
     const loaded = loadedDataRef.current;
     if (type === 'shapes') {
       loaded.shapes.delete(key);
+      loaded.worldBounds.delete(`shapes:${key}`);
       // Clear prebuilt data for every layer that maps to this element key.
       for (const [layerId, config] of Object.entries(layersRef.current)) {
         if (config.type === 'shapes' && config.elementKey === key) {
@@ -765,10 +798,13 @@ export function useLayerData(
       }
     } else if (type === 'points') {
       loaded.points.delete(key);
+      loaded.worldBounds.delete(`points:${key}`);
     } else if (type === 'image') {
       loaded.images.delete(key);
+      loaded.worldBounds.delete(`image:${key}`);
     } else if (type === 'labels') {
       loaded.labels.delete(key);
+      loaded.worldBounds.delete(`labels:${key}`);
     }
     // The useEffect will pick up the missing data and reload
   }, []);
@@ -813,28 +849,50 @@ export function useLayerData(
           const shapeData = loaded.shapes.get(elem.key);
           if (!shapeData) return null;
           const { renderData } = shapeData;
-          if (
-            (renderData.geometryKind === 'circle' || renderData.geometryKind === 'point') &&
-            renderData.circles
-          ) {
-            return boundsFromCircles(renderData.circles, elem.transform);
-          }
-          if (!renderData.polygons?.length) return null;
-          return boundsFromPolygons(renderData.polygons, elem.transform);
+          return getCachedWorldBounds(
+            loaded.worldBounds,
+            getWorldBoundsCacheKey(elem),
+            renderData,
+            elem.transform,
+            () => {
+              if (
+                (renderData.geometryKind === 'circle' || renderData.geometryKind === 'point') &&
+                renderData.circles
+              ) {
+                return boundsFromCircles(renderData.circles, elem.transform);
+              }
+              if (!renderData.polygons?.length) return null;
+              return boundsFromPolygons(renderData.polygons, elem.transform);
+            }
+          );
         }
         if (elem.type === 'points') {
           const pointData = loaded.points.get(elem.key);
           if (!pointData) return null;
-          return boundsFromPoints(pointData, elem.transform, false);
+          return getCachedWorldBounds(
+            loaded.worldBounds,
+            getWorldBoundsCacheKey(elem),
+            pointData,
+            elem.transform,
+            () => boundsFromPoints(pointData, elem.transform, false)
+          );
         }
         if (elem.type === 'image') {
           const imageData = loaded.images.get(elem.key);
           if (!imageData?.loader) return null;
           const source = Array.isArray(imageData.loader) ? imageData.loader[0] : imageData.loader;
           if (!source || typeof source !== 'object') return null;
-          const { width, height } = getImageSize(source as never);
-          const physical = getPhysicalSizeScalingMatrixFromMeta(source);
-          return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+          return getCachedWorldBounds(
+            loaded.worldBounds,
+            getWorldBoundsCacheKey(elem),
+            source,
+            elem.transform,
+            () => {
+              const { width, height } = getImageSize(source as never);
+              const physical = getPhysicalSizeScalingMatrixFromMeta(source);
+              return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+            }
+          );
         }
         if (elem.type === 'labels') {
           const labelsData = loaded.labels.get(elem.key);
@@ -843,9 +901,17 @@ export function useLayerData(
             ? labelsData.loader[0]
             : labelsData.loader;
           if (!source || typeof source !== 'object') return null;
-          const { width, height } = getImageSize(source as never);
-          const physical = getPhysicalSizeScalingMatrixFromMeta(source);
-          return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+          return getCachedWorldBounds(
+            loaded.worldBounds,
+            getWorldBoundsCacheKey(elem),
+            source,
+            elem.transform,
+            () => {
+              const { width, height } = getImageSize(source as never);
+              const physical = getPhysicalSizeScalingMatrixFromMeta(source);
+              return boundsFromImagePixelExtents(width, height, elem.transform, physical);
+            }
+          );
         }
         return null;
       } catch (err) {

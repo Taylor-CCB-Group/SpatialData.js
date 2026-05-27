@@ -60,6 +60,16 @@ refetches. The fix is upstream stability, not downstream caching.
 - Channel control values that are derived from `LayerConfig.channels` and a
   loaded fallback should still be memoized to keep render output cheap, but
   identity stability is not required for correctness.
+- World bounds are structural too. Computing polygon bounds can be O(n-vertices),
+  so bounds must be cached by loaded data reference plus transform reference.
+  Opacity, color, visibility toggles inside the properties pane, and other
+  cosmetic layer edits must not re-run `boundsFromPolygons` /
+  `accumulatePolygonBounds`.
+- Keep expensive fitting work behind command/effect boundaries. Render should
+  ask cheap questions such as "is this layer visible and renderable?" rather
+  than computing bounds just to decide whether a button looks enabled. The
+  actual bounds lookup belongs in the button handler or the guarded auto-fit
+  effect.
 
 ### For image layers through Viv
 
@@ -152,7 +162,7 @@ enough to keep the contract honest.
 
 ## Current audit checklist
 
-Use this checklist when changing images, labels, or future raster-like layers.
+Use this checklist when changing images, labels, shapes, or future layer types.
 
 1. **Identify the tile-loading owner.** For labels, that is
    `LabelsLayer` / its inner `TileLayer`. For images, that is Viv's
@@ -166,6 +176,13 @@ Use this checklist when changing images, labels, or future raster-like layers.
 4. **Test behavior, not cache mechanics.** A cosmetic opacity/color/channel
    change should not produce new tile reads. A real selection/loader change
    should.
+5. **Profile non-fetch structural work too.** A cosmetic prop change should not
+   rebuild precomputed shape arrays, re-decode geometry, or re-scan polygon
+   vertices for world bounds. Tile fetches are only one symptom of a structural
+   leak.
+6. **Check render-time UI state for hidden geometry work.** Buttons and panels
+   should not call `getWorldBoundsForLayer()` unless they are executing a user
+   command.
 
 ## See also
 
