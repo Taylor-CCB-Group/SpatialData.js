@@ -235,6 +235,7 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
  */
 interface ViewerSectionProps {
   deckLayers: Layer[];
+  layerOrder: string[];
   vivLayerProps: ImageLayerConfig[];
   hasEnabledLayers: boolean;
   isBlocking: boolean;
@@ -249,6 +250,7 @@ interface ViewerSectionProps {
 
 function ViewerSection({
   deckLayers,
+  layerOrder,
   vivLayerProps,
   hasEnabledLayers,
   isBlocking,
@@ -308,9 +310,7 @@ function ViewerSection({
 
   if (viewState === null) {
     return (
-      <div style={placeholderStyle}>
-        {isBlocking ? 'Loading layer data...' : 'Framing view...'}
-      </div>
+      <div style={placeholderStyle}>{isBlocking ? 'Loading layer data...' : 'Framing view...'}</div>
     );
   }
 
@@ -322,6 +322,7 @@ function ViewerSection({
         viewState={viewState}
         onViewStateChange={handleViewStateChange}
         layers={deckLayers}
+        layerOrder={layerOrder}
         vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
         onHover={onHover}
       />
@@ -530,12 +531,12 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
         : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
 
-  const selectedLayerWorldBounds = (() => {
-    const id = selectedConfig?.id;
-    if (!id) return null;
-    if (!hasRenderableLayerData(id)) return null;
-    return getWorldBoundsForLayer(id);
-  })();
+  const selectedLayerCanCenter =
+    !!selectedConfig?.id &&
+    selectedConfig.visible &&
+    vw > 0 &&
+    vh > 0 &&
+    hasRenderableLayerData(selectedConfig.id);
 
   // we probably want to see more than obs columns here... but I also don't understand what subset of those we end up with.
   // why not allow instanceKey & regionKey...
@@ -579,13 +580,13 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
   );
 
   const handleCenterOnSelectedLayer = useCallback(() => {
-    if (!selectedLayerId || vw <= 0 || vh <= 0) return;
+    if (!selectedLayerCanCenter || !selectedLayerId) return;
     const config = layers[selectedLayerId];
     if (!config) return;
     const b = getWorldBoundsForLayer(config.id);
     if (!b) return;
     actions.setViewState(viewStateFromBounds(b, vw, vh));
-  }, [selectedLayerId, layers, vw, vh, getWorldBoundsForLayer, actions]);
+  }, [selectedLayerCanCenter, selectedLayerId, layers, getWorldBoundsForLayer, actions, vw, vh]);
 
   if (sdLoading) {
     return (
@@ -708,6 +709,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
           <div ref={handleViewerRef} style={viewerContainerStyle}>
             <ViewerSection
               deckLayers={deckLayers}
+              layerOrder={layerOrder}
               vivLayerProps={vivLayerProps}
               hasEnabledLayers={hasEnabledLayers}
               isBlocking={isBlocking}
@@ -755,11 +757,10 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                   type="button"
                   style={{
                     ...selectStyle,
-                    cursor:
-                      vw > 0 && vh > 0 && selectedLayerWorldBounds ? 'pointer' : 'not-allowed',
-                    opacity: vw > 0 && vh > 0 && selectedLayerWorldBounds ? 1 : 0.5,
+                    cursor: selectedLayerCanCenter ? 'pointer' : 'not-allowed',
+                    opacity: selectedLayerCanCenter ? 1 : 0.5,
                   }}
-                  disabled={vw <= 0 || vh <= 0 || !selectedLayerWorldBounds}
+                  disabled={!selectedLayerCanCenter}
                   onClick={handleCenterOnSelectedLayer}
                 >
                   Center on layer

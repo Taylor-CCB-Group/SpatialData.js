@@ -204,6 +204,23 @@ For now, the Vitessce note should be treated as an API pressure test and a succe
 
 We should track upstream deck.gl / loaders.gl / deck.gl-community work around Arrow, GeoArrow, and GeoParquet carefully. This affects the boundary between `@spatialdata/core`, `@spatialdata/layers`, `@spatialdata/vis`, deck loaders, and app-specific adapters.
 
+Current upstream read:
+
+- `geoarrow/deck.gl-geoarrow` is the renamed home for the former
+  `geoarrow/deck.gl-layers` project. The published package to evaluate is
+  `@geoarrow/deck.gl-geoarrow`; it targets deck.gl 9 and Apache Arrow JS.
+- The useful layer for SpatialData points is likely `GeoArrowScatterplotLayer`,
+  but it expects GeoArrow point/multipoint data, not arbitrary `x` / `y`
+  columns. SpatialData points currently store coordinate columns in Parquet, so
+  an adapter still has to build or expose a GeoArrow point column/batch.
+- The library is most useful when we can keep Arrow chunks columnar all the way
+  to deck.gl's binary attribute interface. It is less compelling if we first
+  materialise every point as JS objects or as the current ndarray-ish wrapper.
+- deck.gl-community's Arrow layers are a second signal in the same direction,
+  but the community docs explicitly warn about maintenance bandwidth. Treat
+  that as an API pressure test rather than a dependency to bet the public
+  contract on.
+
 Current local state:
 
 - `@spatialdata/core` currently loads Parquet bytes/tables through `parquet-wasm` in `VTableSource`, inherited by points and shapes sources.
@@ -211,6 +228,32 @@ Current local state:
 - shapes currently expose a render-oriented core payload with stable feature ids, shared row-index alignment, and a mixed backend path in `@spatialdata/layers`.
 - labels are still their own image/tile rendering path.
 - Vitessce-derived code already has more advanced point handling in places, including tiled point loading, viewport filtering, feature-index filtering, and `DataFilterExtension` use.
+- `VTableSource` recognises `points/<key>/points.parquet` and
+  `points/<key>/points.parquet/part.0.parquet`, but it does not yet model a
+  multi-file Parquet dataset as multiple chunks/batches. That is the wrong
+  shape for large point stores.
+
+Points-specific target shape:
+
+- `core` should expose a `PointsRenderData`-style payload, parallel to
+  `ShapesRenderData`, with stable point ids, row-index alignment, coordinate
+  axis names, optional `feature_key` / `instance_key` columns, and the original
+  Arrow table or record batches when available.
+- `layers` should own a shared points renderer. The renderer should choose
+  between:
+  - a current fallback `ScatterplotLayer` over typed coordinate arrays
+  - a binary deck.gl attribute path for `x` / `y` / optional `z`
+  - a `GeoArrowScatterplotLayer` path when data is already GeoArrow point
+    encoded, or when the adapter can build that point column without copying too
+    much
+- Points need the same feature-state language as shapes: hide, fade, color,
+  radius, and filtered opacity by stable point id or row index. MDV/Vitessce
+  filters should update feature-state or filter columns; they should not force a
+  full Parquet reload.
+- Viewport/row-group filtering belongs behind the points data adapter, not in
+  `SpatialCanvas` UI code. A multi-file Parquet directory can naturally map to
+  progressive chunks/layers first, then later to row-group or bounding-box
+  pruning when metadata is available.
 
 Upstream signals to monitor:
 
@@ -248,14 +291,22 @@ Recommended direction for now:
 
 - [ ] Keep `@spatialdata/core` free of deck.gl dependencies.
 - [ ] Align `@spatialdata/core`'s points and shapes support with Vitessce's SpatialData-derived loaders so we do not fall behind format coverage while the rendering backend evolves.
-- [ ] Move toward `core` exposing Arrow-ish columnar primitives for points/shapes/tables, while preserving convenience methods for simple JS arrays.
+- [ ] Move toward `core` exposing Arrow-ish columnar primitives for
+  points/shapes/tables, while preserving convenience methods for simple JS
+  arrays. For points, that means preserving Arrow batches/vectors alongside the
+  current coordinate-array convenience path.
 - [ ] Make `@spatialdata/layers` responsible for choosing the rendering backend:
   - current polygon fallback for compatibility
   - current `geoarrow-table` runtime branch for shared columnar payloads
-  - `deck.gl-geoarrow` as the intended stronger near-term fast path when the external dependency is adopted cleanly
+  - `@geoarrow/deck.gl-geoarrow` as the intended stronger near-term fast path
+    when the external dependency is adopted cleanly
   - future Arrow/community-layer backends without changing the public shapes config
 - [x] Keep feature identity, table association, coordinate transforms, and metadata interpretation in `core`; keep GPU filtering, tiling, layer construction, and picking/render props in `layers`.
 - [ ] Avoid baking `parquet-wasm` as the only long-term path. Treat it as the current implementation behind a replaceable interface.
+- [ ] Upgrade points before adopting GeoArrow broadly: first add stable point
+  identity, row-index alignment, feature-state filtering/styling, and multi-part
+  Parquet discovery; then add the GeoArrow renderer as an adapter behind the
+  same public points config.
 
 One more API-design note to preserve: the current table-association helpers are still `obs`-oriented and string-column-oriented because that is enough for the first feature-id join path. A future revision should widen the shared contract so style/filter inputs can come coherently from all of the AnnData surfaces we care about: `obs`, `var`, selected `X` columns for chosen `var` rows, `obsm`, potential future `obsp` graph/network data, and `uns`, without forcing integrators to encode everything as ad hoc string column lookups. In principle, many of those richer access patterns should likely be pushed upstream into `anndata.js` rather than duplicated forever in SpatialData.js.
 - [ ] Treat Vitessce parity tests as compatibility fixtures: when Vitessce supports a points/shapes SpatialData layout, `core` should either support it too or document why not.
@@ -268,6 +319,9 @@ One more API-design note to preserve: the current table-association helpers are 
 Open questions:
 
 - Should `PointsElement.loadPoints()` return Arrow vectors/tables in addition to typed arrays?
+- Should `PointsElement` expose a chunked/multipart API (`loadPointBatches`) so
+  large `points.parquet/part-*.parquet` directories can progressively render
+  without pretending they are one file?
 - Should `ShapesElement.loadPolygonShapes()` preserve feature ids alongside geometry in a first-class row object or columnar structure?
 - Where should row-group / viewport filtering live: `core`, `vis`, or app adapter?
 - Can deck.gl-community Arrow layers become a dependency of `@spatialdata/vis`, or should they be optional peer/adapter code?

@@ -85,6 +85,8 @@ export interface VivSpatialViewerProps {
   vivLayerProps: ImageLayerConfig[];
   /** Extra deck.gl layers (shapes, points, etc.) */
   extraLayers?: Layer[];
+  /** Global SpatialCanvas layer order, bottom to top. */
+  layerOrder?: string[];
   /** Viewport width */
   width: number;
   /** Viewport height */
@@ -106,45 +108,55 @@ interface VivSpatialViewerState {
   // deckRef?: React.MutableRefObject<DeckGL>;
 }
 
-/**
- * Pure function to compose layers: [vivImageLayers, ...extraLayers, scaleBarLayer]
- * Note: extraLayers (shapes/points) render on top of images
- *
- * This matches MDVivViewer's pattern exactly:
- * - When deckProps.layers exists: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
- * - When deckProps.layers is undefined: [vivLayers (all), scaleBar]
- */
+interface OrderedLayerRecord {
+  layer: Layer;
+  orderId?: string;
+}
+
+function stripVivId(id: string, vivId: string): string {
+  return id.includes(vivId) ? id.replace(vivId, '') : id;
+}
+
+function sortLayerRecords(records: OrderedLayerRecord[], layerOrder?: string[]): Layer[] {
+  if (!layerOrder?.length) {
+    return records.map((record) => record.layer);
+  }
+  const orderIndex = new Map(layerOrder.map((id, index) => [id, index]));
+  return records
+    .map((record, originalIndex) => ({
+      ...record,
+      originalIndex,
+      order: record.orderId === undefined ? undefined : orderIndex.get(record.orderId),
+    }))
+    .sort((a, b) => {
+      if (a.order === undefined && b.order === undefined) {
+        return a.originalIndex - b.originalIndex;
+      }
+      if (a.order === undefined) {
+        return 1;
+      }
+      if (b.order === undefined) {
+        return -1;
+      }
+      return a.order - b.order;
+    })
+    .map((record) => record.layer);
+}
+
 function composeLayers(
-  vivLayers: LayersList,
-  extraLayers: LayersList = [],
-  deckPropsLayers?: LayersList
+  orderedLayers: OrderedLayerRecord[],
+  deckPropsLayers: LayersList = [],
+  scaleBarLayer?: Layer,
+  layerOrder?: string[]
 ): LayersList {
-  // Separate scale bar from other Viv layers
-  const scaleBarLayer = vivLayers.find((layer) => layer instanceof ScaleBarLayer);
-  const otherVivLayers = vivLayers.filter((layer) => layer !== scaleBarLayer);
+  const layers: LayersList = sortLayerRecords(orderedLayers, layerOrder);
 
-  // Follow MDV pattern: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
-  // In our case, extraLayers = shapes/points (equivalent to deckProps.layers in MDV)
-  // Always compose: [image layers, ...extraLayers, ...deckPropsLayers, scaleBar]
-  const layers: LayersList = [];
-
-  // Add image layers (without scale bar) first - these render at the bottom
-  if (otherVivLayers.length > 0) {
-    layers.push(...otherVivLayers);
-  }
-
-  // Add extra layers (shapes/points) - these render on top of images
-  // This is equivalent to deckProps.layers in MDV
-  if (extraLayers.length > 0) {
-    layers.push(...extraLayers);
-  }
-
-  // Add any additional deckProps layers
-  if (deckPropsLayers && deckPropsLayers.length > 0) {
+  // Caller-supplied deckProps layers are not necessarily SpatialData layers, so
+  // keep them above the generated stack unless a future API gives them order ids.
+  if (deckPropsLayers.length > 0) {
     layers.push(...deckPropsLayers);
   }
 
-  // Scale bar always on top
   if (scaleBarLayer) {
     layers.push(scaleBarLayer);
   }
@@ -356,7 +368,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   }
 
   _renderLayers(): LayersList {
-    const { vivLayerProps, extraLayers, deckProps, onHover } = this.props;
+    const { vivLayerProps, extraLayers, layerOrder, deckProps, onHover } = this.props;
     const { viewStates } = this.state;
 
     // Shared by all paths: layerFilter requires layer IDs to include the Viv viewport token
@@ -364,15 +376,21 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const withVivId = (layer: Layer) =>
       layer.id.includes(vivId) ? layer : layer.clone({ id: `${layer.id}${vivId}` });
 
-    const extraLayersWithVivId = (extraLayers || []).map(withVivId);
+    const extraLayerRecords: OrderedLayerRecord[] = (extraLayers || []).map((layer) => {
+      const layerWithVivId = withVivId(layer);
+      return {
+        layer: layerWithVivId,
+        orderId: stripVivId(layerWithVivId.id, vivId),
+      };
+    });
     const deckPropsLayersWithVivId = normalizeVivLayers(deckProps?.layers ?? []).map(withVivId);
 
     if (vivLayerProps.length === 0) {
-      return composeLayers([], extraLayersWithVivId, deckPropsLayersWithVivId);
+      return composeLayers(extraLayerRecords, deckPropsLayersWithVivId, undefined, layerOrder);
     }
 
-    const vivLayers: Layer[] = [];
-    let scaleBarAdded = false;
+    const orderedLayers: OrderedLayerRecord[] = [...extraLayerRecords];
+    let scaleBarLayer: Layer | undefined;
     const scaleBarView = this.getScaleBarView();
 
     for (const imageLayerProps of vivLayerProps) {
@@ -406,30 +424,30 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
       for (const layer of layersForImage) {
         if (layer instanceof ScaleBarLayer) {
-          if (!scaleBarAdded) {
-            vivLayers.push(layer);
-            scaleBarAdded = true;
+          if (!scaleBarLayer) {
+            scaleBarLayer = layer;
           }
           continue;
         }
 
         // Viv uses generic source-based ids here, so overlays need a stable per-image suffix.
-        vivLayers.push(layer.clone({ id: `${layer.id}-${imageLayerProps.id}` }));
+        orderedLayers.push({
+          layer: layer.clone({ id: `${layer.id}-${imageLayerProps.id}` }),
+          orderId: imageLayerProps.id,
+        });
       }
     }
 
-    if (!scaleBarAdded && scaleBarView) {
+    if (!scaleBarLayer && scaleBarView) {
       const scaleBarLayers = normalizeVivLayers(
         scaleBarView.getLayers({
           viewStates,
         })
       );
-      vivLayers.push(...scaleBarLayers);
+      scaleBarLayer = scaleBarLayers.find((layer) => layer instanceof ScaleBarLayer);
     }
 
-    // Compose with extra layers - following MDV pattern exactly
-    // MDV does: [otherLayers (images), ...deckProps.layers (shapes), scaleBar]
-    return composeLayers(vivLayers, extraLayersWithVivId, deckPropsLayersWithVivId);
+    return composeLayers(orderedLayers, deckPropsLayersWithVivId, scaleBarLayer, layerOrder);
   }
 
   render() {

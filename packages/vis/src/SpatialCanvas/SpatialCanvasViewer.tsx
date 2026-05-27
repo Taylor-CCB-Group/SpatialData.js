@@ -398,6 +398,7 @@ function SpatialCanvasViewerInner({
               viewState={viewState}
               onViewStateChange={onViewStateChange}
               layers={renderer.deckLayers}
+              layerOrder={layerOrder}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={handleHover}
               onClick={handleClick}
