@@ -144,10 +144,18 @@ describe('createShapesDeckLayer', () => {
       lineWidthUnits: string;
       lineWidthMinPixels: number;
       lineWidthMaxPixels: number;
+      updateTriggers: {
+        getFillColor: unknown[];
+        getLineColor: unknown[];
+        getLineWidth: unknown[];
+      };
     };
     expect(props.lineWidthUnits).toBe(DEFAULT_SHAPE_STROKE_WIDTH_UNITS);
     expect(props.lineWidthMinPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS);
     expect(props.lineWidthMaxPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS);
+    expect(props.updateTriggers.getFillColor).toHaveLength(2);
+    expect(props.updateTriggers.getLineColor).toHaveLength(2);
+    expect(props.updateTriggers.getLineWidth).toEqual([1]);
     expect(props.getLineColor(props.data[0])).toEqual([1, 2, 3, 180]);
     expect(props.getLineColor(props.data[1])).toEqual([10, 20, 30, 180]);
   });

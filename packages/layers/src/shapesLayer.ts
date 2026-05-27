@@ -506,6 +506,11 @@ function createPolygonDeckLayer(
     lineWidthUnits: defaultStrokeWidthUnits,
     lineWidthMinPixels: defaultStrokeWidthMinPixels,
     lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
+    updateTriggers: {
+      getFillColor: [featureState, defaultFillColor],
+      getLineColor: [featureState, defaultStrokeColor],
+      getLineWidth: [defaultStrokeWidth],
+    },
     filled: true,
     stroked: true,
     opacity: options.opacity ?? 1,
@@ -549,6 +554,9 @@ function createCircleDeckLayer(
       return featureState.fadedFeatureIds.has(d.featureId)
         ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
         : base;
+    },
+    updateTriggers: {
+      getFillColor: [featureState, defaultFillColor],
     },
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,
