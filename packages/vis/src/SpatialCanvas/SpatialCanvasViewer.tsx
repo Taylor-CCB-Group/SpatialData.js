@@ -268,6 +268,10 @@ function SpatialCanvasViewerInner({
     deckLayers: externalDeckLayers,
     autoFit,
   });
+  const hoverPickLayerIds = useMemo(
+    () => Array.from(renderer.enabledLayerIds),
+    [renderer.enabledLayerIds]
+  );
 
   const handleHover = useCallback(
     (info: PickingInfo) => {
@@ -295,10 +299,19 @@ function SpatialCanvasViewerInner({
       const tooltip = resolveHoverFeatureTooltip(info, renderer.getFeatureTooltip, {
         aggregate: aggregateHoverTooltips,
         deck: getDeckFromDeckGlRef(deckRef),
+        pickLayerIds: hoverPickLayerIds,
       });
       setHoverTooltip(tooltip);
     },
-    [aggregateHoverTooltips, coordinateSystem, deckRef, onHover, onShapeHover, renderTooltip, renderer]
+    [
+      aggregateHoverTooltips,
+      coordinateSystem,
+      hoverPickLayerIds,
+      onHover,
+      onShapeHover,
+      renderTooltip,
+      renderer,
+    ]
   );
 
   const handleClick = useCallback(

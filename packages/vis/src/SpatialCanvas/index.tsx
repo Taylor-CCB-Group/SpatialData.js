@@ -424,6 +424,7 @@ function SpatialCanvasInner({
     width: vw,
     height: vh,
   });
+  const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
     if (
@@ -530,10 +531,11 @@ function SpatialCanvasInner({
       const tooltip = resolveHoverFeatureTooltip(info, getFeatureTooltip, {
         aggregate: aggregateHoverTooltips,
         deck: getDeckFromDeckGlRef(deckRef),
+        pickLayerIds: hoverPickLayerIds,
       });
       setHoverTooltip(tooltip);
     },
-    [aggregateHoverTooltips, getFeatureTooltip]
+    [aggregateHoverTooltips, getFeatureTooltip, hoverPickLayerIds]
   );
 
   const handleViewerRef = useCallback(

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  getAggregateHoverPickDepth,
   normalizeDeckLayerId,
   resolveHoverFeatureTooltip,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
@@ -59,5 +60,46 @@ describe('featureTooltipHover', () => {
 
     expect(result?.sections).toHaveLength(2);
     expect(getFeatureTooltip).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps aggregate picking depth to candidate tooltip layers', () => {
+    expect(getAggregateHoverPickDepth(['shapes:cells', 'labels:mask'])).toBe(2);
+    expect(getAggregateHoverPickDepth(['shapes:cells'], 6)).toBe(6);
+  });
+
+  it('passes candidate layer ids and capped depth to Deck aggregation', () => {
+    const getFeatureTooltip = vi.fn((layerId: string) => ({
+      elementKey: layerId,
+      elementType: 'shapes' as const,
+      layerId,
+      items: [{ label: 'element', value: layerId }],
+    }));
+    const pickMultipleObjects = vi.fn(() => [
+      {
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: { id: 'shapes:cells' },
+        index: 0,
+        object: {},
+      },
+    ]);
+
+    resolveHoverFeatureTooltip(
+      { picked: true, x: 10, y: 20, layer: { id: 'shapes:cells' }, index: 1, object: {} },
+      getFeatureTooltip,
+      {
+        deck: { pickMultipleObjects },
+        pickLayerIds: ['shapes:cells', 'labels:mask'],
+      }
+    );
+
+    expect(pickMultipleObjects).toHaveBeenCalledWith({
+      x: 10,
+      y: 20,
+      radius: 4,
+      depth: 2,
+      layerIds: ['shapes:cells', 'labels:mask'],
+    });
   });
 });

@@ -1,8 +1,5 @@
-import {
-  mergeSpatialFeatureTooltips,
-  type SpatialFeatureTooltipData,
-} from '@spatialdata/core';
 import type { Deck } from '@deck.gl/core';
+import { type SpatialFeatureTooltipData, mergeSpatialFeatureTooltips } from '@spatialdata/core';
 import type { DeckGLRef, PickingInfo } from 'deck.gl';
 
 const DEFAULT_PICK_RADIUS = 4;
@@ -13,7 +10,7 @@ export interface PickMultipleObjectsCapable {
     x: number;
     y: number;
     radius?: number;
-    layerIds?: unknown[];
+    layerIds?: string[];
     depth?: number;
   }): PickingInfo[];
 }
@@ -41,8 +38,20 @@ export interface ResolveHoverFeatureTooltipOptions {
   /** When true (default), query all pickable layers under the cursor via the Deck instance. */
   aggregate?: boolean;
   deck?: PickMultipleObjectsCapable | null;
+  /** Candidate logical deck layer ids for tooltip aggregation. Used to cap Deck's repeated pick passes. */
+  pickLayerIds?: string[];
   pickRadius?: number;
   pickDepth?: number;
+}
+
+export function getAggregateHoverPickDepth(
+  pickLayerIds: readonly string[] | undefined,
+  pickDepth?: number
+): number {
+  if (typeof pickDepth === 'number') {
+    return pickDepth;
+  }
+  return pickLayerIds?.length ? Math.max(1, pickLayerIds.length) : DEFAULT_PICK_DEPTH;
 }
 
 function collectPicks(
@@ -50,7 +59,8 @@ function collectPicks(
   deck: PickMultipleObjectsCapable | null | undefined,
   aggregate: boolean,
   pickRadius: number,
-  pickDepth: number
+  pickDepth: number,
+  pickLayerIds: string[] | undefined
 ): PickingInfo[] {
   if (
     aggregate &&
@@ -64,6 +74,7 @@ function collectPicks(
       y: info.y,
       radius: pickRadius,
       depth: pickDepth,
+      layerIds: pickLayerIds?.length ? pickLayerIds : undefined,
     });
   }
   return [info];
@@ -84,7 +95,8 @@ export function resolveHoverFeatureTooltip(
     options?.deck,
     aggregate,
     options?.pickRadius ?? DEFAULT_PICK_RADIUS,
-    options?.pickDepth ?? DEFAULT_PICK_DEPTH
+    getAggregateHoverPickDepth(options?.pickLayerIds, options?.pickDepth),
+    options?.pickLayerIds
   );
 
   const tooltips: SpatialFeatureTooltipData[] = [];

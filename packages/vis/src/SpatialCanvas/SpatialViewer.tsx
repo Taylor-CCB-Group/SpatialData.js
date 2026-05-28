@@ -10,11 +10,11 @@
  * - Otherwise: uses simplified functional component with DetailView
  */
 
-import { DetailView } from '@hms-dbmi/viv';
 import type { Deck } from '@deck.gl/core';
+import { DetailView } from '@hms-dbmi/viv';
 import { DeckGL } from 'deck.gl';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
-import { useCallback, useId, useMemo, type RefObject } from 'react';
+import { type RefObject, useCallback, useId, useMemo } from 'react';
 import VivSpatialViewer, { normalizeVivLayers } from './VivSpatialViewer';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
