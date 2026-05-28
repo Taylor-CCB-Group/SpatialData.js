@@ -80,6 +80,32 @@ Planned evolution:
 - keep the current convenience helpers focused on association / tooltip use
 - continue feeding capability gaps back upstream to `anndata.js`
 
+### Feature Identity Convergence (labels and shapes)
+
+Current state:
+
+- shapes expose stable feature ids through `ShapesElement.loadFeatureIds()`
+  (plus render data carrying `featureIds` and row-alignment metadata);
+- labels currently expose feature identity from picked raster values during
+  interactive rendering/tooltips.
+
+Near-term unification direction:
+
+1. Add a labels-side feature-id API in `@spatialdata/core` (for example
+   non-zero unique ids at the selected scale).
+2. Route both labels and shapes through the same association helper shape:
+   `featureId -> table row index`.
+3. Keep render-time picking as one producer of feature ids, not the only one.
+
+This keeps the table contract (`region`, `region_key`, `instance_key`) intact
+while making labels/shapes more symmetric in higher-level APIs.
+
+Experimental metadata idea (non-spec):
+we may prototype optional table metadata that asserts equivalence classes across
+elements (for example one canonical row identity corresponding to both
+`labels/<key>/<id>` and `shapes/<key>/<id>`). This should remain explicitly
+experimental and advisory until there is upstream spec support.
+
 ## Element Factory (Internal)
 
 Elements are created internally when loading stores. These functions are not intended for application use:

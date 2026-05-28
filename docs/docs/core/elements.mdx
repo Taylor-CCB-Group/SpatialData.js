@@ -113,6 +113,12 @@ labels.ndim;
 labels.getTransformation('global');
 ```
 
+Current implementation note:
+labels currently expose picked feature identity from raster values (for example
+segment/object ids) at render-time. A dedicated `LabelsElement` feature-id
+loading API, parallel to `ShapesElement.loadFeatureIds()`, is planned but not
+yet part of the public surface.
+
 ## ShapesElement
 
 Shapes represent vector geometries like polygons and circles.
@@ -184,6 +190,55 @@ table.attrs.instance_key;   // Column name for feature IDs / instance IDs
 table.attrs.region;         // Element(s) this table annotates
 table.attrs.region_key;     // Column name linking to region
 ```
+
+### Experimental extension idea: equivalent region encodings
+
+The SpatialData table contract currently maps each row to a single target
+region+instance pair via `region_key` + `instance_key`. For some workflows, we
+may want to assert that one row can be interpreted across multiple equivalent
+elements (for example both `labels/cell_labels` and `shapes/cell_shapes`), then choose
+whichever runtime representation is more appropriate for a task.
+
+This is not part of the SpatialData spec today. In this repo, a possible
+experimental approach is to keep the canonical mapping unchanged and add
+optional sidecar metadata under `table.uns.spatialdata_attrs`, for example:
+
+```ts
+table.uns.spatialdata_attrs.experimental_equivalent_mappings = {
+  canonical: {
+    region_key: 'region',
+    instance_key: 'instance_id',
+  },
+  aliases: {
+    labels: {
+      region: 'labels/cell_labels',
+      // Optional: when labels use a different obs column than canonical.
+      region_key: 'label_region_key',
+      instance_key: 'label_instance_id',
+    },
+    shapes: {
+      region: 'shapes/cell_shapes',
+      // Omit keys when canonical columns already apply.
+    },
+  },
+};
+```
+
+Guidelines for experimentation:
+
+- Treat this metadata as optional and non-authoritative.
+- Preserve normal `region_key`/`instance_key` behavior when it is absent.
+- Prefer column-level equivalence (`*_region_key`, `*_instance_key`) over
+  per-id dictionaries.
+- Keep one canonical identity per row to avoid ambiguous write/update paths.
+- Do not assume other SpatialData tools will read this field.
+
+Alternative worth discussing upstream:
+for common cases where an alias always targets one fixed region, it may be
+simpler to store only `region: '<fixed-region-name>'` for that alias (without a
+`region_key` column reference). This is more divergent from today's
+`region`/`region_key`/`instance_key` table-keys contract, but could reduce
+friction for simple one-region equivalence workflows.
 
 Implementation note:
 `loadObsIndex()` and `loadObsColumns()` are used by the feature-association
