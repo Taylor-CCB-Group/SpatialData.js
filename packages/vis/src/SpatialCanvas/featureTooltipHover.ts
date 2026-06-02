@@ -6,6 +6,9 @@ const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;
 
 export interface PickMultipleObjectsCapable {
+  props?: {
+    layers?: unknown;
+  };
   pickMultipleObjects(opts: {
     x: number;
     y: number;
@@ -27,6 +30,91 @@ export function getDeckFromDeckGlRef(
 
 export function normalizeDeckLayerId(rawLayerId: string): string {
   return rawLayerId.replace(/-#.*#$/, '');
+}
+
+function resolveLogicalLayerId(rawLayerId: string, logicalLayerIds: string[] | undefined): string {
+  const normalized = normalizeDeckLayerId(rawLayerId);
+  if (!logicalLayerIds?.length) {
+    return normalized;
+  }
+
+  const candidates = logicalLayerIds
+    .slice()
+    .sort((a, b) => b.length - a.length)
+    .map((id) => normalizeDeckLayerId(id));
+  for (const candidate of candidates) {
+    if (
+      normalized === candidate ||
+      normalized.startsWith(`${candidate}-`) ||
+      normalized.endsWith(`-${candidate}`) ||
+      normalized.includes(`-${candidate}-`)
+    ) {
+      return candidate;
+    }
+  }
+  return normalized;
+}
+
+function collectDeckLayerIds(layers: unknown, ids: string[] = []): string[] {
+  if (!layers) {
+    return ids;
+  }
+  if (Array.isArray(layers)) {
+    for (const layer of layers) {
+      collectDeckLayerIds(layer, ids);
+    }
+    return ids;
+  }
+  if (typeof layers === 'object') {
+    const id = Reflect.get(layers, 'id');
+    if (typeof id === 'string') {
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
+function collectCurrentDeckLayerIds(deck: PickMultipleObjectsCapable | null | undefined): string[] {
+  const ids: string[] = [];
+  collectDeckLayerIds(deck?.props?.layers, ids);
+  const layerManager =
+    typeof deck === 'object' && deck !== null ? Reflect.get(deck, 'layerManager') : undefined;
+  const getLayers =
+    typeof layerManager === 'object' && layerManager !== null
+      ? Reflect.get(layerManager, 'getLayers')
+      : undefined;
+  const flattenedLayers =
+    typeof getLayers === 'function' ? getLayers.call(layerManager) : undefined;
+  collectDeckLayerIds(flattenedLayers, ids);
+  return ids;
+}
+
+function getSeenLogicalLayerIds(picks: PickingInfo[], logicalLayerIds: string[]): Set<string> {
+  const seen = new Set<string>();
+  for (const pick of picks) {
+    const rawLayerId = typeof pick.layer?.id === 'string' ? pick.layer.id : '';
+    const layerId = resolveLogicalLayerId(rawLayerId, logicalLayerIds);
+    if (layerId) {
+      seen.add(layerId);
+    }
+  }
+  return seen;
+}
+
+export function resolveDeckPickLayerIds(
+  deck: PickMultipleObjectsCapable | null | undefined,
+  logicalLayerIds: string[] | undefined
+): string[] | undefined {
+  if (!logicalLayerIds?.length) {
+    return undefined;
+  }
+  const logical = new Set(logicalLayerIds);
+  const deckLayerIds = collectCurrentDeckLayerIds(deck);
+  const resolved = deckLayerIds.filter(
+    (id) => logical.has(id) || logical.has(resolveLogicalLayerId(id, logicalLayerIds))
+  );
+  const uniqueResolved = Array.from(new Set(resolved));
+  return uniqueResolved.length > 0 ? uniqueResolved : logicalLayerIds;
 }
 
 export type FeatureTooltipResolver = (
@@ -69,13 +157,40 @@ function collectPicks(
     typeof info.x === 'number' &&
     typeof info.y === 'number'
   ) {
-    return deck.pickMultipleObjects({
+    const layerIds = resolveDeckPickLayerIds(deck, pickLayerIds);
+    const picks = deck.pickMultipleObjects({
       x: info.x,
       y: info.y,
       radius: pickRadius,
-      depth: pickDepth,
-      layerIds: pickLayerIds?.length ? pickLayerIds : undefined,
+      depth: layerIds?.length ? Math.min(pickDepth, layerIds.length) : pickDepth,
+      layerIds,
     });
+    if (picks.length === 0) {
+      return [info];
+    }
+
+    if (!pickLayerIds?.length) {
+      return picks;
+    }
+
+    const seenLayerIds = getSeenLogicalLayerIds(picks, pickLayerIds);
+    const missingLayerIds = pickLayerIds.filter(
+      (layerId) => !seenLayerIds.has(normalizeDeckLayerId(layerId))
+    );
+    if (missingLayerIds.length === 0) {
+      return picks;
+    }
+
+    const supplementalPicks = missingLayerIds.flatMap((layerId) =>
+      deck.pickMultipleObjects({
+        x: info.x,
+        y: info.y,
+        radius: pickRadius,
+        depth: 1,
+        layerIds: resolveDeckPickLayerIds(deck, [layerId]),
+      })
+    );
+    return supplementalPicks.length > 0 ? [...picks, ...supplementalPicks] : picks;
   }
   return [info];
 }
@@ -107,7 +222,7 @@ export function resolveHoverFeatureTooltip(
       continue;
     }
     const rawLayerId = typeof pick.layer?.id === 'string' ? pick.layer.id : '';
-    const layerId = normalizeDeckLayerId(rawLayerId);
+    const layerId = resolveLogicalLayerId(rawLayerId, options?.pickLayerIds);
     if (!layerId || seenLayerIds.has(layerId)) {
       continue;
     }

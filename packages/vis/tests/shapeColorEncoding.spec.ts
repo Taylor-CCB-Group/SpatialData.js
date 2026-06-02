@@ -89,6 +89,27 @@ describe('shape fill colour encoding', () => {
     });
   });
 
+  it('prefers feature-index row alignment over colliding numeric feature ids', () => {
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds: ['0', '1', '2'],
+      rowIndexByFeatureIndex: new Int32Array([0, 1, 2]),
+      rowIndexByFeatureId: new Map([
+        ['1', 0],
+        ['5', 1],
+        ['99', 2],
+      ]),
+      column: ['type-a', 'type-b', 'type-c'],
+      mode: 'categorical',
+      alpha: 180,
+    });
+
+    expect(colors).toEqual({
+      '0': [0, 0, 255, 180],
+      '1': [0, 255, 0, 180],
+      '2': [255, 0, 255, 180],
+    });
+  });
+
   it('treats mixed values as categorical in auto mode', () => {
     expect(resolveShapeFillColorMode('auto', ['1', 'tumour'])).toBe('categorical');
   });

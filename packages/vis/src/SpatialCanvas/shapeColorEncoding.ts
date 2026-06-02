@@ -48,14 +48,14 @@ function interpolateRgb(
 }
 
 function getFiniteExtent(values: Array<number | undefined>): [number, number] | undefined {
-  let min = Infinity;
-  let max = -Infinity;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
   for (const value of values) {
     if (value === undefined) continue;
     if (value < min) min = value;
     if (value > max) max = value;
   }
-  return min === Infinity ? undefined : [min, max];
+  return min === Number.POSITIVE_INFINITY ? undefined : [min, max];
 }
 
 export function resolveShapeFillColorMode(
@@ -64,6 +64,23 @@ export function resolveShapeFillColorMode(
 ): Exclude<ShapeFillColorMode, 'auto'> {
   if (mode !== 'auto') return mode;
   return values.every((value) => numericValue(value) !== undefined) ? 'continuous' : 'categorical';
+}
+
+function resolveShapeFillColorRowIndex({
+  featureId,
+  featureIndex,
+  rowIndexByFeatureIndex,
+  rowIndexByFeatureId,
+}: Pick<BuildShapeFillColorByFeatureIdOptions, 'rowIndexByFeatureIndex' | 'rowIndexByFeatureId'> & {
+  featureId: string;
+  featureIndex: number;
+}): number | undefined {
+  const fromFeatureIndex = rowIndexByFeatureIndex[featureIndex];
+  if (fromFeatureIndex !== undefined && fromFeatureIndex >= 0) {
+    return fromFeatureIndex;
+  }
+  const fromFeatureId = rowIndexByFeatureId?.get(featureId);
+  return fromFeatureId !== undefined && fromFeatureId >= 0 ? fromFeatureId : undefined;
 }
 
 export function buildShapeFillColorByFeatureId({
@@ -77,9 +94,18 @@ export function buildShapeFillColorByFeatureId({
   if (!column) return {};
 
   const valuesByFeature = featureIds.map((featureId, featureIndex) => {
-    const rowIndex = rowIndexByFeatureId?.get(featureId) ?? rowIndexByFeatureIndex[featureIndex];
-    const value =
-      rowIndex !== undefined && rowIndex >= 0 ? normalizeCellValue(column[rowIndex]) : '';
+    // why do we end up with a special function for this?
+    // there should be a clear and consistent way of associating feature-ids with rows.
+    // this is also a hot-path in terms of performance, some trepidation around that as well.
+    // also, I'm not convinced this should be in vis/SpatialCanvas;
+    // this should be more of a common layer method.
+    const rowIndex = resolveShapeFillColorRowIndex({
+      featureId,
+      featureIndex,
+      rowIndexByFeatureIndex,
+      rowIndexByFeatureId,
+    });
+    const value = rowIndex !== undefined ? normalizeCellValue(column[rowIndex]) : '';
     return { featureId, value };
   });
   const nonEmptyValues = valuesByFeature
