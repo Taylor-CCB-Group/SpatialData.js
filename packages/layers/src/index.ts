@@ -32,6 +32,18 @@ export {
   type GeoarrowTableLike,
 } from './shapesLayer';
 export {
+  buildShapeFillColorByFeatureId,
+  DEFAULT_SHAPE_CATEGORICAL_PALETTE,
+  DEFAULT_SHAPE_NUMERIC_RAMP,
+  resolveShapeFillColorMode,
+} from './shapeColorEncoding';
+export type {
+  BuildShapeFillColorByFeatureIdOptions,
+  ShapeFillColorMode,
+  ShapeRgbColor,
+  ShapeRgbaColor,
+} from './shapeColorEncoding';
+export {
   spatialLayerPropsSchema,
   spatialSublayerSchema,
   migrateSpatialLayerProps,

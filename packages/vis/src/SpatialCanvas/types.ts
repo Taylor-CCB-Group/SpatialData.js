@@ -4,7 +4,11 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import type { AnyElement, SpatialElement } from '@spatialdata/core';
-import type { ShapeStrokeWidthUnits, ShapesLayerPickEvent } from '@spatialdata/layers';
+import type {
+  ShapeFillColorMode,
+  ShapeStrokeWidthUnits,
+  ShapesLayerPickEvent,
+} from '@spatialdata/layers';
 
 // ============================================
 // View State Types
@@ -66,7 +70,7 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
   fillColor?: [number, number, number, number];
   fillColorByColumn?: {
     columnName: string;
-    mode: 'auto' | 'categorical' | 'continuous';
+    mode: ShapeFillColorMode;
   };
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;

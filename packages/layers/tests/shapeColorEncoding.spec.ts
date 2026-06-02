@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildShapeFillColorByFeatureId,
   resolveShapeFillColorMode,
-} from '../src/SpatialCanvas/shapeColorEncoding.js';
+} from '../src/shapeColorEncoding';
 
 describe('shape fill colour encoding', () => {
   it('maps categorical values deterministically through feature row indices', () => {
@@ -112,5 +112,21 @@ describe('shape fill colour encoding', () => {
 
   it('treats mixed values as categorical in auto mode', () => {
     expect(resolveShapeFillColorMode('auto', ['1', 'tumour'])).toBe('categorical');
+  });
+
+  it('allows callers to supply their own categorical palette', () => {
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds: ['a', 'b'],
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+      column: ['x', 'y'],
+      mode: 'categorical',
+      alpha: 200,
+      categoricalPalette: [[1, 2, 3]],
+    });
+
+    expect(colors).toEqual({
+      a: [1, 2, 3, 200],
+      b: [1, 2, 3, 200],
+    });
   });
 });

@@ -8,6 +8,8 @@ describe('@spatialdata/vis', () => {
     expect(typeof VisExports.SpatialCanvas).toBe('function');
     expect(VisExports.SpatialCanvasViewer).toBeDefined();
     expect(typeof VisExports.SpatialCanvasViewer).toBe('function');
+    expect(VisExports.SpatialViewer).toBeDefined();
+    expect(typeof VisExports.SpatialViewer).toBe('function');
   });
 
   it('should export named components', () => {
