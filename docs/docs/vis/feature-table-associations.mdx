@@ -1,0 +1,135 @@
+---
+sidebar_position: 6
+---
+
+# Feature table associations and annotation columns
+
+This note records the intended foundation for linking SpatialData features to
+table rows, tooltip values, and visual encodings. The current `SpatialCanvas`
+demo supports table-driven shape fill colour and aggregated feature tooltips,
+but some of that logic still lives too close to the demo UI. Before publishing
+the first stable visualization API, these responsibilities should be pulled
+into reusable core/layer utilities.
+
+## Reference semantics
+
+Use Python `spatialdata` as the source of truth for association semantics.
+
+- Tables annotate regions through the `region`, `region_key`, `instance_key`
+  triplet. `region_key` identifies which spatial element a row annotates, and
+  `instance_key` identifies which instance within that element the row
+  annotates. See the upstream
+  [table annotations tutorial](https://spatialdata.scverse.org/en/stable/tutorials/notebooks/notebooks/examples/tables.html)
+  and
+  [SpatialData design document](https://github.com/scverse/spatialdata/blob/main/docs/design_doc.md).
+- Shapes are GeoDataFrames. Their semantic feature ids are the GeoDataFrame
+  index values, and extra GeoDataFrame columns are valid shape annotations.
+  The table `instance_key` should match those shape index values; row order is
+  not the association contract.
+- Labels instances are raster label values, excluding background. Table
+  `instance_key` values annotate those label values.
+- Points are not regions in the same sense as shapes/labels. They can carry
+  annotations directly and may also participate in future feature-key based
+  workflows, but they should not be forced into the region-table model by
+  default.
+
+In TypeScript terms, `featureId` should mean the canonical SpatialData
+instance id. `featureIndex` should mean render/order position only. A
+zero-based `featureIndex` can match a table row only when the upstream element
+index is actually a zero-based range and has been exposed as the feature id.
+
+## Desired API shape
+
+`@spatialdata/core` should expose a single canonical alignment helper for
+regions:
+
+```ts
+type FeatureTableAlignment = {
+  rowIndexByFeatureIndex: Int32Array;
+  rowIndexByFeatureId?: Map<string, number>;
+  resolveRowIndex(feature: {
+    featureId: string;
+    featureIndex: number;
+    rowIndex?: number;
+  }): number | undefined;
+};
+```
+
+The exact type may change, but the principle should not: tooltip resolution,
+click/hover events, table-driven fill colour, filtering, and downstream
+applications should all use one shared resolver. Avoid adding one-off helpers
+such as `resolveShapeFillColorRowIndex` in `SpatialCanvas`.
+
+The resolver should:
+
+- Load association metadata from `region`, `region_key`, and `instance_key`.
+- Filter rows by the target region/element.
+- Match table rows to canonical feature ids, not to render order.
+- Preserve unmatched features explicitly, rather than silently inventing a row.
+- Treat positional fallback as a compatibility path only when the element ids
+  are known to be positional ids.
+
+## Package boundaries
+
+`@spatialdata/core` should own semantic association:
+
+- Reading table keys and annotation metadata.
+- Loading element feature ids / instances.
+- Building `FeatureTableAlignment`.
+- Exposing shape/label/point annotation columns in a consistent way.
+
+`@spatialdata/layers` should own reusable deck/layer helpers:
+
+- Shape/label feature state runtimes.
+- Pick datum interpretation and logical layer id normalization for composite
+  layers where needed.
+- Optional column-to-colour encoders when they are renderer-agnostic and useful
+  to downstream apps.
+
+`@spatialdata/vis` and `SpatialCanvas` should remain UI glue:
+
+- Choosing which column to use.
+- Displaying property panels.
+- Loading the requested columns through core helpers.
+- Passing resolved feature state into deck layers.
+
+The demo UI can exercise a feature before the public API is final, but new
+semantic rules should not be invented in `SpatialCanvas`.
+
+## Annotation column roadmap
+
+Column choices in the demo should eventually include more than associated table
+obs columns:
+
+- Associated table obs columns, excluding `instance_key` and `region_key`.
+- Extra annotation columns stored directly on shape elements.
+- Future entries corresponding to `vars` in `X` / `layers` for expression-like
+  matrices.
+
+Those sources should be surfaced through a common annotation-column discovery
+API so downstream apps do not need to know whether a value came from AnnData
+obs, a GeoDataFrame column, or a matrix-backed feature.
+
+## Current branch status
+
+The current `SpatialCanvas` behaviour is acceptable as demo functionality:
+
+- Shape fill colour can be driven by a chosen table column.
+- Tooltips can aggregate multiple visible layers under the cursor.
+- Multiple layer configs may represent the same element with different visual
+  properties.
+
+However, these are not yet the desired foundations for a first stable
+library-facing API. Before publishing, revisit the implementation with this
+checklist:
+
+1. Move feature-to-row association into a core helper with tests against the
+   SpatialData table semantics above.
+2. Replace local row-index precedence rules in tooltip, fill-colour, and pick
+   event paths with that helper.
+3. Move reusable colour encoders and feature-state helpers out of the demo UI
+   when downstream apps need them.
+4. Keep `SpatialCanvas` as the consumer of these utilities, not the owner of
+   the semantics.
+5. Add fixture coverage for non-matching row order, missing rows, mixed-region
+   tables, labels values, and shape annotation columns.
