@@ -11,10 +11,79 @@ export type SpatialFeatureTooltipItem = {
   value: string;
 };
 
-export type SpatialFeatureTooltipData = {
+/** One spatial element's worth of tooltip content (used when aggregating multi-layer picks). */
+export type SpatialFeatureTooltipSection = {
+  /** Spatial element key (e.g. `Leap034_imc_cell_shapes`). */
+  elementKey: string;
+  /** Element kind (`shapes`, `labels`, …). */
+  elementType: string;
+  /** Layer config id when known (e.g. `shapes:Leap034_imc_cell_shapes`). */
+  layerId?: string;
   title?: string;
   items: SpatialFeatureTooltipItem[];
 };
+
+export type SpatialFeatureTooltipData = {
+  /** Picked spatial element key when showing a single-element tooltip. */
+  elementKey?: string;
+  /** Picked spatial element type when showing a single-element tooltip. */
+  elementType?: string;
+  /** Layer config id when known. */
+  layerId?: string;
+  title?: string;
+  items: SpatialFeatureTooltipItem[];
+  /** Multiple elements under the cursor (bottom-to-top pick order). */
+  sections?: SpatialFeatureTooltipSection[];
+};
+
+export type SpatialFeatureTooltipElementContext = {
+  elementKey: string;
+  elementType: string;
+  layerId?: string;
+};
+
+export function formatSpatialElementLabel(elementType: string, elementKey: string): string {
+  return `${elementType}/${elementKey}`;
+}
+
+export function attachTooltipElementContext(
+  tooltip: Pick<SpatialFeatureTooltipData, 'title' | 'items'>,
+  context: SpatialFeatureTooltipElementContext
+): SpatialFeatureTooltipData {
+  const elementValue = formatSpatialElementLabel(context.elementType, context.elementKey);
+  const items = tooltip.items.filter((item) => item.label !== 'element');
+  return {
+    ...tooltip,
+    elementKey: context.elementKey,
+    elementType: context.elementType,
+    layerId: context.layerId,
+    items: [{ label: 'element', value: elementValue }, ...items],
+  };
+}
+
+export function mergeSpatialFeatureTooltips(
+  tooltips: SpatialFeatureTooltipData[]
+): SpatialFeatureTooltipData | undefined {
+  if (tooltips.length === 0) {
+    return undefined;
+  }
+  if (tooltips.length === 1) {
+    return tooltips[0];
+  }
+
+  const sections: SpatialFeatureTooltipSection[] = tooltips.map((tooltip) => ({
+    elementKey: tooltip.elementKey ?? '',
+    elementType: tooltip.elementType ?? '',
+    layerId: tooltip.layerId,
+    title: tooltip.title,
+    items: tooltip.items,
+  }));
+
+  return {
+    items: [],
+    sections,
+  };
+}
 
 interface BaseTooltipMetadata {
   tooltipSignature?: string;

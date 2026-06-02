@@ -26,23 +26,36 @@ export const spatialScatterSublayerSchema = sublayerBase.extend({
   kind: z.literal('scatter'),
 });
 
-export const spatialShapesSublayerSchema = sublayerBase.extend({
-  kind: z.literal('shapes'),
-  elementKey: z.string(),
-  tooltipFields: z.array(z.string()).optional(),
-  defaultFillColor: rgbaColorSchema.optional(),
-  defaultStrokeColor: rgbaColorSchema.optional(),
-  defaultStrokeWidth: z.number().min(0).optional(),
-  featureState: z
-    .object({
-      fillColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
-      strokeColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
-      hiddenFeatureIds: z.array(z.string()).optional(),
-      fadedFeatureIds: z.array(z.string()).optional(),
-      filteredOpacityMultiplier: z.number().min(0).max(1).optional(),
-    })
-    .optional(),
-});
+export const spatialShapesSublayerSchema = sublayerBase
+  .extend({
+    kind: z.literal('shapes'),
+    elementKey: z.string(),
+    tooltipFields: z.array(z.string()).optional(),
+    defaultFillColor: rgbaColorSchema.optional(),
+    defaultStrokeColor: rgbaColorSchema.optional(),
+    defaultStrokeWidth: z.number().min(0).optional(),
+    defaultStrokeWidthUnits: z.enum(['common', 'pixels']).optional(),
+    defaultStrokeWidthMinPixels: z.number().min(0).optional(),
+    defaultStrokeWidthMaxPixels: z.number().min(0).optional(),
+    featureState: z
+      .object({
+        fillColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
+        strokeColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
+        hiddenFeatureIds: z.array(z.string()).optional(),
+        fadedFeatureIds: z.array(z.string()).optional(),
+        filteredOpacityMultiplier: z.number().min(0).max(1).optional(),
+      })
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    const min = data.defaultStrokeWidthMinPixels;
+    const max = data.defaultStrokeWidthMaxPixels;
+    if (min !== undefined && max !== undefined && min > max) {
+      const message = 'defaultStrokeWidthMinPixels must be <= defaultStrokeWidthMaxPixels';
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['defaultStrokeWidthMinPixels'] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['defaultStrokeWidthMaxPixels'] });
+    }
+  });
 
 export const spatialLabelsSublayerSchema = sublayerBase.extend({
   kind: z.literal('labels'),

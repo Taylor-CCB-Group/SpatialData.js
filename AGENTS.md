@@ -16,8 +16,15 @@ joining work on this repository.
 
 ## Working norms
 
+- Use the Node.js and pnpm versions pinned in `package.json` under `volta`.
+  If `node` or `pnpm` is missing or resolves to a different version, prefer
+  Volta-managed commands (for example `$(volta which pnpm)` or `~/.volta/bin/pnpm`) rather
+  than falling back to the Codex app bundled Node or the system Node.
 - Prefer behavioral tests over cache-key unit tests. If a change is
   performance-related, the test should observe runtime side effects (e.g.
   fetch counts), not internal cache hits.
+- Treat layers as independent views of spatial elements: it must be valid for
+  multiple layer configs to represent the same underlying element with different
+  visual properties, filters, or table-driven encodings.
 - Worktrees share `.git` but not working state. Documents intended to outlive
   the current branch must land on `main`.

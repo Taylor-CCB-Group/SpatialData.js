@@ -60,6 +60,54 @@ describe('loadFeatureRowIndexByFeatureIndex', () => {
     ).resolves.toEqual(new Int32Array([-1]));
   });
 
+  it('aligns zero-based shape indices to table rows by order when instance ids differ', async () => {
+    const sdata = createMockSpatialData();
+    const [, table] = sdata.getAssociatedTable('shapes', 'cells')!;
+    table.loadObsIndex = async () => ['1', '2', '3'];
+    table.loadObsColumns = async () => [['cells', 'cells', 'cells']];
+
+    await expect(
+      loadFeatureRowIndexByFeatureIndex({
+        spatialData: sdata,
+        kind: 'shapes',
+        key: 'cells',
+        featureIds: ['0', '1', '2'],
+      })
+    ).resolves.toEqual(new Int32Array([0, 1, 2]));
+  });
+
+  it('aligns zero-based shape indices even when table instance ids are non-sequential', async () => {
+    const sdata = createMockSpatialData();
+    const [, table] = sdata.getAssociatedTable('shapes', 'cells')!;
+    table.loadObsIndex = async () => ['1', '5', '99'];
+    table.loadObsColumns = async () => [['cells', 'cells', 'cells']];
+
+    await expect(
+      loadFeatureRowIndexByFeatureIndex({
+        spatialData: sdata,
+        kind: 'shapes',
+        key: 'cells',
+        featureIds: ['0', '1', '2'],
+      })
+    ).resolves.toEqual(new Int32Array([0, 1, 2]));
+  });
+
+  it('aligns zero-based shape indices by row order when table ids are opaque strings', async () => {
+    const sdata = createMockSpatialData();
+    const [, table] = sdata.getAssociatedTable('shapes', 'cells')!;
+    table.loadObsIndex = async () => ['cell-a', 'cell-b', 'cell-c'];
+    table.loadObsColumns = async () => [['cells', 'cells', 'cells']];
+
+    await expect(
+      loadFeatureRowIndexByFeatureIndex({
+        spatialData: sdata,
+        kind: 'shapes',
+        key: 'cells',
+        featureIds: ['0', '1', '2'],
+      })
+    ).resolves.toEqual(new Int32Array([0, 1, 2]));
+  });
+
   it('enriches ShapesElement render data with shared row alignment', async () => {
     const sdata = createMockSpatialData();
     const shapeElement = sdata.shapes!.cells as any;

@@ -10,7 +10,7 @@
 import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
-import type { Layer, PickingInfo } from 'deck.gl';
+import type { DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import {
   type CSSProperties,
   type ReactNode,
@@ -24,8 +24,8 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import { shouldAutoFitSpatialView, useSpatialCanvasRenderer } from './SpatialCanvasViewer';
-import type { ImageLayerConfig } from './useLayerData';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -35,42 +35,11 @@ import { SpatialViewer } from './SpatialViewer';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
+import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
+import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
-
-export {
-  SpatialFeatureTooltip,
-  type SpatialFeatureTooltipData,
-  type SpatialFeatureTooltipItem,
-  type SpatialCanvasTooltipRenderProps,
-  type SpatialFeatureTooltipProps,
-} from './SpatialFeatureTooltip';
-
-// Re-export for external use
-export {
-  SpatialCanvasProvider,
-  useSpatialCanvasStore,
-  useSpatialCanvasActions,
-  useSpatialCanvasStoreApi,
-} from './context';
-export { createSpatialCanvasStore } from './stores';
-export type { SpatialCanvasStoreApi } from './stores';
-export type * from './types';
-export { useSpatialViewState, useViewStateUrl } from './hooks';
-export { VivSpatialViewer } from './VivSpatialViewer';
-export {
-  SpatialCanvasViewer,
-  composeSpatialDeckLayers,
-  shouldRenderInternalTooltip,
-  shouldAutoFitSpatialView,
-  useSpatialCanvasRenderer,
-} from './SpatialCanvasViewer';
-export type {
-  SpatialCanvasViewerProps,
-  SpatialCanvasViewerRenderTooltip,
-} from './SpatialCanvasViewer';
-export type { ImageLayerConfig as VivImageLayerConfig } from './useLayerData';
 
 // ============================================
 // Styles
@@ -246,6 +215,7 @@ interface ViewerSectionProps {
   vh: number;
   onHover: (info: PickingInfo) => void;
   coordinateSystem: string | null;
+  deckRef: React.RefObject<DeckGLRef | null>;
 }
 
 function ViewerSection({
@@ -261,6 +231,7 @@ function ViewerSection({
   vh,
   onHover,
   coordinateSystem,
+  deckRef,
 }: ViewerSectionProps) {
   const viewState = useSpatialCanvasStore((s) => s.viewState);
   const actions = useSpatialCanvasActions();
@@ -325,6 +296,7 @@ function ViewerSection({
         layerOrder={layerOrder}
         vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
         onHover={onHover}
+        deckRef={deckRef}
       />
       {isBlocking && (
         <div
@@ -385,24 +357,30 @@ interface SpatialCanvasInnerProps {
   tooltipContainer?: HTMLElement | null;
   /** Override default tooltip UI; receives pick position in viewport coordinates. */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
+  /**
+   * When true (default), hover tooltips include picks from all layers under the cursor.
+   */
+  aggregateHoverTooltips?: boolean;
 }
 
-function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasInnerProps) {
+function SpatialCanvasInner({
+  tooltipContainer,
+  renderTooltip,
+  aggregateHoverTooltips = true,
+}: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [measureRef, { width, height }] = useMeasure();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
+  const deckRef = useRef<DeckGLRef | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [pendingFullscreenRefitSize, setPendingFullscreenRefitSize] = useState<{
     width: number;
     height: number;
   } | null>(null);
-  const [hoverTooltip, setHoverTooltip] = useState<{
-    x: number;
-    y: number;
-    title?: string;
-    items: Array<{ label: string; value: string }>;
-  } | null>(null);
+  const [hoverTooltip, setHoverTooltip] = useState<
+    (SpatialFeatureTooltipData & { x: number; y: number }) | null
+  >(null);
 
   const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
   const layers = useSpatialCanvasStore((s) => s.layers);
@@ -446,6 +424,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     width: vw,
     height: vh,
   });
+  const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
     if (
@@ -538,8 +517,9 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     vh > 0 &&
     hasRenderableLayerData(selectedConfig.id);
 
-  // we probably want to see more than obs columns here... but I also don't understand what subset of those we end up with.
-  // why not allow instanceKey & regionKey...
+  // TODO: include extra annotation columns carried by the shapes element itself,
+  // not just associated table obs columns. Longer term, expose entries
+  // corresponding to vars in X / layers once core has a clean annotation API.
   const availableTooltipFields =
     associatedTable?.getObsColumnNames().filter((columnName) => {
       const tableKeys = associatedTable.getTableKeys();
@@ -548,27 +528,14 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
 
   const handleHover = useCallback(
     (info: PickingInfo) => {
-      if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
-        setHoverTooltip(null);
-        return;
-      }
-      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
-      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
-      const tooltip = getFeatureTooltip(normalizedLayerId, {
-        index: info.index,
-        object: info.object,
+      const tooltip = resolveHoverFeatureTooltip(info, getFeatureTooltip, {
+        aggregate: aggregateHoverTooltips,
+        deck: getDeckFromDeckGlRef(deckRef),
+        pickLayerIds: hoverPickLayerIds,
       });
-      if (!tooltip) {
-        setHoverTooltip(null);
-        return;
-      }
-      setHoverTooltip({
-        x: info.x,
-        y: info.y,
-        ...tooltip,
-      });
+      setHoverTooltip(tooltip);
     },
-    [getFeatureTooltip]
+    [aggregateHoverTooltips, getFeatureTooltip, hoverPickLayerIds]
   );
 
   const handleViewerRef = useCallback(
@@ -620,12 +587,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
     : { ...containerStyle, position: 'relative' };
 
   const tooltipPayload: SpatialFeatureTooltipData | null =
-    hoverTooltip && tooltipClientPosition
-      ? {
-          title: hoverTooltip.title,
-          items: hoverTooltip.items,
-        }
-      : null;
+    hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
 
   const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
 
@@ -720,6 +682,7 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
               vh={vh}
               onHover={handleHover}
               coordinateSystem={coordinateSystem}
+              deckRef={deckRef}
             />
           </div>
 
@@ -838,6 +801,17 @@ function SpatialCanvasInner({ tooltipContainer, renderTooltip }: SpatialCanvasIn
                     updateLayer={actions.updateLayer}
                   />
                 )}
+                {selectedConfig.type === 'shapes' && (
+                  <ShapeFillColorPanel
+                    tableName={associatedTable?.key}
+                    availableFields={availableTooltipFields}
+                    selected={selectedConfig.fillColorByColumn}
+                    onChange={(fillColorByColumn) => {
+                      actions.updateLayer(selectedConfig.id, { fillColorByColumn });
+                    }}
+                    noAssociatedTableMessage="No associated table found for this shapes layer"
+                  />
+                )}
                 {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (
                   <TooltipFieldsPanel
                     tableName={associatedTable?.key}
@@ -889,6 +863,10 @@ export interface SpatialCanvasProps {
    * styling.
    */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
+  /**
+   * When true (default), hover tooltips aggregate picks from all layers under the cursor.
+   */
+  aggregateHoverTooltips?: boolean;
 }
 
 /**
@@ -943,11 +921,16 @@ export default function SpatialCanvas({
   store,
   tooltipContainer,
   renderTooltip,
+  aggregateHoverTooltips,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
       <SpatialCanvasProvider store={store}>
-        <SpatialCanvasInner tooltipContainer={tooltipContainer} renderTooltip={renderTooltip} />
+        <SpatialCanvasInner
+          tooltipContainer={tooltipContainer}
+          renderTooltip={renderTooltip}
+          aggregateHoverTooltips={aggregateHoverTooltips}
+        />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>
   );

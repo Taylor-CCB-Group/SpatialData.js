@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SpatialLayer } from '../src/SpatialLayer';
 import {
-  createShapesDeckLayer,
+  DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
+  DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+  type GeoarrowTableLike,
+  type ShapesRenderDataLike,
+  buildShapeFeatureStateRuntime,
   buildShapesPrebuiltData,
+  createShapesDeckLayer,
+  isShapeFeatureStateRuntime,
+  normalizeShapeFeatureState,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
-  type GeoarrowTableLike,
-  type ShapesRenderDataLike,
 } from '../src/shapesLayer';
 
 const renderData: ShapesRenderDataLike = {
@@ -16,9 +22,30 @@ const renderData: ShapesRenderDataLike = {
   elementKey: 'cells',
   featureIds: ['cell-1', 'cell-2', 'cell-3'],
   polygons: [
-    [[[0, 0], [1, 0], [1, 1], [0, 0]]],
-    [[[2, 2], [3, 2], [3, 3], [2, 2]]],
-    [[[4, 4], [5, 4], [5, 5], [4, 4]]],
+    [
+      [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0, 0],
+      ],
+    ],
+    [
+      [
+        [2, 2],
+        [3, 2],
+        [3, 3],
+        [2, 2],
+      ],
+    ],
+    [
+      [
+        [4, 4],
+        [5, 4],
+        [5, 5],
+        [4, 4],
+      ],
+    ],
   ],
   rowIndexByFeatureIndex: new Int32Array([10, 11, 12]),
 };
@@ -38,14 +65,49 @@ const geoarrowRenderData: ShapesRenderDataLike = {
       return {
         get(index: number) {
           return index === 0
-            ? [[[0, 0], [1, 0], [1, 1], [0, 0]]]
-            : [[[2, 2], [3, 2], [3, 3], [2, 2]]];
+            ? [
+                [
+                  [0, 0],
+                  [1, 0],
+                  [1, 1],
+                  [0, 0],
+                ],
+              ]
+            : [
+                [
+                  [2, 2],
+                  [3, 2],
+                  [3, 3],
+                  [2, 2],
+                ],
+              ];
         },
       };
     },
   } satisfies GeoarrowTableLike,
   rowIndexByFeatureIndex: new Int32Array([20, 21]),
 };
+
+describe('shape feature state runtime', () => {
+  it('reuses a pre-built runtime without reconverting records', () => {
+    const runtime = buildShapeFeatureStateRuntime({
+      fillColorByFeatureId: { a: [1, 2, 3, 255] },
+      hiddenFeatureIds: ['b'],
+    });
+    expect(isShapeFeatureStateRuntime(runtime)).toBe(true);
+    expect(buildShapeFeatureStateRuntime(runtime)).toBe(runtime);
+    expect(normalizeShapeFeatureState(runtime)).toBe(runtime);
+  });
+
+  it('caches record conversion by plain-object identity', () => {
+    const featureState = {
+      fillColorByFeatureId: { 'cell-1': [1, 2, 3, 255] as [number, number, number, number] },
+    };
+    expect(normalizeShapeFeatureState(featureState)).toBe(
+      normalizeShapeFeatureState(featureState)
+    );
+  });
+});
 
 describe('createShapesDeckLayer', () => {
   it('applies feature-state styling and filtering keyed by feature id', () => {
@@ -76,9 +138,81 @@ describe('createShapesDeckLayer', () => {
       'cell-3',
     ]);
     expect((props.getFillColor as (d: any) => number[])(props.data[0])).toEqual([1, 2, 3, 255]);
-    expect((props.getFillColor as (d: any) => number[])(props.data[1])).toEqual([
-      10, 20, 30, 128,
+    expect((props.getFillColor as (d: any) => number[])(props.data[1])).toEqual([10, 20, 30, 128]);
+    expect((props.getLineColor as (d: { featureId: string }) => number[])(props.data[0])).toEqual([
+      4, 5, 6, 255,
     ]);
+  });
+
+  it('uses fill colours for outlines by default with zoom-scaled stroke defaults', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+        defaultFillColor: [10, 20, 30, 180],
+        featureState: {
+          fillColorByFeatureId: { 'cell-1': [1, 2, 3, 180] },
+        },
+      },
+      { id: 'shapes-fill-stroke' }
+    );
+
+    if (!layer) {
+      throw new Error('Expected shapes layer to render');
+    }
+    const props = layer.props as unknown as {
+      data: Array<{ featureId: string }>;
+      getLineColor: (datum: { featureId: string }) => number[];
+      lineWidthUnits: string;
+      lineWidthMinPixels: number;
+      lineWidthMaxPixels: number;
+      updateTriggers: {
+        getFillColor: unknown[];
+        getLineColor: unknown[];
+        getLineWidth: unknown[];
+      };
+    };
+    expect(props.lineWidthUnits).toBe(DEFAULT_SHAPE_STROKE_WIDTH_UNITS);
+    expect(props.lineWidthMinPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS);
+    expect(props.lineWidthMaxPixels).toBe(DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS);
+    expect(props.updateTriggers.getFillColor).toHaveLength(5);
+    expect(props.updateTriggers.getLineColor).toHaveLength(5);
+    expect(props.updateTriggers.getFillColor[0]).toBeInstanceOf(Map);
+    expect(props.updateTriggers.getLineWidth).toEqual([1]);
+    expect(props.getLineColor(props.data[0])).toEqual([1, 2, 3, 180]);
+    expect(props.getLineColor(props.data[1])).toEqual([10, 20, 30, 180]);
+  });
+
+  it('allows callers to configure polygon stroke width behavior', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+        defaultStrokeWidth: 3,
+        defaultStrokeWidthUnits: 'pixels',
+        defaultStrokeWidthMinPixels: 0.5,
+        defaultStrokeWidthMaxPixels: 2,
+      },
+      { id: 'shapes-configured-stroke' }
+    );
+
+    if (!layer) {
+      throw new Error('Expected shapes layer to render');
+    }
+    const props = layer.props as unknown as {
+      getLineWidth: number;
+      lineWidthUnits: string;
+      lineWidthMinPixels: number;
+      lineWidthMaxPixels: number;
+    };
+    expect(props.getLineWidth).toBe(3);
+    expect(props.lineWidthUnits).toBe('pixels');
+    expect(props.lineWidthMinPixels).toBe(0.5);
+    expect(props.lineWidthMaxPixels).toBe(2);
   });
 
   it('emits enriched pick callbacks', () => {
@@ -161,9 +295,9 @@ describe('createShapesDeckLayer', () => {
     expect(layer).not.toBeNull();
     const props = layer!.props as any;
     expect(props.radiusUnits).toBe('common');
-    expect((props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)).toEqual(
-      ['cell-1', 'cell-2']
-    );
+    expect(
+      (props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)
+    ).toEqual(['cell-1', 'cell-2']);
     expect((props.getRadius as (d: { radius: number }) => number)(props.data[1])).toBe(2);
   });
 
@@ -203,7 +337,10 @@ describe('createShapesDeckLayer', () => {
       resolveShapeTooltipFromPickInfo(
         {
           tooltipFields: ['gene', 'score'],
-          tooltipColumns: [['a', 'b', 'c'], [1, 2, 3]],
+          tooltipColumns: [
+            ['a', 'b', 'c'],
+            [1, 2, 3],
+          ],
         },
         { object: picked },
         { rowIndexByFeatureIndex: new Int32Array([0, 1, 2]) }
@@ -280,7 +417,19 @@ describe('createShapesDeckLayer', () => {
     });
   });
 
-  it('prefers feature-id table lookup over geometry feature index', () => {
+  it('prefers feature-index alignment over instance-key map when both are present', () => {
+    expect(
+      resolveShapeTooltipRowIndex(
+        { featureId: '23816', featureIndex: 23816, rowIndex: 23816, polygon: renderData.polygons![0] },
+        {
+          tooltipRowIndexByFeatureId: new Map([['23816', 22271]]),
+          rowIndexByFeatureIndex: new Int32Array(49750).fill(-1),
+        }
+      )
+    ).toBe(23816);
+  });
+
+  it('prefers feature-id table lookup when feature-index alignment is unavailable', () => {
     expect(
       resolveShapeTooltipRowIndex(
         { featureId: 'cell-1', featureIndex: 5, polygon: renderData.polygons![0] },

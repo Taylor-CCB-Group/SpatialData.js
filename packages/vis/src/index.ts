@@ -27,7 +27,7 @@ export {
   shouldRenderInternalTooltip,
   shouldAutoFitSpatialView,
   useSpatialCanvasRenderer,
-} from './SpatialCanvas';
+} from './SpatialCanvas/public';
 export type {
   SpatialCanvasStoreApi,
   SpatialCanvasState,
@@ -43,7 +43,8 @@ export type {
   SpatialCanvasViewerRenderTooltip,
   SpatialFeatureTooltipData,
   SpatialFeatureTooltipItem,
+  SpatialFeatureTooltipSection,
   SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltipProps,
-} from './SpatialCanvas';
-export { SpatialFeatureTooltip } from './SpatialCanvas';
+} from './SpatialCanvas/public';
+export { SpatialFeatureTooltip } from './SpatialCanvas/public';

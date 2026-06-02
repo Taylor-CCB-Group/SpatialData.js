@@ -10,10 +10,11 @@
  * - Otherwise: uses simplified functional component with DetailView
  */
 
+import type { Deck } from '@deck.gl/core';
 import { DetailView } from '@hms-dbmi/viv';
 import { DeckGL } from 'deck.gl';
-import type { DeckGLProps, Layer, PickingInfo } from 'deck.gl';
-import { useCallback, useId, useMemo } from 'react';
+import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
+import { type RefObject, useCallback, useId, useMemo } from 'react';
 import VivSpatialViewer, { normalizeVivLayers } from './VivSpatialViewer';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
@@ -39,6 +40,8 @@ export interface SpatialViewerProps {
   onClick?: (info: PickingInfo) => void;
   /** Optional: Additional deck.gl props */
   deckProps?: Partial<DeckGLProps>;
+  /** Ref to the underlying Deck instance (for multi-layer tooltip picking). */
+  deckRef?: RefObject<DeckGLRef | null>;
 }
 
 /**
@@ -59,6 +62,7 @@ export function SpatialViewer({
   onHover,
   onClick,
   deckProps,
+  deckRef,
 }: SpatialViewerProps) {
   const hasImageLayers = vivLayerProps && vivLayerProps.length > 0;
 
@@ -76,6 +80,7 @@ export function SpatialViewer({
         onHover={onHover}
         onClick={onClick}
         deckProps={deckProps}
+        deckRef={deckRef}
       />
     );
   }
@@ -91,6 +96,7 @@ export function SpatialViewer({
       onHover={onHover}
       onClick={onClick}
       deckProps={deckProps}
+      deckRef={deckRef}
     />
   );
 }
@@ -107,7 +113,8 @@ function SpatialViewerSimple({
   onHover,
   onClick,
   deckProps,
-}: Omit<SpatialViewerProps, 'vivLayerProps'>) {
+  deckRef,
+}: Omit<SpatialViewerProps, 'vivLayerProps' | 'layerOrder'>) {
   const viewId = useId();
   const detailViewId = useMemo(() => `spatial-${viewId}`, [viewId]);
   type DeckDetailViewState = {
@@ -178,6 +185,7 @@ function SpatialViewerSimple({
 
   return (
     <DeckGL
+      ref={deckRef}
       {...(deckProps ?? {})}
       width={width}
       height={height}

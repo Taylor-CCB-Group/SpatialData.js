@@ -3,8 +3,8 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialElement, AnyElement } from '@spatialdata/core';
-import type { ShapesLayerPickEvent } from '@spatialdata/layers';
+import type { AnyElement, SpatialElement } from '@spatialdata/core';
+import type { ShapeStrokeWidthUnits, ShapesLayerPickEvent } from '@spatialdata/layers';
 
 // ============================================
 // View State Types
@@ -64,8 +64,15 @@ export interface ImageLayerConfig extends BaseLayerConfig {
 export interface ShapesLayerConfig extends BaseLayerConfig {
   type: 'shapes';
   fillColor?: [number, number, number, number];
+  fillColorByColumn?: {
+    columnName: string;
+    mode: 'auto' | 'categorical' | 'continuous';
+  };
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
+  strokeWidthUnits?: ShapeStrokeWidthUnits;
+  strokeWidthMinPixels?: number;
+  strokeWidthMaxPixels?: number;
   /** Table obs columns to display for a picked feature in this shapes layer. */
   tooltipFields?: string[];
   featureState?: {

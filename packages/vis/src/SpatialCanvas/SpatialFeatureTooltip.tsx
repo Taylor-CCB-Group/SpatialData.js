@@ -1,9 +1,15 @@
 import type { CSSProperties } from 'react';
-import type { SpatialFeatureTooltipData, SpatialFeatureTooltipItem } from '@spatialdata/core';
+import type {
+  SpatialFeatureTooltipData,
+  SpatialFeatureTooltipItem,
+  SpatialFeatureTooltipSection,
+} from '@spatialdata/core';
+import { formatSpatialElementLabel } from '@spatialdata/core';
 
 export type {
   SpatialFeatureTooltipData,
   SpatialFeatureTooltipItem,
+  SpatialFeatureTooltipSection,
 } from '@spatialdata/core';
 
 export type SpatialCanvasTooltipRenderProps = {
@@ -13,7 +19,7 @@ export type SpatialCanvasTooltipRenderProps = {
 };
 
 const tooltipBaseStyle: CSSProperties = {
-  maxWidth: 260,
+  maxWidth: 300,
   borderRadius: 6,
   border: '1px solid rgba(255,255,255,0.1)',
   backgroundColor: 'rgba(10, 10, 10, 0.9)',
@@ -28,6 +34,26 @@ const titleStyle: CSSProperties = {
   marginBottom: 6,
   fontWeight: 600,
   color: '#fafafa',
+};
+
+const sectionHeaderStyle: CSSProperties = {
+  marginBottom: 4,
+  fontWeight: 600,
+  fontSize: 11,
+  letterSpacing: '0.02em',
+  textTransform: 'uppercase',
+  color: '#94a3b8',
+};
+
+const sectionWrapStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+};
+
+const sectionDividerStyle: CSSProperties = {
+  margin: '8px 0',
+  borderTop: '1px solid rgba(255,255,255,0.12)',
 };
 
 const itemsWrapStyle: CSSProperties = {
@@ -52,6 +78,39 @@ const itemValueStyle: CSSProperties = {
 };
 
 const TOOLTIP_OFFSET = 12;
+
+function elementHeaderLabel(section: SpatialFeatureTooltipSection): string {
+  return formatSpatialElementLabel(section.elementType, section.elementKey);
+}
+
+function TooltipItems({ items }: { items: SpatialFeatureTooltipItem[] }) {
+  return (
+    <div style={itemsWrapStyle}>
+      {items.map((item) => (
+        <div key={`${item.label}:${item.value}`} style={itemRowStyle}>
+          <span style={itemLabelStyle}>{item.label}</span>
+          <span style={itemValueStyle}>{item.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TooltipSectionBlock({
+  section,
+  showElementHeader,
+}: {
+  section: SpatialFeatureTooltipSection;
+  showElementHeader: boolean;
+}) {
+  return (
+    <div style={sectionWrapStyle}>
+      {showElementHeader && <div style={sectionHeaderStyle}>{elementHeaderLabel(section)}</div>}
+      {section.title && <div style={titleStyle}>{section.title}</div>}
+      <TooltipItems items={section.items} />
+    </div>
+  );
+}
 
 export interface SpatialFeatureTooltipProps {
   /** Viewport X of the picked feature (deck.gl `info.x` + viewer origin). */
@@ -83,17 +142,32 @@ export function SpatialFeatureTooltip({
     ...(position === 'fixed' ? { zIndex } : {}),
   };
 
-  return (
-    <div style={tooltipStyle}>
-      {tooltip.title && <div style={titleStyle}>{tooltip.title}</div>}
-      <div style={itemsWrapStyle}>
-        {tooltip.items.map((item) => (
-          <div key={item.label} style={itemRowStyle}>
-            <span style={itemLabelStyle}>{item.label}</span>
-            <span style={itemValueStyle}>{item.value}</span>
+  const sections = tooltip.sections;
+  if (sections && sections.length > 0) {
+    return (
+      <div style={tooltipStyle}>
+        {sections.map((section, index) => (
+          <div key={section.layerId ?? `${section.elementType}:${section.elementKey}`}>
+            {index > 0 && <div style={sectionDividerStyle} />}
+            <TooltipSectionBlock section={section} showElementHeader />
           </div>
         ))}
       </div>
+    );
+  }
+
+  const showElementHeader = !!(tooltip.elementKey && tooltip.elementType);
+  const singleSection: SpatialFeatureTooltipSection = {
+    elementKey: tooltip.elementKey ?? '',
+    elementType: tooltip.elementType ?? '',
+    layerId: tooltip.layerId,
+    title: tooltip.title,
+    items: tooltip.items,
+  };
+
+  return (
+    <div style={tooltipStyle}>
+      <TooltipSectionBlock section={singleSection} showElementHeader={showElementHeader} />
     </div>
   );
 }

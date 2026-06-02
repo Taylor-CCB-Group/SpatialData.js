@@ -1,5 +1,5 @@
 import type { Matrix4 } from '@math.gl/core';
-import { PolygonLayer, ScatterplotLayer, type Layer, type PickingInfo } from 'deck.gl';
+import { type Layer, type PickingInfo, PolygonLayer, ScatterplotLayer } from 'deck.gl';
 import type { SpatialShapesSublayer } from './spatialLayerProps';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
@@ -8,8 +8,13 @@ export type ShapesGeometryKind = 'polygon' | 'circle' | 'point';
 
 /** Default marker radius for point landmarks (pixels). */
 export const DEFAULT_SHAPE_POINT_RADIUS_PX = 8;
+export const DEFAULT_SHAPE_STROKE_WIDTH = 1;
+export const DEFAULT_SHAPE_STROKE_WIDTH_UNITS = 'common' as const;
+export const DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS = 0;
+export const DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS = 1;
 
 export type ShapesGeometryRepresentationKind = 'js-polygons' | 'wkb-parquet' | 'geoarrow-table';
+export type ShapeStrokeWidthUnits = 'common' | 'pixels';
 
 export interface ShapeCircleColumnarLike {
   positions: [Float32Array, Float32Array];
@@ -44,6 +49,14 @@ export interface ShapeFeatureStateRuntime {
   fadedFeatureIds: Set<string>;
   filteredOpacityMultiplier: number;
 }
+
+export type ShapeFeatureStateInput =
+  | SpatialShapesSublayer['featureState']
+  | ShapeFeatureStateRuntime;
+
+export type SpatialShapesRuntimeSublayer = Omit<SpatialShapesSublayer, 'featureState'> & {
+  featureState?: ShapeFeatureStateInput;
+};
 
 export interface ShapePolygonRenderDatum {
   featureId: string;
@@ -90,11 +103,11 @@ export interface ShapesPrebuiltData {
   data: ShapePolygonRenderDatum[] | ShapeCircleRenderDatum[];
 }
 
-/** Cache normalised featureState runtimes by object identity. */
+/** Cache normalised featureState runtimes by plain-object identity. */
 const normalizeCache = new WeakMap<object, ShapeFeatureStateRuntime>();
 
 /** Singleton for the common case of no featureState at all. */
-const EMPTY_FEATURE_STATE_RUNTIME = Object.freeze({
+export const EMPTY_SHAPE_FEATURE_STATE_RUNTIME = Object.freeze({
   fillColorByFeatureId: new Map(),
   strokeColorByFeatureId: new Map(),
   hiddenFeatureIds: new Set(),
@@ -102,21 +115,79 @@ const EMPTY_FEATURE_STATE_RUNTIME = Object.freeze({
   filteredOpacityMultiplier: 0.35,
 } satisfies ShapeFeatureStateRuntime);
 
-export function normalizeShapeFeatureState(
-  featureState: SpatialShapesSublayer['featureState']
+export function isShapeFeatureStateRuntime(value: unknown): value is ShapeFeatureStateRuntime {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value.fillColorByFeatureId instanceof Map &&
+    value.strokeColorByFeatureId instanceof Map &&
+    value.hiddenFeatureIds instanceof Set &&
+    value.fadedFeatureIds instanceof Set &&
+    typeof value.filteredOpacityMultiplier === 'number'
+  );
+}
+
+function recordToRgbaMap(
+  record: Record<string, [number, number, number, number]> | undefined
+): Map<string, [number, number, number, number]> {
+  if (!record) {
+    return new Map();
+  }
+  const map = new Map<string, [number, number, number, number]>();
+  for (const key in record) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      map.set(key, record[key]);
+    }
+  }
+  return map;
+}
+
+/**
+ * Build the Map/Set runtime used by deck accessors. Call once when feature-state
+ * content changes (filtering, table-driven colours), not on cosmetic prop churn.
+ */
+export function buildShapeFeatureStateRuntime(
+  featureState: NonNullable<ShapeFeatureStateInput>
 ): ShapeFeatureStateRuntime {
-  if (!featureState) return EMPTY_FEATURE_STATE_RUNTIME;
+  if (isShapeFeatureStateRuntime(featureState)) {
+    return featureState;
+  }
   const cached = normalizeCache.get(featureState);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
   const result: ShapeFeatureStateRuntime = {
-    fillColorByFeatureId: new Map(Object.entries(featureState.fillColorByFeatureId ?? {})),
-    strokeColorByFeatureId: new Map(Object.entries(featureState.strokeColorByFeatureId ?? {})),
+    fillColorByFeatureId: recordToRgbaMap(featureState.fillColorByFeatureId),
+    strokeColorByFeatureId: recordToRgbaMap(featureState.strokeColorByFeatureId),
     hiddenFeatureIds: new Set(featureState.hiddenFeatureIds ?? []),
     fadedFeatureIds: new Set(featureState.fadedFeatureIds ?? []),
     filteredOpacityMultiplier: featureState.filteredOpacityMultiplier ?? 0.35,
   };
   normalizeCache.set(featureState, result);
   return result;
+}
+
+export function normalizeShapeFeatureState(
+  featureState: ShapeFeatureStateInput
+): ShapeFeatureStateRuntime {
+  if (!featureState) {
+    return EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
+  }
+  return buildShapeFeatureStateRuntime(featureState);
+}
+
+function shapeFeatureColorUpdateTriggers(
+  featureState: ShapeFeatureStateRuntime,
+  defaultColor: [number, number, number, number]
+) {
+  return [
+    featureState.fillColorByFeatureId,
+    featureState.strokeColorByFeatureId,
+    featureState.fadedFeatureIds,
+    featureState.filteredOpacityMultiplier,
+    defaultColor,
+  ];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -178,6 +249,19 @@ function multiplyAlpha(
     color[2],
     Math.max(0, Math.min(255, Math.round(color[3] * multiplier))),
   ];
+}
+
+function resolveFeatureColor(
+  featureId: string,
+  primaryColors: Map<string, [number, number, number, number]>,
+  fallbackColors: Map<string, [number, number, number, number]>,
+  defaultColor: [number, number, number, number],
+  featureState: ShapeFeatureStateRuntime
+): [number, number, number, number] {
+  const base = primaryColors.get(featureId) ?? fallbackColors.get(featureId) ?? defaultColor;
+  return featureState.fadedFeatureIds.has(featureId)
+    ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
+    : base;
 }
 
 function resolveGeometryKind(renderData: ShapesRenderDataLike): ShapesGeometryKind {
@@ -242,9 +326,7 @@ function buildCircleRenderedFeatures(
     }
     const x = xs[featureIndex];
     const y = ys[featureIndex];
-    const radius = usePerFeatureRadius
-      ? radii[featureIndex]
-      : DEFAULT_SHAPE_POINT_RADIUS_PX;
+    const radius = usePerFeatureRadius ? radii[featureIndex] : DEFAULT_SHAPE_POINT_RADIUS_PX;
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius < 0) {
       continue;
     }
@@ -373,22 +455,25 @@ export function resolveShapeTooltipRowIndex(
   alignment?: ShapeTooltipRowIndexAlignment
 ): number | undefined {
   const fromFeatureId = alignment?.tooltipRowIndexByFeatureId?.get(feature.featureId);
-  if (fromFeatureId !== undefined && fromFeatureId >= 0) {
-    return fromFeatureId;
-  }
-
-  if (feature.rowIndex !== undefined && feature.rowIndex >= 0) {
-    return feature.rowIndex;
-  }
-
+  const fromFeatureRowIndex =
+    feature.rowIndex !== undefined && feature.rowIndex >= 0 ? feature.rowIndex : undefined;
   const fromTooltip = alignment?.tooltipRowIndices?.[feature.featureIndex];
+  const fromRender = alignment?.rowIndexByFeatureIndex?.[feature.featureIndex];
+
+  if (fromFeatureRowIndex !== undefined) {
+    return fromFeatureRowIndex;
+  }
+
   if (fromTooltip !== undefined && fromTooltip >= 0) {
     return fromTooltip;
   }
 
-  const fromRender = alignment?.rowIndexByFeatureIndex?.[feature.featureIndex];
   if (fromRender !== undefined && fromRender >= 0) {
     return fromRender;
+  }
+
+  if (fromFeatureId !== undefined && fromFeatureId >= 0) {
+    return fromFeatureId;
   }
 
   return undefined;
@@ -420,13 +505,22 @@ export function resolveShapeTooltipFromPickInfo(
     return undefined;
   }
   const rowIndex = resolveShapeTooltipRowIndex(feature, alignment);
-  if (
-    rowIndex === undefined ||
-    rowIndex < 0 ||
-    !renderData.tooltipFields ||
-    !renderData.tooltipColumns
-  ) {
+  if (!renderData.tooltipFields || !renderData.tooltipColumns) {
     return undefined;
+  }
+  if (rowIndex === undefined || rowIndex < 0) {
+    return {
+      title: feature.featureId,
+      items: [
+        { label: 'feature_id', value: feature.featureId },
+        { label: 'feature_index', value: String(feature.featureIndex) },
+        {
+          label: 'table_row',
+          value:
+            'unmatched — shape index was not found in the associated table instance_key column',
+        },
+      ],
+    };
   }
 
   const items = renderData.tooltipFields
@@ -441,7 +535,17 @@ export function resolveShapeTooltipFromPickInfo(
     .filter((item) => item.value !== '');
 
   if (items.length === 0) {
-    return undefined;
+    return {
+      title: feature.featureId,
+      items: [
+        { label: 'feature_id', value: feature.featureId },
+        { label: 'table_row', value: String(rowIndex) },
+        {
+          label: 'tooltip',
+          value: 'matched table row has no non-empty values for the selected tooltip fields',
+        },
+      ],
+    };
   }
 
   return {
@@ -452,32 +556,49 @@ export function resolveShapeTooltipFromPickInfo(
 
 function createPolygonDeckLayer(
   data: ShapePolygonRenderDatum[],
-  sublayer: SpatialShapesSublayer,
+  sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
-  const defaultStrokeColor = sublayer.defaultStrokeColor ?? [255, 255, 255, 255];
-  const defaultStrokeWidth = sublayer.defaultStrokeWidth ?? 1;
+  const defaultStrokeColor = sublayer.defaultStrokeColor ?? defaultFillColor;
+  const defaultStrokeWidth = sublayer.defaultStrokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
+  const defaultStrokeWidthUnits =
+    sublayer.defaultStrokeWidthUnits ?? DEFAULT_SHAPE_STROKE_WIDTH_UNITS;
+  const defaultStrokeWidthMinPixels =
+    sublayer.defaultStrokeWidthMinPixels ?? DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS;
+  const defaultStrokeWidthMaxPixels =
+    sublayer.defaultStrokeWidthMaxPixels ?? DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS;
 
   return new PolygonLayer<ShapePolygonRenderDatum>({
     id: options.id,
     data,
     getPolygon: (d) => d.polygon,
-    getFillColor: (d) => {
-      const base = featureState.fillColorByFeatureId.get(d.featureId) ?? defaultFillColor;
-      return featureState.fadedFeatureIds.has(d.featureId)
-        ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
-        : base;
-    },
-    getLineColor: (d) => {
-      const base = featureState.strokeColorByFeatureId.get(d.featureId) ?? defaultStrokeColor;
-      return featureState.fadedFeatureIds.has(d.featureId)
-        ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
-        : base;
-    },
+    getFillColor: (d) =>
+      resolveFeatureColor(
+        d.featureId,
+        featureState.fillColorByFeatureId,
+        EMPTY_SHAPE_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
+        defaultFillColor,
+        featureState
+      ),
+    getLineColor: (d) =>
+      resolveFeatureColor(
+        d.featureId,
+        featureState.strokeColorByFeatureId,
+        featureState.fillColorByFeatureId,
+        defaultStrokeColor,
+        featureState
+      ),
     getLineWidth: defaultStrokeWidth,
-    lineWidthUnits: 'pixels',
+    lineWidthUnits: defaultStrokeWidthUnits,
+    lineWidthMinPixels: defaultStrokeWidthMinPixels,
+    lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
+    updateTriggers: {
+      getFillColor: shapeFeatureColorUpdateTriggers(featureState, defaultFillColor),
+      getLineColor: shapeFeatureColorUpdateTriggers(featureState, defaultStrokeColor),
+      getLineWidth: [defaultStrokeWidth],
+    },
     filled: true,
     stroked: true,
     opacity: options.opacity ?? 1,
@@ -503,7 +624,7 @@ function createPolygonDeckLayer(
 function createCircleDeckLayer(
   data: ShapeCircleRenderDatum[],
   geometryKind: 'circle' | 'point',
-  sublayer: SpatialShapesSublayer,
+  sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
@@ -521,6 +642,9 @@ function createCircleDeckLayer(
       return featureState.fadedFeatureIds.has(d.featureId)
         ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
         : base;
+    },
+    updateTriggers: {
+      getFillColor: shapeFeatureColorUpdateTriggers(featureState, defaultFillColor),
     },
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,
@@ -556,7 +680,7 @@ function createCircleDeckLayer(
  */
 export function createShapesDeckLayer(
   renderData: ShapesRenderDataLike,
-  sublayer: SpatialShapesSublayer,
+  sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions,
   prebuilt?: ShapesPrebuiltData
 ): Layer | null {
@@ -574,11 +698,7 @@ export function createShapesDeckLayer(
         options
       );
     }
-    return createPolygonDeckLayer(
-      prebuilt.data as ShapePolygonRenderDatum[],
-      sublayer,
-      options
-    );
+    return createPolygonDeckLayer(prebuilt.data as ShapePolygonRenderDatum[], sublayer, options);
   }
 
   // Fallback: build data inline (backward-compatible path for external callers).
