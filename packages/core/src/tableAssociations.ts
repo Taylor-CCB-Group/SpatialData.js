@@ -1,5 +1,5 @@
-import type { ElementName, TableColumnData } from './types';
 import type { SpatialData } from './store';
+import type { ElementName, TableColumnData } from './types';
 
 type SpatialAssociationKind = Exclude<ElementName, 'tables'>;
 
@@ -10,10 +10,55 @@ export interface AssociatedTableFeatureRows {
   extraColumns?: Array<TableColumnData | undefined>;
 }
 
+/**
+ * Alignment follows Python spatialdata association semantics:
+ * - SpatialElements match by their instance index (`GeoDataFrame.index` for
+ *   shapes; non-background label values for labels).
+ * - Tables match by `region_key` and `instance_key` columns, not `obs.index`.
+ *
+ * Source: scverse/spatialdata `join_spatialelement_table` and
+ * `get_element_instances` in `spatialdata/_core/query/relational_query.py`.
+ */
+export type FeatureTableAlignmentFeature = {
+  featureId: string;
+  featureIndex: number;
+  rowIndex?: number;
+};
+
+export type FeatureTableAlignment = {
+  rowIndexByFeatureIndex: Int32Array;
+  rowIndexByFeatureId?: Map<string, number>;
+  resolveRowIndex(feature: FeatureTableAlignmentFeature): number | undefined;
+};
+
 function createDefaultRowIndexByFeatureIndex(length: number): Int32Array {
   const indices = new Int32Array(length);
   indices.fill(-1);
   return indices;
+}
+
+export function createFeatureTableAlignment({
+  rowIndexByFeatureIndex,
+  rowIndexByFeatureId,
+}: {
+  rowIndexByFeatureIndex: Int32Array;
+  rowIndexByFeatureId?: Map<string, number>;
+}): FeatureTableAlignment {
+  return {
+    rowIndexByFeatureIndex,
+    rowIndexByFeatureId,
+    resolveRowIndex(feature) {
+      if (feature.rowIndex !== undefined && feature.rowIndex >= 0) {
+        return feature.rowIndex;
+      }
+      const byFeatureIndex = rowIndexByFeatureIndex[feature.featureIndex];
+      if (byFeatureIndex !== undefined && byFeatureIndex >= 0) {
+        return byFeatureIndex;
+      }
+      const byFeatureId = rowIndexByFeatureId?.get(feature.featureId);
+      return byFeatureId !== undefined && byFeatureId >= 0 ? byFeatureId : undefined;
+    },
+  };
 }
 
 function normalizeCellValue(value: TableColumnData | undefined, rowIndex: number): string {

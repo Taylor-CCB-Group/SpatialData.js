@@ -70,14 +70,10 @@ describe('shape fill colour encoding', () => {
     expect(Object.keys(colors).sort()).toEqual(['present']);
   });
 
-  it('prefers feature-id table row mappings when render data row indices are unavailable', () => {
+  it('uses already-resolved row alignment from core association helpers', () => {
     const colors = buildShapeFillColorByFeatureId({
       featureIds: ['circle-a', 'circle-b'],
-      rowIndexByFeatureIndex: new Int32Array([-1, -1]),
-      rowIndexByFeatureId: new Map([
-        ['circle-a', 1],
-        ['circle-b', 0],
-      ]),
+      rowIndexByFeatureIndex: new Int32Array([1, 0]),
       column: ['type-x', 'type-y'],
       mode: 'categorical',
       alpha: 180,
@@ -89,24 +85,17 @@ describe('shape fill colour encoding', () => {
     });
   });
 
-  it('prefers feature-index row alignment over colliding numeric feature ids', () => {
+  it('does not invent rows for unresolved features', () => {
     const colors = buildShapeFillColorByFeatureId({
-      featureIds: ['0', '1', '2'],
-      rowIndexByFeatureIndex: new Int32Array([0, 1, 2]),
-      rowIndexByFeatureId: new Map([
-        ['1', 0],
-        ['5', 1],
-        ['99', 2],
-      ]),
+      featureIds: ['matched', 'unmatched'],
+      rowIndexByFeatureIndex: new Int32Array([1, -1]),
       column: ['type-a', 'type-b', 'type-c'],
       mode: 'categorical',
       alpha: 180,
     });
 
     expect(colors).toEqual({
-      '0': [0, 0, 255, 180],
-      '1': [0, 255, 0, 180],
-      '2': [255, 0, 255, 180],
+      matched: [0, 0, 255, 180],
     });
   });
 

@@ -5,8 +5,8 @@ export type ShapeRgbColor = [number, number, number];
 
 export interface BuildShapeFillColorByFeatureIdOptions {
   featureIds: readonly string[];
+  /** Table row index per feature index, resolved by @spatialdata/core association helpers. */
   rowIndexByFeatureIndex: Int32Array;
-  rowIndexByFeatureId?: Map<string, number>;
   column: ArrayLike<unknown> | undefined;
   mode: ShapeFillColorMode;
   alpha: number;
@@ -75,27 +75,9 @@ export function resolveShapeFillColorMode(
   return values.every((value) => numericValue(value) !== undefined) ? 'continuous' : 'categorical';
 }
 
-function resolveShapeFillColorRowIndex({
-  featureId,
-  featureIndex,
-  rowIndexByFeatureIndex,
-  rowIndexByFeatureId,
-}: Pick<BuildShapeFillColorByFeatureIdOptions, 'rowIndexByFeatureIndex' | 'rowIndexByFeatureId'> & {
-  featureId: string;
-  featureIndex: number;
-}): number | undefined {
-  const fromFeatureIndex = rowIndexByFeatureIndex[featureIndex];
-  if (fromFeatureIndex !== undefined && fromFeatureIndex >= 0) {
-    return fromFeatureIndex;
-  }
-  const fromFeatureId = rowIndexByFeatureId?.get(featureId);
-  return fromFeatureId !== undefined && fromFeatureId >= 0 ? fromFeatureId : undefined;
-}
-
 export function buildShapeFillColorByFeatureId({
   featureIds,
   rowIndexByFeatureIndex,
-  rowIndexByFeatureId,
   column,
   mode,
   alpha,
@@ -105,12 +87,7 @@ export function buildShapeFillColorByFeatureId({
   if (!column) return {};
 
   const valuesByFeature = featureIds.map((featureId, featureIndex) => {
-    const rowIndex = resolveShapeFillColorRowIndex({
-      featureId,
-      featureIndex,
-      rowIndexByFeatureIndex,
-      rowIndexByFeatureId,
-    });
+    const rowIndex = rowIndexByFeatureIndex[featureIndex];
     const value = rowIndex !== undefined ? normalizeCellValue(column[rowIndex]) : '';
     return { featureId, value };
   });

@@ -11,9 +11,31 @@ but some of that logic still lives too close to the demo UI. Before publishing
 the first stable visualization API, these responsibilities should be pulled
 into reusable core/layer utilities.
 
-## Reference semantics
+## Reference Semantics
 
-Use Python `spatialdata` as the source of truth for association semantics.
+Use Python `spatialdata` as the source of truth for association semantics. In
+particular, mirror the upstream `scverse/spatialdata` implementation before
+adding TypeScript-specific shortcuts:
+
+- Python source:
+  [`join_spatialelement_table`](https://github.com/scverse/spatialdata/blob/main/src/spatialdata/_core/query/relational_query.py)
+  documents and implements element/table matching. Its docstring says matching
+  is determined from the SpatialElement index plus the table `region_key` and
+  `instance_key` columns.
+- Python source:
+  [`get_element_instances`](https://github.com/scverse/spatialdata/blob/main/src/spatialdata/_core/query/relational_query.py)
+  defines what "instance" means for each element kind: shapes use the
+  `GeoDataFrame.index`; labels use the unique label values, excluding
+  background `0` unless requested.
+- Python docs:
+  [Working with annotations in SpatialData](https://spatialdata.scverse.org/en/stable/tutorials/notebooks/notebooks/examples/tables.html)
+  states that `region`, `region_key`, and `instance_key` are the table
+  annotation metadata, and explicitly warns that the table index is not used for
+  annotation matching.
+- Python design doc:
+  [Table annotations for regions](https://github.com/scverse/spatialdata/blob/main/docs/design_doc.md#table-table-of-annotations-for-regions)
+  describes `region`, `region_key`, and `instance_key` as the required metadata
+  for mapping a table to spatial regions.
 
 - Tables annotate regions through the `region`, `region_key`, `instance_key`
   triplet. `region_key` identifies which spatial element a row annotates, and

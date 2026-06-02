@@ -307,7 +307,6 @@ async function loadShapeFillColorData({
     fillColorByFeatureId: buildShapeFillColorByFeatureId({
       featureIds: renderData.featureIds,
       rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
-      rowIndexByFeatureId: rows.rowIndexByFeatureId,
       column: rows.extraColumns?.[0],
       mode: fillColorByColumn.mode,
       alpha: getShapeFillColorAlpha(config),
