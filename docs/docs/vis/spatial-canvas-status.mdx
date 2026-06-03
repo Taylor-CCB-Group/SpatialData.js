@@ -37,11 +37,17 @@ sidebar_position: 1
 - [`packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx) — Viv + deck layer composition
 - [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts) — Loaders and Viv layer props
 - [`packages/vis/src/SpatialCanvas/types.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/types.ts) — `LayerConfig`, `ChannelConfig`
+- [`packages/core/src/tableAssociations.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/core/src/tableAssociations.ts) — feature/table row alignment following Python `spatialdata` semantics
+- [`packages/layers/src/shapeColorEncoding.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/shapeColorEncoding.ts) — renderer-agnostic shape column-to-colour encoding over resolved row alignment
 
 ## Recently landed (check repo for details)
 
 - **`@spatialdata/avivatorish`** — shared loaders and Zustand stores; SpatialCanvas / ImageView import from the package.
 - **`@spatialdata/layers`** — **`SpatialLayer`** + Zod **`SpatialLayerProps`** + **`migrateSpatialLayerProps`** (sublayer wiring still to grow).
+- **Feature/table split** — `@spatialdata/core` now exposes a
+  `FeatureTableAlignment` resolver shape, and `@spatialdata/layers` owns the
+  reusable shape column-to-colour encoder. `SpatialCanvas` consumes these
+  helpers rather than owning the fill-colour association rule.
 - **SpatialCanvas** — loader registry context (**`VivLoaderRegistryProvider`** / **`useVivLoaderRegistry`**), **layers / properties** sidebars, **DnD** layer order, **fullscreen** toggle, **channel** controls for image layers.
 - **Demo / Sketch** — full-height shell for the vis demo.
 
@@ -49,9 +55,9 @@ sidebar_position: 1
 
 - **Histogram** (optional) and richer channel UX (MDV parity).
 - **Fold or replace `ImageView`** once SpatialCanvas covers the single-image case well.
-- **Feature/table foundations:** keep current shape colour and aggregate
-  tooltip behaviour as demo functionality, then move canonical feature-to-row
-  association and annotation column discovery into reusable core/layer APIs.
+- **Feature/table foundations:** finish routing tooltip and pick-event row
+  resolution through the shared core resolver shape, then add annotation column
+  discovery for direct shape annotations and future matrix-backed values.
   See [Feature table associations and annotation columns](./feature-table-associations).
 
 ## Medium-term roadmap

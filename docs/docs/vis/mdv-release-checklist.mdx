@@ -78,6 +78,18 @@ For v1, shapes must support the same *effect* as MDV table-row colouring/filteri
 - [ ] Feature index / `instance_key` alignment with the associated table is stable for picking and styling (same join used for tooltips)
 - [ ] Document that MDV updates `layers[layerId]` when datastore selection or colour columns change
 
+Current local state:
+
+- `@spatialdata/core` exposes `FeatureTableAlignment` /
+  `createFeatureTableAlignment()` as the shared row resolver shape, following
+  Python `spatialdata` `region_key` / `instance_key` semantics.
+- `@spatialdata/layers` owns `buildShapeFillColorByFeatureId()` for converting
+  a resolved `rowIndexByFeatureIndex` plus a table column into per-feature
+  colours.
+- Remaining release risk: tooltip and pick-event row resolution should finish
+  converging on the shared core resolver shape before treating the association
+  contract as stable.
+
 Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; not required if config-driven styling is sufficient.
 
 ### Bespoke layer extension path
@@ -201,4 +213,3 @@ Design constraints to decide before building:
 - Whether edits target **Zarr/SpatialData on disk**, **in-memory session state**, or **MDV’s own project files**.
 - How editable layers share **picking ids** and **coordinate systems** with read-only SpatialData layers.
 - Whether Vitessce/MDV both need the same editable-layer API or app-specific extensions remain sufficient.
-

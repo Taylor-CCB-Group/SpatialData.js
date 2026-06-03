@@ -75,6 +75,13 @@ The main entry points for application code are:
 | Element classes | `ImageElement`, `ShapesElement`, `LabelsElement`, `PointsElement`, `TableElement` |
 | `Result` utilities | `Ok`, `Err`, `isOk`, `isErr`, `unwrap`, `unwrapOr` |
 | `getTransformMatrix()` | Convenience function for getting Matrix4 transforms |
+| Table association helpers | `loadAssociatedTableFeatureRows`, `loadFeatureRowIndexByFeatureIndex`, `createFeatureTableAlignment` |
+
+The table association helpers follow Python `spatialdata` semantics: regions
+are matched through `region`, `region_key`, and `instance_key`, with feature ids
+coming from SpatialElement instances such as `GeoDataFrame.index` for shapes.
+Visual encoders in `@spatialdata/layers` consume the row alignment produced
+here rather than reimplementing association rules.
 
 For internal architecture details, module organization, and APIs intended for contributors or advanced tooling, see [Internals & Architecture](./internals).
 
@@ -101,4 +108,3 @@ These have coordinate transformations and can be rendered in shared coordinate s
 - [Transformations](./transformations) - Understanding coordinate systems and transforms
 - [Error Handling](./error-handling) - Using the Result type pattern
 - [Internals](./internals) - Architecture and internal APIs (for contributors)
-

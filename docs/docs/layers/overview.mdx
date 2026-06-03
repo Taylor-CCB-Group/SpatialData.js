@@ -31,6 +31,9 @@ See also the [visualization overview](../vis/overview): deck-only integrators ca
 - shapes rendering is owned primarily at the `@spatialdata/layers` tier rather than `@spatialdata/vis`
 - the current shipping path is mixed-mode: polygon fallback for JS/WKB payloads and a shared columnar backend branch for `geoarrow-table` runtime data
 - row alignment, picking, and tooltip resolution are now driven by stable feature identity plus shared row-index metadata
+- `buildShapeFillColorByFeatureId()` turns a table column plus already-resolved
+  `rowIndexByFeatureIndex` into per-feature colour maps; it deliberately does
+  not resolve SpatialData table associations itself
 - the public shapes config stays representation-agnostic so a stronger future `deck.gl-geoarrow` backend can slot in without changing saved props
 
 For shapes, the important contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.
