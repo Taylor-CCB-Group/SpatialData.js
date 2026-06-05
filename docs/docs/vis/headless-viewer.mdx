@@ -1,0 +1,250 @@
+---
+sidebar_position: 5
+---
+
+# Headless viewer guide
+
+This page is a practical guide for experimenting with the **headless** rendering
+API in `@spatialdata/vis`. Use it when you want deck/Viv output without
+`SpatialCanvas` sidebars, layer-order panels, or the built-in properties UI.
+
+## What "headless" means here
+
+Headless mode is **not** a separate WebGL backend. It reuses the same
+`useLayerData` → deck/Viv stack as `SpatialCanvas`, but exposes only:
+
+- **`SpatialCanvasViewer`** — a measured viewport + `SpatialViewer` (deck/Viv)
+- **`useSpatialCanvasRenderer`** — the same loading/composition logic without UI
+- **`composeSpatialDeckLayers`**, **`shouldAutoFitSpatialView`**, **`shouldRenderInternalTooltip`** — small helpers for integrators
+
+**2D only:** same limitation as `SpatialCanvas` — orthographic pan/zoom, no 3D
+orbit or volume views. Image `z`/`c`/`t` slice selection is supported; 3D scene
+navigation is not.
+
+MDV, Vitessce, and local experiments should import these from the **public**
+`@spatialdata/vis` entry point, not from `packages/vis/src/...` paths.
+
+## Minimal controlled viewer
+
+```tsx
+import { useState } from 'react';
+import { readZarr } from '@spatialdata/core';
+import {
+  SpatialCanvasViewer,
+  type LayerConfig,
+  type ViewState,
+} from '@spatialdata/vis';
+
+const [spatialData, setSpatialData] = useState<Awaited<ReturnType<typeof readZarr>> | null>(null);
+const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
+const [viewState, setViewState] = useState<ViewState | null>(null);
+
+const layers: Record<string, LayerConfig> = {
+  image: {
+    id: 'image',
+    type: 'image',
+    elementKey: 'my_image',
+    visible: true,
+    opacity: 1,
+  },
+  shapes: {
+    id: 'shapes',
+    type: 'shapes',
+    elementKey: 'cell_shapes',
+    visible: true,
+    opacity: 1,
+    fillColor: [100, 149, 237, 180],
+    fillColorByColumn: { columnName: 'cell_type', mode: 'categorical' },
+    tooltipFields: ['cell_type'],
+  },
+};
+const layerOrder = ['image', 'shapes'];
+
+// After loading:
+<SpatialCanvasViewer
+  spatialData={spatialData}
+  coordinateSystem={coordinateSystem}
+  layers={layers}
+  layerOrder={layerOrder}
+  viewState={viewState}
+  onViewStateChange={setViewState}
+  style={{ width: '100%', height: '100%' }}
+/>
+```
+
+**You own all state.** Change `layers`, `layerOrder`, or `viewState` from your
+app store (MobX, zustand, React state, Leva, etc.) and the viewer re-renders.
+
+## Hook-only composition (custom layout)
+
+When you already have a `DeckGL` shell or need to split loading from the viewport:
+
+```tsx
+import { useMeasure } from '@uidotdev/usehooks';
+import { useSpatialCanvasRenderer } from '@spatialdata/vis';
+import { SpatialViewer } from '@spatialdata/vis';
+
+function MyViewport({ spatialData, coordinateSystem, layers, layerOrder, viewState, onViewStateChange }) {
+  const [ref, { width, height }] = useMeasure();
+  const renderer = useSpatialCanvasRenderer({
+    spatialData,
+    coordinateSystem,
+    layers,
+    layerOrder,
+    viewState,
+    onViewStateChange,
+    width: width ?? 0,
+    height: height ?? 0,
+    deckLayers: myCustomScatterLayer ? [myCustomScatterLayer] : undefined,
+  });
+
+  return (
+    <div ref={ref} style={{ width: '100%', height: '100%' }}>
+      <SpatialViewer
+        width={width ?? 0}
+        height={height ?? 0}
+        viewState={viewState}
+        onViewStateChange={onViewStateChange}
+        deckLayers={renderer.deckLayers}
+        vivLayerProps={renderer.vivLayerProps}
+      />
+    </div>
+  );
+}
+```
+
+`useSpatialCanvasRenderer` returns `deckLayers`, `vivLayerProps`, loading
+flags, bounds helpers, and shape pick/tooltip resolvers — same as inside
+`SpatialCanvasViewer`.
+
+## MDV-style overlays
+
+Pass app-built deck layers **above** SpatialData-generated layers:
+
+```tsx
+import { ScatterplotLayer } from 'deck.gl';
+
+const mdvScatter = new ScatterplotLayer({
+  id: 'mdv-scatter',
+  data: scatterData,
+  getPosition: (d) => d.position,
+  getRadius: 2,
+});
+
+<SpatialCanvasViewer
+  /* ...controlled props... */
+  deckLayers={[mdvScatter]}
+  deckProps={{
+    controller: true,
+    getCursor: ({ isDragging }) => (isDragging ? 'grabbing' : 'default'),
+  }}
+/>
+```
+
+Composition order is always: **SpatialData layers first**, then `deckLayers`,
+then scale bar (inside `SpatialViewer`).
+
+## Tooltips: internal, external, or off
+
+| `renderTooltip` | Behaviour |
+|-----------------|-----------|
+| `undefined` (default) | Built-in `SpatialFeatureTooltip` on hover |
+| `false` | No internal tooltip; use `onHover` / `onShapeHover` |
+| `(props) => <MyTooltip {...props} />` | Custom renderer; optional `tooltipContainer` for portals |
+
+```tsx
+<SpatialCanvasViewer
+  renderTooltip={false}
+  onShapeHover={(event) => {
+    // event.featureId, event.rowIndex, event.pickInfo, ...
+  }}
+  onHover={(info) => {
+    // raw deck PickingInfo for custom layers
+  }}
+/>
+```
+
+For MDV-style outer-container tooltips, set `renderTooltip={false}` and route
+picks through your existing portal hook.
+
+## Shapes: table-driven colour and filter state
+
+MDV should drive styling by updating `layers[layerId]` — not by reaching into
+vis internals:
+
+```ts
+layers[shapesId] = {
+  ...layers[shapesId],
+  fillColorByColumn: { columnName: 'leiden', mode: 'categorical' },
+  featureState: {
+    hiddenFeatureIds: filteredOutIds,
+    fadedFeatureIds: dimmedIds,
+    fillColorByFeatureId: selectionColors,
+    filteredOpacityMultiplier: 0.35,
+  },
+};
+```
+
+Row alignment comes from `@spatialdata/core` (`createFeatureTableAlignment`);
+colour encoding from `@spatialdata/layers` (`buildShapeFillColorByFeatureId`).
+`SpatialCanvasViewer` wires these when `fillColorByColumn` is set.
+
+## Auto-fit and view state
+
+- Pass `viewState={null}` on first render to let the viewer compute an initial
+  fit from visible layer bounds (`autoFit` defaults to `true`).
+- After the user pans/zooms, keep `viewState` controlled and pass updates through
+  `onViewStateChange`.
+- Set `autoFit={false}` if your app restores saved view state and must never
+  overwrite it.
+
+## Try it locally
+
+From the repo root:
+
+```bash
+pnpm install
+pnpm test:fixtures:generate:0.7.2   # once, if test-fixtures/ is missing
+pnpm --filter @spatialdata/vis dev
+```
+
+Open **http://127.0.0.1:5173/headless** for the headless demo route. It loads
+the local **`blobs.zarr`** fixture (`v0.7.2`) via `SpatialCanvasViewer` with
+externally controlled layer state — no `SpatialCanvas` sidebars.
+
+The dev script starts the fixture server on port **38473** (override with
+`SPATIALDATA_FIXTURE_PORT`) and proxies `/test-fixtures` through Vite on
+**5173**. The default Sketch UI remains at **http://127.0.0.1:5173/**.
+
+Suggested experiments (matching the [MDV integration roadmap](./mdv-integration)):
+
+1. **Fixed stack** — hard-code `layers` / `layerOrder` for one fixture URL.
+2. **External controls** — Leva panel for coordinate system, visibility, opacity, channel colours.
+3. **Custom deck layer** — one `ScatterplotLayer` above the image.
+4. **Controlled view** — save/restore `viewState` in `sessionStorage`.
+5. **External tooltips** — `renderTooltip={false}` + log `onShapeHover` payloads.
+
+Pack for MDV smoke tests:
+
+```bash
+pnpm build
+pnpm --filter @spatialdata/vis pack
+# install the resulting .tgz in the MDV workspace
+```
+
+## Public API checklist
+
+Before treating the API as stable for MDV:
+
+- [x] `SpatialCanvasViewer` exported from `@spatialdata/vis`
+- [x] `useSpatialCanvasRenderer`, `composeSpatialDeckLayers`, `shouldAutoFitSpatialView`, `shouldRenderInternalTooltip` exported
+- [x] Controlled `coordinateSystem`, `layers`, `layerOrder`, `viewState`
+- [x] `deckLayers` / `deckProps` passthrough
+- [x] `renderTooltip={false}` for external tooltip ownership
+- [x] `demo/headless` route with local `blobs.zarr` fixture
+- [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)
+- [ ] Tooltip/pick row resolution fully on shared `FeatureTableAlignment` (in progress)
+- [ ] npm prerelease published and smoke-tested in MDV
+
+See also [MDV release checklist](./mdv-release-checklist) and
+[Feature table associations](./feature-table-associations).

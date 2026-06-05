@@ -54,3 +54,44 @@ load-bearing:
 The migration test is the same as shapes: MDV or Vitessce should be able to
 drive hide/fade/color/radius state without knowing whether the renderer used JS
 arrays, deck binary attributes, or GeoArrow batches underneath.
+
+## React-agnostic usage
+
+`@spatialdata/layers` has no React dependency. A minimal deck-only path:
+
+```ts
+import {
+  buildShapesPrebuiltData,
+  createShapesDeckLayer,
+  buildShapeFillColorByFeatureId,
+} from '@spatialdata/layers';
+import {
+  createFeatureTableAlignment,
+  loadFeatureRowIndexByFeatureIndex,
+} from '@spatialdata/core';
+
+// After loading renderData + table column from core:
+const fillColorByFeatureId = buildShapeFillColorByFeatureId({
+  featureIds: renderData.featureIds,
+  rowIndexByFeatureIndex: alignment.rowIndexByFeatureIndex,
+  column: obsColumn,
+  mode: 'categorical',
+  alpha: 200,
+});
+
+const layer = createShapesDeckLayer(
+  renderData,
+  {
+    kind: 'shapes',
+    elementKey: 'cell_shapes',
+    visible: true,
+    featureState: { fillColorByFeatureId },
+  },
+  { id: 'shapes', prebuilt: buildShapesPrebuiltData(renderData) }
+);
+```
+
+For Viv images and async SpatialData layer orchestration without the
+`SpatialCanvas` UI, use `@spatialdata/vis` headless APIs
+([Headless viewer guide](../vis/headless-viewer)) or compose
+`createShapesDeckLayer` output with your own `Deck` / `DeckGL` stack.

@@ -29,7 +29,7 @@ pnpm add @spatialdata/core
 ## Quick Start
 
 ```ts
-import { readZarr } from '@spatialdata/core';
+import { readZarr, loadFeatureRowIndexByFeatureIndex } from '@spatialdata/core';
 
 // Load a SpatialData store from a URL
 const sdata = await readZarr('https://example.com/my-spatialdata.zarr');
@@ -46,7 +46,22 @@ const points = sdata.points;    // Record<string, PointsElement>
 
 // Get coordinate systems
 const coordinateSystems = sdata.coordinateSystems; // ['global', ...]
+
+// Table-backed shape association (see also @spatialdata/layers encoders)
+const shapesEl = sdata.shapes.cell_shapes;
+const renderData = await shapesEl.loadRenderData();
+const rowIndexByFeatureIndex = await loadFeatureRowIndexByFeatureIndex({
+  spatialData: sdata,
+  kind: 'shapes',
+  key: 'cell_shapes',
+  featureIds: renderData.featureIds,
+});
 ```
+
+Tables load through **`anndata.js`** on **`zarrita`** stores. Association helpers
+today use targeted obs-column loaders; the roadmap is a unified AnnData.js /
+zarrita **`DataLoader`** surface for richer `obs` / `var` / `X` / `obsm` access
+(see [MDV integration — tables](../vis/mdv-integration#tables-anndatajs-and-zarrita-dataloader)).
 
 ## Design Philosophy
 

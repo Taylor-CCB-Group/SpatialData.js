@@ -56,7 +56,8 @@ function shutdown(code) {
 process.on('SIGINT', () => shutdown(130));
 process.on('SIGTERM', () => shutdown(143));
 
-console.log('Starting vis build watch and demo server...');
+console.log('Starting fixture server, vis build watch, and demo server...');
+start('fixtures', ['node', '../../scripts/test-server.js']);
 start('watch', ['vite', 'build', '--watch']);
 start('demo', [
   'vite',

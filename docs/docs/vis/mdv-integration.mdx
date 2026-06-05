@@ -8,19 +8,33 @@ This page explains architecture and phased context. For the branch-level shippin
 
 This library is intended to align with **[MDV](https://github.com/Taylor-CCB-Group/MDV)** and **[Vitessce](https://vitessce.io/)** so both projects can render SpatialData images, labels, shapes, and points from shared packages instead of relying on diverging local implementations.
 
-The near-term target is not a full replacement for every MDV spatial feature. The target is a baseline `SpatialCanvas`-backed MDV chart that can stand in for `VivScatterComponent` where appropriate, accept MDV-controlled state, compose MDV custom deck.gl layers, and avoid showing this repo's demo/editor UI inside MDV. MDV is the first "use it in anger" sanity check; Vitessce compatibility remains a priority design target rather than a later afterthought.
+The near-term target is not a full replacement for every MDV spatial feature. The target is a baseline **2D** `SpatialCanvas`-backed MDV chart that can stand in for `VivScatterComponent` where appropriate, accept MDV-controlled state, compose MDV custom deck.gl layers, and avoid showing this repo's demo/editor UI inside MDV. **3D orbit/volume rendering is out of scope** for this integration path. MDV is the first "use it in anger" sanity check; Vitessce compatibility remains a priority design target rather than a later afterthought.
 
 ## Current state
 
-`@spatialdata/vis` already exports `SpatialCanvas`, `SpatialViewer`, and `VivSpatialViewer`. The rendering path is close to MDV's existing `MDVivViewer` pattern:
+`@spatialdata/vis` exports both the full **`SpatialCanvas`** UI and a **headless**
+**`SpatialCanvasViewer`** (plus **`useSpatialCanvasRenderer`**, **`composeSpatialDeckLayers`**, and related helpers) from the public package entry. The rendering path matches MDV's existing `MDVivViewer` pattern:
 
 - image layers are rendered through Viv `DetailView`
 - extra deck.gl layers are composed above images
 - non-image spatial layers use the same deck.gl view model
 - shape, point, and labels renderers exist
-- `SpatialCanvas` has a zustand store and can persist layer config externally
+- shapes support table-driven fill colour and per-feature state on `ShapesLayerConfig`
+- `@spatialdata/core` exposes `FeatureTableAlignment` / `createFeatureTableAlignment()`
+- `@spatialdata/layers` owns shape deck rendering and `buildShapeFillColorByFeatureId()`
 
-The blocker for MDV use is mostly API shape. `SpatialCanvas` currently owns a full UI shell: coordinate-system selector, layer selector, layer-order panel, properties panel, fullscreen button, loading overlays, tooltip rendering, and local layer creation. MDV needs the rendering core without that UI, and it needs to drive view state, layers, style, filtering, highlighting, and custom overlays from chart/data-store state.
+**Remaining MDV blockers** are packaging and polish, not the absence of a headless component:
+
+- packages are not yet published to npm (pack / link / prerelease for MDV smoke tests)
+- tooltip/pick row resolution should finish converging on the shared core resolver
+- points layer is minimal scatter only (v1.1 for MDV parity)
+
+**Viv/deck stack:** this repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9`. MDV's
+matching upgrade is almost ready to merge — treat shared Viv/deck/luma versions as
+**effectively aligned** for the first `@spatialdata/vis` smoke test. Residual risk is
+extension-specific visual regression, not version skew between the two codebases.
+
+`SpatialCanvas` still owns a full UI shell for demos. MDV should embed **`SpatialCanvasViewer`** and drive view state, layers, style, filtering, highlighting, and custom overlays from chart/data-store state.
 
 ## Priority: headless first
 
@@ -30,15 +44,15 @@ The first implementation should use a **bridge path** rather than a full layers-
 
 The layers-first direction is still likely the cleaner long-term architecture, especially for MDV and Vitessce. For now, `@spatialdata/layers` should mature through narrow renderer slices rather than becoming the blocking path for headless mode: the current `SpatialLayer` package defines a schema/contract, but real image, labels, shapes, and points sublayer factories still need to be ported deliberately.
 
-Useful in-repo validation demos:
+Useful in-repo validation demos (see [Headless viewer guide](./headless-viewer)):
 
-- [ ] `demo/headless-basic`: render a fixed SpatialData image/labels/shapes stack with all props owned by the demo component, no `SpatialCanvas` sidebars.
-- [ ] `demo/headless-leva`: use Leva or a similar external control panel to drive coordinate system, layer visibility, opacity, channel colors, labels style, and view reset.
+- [x] `demo/headless`: local `blobs.zarr` fixture via `SpatialCanvasViewer` (no `SpatialCanvas` sidebars).
+- [ ] `demo/headless-leva`: external control panel variant of the above.
 - [ ] `demo/headless-custom-layers`: pass arbitrary deck.gl layers into the viewer, matching the way MDV will pass scatter, gates, contours, and ROI JSON.
 - [ ] `demo/headless-controlled-view`: keep view state fully controlled by an outer component, including programmatic pan/zoom/reset and saved/restored state.
 - [ ] `demo/headless-tooltips`: disable internal tooltip UI and route picking into an externally owned tooltip renderer.
 
-Acceptance signal: the demos should import the same public API that MDV would use. If a demo needs internal imports from `packages/vis/src/SpatialCanvas/*`, the API is not ready.
+Acceptance signal: demos should import the same public API MDV uses (`SpatialCanvasViewer` from `@spatialdata/vis`). That bar is met; the gap is example apps, not missing exports.
 
 ## Phase 0: rendering stack and package sanity
 
@@ -50,27 +64,21 @@ Acceptance signal: the demos should import the same public API that MDV would us
   - optional: `@spatialdata/avivatorish`
 - [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
 - [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
-- [ ] Track upgrading to `@hms-dbmi/viv@0.21.0` / deck.gl `9.2.9` as a first-class migration. Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924) is merged there (uniform-buffer-backed shader props, `model.shaderInputs`, and variable channel counts).
-- [ ] Update shader extensions here and in MDV in the same wave:
-  - replace deprecated `setUniforms` paths with `model.shaderInputs.setProps(...)`
-  - prefer `updateState()` for shader input updates where appropriate
-  - move custom extension uniforms to UBO/module prop style
-  - audit assumptions around `MAX_CHANNELS = 6`
-  - use Viv's `NUM_CHANNELS` / shader preprocessing conventions where relevant
-  - refactor props passed into Viv image layers so extension props are explicit and serializable
-- [ ] Align dependency versions before testing in MDV. This repo currently uses Viv `0.20.x` and deck.gl `9.1.x`; MDV currently declares Viv `0.19.x`. The expected integration target is likely newer than both, so the first MDV smoke test should use the same upgraded Viv/deck/luma stack as this repo.
+- [x] Upgrade to `@hms-dbmi/viv@0.21.0` / deck.gl `9.2.9` in this repo (Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924): uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts).
+- [x] MDV Viv/deck/luma upgrade to the same stack — **almost ready to merge**; treat as done for integration planning.
+- [ ] Residual extension audit on both sides after MDV merge (shader-input paths, channel-count assumptions, extension prop passthrough through `deckProps` / `SpatialCanvasViewer`).
 - [ ] Run a clean `pnpm build` and pack the packages, then install them into `~/code/www/MDV`.
 - [ ] Add one minimal MDV smoke chart that imports the package and renders a known fixture before attempting a full chart replacement.
 
 ## Phase 1: headless `SpatialCanvas` API
 
-Add a controlled/headless rendering API to `@spatialdata/vis` so MDV can embed the viewer without this repo's UI.
+**Mostly landed.** `@spatialdata/vis` exports **`SpatialCanvasViewer`** as a separate controlled component (not a `mode` prop on `SpatialCanvas`).
 
-Proposed surface:
+Current surface:
 
 ```tsx
-<SpatialCanvas
-  mode="viewer"
+<SpatialCanvasViewer
+  spatialData={spatialData}
   coordinateSystem={coordinateSystem}
   layers={layers}
   layerOrder={layerOrder}
@@ -78,23 +86,23 @@ Proposed surface:
   onViewStateChange={setViewState}
   deckLayers={mdvDeckLayers}
   deckProps={deckProps}
-  renderTooltip={renderTooltip}
+  renderTooltip={false}
+  onShapeHover={onShapeHover}
 />
 ```
 
-Likely implementation steps:
+Implementation status:
 
-- [ ] Split the current component into a UI wrapper and a reusable viewer core.
-- [ ] Export a stable `SpatialCanvasViewer` or `SpatialCanvasCore` that renders only the measured viewport and `SpatialViewer`.
-- [ ] Support controlled `coordinateSystem`, `layers`, `layerOrder`, and `viewState` props.
-- [ ] Keep the existing zustand-driven UI as `SpatialCanvas` or `SpatialCanvasEditor`.
-- [ ] Add `extraLayers` / `deckLayers` / `deckProps` so MDV can pass scatter points, gates, selection overlays, contours, ROI JSON, and custom tooltips.
-- [ ] Allow overlays and loading indicators to be disabled or replaced by MDV.
-- [ ] Allow tooltip handling to be fully external, including MDV's outer-container portal behavior.
-- [ ] Allow a stable externally supplied Viv/deck view id or layer id suffix, so MDV can keep its layer-filtering conventions.
-- [ ] Keep Viv image-layer props and non-image layer props separate enough that shader-extension migrations do not leak through the MDV adapter.
+- [x] Split viewer core (`SpatialCanvasViewer` / `useSpatialCanvasRenderer`) from `SpatialCanvas` UI shell.
+- [x] Export `SpatialCanvasViewer` from public `@spatialdata/vis` entry.
+- [x] Controlled `coordinateSystem`, `layers`, `layerOrder`, and `viewState`.
+- [x] `deckLayers` / `deckProps` for MDV scatter, gates, contours, ROI overlays.
+- [x] `showLoadingOverlay` and `renderTooltip={false}` for external tooltip ownership.
+- [x] `onShapeHover` / `onShapeClick` for feature-aware picking.
+- [ ] Stable externally supplied Viv/deck view id or layer id suffix (`getVivId` compatibility).
+- [ ] Viv extension prop audit once MDV merge lands (low risk; versions already aligned).
 
-Open design choice: either make `SpatialCanvas` support both controlled and uncontrolled modes, or introduce a separate `SpatialCanvasViewer` for embedding. A separate component is probably cleaner for MDV because it avoids accidental UI/state coupling.
+See [Headless viewer guide](./headless-viewer) for experimentation steps.
 
 ## Phase 2: MDV adapter chart
 
@@ -121,6 +129,34 @@ Adapter responsibilities:
 - keep MDV keyboard/selection behavior around the viewer container
 
 The first-pass chart can deliberately avoid replacing the channel dialog and most image editing UI. It only needs enough layer config to render an image/labels/shapes baseline and enough view-state synchronization to sanity-check against the current Viv chart.
+
+## Tables, AnnData.js, and zarrita `DataLoader`
+
+MDV chart config ultimately drives **table-backed** shape colour, tooltips, and
+filters. The shared contract spans three packages:
+
+| Concern | Owner |
+|---------|--------|
+| `region` / `region_key` / `instance_key` semantics, row alignment | `@spatialdata/core` |
+| Column → per-feature colour maps, deck feature state | `@spatialdata/layers` |
+| Which column to show, loading columns for UI, passing config into the viewer | `@spatialdata/vis` / MDV |
+
+**Today:** `TableElement` loads AnnData stores via **`anndata.js`** on top of
+**`zarrita`** (`readZarr` on the table's zarr subtree). Association helpers
+(`loadFeatureRowIndexByFeatureIndex`, `loadAssociatedTableFeatureRows`) use
+targeted obs-column loaders rather than a single high-level DataLoader API.
+
+**Near-term roadmap:** expose coherent **`tables`** access through
+**AnnData.js** (and zarrita-backed **`DataLoader`** where appropriate) so
+integrators can read `obs`, `var`, selected `X` columns, `obsm`, and future
+`uns` / `obsp` surfaces without ad hoc string-column lookups or dropping to
+`getAnnDataJS()` for every chart. Richer query patterns should push upstream
+into `anndata.js` where possible; SpatialData.js should thin-wrap table
+elements and preserve Python association semantics.
+
+MDV should pass resolved **`featureState`** and **`fillColorByColumn`** on
+`ShapesLayerConfig` when selection or colour mappings change — not re-load
+geometry. See [Feature table associations](./feature-table-associations).
 
 ## Phase 3: layer styling, filtering, and highlighting
 
@@ -434,8 +470,7 @@ Open questions:
 
 ## Compatibility risks
 
-- **Viv/deck version skew:** MDV uses Viv `0.19.x`; this repo uses Viv `0.20.x`. Mixed deck/luma packages can fail in subtle WebGL ways.
-- **Viv/deck migration (Viv `0.21.0` / PR `#924`):** Merged upstream in `@hms-dbmi/viv@0.21.0` with deck.gl `9.2.9`; shader props use UBOs and `model.shaderInputs`. This repo and MDV still need to adopt that stack and migrate custom shader extensions deliberately, not piecemeal.
+- **Viv/deck version skew:** largely resolved — both codebases target Viv `0.21.0` / deck.gl `9.2.9`; MDV's upgrade PR is almost ready to merge. Remaining risk is extension-specific regression, not mismatched package versions.
 - **Arrow/Parquet churn:** loaders.gl Parquet and deck.gl-community Arrow layers are promising but still moving targets. We should avoid locking public `core` APIs to one loader implementation too early.
 - **Raster backend churn:** `deck.gl-raster` may absorb image/Zarr responsibilities that currently sit in Viv or custom labels layers. Public props should leave room for a backend swap.
 - **Image format/codecs uncertainty:** OME-TIFF, JP2K-compressed TIFF, OME-Zarr, SpatialData Zarr, and future Zarr image codecs may all matter. Avoid encoding one storage format too deeply into viewer props.
@@ -444,7 +479,7 @@ Open questions:
 - **Layer ids:** MDV relies on `getVivId(...)` tokens for layer filtering. `VivSpatialViewer` has its own generated ids. MDV embedding may need a supplied `viewId` / `layerIdSuffix`.
 - **UI ownership:** current `SpatialCanvas` resets its local store when coordinate systems change. In controlled MDV mode this could wipe chart-driven layers if not separated.
 - **Tooltip ownership:** both libraries have tooltip systems. MDV should own tooltip portals for now.
-- **Feature ids:** shapes currently load polygon arrays without an obvious stable id in the render path. Labels expose picked label ids, but table association must be explicit and tested.
+- **Feature ids:** shapes now carry stable `featureId` values in render data and layer picking; labels association and tests still need to catch up to the shapes path.
 - **Performance:** shape/label styling from MDV filters must avoid expensive observable lookups inside render accessors.
 - **Data model mismatch:** MDV's regions/image metadata is not the same as a full SpatialData object. The first adapter may need a compatibility layer while MDV projects transition.
 - **CSS/layout:** `SpatialCanvas` has hard-coded dark UI styles and minimum height. Headless mode should render with parent-owned layout and no border/sidebar styles.

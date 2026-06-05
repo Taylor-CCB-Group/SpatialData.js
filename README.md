@@ -195,14 +195,16 @@ pnpm test:fixtures:generate:0.7.2
 The main Node integration tests now load fixtures directly from a `FileSystemStore`. This server is still useful for HTTP smoke tests and browser-oriented local development with `FetchStore`:
 
 ```bash
-# Start the test fixture server (runs on http://localhost:8080)
+# Start the test fixture server (default http://localhost:38473)
 pnpm test:server
 ```
 
+Override the port with `SPATIALDATA_FIXTURE_PORT` if needed.
+
 Once running, fixtures are accessible at:
-- `http://localhost:8080/test-fixtures/v0.5.0/blobs.zarr`
-- `http://localhost:8080/test-fixtures/v0.6.1/blobs.zarr`
-- `http://localhost:8080/test-fixtures/v0.7.2/blobs.zarr`
+- `http://localhost:38473/test-fixtures/v0.5.0/blobs.zarr`
+- `http://localhost:38473/test-fixtures/v0.6.1/blobs.zarr`
+- `http://localhost:38473/test-fixtures/v0.7.2/blobs.zarr`
 
 The server provides directory listings and serves all zarr metadata files with appropriate CORS headers.
 
