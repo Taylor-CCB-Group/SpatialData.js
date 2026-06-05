@@ -6,7 +6,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 
 const config: Config = {
   title: 'SpatialData.js',
-  tagline: 'A library for interfacing with SpatialData stores in TS/JS',
+  tagline: 'A library for interfacing with and visualizing SpatialData stores in TS/JS',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
