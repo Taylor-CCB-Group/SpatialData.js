@@ -223,6 +223,10 @@ frame.
 - **Merged feature-state objects must not be allocated each frame** when only
   cosmetic layer props change. Table-driven fill colours are merged inside
   `getStableShapeFeatureStateRuntime` only when the signature changes.
+- **Table-driven fill colours** should be computed from
+  `@spatialdata/core`-resolved `rowIndexByFeatureIndex` and the shared
+  `@spatialdata/layers` colour encoder. Do not add local feature-to-row
+  precedence rules in `SpatialCanvas` or layer modules.
 
 ### Layer contract (`@spatialdata/layers`)
 
@@ -233,6 +237,9 @@ frame.
   caller may still pass records (tests, `SpatialLayer`).
 - **`updateTriggers` for `getFillColor` / `getLineColor`**: list the specific
   Maps/Sets/scalars that affect colour, not the whole `featureState` object.
+- **`buildShapeFillColorByFeatureId`**: converts a table column plus resolved
+  row alignment into per-feature colours. It is renderer-agnostic and does not
+  load tables or decide SpatialData feature/table association semantics.
 - Prefer **constant accessors** and layer `opacity` over per-feature callbacks
   when the visual change is uniform.
 
@@ -242,6 +249,7 @@ frame.
 |---|---|
 | `new Map(Object.entries(fillColorByFeatureId))` on every `getLayers()` | O(n) allocation and GC pressure on large feature sets |
 | Spreading `featureState` each render for table fill colours | Defeats WeakMap identity caches; triggers full accessor rebuilds |
+| Resolving feature/table row precedence inside a colour encoder | Duplicates `@spatialdata/core` association semantics and drifts from Python `spatialdata` |
 | Putting `featureState` wholesale in `updateTriggers` | Any new object identity invalidates all colour attributes |
 | Per-feature accessors for layer-wide opacity | Use deck `opacity` on the layer instead |
 

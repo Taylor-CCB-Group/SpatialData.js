@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { createWorkspaceSourceAliases } from '../../vite.config.base';
+import { fixtureServerOrigin } from '../../scripts/fixture-server-port.mjs';
 
 // https://vitejs.dev/config/
 const workspaceRoot = path.resolve(__dirname, '../..');
@@ -26,5 +27,11 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     open: false,
+    proxy: {
+      '/test-fixtures': {
+        target: fixtureServerOrigin(),
+        changeOrigin: true,
+      },
+    },
   },
 });

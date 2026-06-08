@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildShapeFillColorByFeatureId,
   resolveShapeFillColorMode,
-} from '../src/SpatialCanvas/shapeColorEncoding.js';
+} from '../src/shapeColorEncoding';
 
 describe('shape fill colour encoding', () => {
   it('maps categorical values deterministically through feature row indices', () => {
@@ -70,14 +70,10 @@ describe('shape fill colour encoding', () => {
     expect(Object.keys(colors).sort()).toEqual(['present']);
   });
 
-  it('prefers feature-id table row mappings when render data row indices are unavailable', () => {
+  it('uses already-resolved row alignment from core association helpers', () => {
     const colors = buildShapeFillColorByFeatureId({
       featureIds: ['circle-a', 'circle-b'],
-      rowIndexByFeatureIndex: new Int32Array([-1, -1]),
-      rowIndexByFeatureId: new Map([
-        ['circle-a', 1],
-        ['circle-b', 0],
-      ]),
+      rowIndexByFeatureIndex: new Int32Array([1, 0]),
       column: ['type-x', 'type-y'],
       mode: 'categorical',
       alpha: 180,
@@ -89,28 +85,37 @@ describe('shape fill colour encoding', () => {
     });
   });
 
-  it('prefers feature-index row alignment over colliding numeric feature ids', () => {
+  it('does not invent rows for unresolved features', () => {
     const colors = buildShapeFillColorByFeatureId({
-      featureIds: ['0', '1', '2'],
-      rowIndexByFeatureIndex: new Int32Array([0, 1, 2]),
-      rowIndexByFeatureId: new Map([
-        ['1', 0],
-        ['5', 1],
-        ['99', 2],
-      ]),
+      featureIds: ['matched', 'unmatched'],
+      rowIndexByFeatureIndex: new Int32Array([1, -1]),
       column: ['type-a', 'type-b', 'type-c'],
       mode: 'categorical',
       alpha: 180,
     });
 
     expect(colors).toEqual({
-      '0': [0, 0, 255, 180],
-      '1': [0, 255, 0, 180],
-      '2': [255, 0, 255, 180],
+      matched: [0, 0, 255, 180],
     });
   });
 
   it('treats mixed values as categorical in auto mode', () => {
     expect(resolveShapeFillColorMode('auto', ['1', 'tumour'])).toBe('categorical');
+  });
+
+  it('allows callers to supply their own categorical palette', () => {
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds: ['a', 'b'],
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+      column: ['x', 'y'],
+      mode: 'categorical',
+      alpha: 200,
+      categoricalPalette: [[1, 2, 3]],
+    });
+
+    expect(colors).toEqual({
+      a: [1, 2, 3, 200],
+      b: [1, 2, 3, 200],
+    });
   });
 });

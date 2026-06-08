@@ -42,12 +42,14 @@ import {
   unionBoundsList,
 } from '@spatialdata/core';
 import {
+  EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   type ShapeFeatureRenderDatum,
+  type ShapeFeatureStateRuntime,
+  type ShapeFillColorMode,
   type ShapesPrebuiltData,
   buildShapeFeatureStateRuntime,
+  buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
-  EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
-  type ShapeFeatureStateRuntime,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
@@ -63,7 +65,6 @@ import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
-import { type ShapeFillColorMode, buildShapeFillColorByFeatureId } from './shapeColorEncoding';
 import type { AvailableElement, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
 
 export interface ImageLoaderData {
@@ -306,7 +307,6 @@ async function loadShapeFillColorData({
     fillColorByFeatureId: buildShapeFillColorByFeatureId({
       featureIds: renderData.featureIds,
       rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
-      rowIndexByFeatureId: rows.rowIndexByFeatureId,
       column: rows.extraColumns?.[0],
       mode: fillColorByColumn.mode,
       alpha: getShapeFillColorAlpha(config),
@@ -750,7 +750,9 @@ export function useLayerData(
                     if (metadata?.channels) {
                       const Channels = metadata.channels;
                       const isRgb = guessRgb({
-                        Pixels: { Channels: Channels.map((c: any) => ({ Name: c.label })) },
+                        Pixels: {
+                          Channels: Channels.map((c: { label?: string }) => ({ Name: c.label })),
+                        },
                       });
 
                       if (isRgb) {

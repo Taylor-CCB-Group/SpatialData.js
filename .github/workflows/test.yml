@@ -72,19 +72,19 @@ jobs:
           # Wait for server to be ready (up to ~30s)
           # Check both root and a fixture path to ensure server is fully ready
           for i in {1..30}; do
-            if curl -sSf http://localhost:8080/ >/dev/null && \
-               curl -sSf http://localhost:8080/v0.5.0/blobs.zarr/zmetadata >/dev/null; then
+            if curl -sSf http://localhost:38473/ >/dev/null && \
+               curl -sSf http://localhost:38473/v0.5.0/blobs.zarr/zmetadata >/dev/null; then
               echo "Test server is up and serving fixtures"
               break
             fi
-            echo "Waiting for test server on http://localhost:8080/ ..."
+            echo "Waiting for test server on http://localhost:38473/ ..."
             sleep 1
           done
 
           # Small additional delay to ensure server is fully ready
           sleep 2
 
-          # Run integration tests (will hit http://localhost:8080/…)
+          # Run integration tests (will hit http://localhost:38473/…)
           pnpm test:integration
 
           # Clean up server

@@ -11,13 +11,14 @@ import { readFile, stat, readdir } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import { FIXTURE_SERVER_PORT } from './fixture-server-port.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = resolve(__dirname, '..');
 const fixturesDir = join(projectRoot, 'test-fixtures');
 
-const PORT = process.env.PORT || 8080;
+const PORT = FIXTURE_SERVER_PORT;
 
 /**
  * Get MIME type for a file based on extension

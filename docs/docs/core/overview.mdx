@@ -29,7 +29,7 @@ pnpm add @spatialdata/core
 ## Quick Start
 
 ```ts
-import { readZarr } from '@spatialdata/core';
+import { readZarr, loadFeatureRowIndexByFeatureIndex } from '@spatialdata/core';
 
 // Load a SpatialData store from a URL
 const sdata = await readZarr('https://example.com/my-spatialdata.zarr');
@@ -46,7 +46,22 @@ const points = sdata.points;    // Record<string, PointsElement>
 
 // Get coordinate systems
 const coordinateSystems = sdata.coordinateSystems; // ['global', ...]
+
+// Table-backed shape association (see also @spatialdata/layers encoders)
+const shapesEl = sdata.shapes.cell_shapes;
+const renderData = await shapesEl.loadRenderData();
+const rowIndexByFeatureIndex = await loadFeatureRowIndexByFeatureIndex({
+  spatialData: sdata,
+  kind: 'shapes',
+  key: 'cell_shapes',
+  featureIds: renderData.featureIds,
+});
 ```
+
+Tables load through **`anndata.js`** on **`zarrita`** stores. Association helpers
+today use targeted obs-column loaders; the roadmap is a unified AnnData.js /
+zarrita **`DataLoader`** surface for richer `obs` / `var` / `X` / `obsm` access
+(see [MDV integration — tables](../vis/mdv-integration#tables-anndatajs-and-zarrita-dataloader)).
 
 ## Design Philosophy
 
@@ -75,6 +90,13 @@ The main entry points for application code are:
 | Element classes | `ImageElement`, `ShapesElement`, `LabelsElement`, `PointsElement`, `TableElement` |
 | `Result` utilities | `Ok`, `Err`, `isOk`, `isErr`, `unwrap`, `unwrapOr` |
 | `getTransformMatrix()` | Convenience function for getting Matrix4 transforms |
+| Table association helpers | `loadAssociatedTableFeatureRows`, `loadFeatureRowIndexByFeatureIndex`, `createFeatureTableAlignment` |
+
+The table association helpers follow Python `spatialdata` semantics: regions
+are matched through `region`, `region_key`, and `instance_key`, with feature ids
+coming from SpatialElement instances such as `GeoDataFrame.index` for shapes.
+Visual encoders in `@spatialdata/layers` consume the row alignment produced
+here rather than reimplementing association rules.
 
 For internal architecture details, module organization, and APIs intended for contributors or advanced tooling, see [Internals & Architecture](./internals).
 
@@ -101,4 +123,3 @@ These have coordinate transformations and can be rendered in shared coordinate s
 - [Transformations](./transformations) - Understanding coordinate systems and transforms
 - [Error Handling](./error-handling) - Using the Result type pattern
 - [Internals](./internals) - Architecture and internal APIs (for contributors)
-

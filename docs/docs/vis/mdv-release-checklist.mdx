@@ -74,9 +74,21 @@ Over time, patterns that repeat in MDV (shared shape styling, common overlays) m
 
 For v1, shapes must support the same *effect* as MDV table-row colouring/filtering, without MDV re-implementing SpatialData loading:
 
-- [ ] `ShapesLayerConfig` accepts MDV-driven per-feature style (accessors or equivalent state on the config object MDV updates when selection changes)
-- [ ] Feature index / `instance_key` alignment with the associated table is stable for picking and styling (same join used for tooltips)
-- [ ] Document that MDV updates `layers[layerId]` when datastore selection or colour columns change
+- [x] `ShapesLayerConfig` accepts MDV-driven per-feature style (`featureState`, `fillColorByColumn` on the config object MDV updates when selection changes)
+- [x] Feature index / `instance_key` alignment with the associated table is stable for picking and styling (core `FeatureTableAlignment` + layers encoders)
+- [x] Document that MDV updates `layers[layerId]` when datastore selection or colour columns change ([Headless viewer guide](./headless-viewer), [Feature table associations](./feature-table-associations))
+
+Current local state:
+
+- `@spatialdata/core` exposes `FeatureTableAlignment` /
+  `createFeatureTableAlignment()` as the shared row resolver shape, following
+  Python `spatialdata` `region_key` / `instance_key` semantics.
+- `@spatialdata/layers` owns `buildShapeFillColorByFeatureId()` for converting
+  a resolved `rowIndexByFeatureIndex` plus a table column into per-feature
+  colours.
+- Remaining release risk: tooltip and pick-event row resolution should finish
+  converging on the shared core resolver shape before treating the association
+  contract as stable.
 
 Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; not required if config-driven styling is sufficient.
 
@@ -95,25 +107,25 @@ Practical checks for this branch:
 
 ### 1) API and export sanity
 
-- [ ] `@spatialdata/vis` exports `SpatialCanvasViewer` as public API.
-- [ ] Viewer helper exports are public and documented:
+- [x] `@spatialdata/vis` exports `SpatialCanvasViewer` as public API.
+- [x] Viewer helper exports are public and documented:
   - `useSpatialCanvasRenderer`
   - `composeSpatialDeckLayers`
   - `shouldAutoFitSpatialView`
   - `shouldRenderInternalTooltip`
-- [ ] `SpatialViewer` supports passthrough `deckProps` safely.
-- [ ] No MDV integration requires importing from `packages/vis/src/...` internals.
+- [x] `SpatialViewer` supports passthrough `deckProps` safely.
+- [x] No MDV integration requires importing from `packages/vis/src/...` internals (public entry only).
 
 ### 2) Headless behavior parity checks
 
-- [ ] `SpatialCanvasViewer` renders with externally controlled:
+- [x] `SpatialCanvasViewer` renders with externally controlled:
   - `coordinateSystem`
   - `layers`
   - `layerOrder`
   - `viewState`
-- [ ] It composes caller deck layers above SpatialData-rendered layers.
-- [ ] It allows MDV-owned tooltip flow (internal tooltip disabled or overridden).
-- [ ] It supports MDV-owned controller settings through `deckProps`.
+- [x] It composes caller deck layers above SpatialData-rendered layers.
+- [x] It allows MDV-owned tooltip flow (`renderTooltip={false}`, `onShapeHover`).
+- [x] It supports MDV-owned controller settings through `deckProps`.
 
 ### 3) MDV touchpoint checks
 
@@ -132,12 +144,13 @@ Practical checks for this branch:
 ### 5) Non-goals (explicit)
 
 - [ ] No attempt to replace Viv in this release.
+- [ ] No 3D rendering (orbit views, volume rendering, pitch/bearing navigation) in this release — 2D Cartesian only.
 - [ ] No in-repo implementation of broad GIS support in this release.
 - [ ] No hard coupling of `core` API to deck-specific loaders for this release.
 
-## Viv extensions and near-term Viv upgrade
+## Viv extensions and Viv `0.21.0` stack
 
-With Viv PR [#924](https://github.com/hms-dbmi/viv/pull/924) merged in `@hms-dbmi/viv@0.21.0` (deck.gl `9.2.9`, uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts), we should treat extension compatibility as a release gate when adopting that stack.
+This repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9` (Viv PR [#924](https://github.com/hms-dbmi/viv/pull/924): uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts). MDV's matching Viv/deck upgrade is **almost ready to merge** — treat version alignment as done; the remaining gate is extension behaviour under the shared stack.
 
 ### Why this matters now
 
@@ -147,6 +160,7 @@ With Viv PR [#924](https://github.com/hms-dbmi/viv/pull/924) merged in `@hms-dbm
 
 ### Branch checklist for Viv-upgrade readiness
 
+- [x] Align Viv `0.21.0` / deck.gl `9.2.9` in this repo and MDV (MDV merge imminent).
 - [ ] Audit `@spatialdata/vis` Viv paths for extension prop preservation:
   - `packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`
   - ensure layer cloning/composition does not drop non-enumerable extension/default props.
@@ -201,4 +215,3 @@ Design constraints to decide before building:
 - Whether edits target **Zarr/SpatialData on disk**, **in-memory session state**, or **MDV’s own project files**.
 - How editable layers share **picking ids** and **coordinate systems** with read-only SpatialData layers.
 - Whether Vitessce/MDV both need the same editable-layer API or app-specific extensions remain sufficient.
-

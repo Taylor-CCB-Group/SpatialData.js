@@ -8,5 +8,8 @@
     "editor.defaultFormatter": "ms-python.black-formatter",
     "editor.formatOnSave": true
   },
-  "python.analysis.extraPaths": ["${workspaceFolder}/python"]
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/python"
+  ],
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

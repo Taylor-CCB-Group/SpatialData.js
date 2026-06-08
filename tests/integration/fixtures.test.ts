@@ -9,6 +9,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fixtureServerOrigin } from '../../scripts/fixture-server-port.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -129,7 +130,7 @@ describe('Integration Tests - HTTP smoke test', () => {
 
   beforeAll(() => {
     ensureFixtures(version);
-    fixtureUrl = `http://localhost:8080/v${version}/blobs.zarr`;
+    fixtureUrl = `${fixtureServerOrigin('localhost')}/v${version}/blobs.zarr`;
   });
 
   it('should still load a spatialdata store over HTTP', async () => {

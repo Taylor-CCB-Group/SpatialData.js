@@ -12,31 +12,162 @@ The approach taken to the design is to follow the structure of the original libr
 
 There are several packages that aim to facilitate the use and development of this functionality:
 
+## Package map
+
+| Package | Role | React? | npm status |
+|---------|------|--------|------------|
+| `@spatialdata/core` | Load SpatialData Zarr stores; elements, transforms, table association | No | Not published yet |
+| `@spatialdata/react` | Thin hooks around core (`useSpatialData`, provider) | Yes | Not published yet |
+| `@spatialdata/layers` | deck.gl layers, shape/point renderers, versioned layer props | No | Not published yet |
+| `@spatialdata/avivatorish` | Viv loaders, channel stats, image Zustand stores | No | Not published yet |
+| `@spatialdata/vis` | `SpatialCanvas` UI + headless `SpatialCanvasViewer` | Yes | Not published yet; MDV-targeted prerelease in progress |
+
+Nothing is on npm yet. Clone the monorepo or `pnpm pack` workspace packages for local integration (see [Headless viewer guide](./vis/headless-viewer)).
+
 ## `@spatialdata/core`
 
-This is a vanilla-JS library that provides a reasonably lightweight, clean and efficient way of loading data from SpatialData stores, reflecting the functionality of the Python library.
+Vanilla-JS library for loading SpatialData Zarr stores. Mirrors the Python
+`spatialdata` API where practical: elements, coordinate systems, lazy data
+loads, and table–feature association (`region` / `region_key` / `instance_key`).
 
-See the [Core Package documentation](./core/overview) for detailed API documentation, including:
-- [Element Classes](./core/elements) - Working with images, shapes, labels, points, and tables
-- [Transformations](./core/transformations) - Coordinate systems and spatial transforms
-- [Error Handling](./core/error-handling) - The Result type pattern
-- [Internals](./core/internals) - Architecture and internal APIs (for contributors)
+Built on **`zarrita`** for Zarr I/O and **`anndata.js`** for AnnData-backed
+tables. Table obs-column helpers used today (`loadObsColumns`, association
+resolvers) sit on a direct loader path; the roadmap is a coherent
+**`TableElement` → AnnData.js / zarrita `DataLoader`** surface for `obs`,
+`var`, `X`, `obsm`, and related AnnData views without every integrator calling
+`getAnnDataJS()` directly.
 
+See [Core Package documentation](./core/overview):
+- [Element Classes](./core/elements) — images, shapes, labels, points, tables
+- [Transformations](./core/transformations) — coordinate systems and spatial transforms
+- [Error Handling](./core/error-handling) — the `Result` type pattern
+- [Internals](./core/internals) — architecture (for contributors)
+
+### Core-only example
+
+```ts
+import {
+  readZarr,
+  createFeatureTableAlignment,
+  loadFeatureRowIndexByFeatureIndex,
+} from '@spatialdata/core';
+
+const sdata = await readZarr('https://example.com/data.zarr');
+
+// Load shape geometry + stable feature ids (async per element)
+const shapesEl = sdata.shapes.cell_shapes;
+const renderData = await shapesEl.loadRenderData();
+
+// Join shapes to an associated AnnData table row index
+const rowIndexByFeatureIndex = await loadFeatureRowIndexByFeatureIndex({
+  spatialData: sdata,
+  kind: 'shapes',
+  key: 'cell_shapes',
+  featureIds: renderData.featureIds,
+});
+const alignment = createFeatureTableAlignment({ rowIndexByFeatureIndex });
+
+// alignment.resolveRowIndex({ featureId, featureIndex }) → table row or undefined
+```
+
+## `@spatialdata/layers`
+
+**deck.gl–native, React-free** rendering package. This is the layer between
+`core` data and any viewer (custom `DeckGL`, MDV, Vitessce, or `@spatialdata/vis`).
+
+What it owns today:
+
+- **`createShapesDeckLayer`** / **`buildShapesPrebuiltData`** — polygon, circle, and GeoArrow-table shape paths with feature-state styling (hide, fade, per-id colours)
+- **`buildShapeFillColorByFeatureId`** — table column → per-feature colours (consumes core row alignment; does not resolve associations itself)
+- **`SpatialLayer`** + **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — versioned, JSON-serializable composite-layer contract (image/points sublayers still maturing)
+- Pick/tooltip helpers keyed by stable **`featureId`**
+
+`@spatialdata/vis` calls into `@spatialdata/layers` for shapes; MDV can drive
+the same contracts by updating layer config / feature state without importing vis
+internals.
+
+See [Layers package overview](./layers/overview).
+
+### React-agnostic deck example
+
+```ts
+import { createShapesDeckLayer, buildShapesPrebuiltData } from '@spatialdata/layers';
+import { Deck } from '@deck.gl/core';
+
+// renderData from core (see above)
+const prebuilt = buildShapesPrebuiltData(renderData);
+const shapesLayer = createShapesDeckLayer(
+  renderData,
+  {
+    kind: 'shapes',
+    elementKey: 'cell_shapes',
+    visible: true,
+    defaultFillColor: [70, 130, 180, 200],
+    featureState: { hiddenFeatureIds: ['42'] },
+  },
+  { id: 'my-shapes', prebuilt }
+);
+
+const deck = new Deck({
+  canvas: document.getElementById('deck-canvas'),
+  initialViewState: { longitude: 0, latitude: 0, zoom: 1 },
+  layers: shapesLayer ? [shapesLayer] : [],
+});
+```
 
 ## `@spatialdata/react`
 
-React hooks for SpatialData. This package should have a minimal set of dependencies, such that it should be easy to integrate into other React applications. It is mostly focused on providing react-idiomatic ways of accessing the data itself, with appropriate abstractions around the core vanilla API, managing the `async` nature of fetching data etc.
-
+Minimal React hooks for SpatialData: `SpatialDataProvider` + `useSpatialData`
+wrap `readZarr` and expose `{ spatialData, loading, error }`. No deck/Viv
+dependencies — use with `@spatialdata/vis` or your own renderer.
 
 ## `@spatialdata/vis`
 
-High-level React-components and deck.gl layers for visualising SpatialData. This package is explicitly less stable and more experimental than the related `core` and `react` packages - the dependency on the `viv`/`deck.gl`/`luma.gl` stack means that installing it into an app (particularly one that already uses anything from this ecosystem) entails a certain amount of care around potential conflicts or breaking changes between versions.
+React components and the SpatialCanvas stack (Viv images + deck vectors).
+**2D only today** — orthographic pan/zoom via Viv `DetailView`; no 3D orbit or volume rendering.
 
-It is hoped that it will be robust and of a high quality, but especially at the early stage of development, the goal is not to have a lean bundle size, guarantees of API stability between releases, etc.
+**Two entry modes:**
 
-It is used to provide working examples for displaying in the `docs` site, as well as a sample app primarily for prototyping while developing features.
+1. **Batteries included** — `SpatialCanvas` with coordinate-system picker, layer list, properties panels, tooltips.
+2. **Headless / controlled** — `SpatialCanvasViewer` or `useSpatialCanvasRenderer`: same render path, **your** state for `layers`, `layerOrder`, `viewState`, plus optional `deckLayers` for app overlays.
 
-- [SpatialCanvas + images — status and roadmap](./vis/spatial-canvas-status) — what works today, known gaps, and planned work
-- [Visualization package overview](./vis/overview) — packages topology and direction (`vis`, `layers`, `avivatorish`)
-- [Layers package overview](./layers/overview) — `SpatialLayer`, versioned `SpatialLayerProps`, migrations
-- [MDV integration notes](./vis/mdv-integration) — how this repo aligns with MDV over time
+The vis package is more experimental than `core`/`layers` because of the
+Viv/deck/luma dependency stack. The near-term goal is an MDV-consumable
+prerelease with headless embedding first; API stability guarantees come after
+that smoke test.
+
+- [Headless viewer guide](./vis/headless-viewer) — practical guide for controlled / MDV-style embedding
+- [SpatialCanvas status and roadmap](./vis/spatial-canvas-status) — what works, known gaps
+- [Visualization overview](./vis/overview) — package topology (`vis`, `layers`, `avivatorish`)
+- [MDV integration](./vis/mdv-integration) — phased MDV/Vitessce alignment
+- [MDV release checklist](./vis/mdv-release-checklist) — branch shipping criteria
+
+### Headless vis example
+
+```tsx
+import { SpatialCanvasViewer, type LayerConfig } from '@spatialdata/vis';
+
+<SpatialCanvasViewer
+  spatialData={spatialData}
+  coordinateSystem="global"
+  layers={layers}
+  layerOrder={['image', 'shapes']}
+  viewState={viewState}
+  onViewStateChange={setViewState}
+  deckLayers={myMdvOverlays}
+  renderTooltip={false}
+  onShapeHover={handleShapeHover}
+/>
+```
+
+### Full UI example
+
+```tsx
+import { SpatialCanvas } from '@spatialdata/vis';
+
+<SpatialCanvas spatialData={spatialData} />
+```
+
+`SpatialCanvas` manages its own zustand store (layer visibility, order, channel
+UI). Use it for demos and exploration; MDV and other hosts should prefer
+`SpatialCanvasViewer` with externally owned state.

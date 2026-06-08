@@ -2,7 +2,7 @@
   "name": "spatialdata-monorepo",
   "version": "0.0.1",
   "private": true,
-  "description": "A library for interfacing with SpatialData stores in TS/JS",
+  "description": "A library for interfacing with and visualizing SpatialData stores in TS/JS",
   "license": "MIT",
   "repository": {
     "type": "git",

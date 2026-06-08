@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
 import { ATTRS_KEY } from '@spatialdata/zarrextra';
+import type { ConsolidatedStore } from '@spatialdata/zarrextra';
+import { describe, expect, it } from 'vitest';
 import { getTableKeys } from '../src/models/index.js';
 import { SpatialData } from '../src/store/index.js';
-import { loadAssociatedTableFeatureRows } from '../src/tableAssociations.js';
+import {
+  createFeatureTableAlignment,
+  loadAssociatedTableFeatureRows,
+} from '../src/tableAssociations.js';
 
 function createMockSpatialData() {
   const rootStore = {
@@ -62,7 +66,10 @@ function createMockSpatialData() {
     zarritaStore: {},
   };
 
-  return new SpatialData('https://example.com/mock.zarr', rootStore as any, ['shapes', 'tables']);
+  return new SpatialData('https://example.com/mock.zarr', rootStore as ConsolidatedStore, [
+    'shapes',
+    'tables',
+  ]);
 }
 
 describe('getTableKeys', () => {
@@ -131,7 +138,11 @@ describe('SpatialData table associations', () => {
 describe('loadAssociatedTableFeatureRows', () => {
   it('maps cell_circles features through a shared table tagged with region cells', async () => {
     const sdata = createMockSpatialData();
-    const [, table] = sdata.getAssociatedTable('shapes', 'cell_circles')!;
+    const associated = sdata.getAssociatedTable('shapes', 'cell_circles');
+    if (!associated) {
+      throw new Error('Expected mock cell_circles association');
+    }
+    const [, table] = associated;
     table.loadObsIndex = async () => ['48022', '48023'];
     table.loadObsColumns = async () => [
       ['cells', 'cells'],
@@ -157,5 +168,45 @@ describe('loadAssociatedTableFeatureRows', () => {
     });
     expect(rows.rowIndexByFeatureId?.get('48022')).toBe(0);
     expect(rows.extraColumns?.[0]?.[0]).toBe('10.5');
+  });
+});
+
+describe('createFeatureTableAlignment', () => {
+  it('resolves rows from precomputed feature-index alignment', () => {
+    const alignment = createFeatureTableAlignment({
+      rowIndexByFeatureIndex: new Int32Array([1, 0, -1]),
+    });
+
+    expect(alignment.resolveRowIndex({ featureId: 'cell-a', featureIndex: 0 })).toBe(1);
+    expect(alignment.resolveRowIndex({ featureId: 'cell-b', featureIndex: 1 })).toBe(0);
+    expect(alignment.resolveRowIndex({ featureId: 'missing', featureIndex: 2 })).toBeUndefined();
+  });
+
+  it('uses feature-id alignment as a compatibility fallback only when index alignment is absent', () => {
+    const alignment = createFeatureTableAlignment({
+      rowIndexByFeatureIndex: new Int32Array([-1, -1]),
+      rowIndexByFeatureId: new Map([
+        ['circle-a', 1],
+        ['circle-b', 0],
+      ]),
+    });
+
+    expect(alignment.resolveRowIndex({ featureId: 'circle-a', featureIndex: 0 })).toBe(1);
+    expect(alignment.resolveRowIndex({ featureId: 'circle-b', featureIndex: 1 })).toBe(0);
+  });
+
+  it('does not let colliding numeric feature ids override resolved feature-index alignment', () => {
+    const alignment = createFeatureTableAlignment({
+      rowIndexByFeatureIndex: new Int32Array([0, 1, 2]),
+      rowIndexByFeatureId: new Map([
+        ['1', 0],
+        ['5', 1],
+        ['99', 2],
+      ]),
+    });
+
+    expect(alignment.resolveRowIndex({ featureId: '0', featureIndex: 0 })).toBe(0);
+    expect(alignment.resolveRowIndex({ featureId: '1', featureIndex: 1 })).toBe(1);
+    expect(alignment.resolveRowIndex({ featureId: '2', featureIndex: 2 })).toBe(2);
   });
 });

@@ -40,7 +40,7 @@ Pass the store URL directly:
 
 ```js
 const { readZarr } = await import('./packages/core/dist/index.js');
-const sdata = await readZarr('http://localhost:8080/v0.7.2/blobs.zarr');
+const sdata = await readZarr('http://localhost:38473/v0.7.2/blobs.zarr');
 
 sdata.url;
 Object.keys(sdata.images ?? {});
