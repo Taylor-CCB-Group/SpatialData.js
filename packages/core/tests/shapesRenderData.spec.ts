@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ATTRS_KEY } from '@spatialdata/zarrextra';
+import { ATTRS_KEY } from 'zarrextra';
 import { SpatialData } from '../src/store/index.js';
 import { loadFeatureRowIndexByFeatureIndex } from '../src/tableAssociations.js';
 

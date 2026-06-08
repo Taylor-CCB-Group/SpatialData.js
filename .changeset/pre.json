@@ -1,0 +1,13 @@
+{
+  "mode": "pre",
+  "tag": "next",
+  "initialVersions": {
+    "zarrextra": "0.0.1",
+    "@spatialdata/core": "0.0.1",
+    "@spatialdata/react": "0.0.1",
+    "@spatialdata/layers": "0.0.1",
+    "@spatialdata/avivatorish": "0.0.1",
+    "@spatialdata/vis": "0.0.1"
+  },
+  "changesets": []
+}

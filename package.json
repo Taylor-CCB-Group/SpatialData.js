@@ -27,17 +27,22 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "dev": "pnpm -r --parallel dev",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish --tag next",
     "docs:dev": "pnpm --filter docs dev",
     "docs:build": "pnpm --filter docs build"
   },
   "devDependencies": {
-    "@zarrita/storage": "catalog:",
     "@biomejs/biome": "^1.9.4",
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
+    "@vitejs/plugin-react": "catalog:",
+    "@zarrita/storage": "catalog:",
+    "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plugin-dts": "catalog:",
-    "@vitejs/plugin-react": "catalog:",
-    "vitest": "catalog:",
-    "typescript": "catalog:"
+    "vitest": "catalog:"
   },
   "engines": {
     "node": ">=20.19",

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "Taylor-CCB-Group/SpatialData.js"
+    }
+  ],
+  "commit": false,
+  "fixed": [
+    [
+      "@spatialdata/core",
+      "@spatialdata/react",
+      "@spatialdata/layers",
+      "@spatialdata/avivatorish",
+      "@spatialdata/vis"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  }
+}

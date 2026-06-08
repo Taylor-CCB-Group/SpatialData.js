@@ -8,7 +8,7 @@ import {
   type ConsolidatedStore,
   openExtraConsolidated,
   serializeZarrTree,
-} from '@spatialdata/zarrextra';
+} from 'zarrextra';
 import {
   getTableKeys,
   loadElements,

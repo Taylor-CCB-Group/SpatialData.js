@@ -10,7 +10,7 @@ export function createWorkspaceSourceAliases(rootDir: string) {
     '@spatialdata/layers': path.resolve(rootDir, 'packages/layers/src/index.ts'),
     '@spatialdata/react': path.resolve(rootDir, 'packages/react/src/index.ts'),
     '@spatialdata/vis': path.resolve(rootDir, 'packages/vis/src/index.ts'),
-    '@spatialdata/zarrextra': path.resolve(rootDir, 'packages/zarrextra/src/index.ts'),
+    zarrextra: path.resolve(rootDir, 'packages/zarrextra/src/index.ts'),
   };
 }
 

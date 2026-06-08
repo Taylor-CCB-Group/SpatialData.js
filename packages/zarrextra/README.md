@@ -1,4 +1,4 @@
-# @spatialdata/zarrextra
+# zarrextra
 
 Extra utilities for working with zarr stores using zarrita.
 
@@ -15,13 +15,13 @@ This package includes a `Result<T, E>` type inspired by Rust for explicit error 
 ## Installation
 
 ```bash
-npm install @spatialdata/zarrextra
+npm install zarrextra
 ```
 
 ## Usage
 
 ```typescript
-import { openExtraConsolidated } from '@spatialdata/zarrextra';
+import { openExtraConsolidated } from 'zarrextra';
 import * as zarr from 'zarrita';
 
 const result = await openExtraConsolidated('https://example.com/store.zarr');

@@ -6,9 +6,11 @@ A library for interfacing with SpatialData stores in TypeScript/JavaScript.
 
 This monorepo contains:
 
-- **[@spatialdata/zarrextra](./packages/zarrextra)** - Utility layer on top of `zarrita` for higher-level representations of metadata
+- **[zarrextra](./packages/zarrextra)** - Lower-level utility layer on top of `zarrita` for higher-level metadata representations
 - **[@spatialdata/core](./packages/core)** - Core library for reading and validating SpatialData stores
 - **[@spatialdata/react](./packages/react)** - React hooks for providing SpatialData context, with few extra dependencies
+- **[@spatialdata/layers](./packages/layers)** - deck.gl layers and versioned rendering props
+- **[@spatialdata/avivatorish](./packages/avivatorish)** - Viv loaders, channel stats, and image viewer state helpers
 - **[@spatialdata/vis](./packages/vis)** - High-level react components for visualising data
 - **[docs](./docs)** - Documentation site built with Docusaurus
 

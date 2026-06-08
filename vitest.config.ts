@@ -28,7 +28,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@spatialdata/core': resolve(__dirname, 'packages/core/src'),
-      '@spatialdata/zarrextra': resolve(__dirname, 'packages/zarrextra/src'),
+      zarrextra: resolve(__dirname, 'packages/zarrextra/src'),
     },
   },
 });

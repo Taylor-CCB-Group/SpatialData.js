@@ -1,5 +1,5 @@
-import { ATTRS_KEY } from '@spatialdata/zarrextra';
-import type { ConsolidatedStore } from '@spatialdata/zarrextra';
+import { ATTRS_KEY } from 'zarrextra';
+import type { ConsolidatedStore } from 'zarrextra';
 import { describe, expect, it } from 'vitest';
 import { getTableKeys } from '../src/models/index.js';
 import { SpatialData } from '../src/store/index.js';
