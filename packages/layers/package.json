@@ -1,6 +1,6 @@
 {
   "name": "@spatialdata/layers",
-  "version": "0.1.0-next.0",
+  "version": "0.1.0",
   "description": "deck.gl CompositeLayer and versioned SpatialLayerProps for SpatialData rendering",
   "type": "module",
   "module": "./dist/index.js",
