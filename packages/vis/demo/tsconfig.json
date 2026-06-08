@@ -27,7 +27,7 @@
       "@spatialdata/layers": ["../../layers/src/index.ts"],
       "@spatialdata/react": ["../../react/src/index.ts"],
       "@spatialdata/vis": ["../src/index.ts"],
-      "@spatialdata/zarrextra": ["../../zarrextra/src/index.ts"]
+      "zarrextra": ["../../zarrextra/src/index.ts"]
     }
   },
   "include": ["src"]

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ATTRS_KEY } from '@spatialdata/zarrextra';
-import type { ConsolidatedStore } from '@spatialdata/zarrextra';
+import { ATTRS_KEY } from 'zarrextra';
+import type { ConsolidatedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
 import { SpatialData } from '../src/store/index.js';
 

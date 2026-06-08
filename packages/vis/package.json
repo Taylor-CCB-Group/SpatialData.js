@@ -12,6 +12,9 @@
     }
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "vite build && tsc --noEmit",
     "dev": "node scripts/dev.mjs",

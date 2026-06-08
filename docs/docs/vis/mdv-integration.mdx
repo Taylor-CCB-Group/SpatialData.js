@@ -25,7 +25,7 @@ The near-term target is not a full replacement for every MDV spatial feature. Th
 
 **Remaining MDV blockers** are packaging and polish, not the absence of a headless component:
 
-- packages are not yet published to npm (pack / link / prerelease for MDV smoke tests)
+- publish and smoke-test the npm `next` prerelease in MDV
 - tooltip/pick row resolution should finish converging on the shared core resolver
 - points layer is minimal scatter only (v1.1 for MDV parity)
 
@@ -62,6 +62,7 @@ Acceptance signal: demos should import the same public API MDV uses (`SpatialCan
   - `@spatialdata/layers`
   - `@spatialdata/vis`
   - optional: `@spatialdata/avivatorish`
+  - lower-level dependency: `zarrextra`
 - [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
 - [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
 - [x] Upgrade to `@hms-dbmi/viv@0.21.0` / deck.gl `9.2.9` in this repo (Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924): uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts).

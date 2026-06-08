@@ -10,20 +10,22 @@ The bundle should be tree-shakeable and avoid loading heavy dependencies before 
 
 ## Installation
 
-:::info you can't actually install this from npm right now
+:::info alpha prerelease
 
-As of writing, this isn't actually published to npm yet and when it is it may not be under this exact name. This documentation is evolving with the implementation, anticipating the expected usage.
+The first npm line is an MDV-targeted alpha prerelease. Install from the
+`next` tag until the public API is declared stable.
 
 You're more than welcome to clone the git repo and do what you will with it.
 
-Note that as of now it only works with outputs from `spatialdata ~=0.5.0` / `zarr v2` (this should change reasonably soon).
+Known risks and release-readiness notes are tracked in the
+[MDV release checklist](../vis/mdv-release-checklist).
 
 :::
 
 ```bash
-npm install @spatialdata/core
+npm install @spatialdata/core@next
 # or
-pnpm add @spatialdata/core
+pnpm add @spatialdata/core@next
 ```
 
 ## Quick Start

@@ -224,7 +224,13 @@ Suggested experiments (matching the [MDV integration roadmap](./mdv-integration)
 4. **Controlled view** — save/restore `viewState` in `sessionStorage`.
 5. **External tooltips** — `renderTooltip={false}` + log `onShapeHover` payloads.
 
-Pack for MDV smoke tests:
+Install the prerelease for MDV smoke tests:
+
+```bash
+pnpm add @spatialdata/vis@next
+```
+
+Pack local builds when testing an unpublished branch:
 
 ```bash
 pnpm build
@@ -244,7 +250,7 @@ Before treating the API as stable for MDV:
 - [x] `demo/headless` route with local `blobs.zarr` fixture
 - [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)
 - [ ] Tooltip/pick row resolution fully on shared `FeatureTableAlignment` (in progress)
-- [ ] npm prerelease published and smoke-tested in MDV
+- [ ] npm `next` prerelease published and smoke-tested in MDV
 
 See also [MDV release checklist](./mdv-release-checklist) and
 [Feature table associations](./feature-table-associations).

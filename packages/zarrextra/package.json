@@ -1,5 +1,5 @@
 {
-  "name": "@spatialdata/zarrextra",
+  "name": "zarrextra",
   "version": "0.0.1",
   "description": "Extra utilities for working with zarr stores using zarrita",
   "type": "module",
@@ -12,6 +12,9 @@
     }
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",

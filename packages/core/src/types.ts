@@ -14,7 +14,7 @@
 
 import type * as ad from 'anndata.js';
 import type * as zarr from 'zarrita';
-import type { ConsolidatedStore } from '@spatialdata/zarrextra';
+import type { ConsolidatedStore } from 'zarrextra';
 
 /**
  * Element name constants and types
@@ -76,13 +76,13 @@ export type ZGroup = zarr.Group<Store>;
 
 // Re-export zarr-related types from zarrextra for convenience
 // These are used in SDataProps and models, so we keep them accessible from core/types
-export type { ZarrTree, LazyZarrArray, ZAttrsAny } from '@spatialdata/zarrextra';
-export { ATTRS_KEY, ZARRAY_KEY } from '@spatialdata/zarrextra';
+export type { ZarrTree, LazyZarrArray, ZAttrsAny } from 'zarrextra';
+export { ATTRS_KEY, ZARRAY_KEY } from 'zarrextra';
 
 // Re-export Result type and utilities from zarrextra for convenience
 // Result is used throughout core for explicit error handling
-export type { Result } from '@spatialdata/zarrextra';
-export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from '@spatialdata/zarrextra';
+export type { Result } from 'zarrextra';
+export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from 'zarrextra';
 
 /**
  * Used internally when passing around properties of a spatialdata object to be used by the models/loaders.

@@ -1,5 +1,5 @@
 import { assert, describe, expect, it, vi } from 'vitest';
-import { ATTRS_KEY } from '@spatialdata/zarrextra';
+import { ATTRS_KEY } from 'zarrextra';
 import { SpatialData } from '../src/store/index.js';
 
 function createMockSpatialData() {

@@ -12,6 +12,9 @@
     }
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
     "dev": "vite build --watch",
@@ -20,7 +23,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@spatialdata/zarrextra": "workspace:*",
+    "zarrextra": "workspace:*",
     "@math.gl/core": "catalog:",
     "@zarrita/storage": "catalog:",
     "anndata.js": "catalog:",

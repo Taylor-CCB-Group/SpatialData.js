@@ -105,6 +105,21 @@ Practical checks for this branch:
 
 ## Release checklist (this branch)
 
+### 0) npm prerelease setup
+
+- [x] `zarrextra` is published outside the `@spatialdata/*` namespace.
+- [x] Changesets is configured with a fixed `@spatialdata/*` prerelease suite:
+  - `@spatialdata/core`
+  - `@spatialdata/react`
+  - `@spatialdata/layers`
+  - `@spatialdata/avivatorish`
+  - `@spatialdata/vis`
+- [x] `zarrextra` participates in the initial prerelease but can version independently in future releases.
+- [x] Release automation creates the Changesets version PR only; npm publishing is manual for now.
+- [x] No npm publish token is required in GitHub repository secrets.
+- [ ] Publish manually from a clean local checkout using `pnpm publish:next`.
+- [ ] `@spatialdata/vis@next` installs cleanly in MDV.
+
 ### 1) API and export sanity
 
 - [x] `@spatialdata/vis` exports `SpatialCanvasViewer` as public API.
@@ -138,7 +153,7 @@ Practical checks for this branch:
 
 - [ ] `pnpm -r --filter @spatialdata/vis test` passes.
 - [ ] package build succeeds for `@spatialdata/vis` and dependent workspace packages.
-- [ ] produce installable package(s) for MDV testing (pack or prerelease).
+- [ ] produce installable package(s) for MDV testing (npm `next` prerelease or packed tarballs).
 - [ ] smoke-test install in MDV workspace and verify viewer renders.
 
 ### 5) Non-goals (explicit)
@@ -147,6 +162,23 @@ Practical checks for this branch:
 - [ ] No 3D rendering (orbit views, volume rendering, pitch/bearing navigation) in this release — 2D Cartesian only.
 - [ ] No in-repo implementation of broad GIS support in this release.
 - [ ] No hard coupling of `core` API to deck-specific loaders for this release.
+
+## Known alpha risks
+
+Track these as explicit prerelease risks rather than blockers to the first MDV
+smoke package:
+
+- [#41](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/41) — very large shape/image inputs can exhaust browser memory; add resource estimates and guard rails before broad use.
+- [#33](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/33) — stale elements can appear after switching stores when element names overlap.
+- [#12](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/12) — parquet-wasm loading can fail in the vis dev server.
+- [#13](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/13) — image source changes can temporarily hit an invalid source and surface runtime errors.
+- [#24](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/24) — points parquet loading should fail gracefully when server responses are directory listings or otherwise misconfigured.
+
+Post-prerelease unless MDV needs them immediately:
+
+- [#11](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/11) — multipart parquet sources.
+- [#16](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/16) — 3D volumetric state/UI.
+- [#6](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/6) — local file selection.
 
 ## Viv extensions and Viv `0.21.0` stack
 

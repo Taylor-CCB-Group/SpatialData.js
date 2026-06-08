@@ -22,8 +22,8 @@
       "@spatialdata/layers/*": ["../layers/src/*"],
       "@spatialdata/react": ["../react/src/index.ts"],
       "@spatialdata/react/*": ["../react/src/*"],
-      "@spatialdata/zarrextra": ["../zarrextra/src/index.ts"],
-      "@spatialdata/zarrextra/*": ["../zarrextra/src/*"]
+      "zarrextra": ["../zarrextra/src/index.ts"],
+      "zarrextra/*": ["../zarrextra/src/*"]
     },
     "types": ["react", "react-dom"]
   },

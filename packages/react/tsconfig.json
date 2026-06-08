@@ -16,8 +16,8 @@
     "paths": {
       "@spatialdata/core": ["../core/src/index.ts"],
       "@spatialdata/core/*": ["../core/src/*"],
-      "@spatialdata/zarrextra": ["../zarrextra/src/index.ts"],
-      "@spatialdata/zarrextra/*": ["../zarrextra/src/*"]
+      "zarrextra": ["../zarrextra/src/index.ts"],
+      "zarrextra/*": ["../zarrextra/src/*"]
     },
     "types": ["react", "react-dom"]
   },
