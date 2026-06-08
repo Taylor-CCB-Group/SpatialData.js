@@ -1,6 +1,6 @@
 {
   "name": "@spatialdata/react",
-  "version": "0.0.1",
+  "version": "0.1.0-next.0",
   "description": "React hooks and components for SpatialData",
   "type": "module",
   "module": "./dist/index.js",
@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },
