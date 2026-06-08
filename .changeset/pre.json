@@ -7,7 +7,10 @@
     "@spatialdata/react": "0.0.1",
     "@spatialdata/layers": "0.0.1",
     "@spatialdata/avivatorish": "0.0.1",
-    "@spatialdata/vis": "0.0.1"
+    "@spatialdata/vis": "0.0.1",
+    "docs": "0.0.0"
   },
-  "changesets": []
+  "changesets": [
+    "mdv-prerelease"
+  ]
 }
