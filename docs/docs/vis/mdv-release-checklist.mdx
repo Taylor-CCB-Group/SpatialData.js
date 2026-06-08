@@ -115,8 +115,9 @@ Practical checks for this branch:
   - `@spatialdata/avivatorish`
   - `@spatialdata/vis`
 - [x] `zarrextra` participates in the initial prerelease but can version independently in future releases.
-- [x] Release automation publishes via npm dist-tag `next`.
-- [ ] `NPM_TOKEN` is configured in GitHub repository secrets before publishing.
+- [x] Release automation creates the Changesets version PR only; npm publishing is manual for now.
+- [x] No npm publish token is required in GitHub repository secrets.
+- [ ] Publish manually from a clean local checkout using `pnpm publish:next`.
 - [ ] `@spatialdata/vis@next` installs cleanly in MDV.
 
 ### 1) API and export sanity

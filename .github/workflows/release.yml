@@ -1,4 +1,4 @@
-name: Release
+name: Version Packages
 
 on:
   push:
@@ -34,12 +34,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Create release PR or publish prerelease
+      - name: Create version PR
         uses: changesets/action@v1
         with:
-          publish: pnpm release
+          version: pnpm version-packages
           title: Version packages
           commit: Version packages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

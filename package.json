@@ -29,7 +29,7 @@
     "dev": "pnpm -r --parallel dev",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "pnpm build && changeset publish --tag next",
+    "publish:next": "pnpm build && changeset publish --tag next",
     "docs:dev": "pnpm --filter docs dev",
     "docs:build": "pnpm --filter docs build"
   },
