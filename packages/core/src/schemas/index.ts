@@ -441,9 +441,9 @@ export type PointsAttrs = z.infer<typeof pointsAttrsSchema>;
  */
 export const tableAttrsSchema = z
   .looseObject({
-    instance_key: z.string().optional(),
-    region: z.union([z.string(), z.array(z.string())]).optional(),
-    region_key: z.string().optional(),
+    instance_key: z.string().optional().nullable(),
+    region: z.union([z.string(), z.array(z.string())]).optional().nullable(),
+    region_key: z.string().optional().nullable(),
     'spatialdata-encoding-type': z.literal('ngff:regions_table'),
   });
 
