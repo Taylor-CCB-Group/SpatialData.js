@@ -236,27 +236,6 @@ export type TableKeys = {
   instanceKey: string;
 };
 
-type TableKeysInput = TableAttrs | { attrs: TableAttrs };
-
-function getTableAttrs(input: TableKeysInput): TableAttrs {
-  const attrs = (input as { attrs?: TableAttrs }).attrs;
-  return attrs ?? (input as TableAttrs);
-}
-
-/**
- * Equivalent of SpatialData's Python-side `get_table_keys()`.
- * Returns normalized table association metadata, always exposing `region`
- * as an array for easier downstream matching.
- */
-export function getTableKeys(input: TableKeysInput): TableKeys {
-  const attrs = getTableAttrs(input);
-  return {
-    region: Array.isArray(attrs.region) ? attrs.region : [attrs.region],
-    regionKey: attrs.region_key,
-    instanceKey: attrs.instance_key,
-  };
-}
-
 // ============================================
 // Table Element (non-spatial)
 // ============================================
@@ -297,10 +276,27 @@ export class TableElement extends AbstractElement<'tables'> {
   }
 
   /**
-   * Return the normalized association keys for this table.
+   * Equivalent of SpatialData's Python-side `get_table_keys()`.
+   * Returns normalized table association metadata, always exposing `region`
+   * as an array for easier downstream matching.
+   *
+   * When the table has no region association metadata, `region` is an empty
+   * array and `regionKey` / `instanceKey` are empty strings (subject to revision).
    */
   getTableKeys(): TableKeys {
-    return getTableKeys(this);
+    const { region, region_key, instance_key } = this.attrs;
+    if (!region || !region_key || !instance_key) {
+      return {
+        region: [],
+        regionKey: '',
+        instanceKey: '',
+      };
+    }
+    return {
+      region: Array.isArray(region) ? region : [region],
+      regionKey: region_key,
+      instanceKey: instance_key,
+    };
   }
 
   /**
