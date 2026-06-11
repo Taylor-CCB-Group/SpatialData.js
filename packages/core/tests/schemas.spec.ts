@@ -287,6 +287,17 @@ describe('Schema Transformations', () => {
 
       expect(() => tableAttrsSchema.parse(attrs)).not.toThrow();
     });
+
+    it('should accept null association keys from real stores', () => {
+      const attrs = {
+        instance_key: null,
+        region: null,
+        region_key: null,
+        'spatialdata-encoding-type': 'ngff:regions_table',
+      };
+
+      expect(() => tableAttrsSchema.parse(attrs)).not.toThrow();
+    });
   });
 
   describe('spatialDataSchema', () => {

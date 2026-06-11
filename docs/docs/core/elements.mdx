@@ -185,11 +185,25 @@ const adata = await table.getAnnDataJS();
 const rowIds = await table.loadObsIndex();
 const regionColumns = await table.loadObsColumns(['region']);
 
-// Access region annotation metadata
+// Normalized association metadata (Python `get_table_keys()` equivalent)
+const { region, regionKey, instanceKey } = table.getTableKeys();
+
+// Find tables that annotate a spatial element
+const associated = sdata.getAssociatedTable('shapes', 'cell_boundaries');
+const [tableName, associatedTable] = associated ?? [];
+
+// Raw attrs are also available; association keys may be absent on some tables
 table.attrs.instance_key;   // Column name for feature IDs / instance IDs
 table.attrs.region;         // Element(s) this table annotates
 table.attrs.region_key;     // Column name linking to region
 ```
+
+`getTableKeys()` always returns normalized keys: `region` is a string array,
+and when association metadata is missing `region` is `[]` while
+`regionKey` / `instanceKey` are empty strings. Prefer this method over
+reading `table.attrs` directly when matching tables to spatial elements.
+`SpatialData.getAssociatedTables()` / `getAssociatedTable()` use the same
+normalization and ignore tables without association metadata.
 
 ### Experimental extension idea: equivalent region encodings
 
@@ -271,12 +285,17 @@ boundary rather than in the query layer.
 
 ```ts
 type TableAttrs = {
-  instance_key: string;
-  region: string | string[];
-  region_key: string;
+  instance_key?: string | null;
+  region?: string | string[] | null;
+  region_key?: string | null;
   'spatialdata-encoding-type': 'ngff:regions_table';
 };
 ```
+
+Association metadata is optional at the schema level: some tables only carry
+the `ngff:regions_table` encoding marker, and real stores may persist missing
+keys as JSON `null`. Use `getTableKeys()` to read the normalized association
+contract rather than assuming all three keys are present strings.
 
 ## Working with Coordinate Systems
 

@@ -92,11 +92,13 @@ The main entry points for application code are:
 | Element classes | `ImageElement`, `ShapesElement`, `LabelsElement`, `PointsElement`, `TableElement` |
 | `Result` utilities | `Ok`, `Err`, `isOk`, `isErr`, `unwrap`, `unwrapOr` |
 | `getTransformMatrix()` | Convenience function for getting Matrix4 transforms |
-| Table association helpers | `loadAssociatedTableFeatureRows`, `loadFeatureRowIndexByFeatureIndex`, `createFeatureTableAlignment` |
+| Table association helpers | `TableElement.getTableKeys()`, `SpatialData.getAssociatedTable(s)`, `loadAssociatedTableFeatureRows`, `loadFeatureRowIndexByFeatureIndex`, `createFeatureTableAlignment` |
 
 The table association helpers follow Python `spatialdata` semantics: regions
-are matched through `region`, `region_key`, and `instance_key`, with feature ids
-coming from SpatialElement instances such as `GeoDataFrame.index` for shapes.
+are matched through `region`, `region_key`, and `instance_key` (when present),
+with feature ids coming from SpatialElement instances such as
+`GeoDataFrame.index` for shapes. `getTableKeys()` normalizes the attrs contract
+and treats missing association metadata as "no region links".
 Visual encoders in `@spatialdata/layers` consume the row alignment produced
 here rather than reimplementing association rules.
 

@@ -290,10 +290,9 @@ export type NgffImage = z.infer<typeof imageSchema>;
  * - For shapes/points: `version` is the spatialdata format version (e.g., '0.1', '0.2') and IS used for format detection.
  */
 export const spatialDataAttrsSchema = z
-  .object({
+  .looseObject({
     version: z.string(),
-  })
-  .passthrough(); // allow extra fields we don't validate yet
+  }); // allow extra fields we don't validate yet
 
 export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
 
@@ -302,7 +301,7 @@ export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
  * Uses OME-NGFF 0.4 format with multiscales at the top level
  */
 const rasterAttrs_OME_04_Schema = z
-  .object({
+  .looseObject({
     multiscales: z
       .array(
         z.object({
@@ -322,17 +321,16 @@ const rasterAttrs_OME_04_Schema = z
       .min(1),
     omero: omeroSchema.optional(),
     spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  })
-  .passthrough();
+  });
 
 /**
  * Schema for raster element attrs in spatialdata 0.6.1+ format
  * Uses OME-NGFF 0.5 format with multiscales nested under 'ome' key
  */
 const rasterAttrs_OME_05_Schema = z
-  .object({
+  .looseObject({
     ome: z
-      .object({
+      .looseObject({
         multiscales: z
           .array(
             z.object({
@@ -351,11 +349,9 @@ const rasterAttrs_OME_05_Schema = z
           )
           .min(1),
         omero: omeroSchema.optional(),
-      })
-      .passthrough(),
+      }),
     spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  })
-  .passthrough();
+  });
 
 /**
  * Schema for raster element attrs (images & labels)
@@ -417,13 +413,12 @@ export type RasterAttrs = {
  * Transformations are at the top level with input/output coordinate system references.
  */
 export const shapesAttrsSchema = z
-  .object({
+  .looseObject({
     'encoding-type': z.string().optional(), // e.g., 'ngff:shapes'
     axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
     coordinateTransformations: coordinateTransformationSchema.optional(),
     spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  })
-  .passthrough();
+  });
 
 export type ShapesAttrs = z.infer<typeof shapesAttrsSchema>;
 
@@ -432,13 +427,12 @@ export type ShapesAttrs = z.infer<typeof shapesAttrsSchema>;
  * Transformations are at the top level with input/output coordinate system references.
  */
 export const pointsAttrsSchema = z
-  .object({
+  .looseObject({
     'encoding-type': z.string().optional(), // e.g., 'ngff:points'
     axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
     coordinateTransformations: coordinateTransformationSchema.optional(),
     spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  })
-  .passthrough();
+  });
 
 export type PointsAttrs = z.infer<typeof pointsAttrsSchema>;
 
@@ -446,13 +440,12 @@ export type PointsAttrs = z.infer<typeof pointsAttrsSchema>;
  * Schema for anndata table metadata
  */
 export const tableAttrsSchema = z
-  .object({
-    instance_key: z.string(),
-    region: z.union([z.string(), z.array(z.string())]),
-    region_key: z.string(),
+  .looseObject({
+    instance_key: z.string().optional().nullable(),
+    region: z.union([z.string(), z.array(z.string())]).optional().nullable(),
+    region_key: z.string().optional().nullable(),
     'spatialdata-encoding-type': z.literal('ngff:regions_table'),
-  })
-  .passthrough();
+  });
 
 export type TableAttrs = z.infer<typeof tableAttrsSchema>;
 

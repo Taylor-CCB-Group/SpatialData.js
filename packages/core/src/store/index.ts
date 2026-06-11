@@ -10,7 +10,6 @@ import {
   serializeZarrTree,
 } from 'zarrextra';
 import {
-  getTableKeys,
   loadElements,
   type ElementInstanceMap,
   type SpatialElement,
@@ -167,7 +166,7 @@ export class SpatialData {
     }
     const candidates = elementPathCandidates(kind, key);
     return Object.entries(this.tables).filter(([, table]) => {
-      const { region } = getTableKeys(table);
+      const { region } = table.getTableKeys();
       return region.some((regionName) => candidates.has(regionName));
     });
   }
