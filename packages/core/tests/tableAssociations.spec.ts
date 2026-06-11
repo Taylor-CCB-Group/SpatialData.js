@@ -1,7 +1,6 @@
 import { ATTRS_KEY } from 'zarrextra';
 import type { ConsolidatedStore } from 'zarrextra';
 import { describe, expect, it } from 'vitest';
-import { getTableKeys } from '../src/models/index.js';
 import { SpatialData } from '../src/store/index.js';
 import {
   createFeatureTableAlignment,
@@ -61,6 +60,19 @@ function createMockSpatialData() {
             'spatialdata-encoding-type': 'ngff:regions_table',
           },
         },
+        orphan_table: {
+          [ATTRS_KEY]: {
+            'spatialdata-encoding-type': 'ngff:regions_table',
+          },
+        },
+        null_keys_table: {
+          [ATTRS_KEY]: {
+            instance_key: null,
+            region: null,
+            region_key: null,
+            'spatialdata-encoding-type': 'ngff:regions_table',
+          },
+        },
       },
     },
     zarritaStore: {},
@@ -72,16 +84,10 @@ function createMockSpatialData() {
   ]);
 }
 
-describe('getTableKeys', () => {
+describe('TableElement.getTableKeys', () => {
   it('normalizes a single region to an array', () => {
-    expect(
-      getTableKeys({
-        instance_key: 'cell_id',
-        region: 'cells',
-        region_key: 'region',
-        'spatialdata-encoding-type': 'ngff:regions_table',
-      })
-    ).toEqual({
+    const sdata = createMockSpatialData();
+    expect(sdata.tables!.cells_table.getTableKeys()).toEqual({
       instanceKey: 'cell_id',
       region: ['cells'],
       regionKey: 'region',
@@ -89,17 +95,29 @@ describe('getTableKeys', () => {
   });
 
   it('preserves multiple regions', () => {
-    expect(
-      getTableKeys({
-        instance_key: 'cell_id',
-        region: ['cells', 'nuclei'],
-        region_key: 'region',
-        'spatialdata-encoding-type': 'ngff:regions_table',
-      })
-    ).toEqual({
+    const sdata = createMockSpatialData();
+    expect(sdata.tables!.multi_region_table.getTableKeys()).toEqual({
       instanceKey: 'cell_id',
       region: ['cells', 'nuclei'],
       regionKey: 'region',
+    });
+  });
+
+  it('returns empty keys when association metadata is absent', () => {
+    const sdata = createMockSpatialData();
+    expect(sdata.tables!.orphan_table.getTableKeys()).toEqual({
+      instanceKey: '',
+      region: [],
+      regionKey: '',
+    });
+  });
+
+  it('returns empty keys when association metadata is null', () => {
+    const sdata = createMockSpatialData();
+    expect(sdata.tables!.null_keys_table.getTableKeys()).toEqual({
+      instanceKey: '',
+      region: [],
+      regionKey: '',
     });
   });
 });
@@ -132,6 +150,13 @@ describe('SpatialData table associations', () => {
   it('returns an empty list when no tables annotate an element', () => {
     const sdata = createMockSpatialData();
     expect(sdata.getAssociatedTables('shapes', 'missing')).toEqual([]);
+  });
+
+  it('ignores tables without region association metadata', () => {
+    const sdata = createMockSpatialData();
+    expect(sdata.getAssociatedTables('shapes', 'cells').map(([name]) => name)).not.toContain(
+      'orphan_table'
+    );
   });
 });
 
