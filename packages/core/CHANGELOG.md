@@ -1,5 +1,11 @@
 # @spatialdata/core
 
+## 0.2.0
+
+### Minor Changes
+
+- [#47](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/47) [`faf55cf`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/faf55cf9988e0a82449f5dcd3b75c01aa6550587) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Fix schema to allow for tables without association to spatial elements.
+
 ## 0.1.0
 
 ### Minor Changes

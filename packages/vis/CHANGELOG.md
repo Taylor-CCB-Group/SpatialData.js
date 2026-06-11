@@ -1,5 +1,15 @@
 # @spatialdata/vis
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies [[`faf55cf`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/faf55cf9988e0a82449f5dcd3b75c01aa6550587), [`2e74bea`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/2e74beaf44598debe9692f6da38b6584c4c04fa5)]:
+  - @spatialdata/core@0.2.0
+  - @spatialdata/layers@0.2.0
+  - @spatialdata/react@0.2.0
+  - @spatialdata/avivatorish@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
