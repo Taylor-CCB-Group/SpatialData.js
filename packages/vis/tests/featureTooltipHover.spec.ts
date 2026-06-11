@@ -6,6 +6,9 @@ import {
   resolveHoverFeatureTooltip,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
 
+const LABELS_BITMASK_LAYER_ID =
+  'sub-layer-0-0-0-0,512,512,0-labels:mask-#spatial-view#-labels';
+
 describe('featureTooltipHover', () => {
   it('normalizes viv-suffixed deck layer ids', () => {
     expect(normalizeDeckLayerId('shapes:cells-#image-a#')).toBe('shapes:cells');
@@ -132,7 +135,7 @@ describe('featureTooltipHover', () => {
           layerManager: {
             getLayers: () => [
               { id: 'shapes:cells-#spatial-view#' },
-              { id: 'sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels' },
+              { id: LABELS_BITMASK_LAYER_ID },
             ],
           },
           pickMultipleObjects: () => [],
@@ -142,7 +145,7 @@ describe('featureTooltipHover', () => {
     ).toEqual([
       'labels:mask-#spatial-view#',
       'shapes:cells-#spatial-view#',
-      'sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels',
+      LABELS_BITMASK_LAYER_ID,
     ]);
   });
 
@@ -225,7 +228,7 @@ describe('featureTooltipHover', () => {
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels' },
+        layer: { id: LABELS_BITMASK_LAYER_ID },
         index: 0,
         object: { labelId: 7 },
       },
@@ -246,7 +249,7 @@ describe('featureTooltipHover', () => {
           layerManager: {
             getLayers: () => [
               { id: 'shapes:cells-#spatial-view#' },
-              { id: 'sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels' },
+              { id: LABELS_BITMASK_LAYER_ID },
             ],
           },
           pickMultipleObjects,
@@ -271,16 +274,13 @@ describe('featureTooltipHover', () => {
       items: [{ label: 'element', value: layerId }],
     }));
     const pickMultipleObjects = vi.fn(({ layerIds }: { layerIds?: string[] }) => {
-      if (
-        layerIds?.length === 1 &&
-        layerIds.includes('sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels')
-      ) {
+      if (layerIds?.length === 1 && layerIds.includes(LABELS_BITMASK_LAYER_ID)) {
         return [
           {
             picked: true,
             x: 10,
             y: 20,
-            layer: { id: 'sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels' },
+            layer: { id: LABELS_BITMASK_LAYER_ID },
             index: 0,
             object: { labelId: 7 },
           },
@@ -322,7 +322,7 @@ describe('featureTooltipHover', () => {
           layerManager: {
             getLayers: () => [
               { id: 'shapes:cells-#spatial-view#' },
-              { id: 'sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels' },
+              { id: LABELS_BITMASK_LAYER_ID },
             ],
           },
           pickMultipleObjects,
@@ -337,7 +337,7 @@ describe('featureTooltipHover', () => {
       y: 20,
       radius: 4,
       depth: 1,
-      layerIds: ['sub-layer-0,512,512,0-labels:mask-#spatial-view#-labels'],
+      layerIds: [LABELS_BITMASK_LAYER_ID],
     });
     expect(result?.sections).toHaveLength(2);
     expect(getFeatureTooltip).toHaveBeenCalledWith('shapes:cells', expect.any(Object));
