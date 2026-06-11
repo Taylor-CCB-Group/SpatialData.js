@@ -167,4 +167,39 @@ describe('LabelsLayer prop flow', () => {
     expect(tileLayer.props.customExtensionProp).toBe('forwarded');
     expect(bitmaskLayer.props.customExtensionProp).toBe('forwarded');
   });
+
+  it('keeps labels bitmask sublayer ids distinct across tile resolutions', () => {
+    const { loader } = makeLabelsLoader();
+    const tileLayer = renderLabelsLayer({ loader });
+    const baseTileProps = {
+      ...tileLayer.props,
+      id: 'labels:mask-viewport-labels',
+      data: {
+        data: [new Float32Array([0, 1, 2, 0])],
+        width: 2,
+        height: 2,
+      },
+      tile: {
+        bbox: { left: 0, top: 0, right: 512, bottom: 512 },
+        zoom: 0,
+      },
+    };
+
+    const highResolutionLayer = tileLayer.props.renderSubLayers({
+      ...baseTileProps,
+      tile: {
+        ...baseTileProps.tile,
+        index: { x: 0, y: 0, z: 0 },
+      },
+    }) as { id: string };
+    const lowResolutionLayer = tileLayer.props.renderSubLayers({
+      ...baseTileProps,
+      tile: {
+        ...baseTileProps.tile,
+        index: { x: 0, y: 0, z: -1 },
+      },
+    }) as { id: string };
+
+    expect(highResolutionLayer.id).not.toBe(lowResolutionLayer.id);
+  });
 });

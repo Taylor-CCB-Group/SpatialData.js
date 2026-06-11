@@ -256,7 +256,7 @@ function renderSubBitmaskLayers(props: any) {
   return new LabelsBitmaskTileLayer(props, {
     channelData: data,
     bounds,
-    id: `sub-layer-${bounds}-${id}`,
+    id: `sub-layer-${z}-${x}-${y}-${bounds}-${id}`,
     tileId: { x, y, z },
     zoom,
     minZoom,
