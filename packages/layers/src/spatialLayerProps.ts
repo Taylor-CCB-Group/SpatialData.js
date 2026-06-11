@@ -89,13 +89,12 @@ export type SpatialLayerProps = z.infer<typeof spatialLayerPropsSchema>;
 
 /** Version 0: pre-schema ad-hoc objects (empty or partial). */
 const spatialLayerPropsV0Schema = z
-  .object({
+  .looseObject({
     schemaVersion: z.never().optional(),
     sublayers: z.array(z.unknown()).optional(),
     viewMode: z.enum(['2d', '3d']).optional(),
     globalTimeIndex: z.number().optional(),
-  })
-  .passthrough();
+  });
 
 function migrateV0ToV1(raw: z.infer<typeof spatialLayerPropsV0Schema>): SpatialLayerProps {
   const sublayersIn = raw.sublayers ?? [];
