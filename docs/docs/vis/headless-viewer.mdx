@@ -212,6 +212,9 @@ Open **http://127.0.0.1:5173/headless** for the headless demo route. It loads
 the local **`blobs.zarr`** fixture (`v0.7.2`) via `SpatialCanvasViewer` with
 externally controlled layer state — no `SpatialCanvas` sidebars.
 
+Open **http://127.0.0.1:5173/codec** for the JP2K codec fixture route. Generate
+it first with `pnpm test:fixtures:generate:codecs`.
+
 The dev script starts the fixture server on port **38473** (override with
 `SPATIALDATA_FIXTURE_PORT`) and proxies `/test-fixtures` through Vite on
 **5173**. The default Sketch UI remains at **http://127.0.0.1:5173/**.

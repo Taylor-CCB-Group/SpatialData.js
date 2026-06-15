@@ -1,9 +1,12 @@
-import { createContext, useContext, useMemo, type PropsWithChildren } from 'react';
-import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
+import {
+  type OmeZarrMultiscalesSource,
+  loadOmeZarrMultiscalesData,
+} from '@spatialdata/avivatorish';
+import { type PropsWithChildren, createContext, useContext, useMemo } from 'react';
 
 export type VivLoaderRegistryValue = {
-  /** Multiscales pixel sources for an OME-Zarr URL (SpatialCanvas image path). */
-  getOmeZarrMultiscalesData: (url: string) => Promise<unknown>;
+  /** Multiscales pixel sources for an OME-Zarr store or URL (SpatialCanvas image path). */
+  getOmeZarrMultiscalesData: (source: OmeZarrMultiscalesSource) => Promise<unknown>;
 };
 
 const defaultRegistry: VivLoaderRegistryValue = {
@@ -16,10 +19,7 @@ export function VivLoaderRegistryProvider({
   children,
   value,
 }: PropsWithChildren<{ value?: Partial<VivLoaderRegistryValue> }>) {
-  const merged = useMemo(
-    () => ({ ...defaultRegistry, ...value }),
-    [value?.getOmeZarrMultiscalesData]
-  );
+  const merged = useMemo(() => ({ ...defaultRegistry, ...value }), [value]);
   return (
     <VivLoaderRegistryContext.Provider value={merged}>{children}</VivLoaderRegistryContext.Provider>
   );

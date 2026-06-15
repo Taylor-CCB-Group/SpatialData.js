@@ -1,13 +1,13 @@
 import * as zarr from 'zarrita';
+import { Err, Ok, type Result } from './result';
 import type {
   ConsolidatedStore,
   LazyZarrArray,
   StoreReference,
-  ZarrTree,
   ZAttrsAny,
+  ZarrTree,
 } from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
-import { Err, Ok, type Result } from './result';
 
 const decoder = new TextDecoder();
 
@@ -204,6 +204,20 @@ export type {
   ZAttrsAny,
 } from './types';
 export { ATTRS_KEY, ZARRAY_KEY } from './types';
+export { createPrefixedStore } from './prefixedStore';
+export {
+  createOpenJpegDecoder,
+  registerJpeg2kCodec,
+  registerExperimentalHtj2kCodec,
+  type ImageCodecDecoder,
+  type OpenJpegFactory,
+  type RegisterImageCodecOptions,
+} from './codecs';
+export {
+  loadOmeZarrMultiscalesFromStore,
+  type VivCompatiblePixelSource,
+  type RasterSelection,
+} from './omeZarr';
 
 export type { Result } from './result';
 export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from './result';

@@ -174,6 +174,9 @@ importers:
       react-dom:
         specifier: '>=18 <20'
         version: 19.2.1(react@19.2.1)
+      zarrextra:
+        specifier: workspace:*
+        version: link:../zarrextra
       zustand:
         specifier: ^5.0.8
         version: 5.0.8(@types/react@19.2.2)(react@19.2.1)(use-sync-external-store@1.6.0(react@19.2.1))
@@ -342,7 +345,7 @@ importers:
         version: 9.2.11
       '@hms-dbmi/viv':
         specifier: 'catalog:'
-        version: 0.21.0(682892a736d1d10c2d929b2464c0e937)
+        version: 0.21.0(34b22613fa33583b145acc9b31a1f375)
       '@luma.gl/core':
         specifier: 'catalog:'
         version: 9.2.6
@@ -363,10 +366,10 @@ importers:
         version: link:../react
       '@uidotdev/usehooks':
         specifier: ^2.4.1
-        version: 2.4.1(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+        version: 2.4.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@uiw/react-json-view':
         specifier: 2.0.0-alpha.39
-        version: 2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+        version: 2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@vivjs/views':
         specifier: 'catalog:'
         version: 0.21.0(f5ace54b53b72239a461a3179859574d)
@@ -375,7 +378,7 @@ importers:
         version: 0.0.2
       deck.gl:
         specifier: 'catalog:'
-        version: 9.2.11(@arcgis/core@4.34.5)(@luma.gl/constants@9.2.6)(@luma.gl/gltf@9.2.6(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))(@luma.gl/webgl@9.2.6(@luma.gl/core@9.2.6))(@math.gl/web-mercator@4.1.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+        version: 9.2.11(@arcgis/core@4.34.5)(@luma.gl/constants@9.2.6)(@luma.gl/gltf@9.2.6(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))(@luma.gl/webgl@9.2.6(@luma.gl/core@9.2.6))(@math.gl/web-mercator@4.1.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       fast-deep-equal:
         specifier: ^3.1.3
         version: 3.1.3
@@ -384,17 +387,20 @@ importers:
         version: 2.1.4-beta.0
       react:
         specifier: '>=18 <20'
-        version: 19.2.0
+        version: 19.2.1
       react-dom:
         specifier: '>=18 <20'
-        version: 19.2.0(react@19.2.0)
+        version: 19.2.1(react@19.2.1)
       zarrita:
         specifier: 'catalog:'
         version: 0.7.1
       zustand:
         specifier: ^5.0.8
-        version: 5.0.8(@types/react@19.2.2)(react@19.2.0)(use-sync-external-store@1.6.0(react@19.2.0))
+        version: 5.0.8(@types/react@19.2.2)(react@19.2.1)(use-sync-external-store@1.6.0(react@19.2.1))
     devDependencies:
+      '@cornerstonejs/codec-openjpeg':
+        specifier: ^1.3.0
+        version: 1.3.0
       '@types/node':
         specifier: 'catalog:'
         version: 22.18.8
@@ -447,6 +453,10 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 4.1.4(@opentelemetry/api@1.9.0)(@types/node@22.18.8)(jsdom@27.4.0)(vite@8.0.8(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+    optionalDependencies:
+      '@cornerstonejs/codec-openjpeg':
+        specifier: ^1.3.0
+        version: 1.3.0
 
 packages:
 
@@ -1273,6 +1283,10 @@ packages:
   '@colors/colors@1.5.0':
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
     engines: {node: '>=0.1.90'}
+
+  '@cornerstonejs/codec-openjpeg@1.3.0':
+    resolution: {integrity: sha512-hP8WAZ63AcaDYmHbBVTY04x424AglXsRHrI6VBdW4eTiJ76f0heWrEodT9Sb3sNwazzYuyMOIZNndJPeVSeHcw==}
+    engines: {node: '>=0.14'}
 
   '@csstools/cascade-layer-name-parser@2.0.5':
     resolution: {integrity: sha512-p1ko5eHgV+MgXFVa4STPKpvPxr6ReS8oS2jzTukjR74i5zJNyWO1ZM1m8YKBXnzDKWfBN1ztLYlHxbVemDD88A==}
@@ -9042,6 +9056,8 @@ snapshots:
   '@colors/colors@1.5.0':
     optional: true
 
+  '@cornerstonejs/codec-openjpeg@1.3.0': {}
+
   '@csstools/cascade-layer-name-parser@2.0.5(@csstools/css-parser-algorithms@3.0.5(@csstools/css-tokenizer@3.0.4))(@csstools/css-tokenizer@3.0.4)':
     dependencies:
       '@csstools/css-parser-algorithms': 3.0.5(@csstools/css-tokenizer@3.0.4)
@@ -9491,13 +9507,6 @@ snapshots:
       '@luma.gl/shadertools': 9.2.6(@luma.gl/core@9.2.6)
     transitivePeerDependencies:
       - '@loaders.gl/core'
-
-  '@deck.gl/react@9.2.11(@deck.gl/core@9.2.11)(@deck.gl/widgets@9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
-    dependencies:
-      '@deck.gl/core': 9.2.11
-      '@deck.gl/widgets': 9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6)
-      react: 19.2.0
-      react-dom: 19.2.0(react@19.2.0)
 
   '@deck.gl/react@9.2.11(@deck.gl/core@9.2.11)(@deck.gl/widgets@9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
@@ -10379,27 +10388,6 @@ snapshots:
       '@vivjs/loaders': 0.21.0
       '@vivjs/types': 0.21.0
       '@vivjs/viewers': 0.21.0(34b22613fa33583b145acc9b31a1f375)
-      '@vivjs/views': 0.21.0(f5ace54b53b72239a461a3179859574d)
-    transitivePeerDependencies:
-      - '@deck.gl/core'
-      - '@deck.gl/geo-layers'
-      - '@deck.gl/layers'
-      - '@deck.gl/react'
-      - '@luma.gl/constants'
-      - '@luma.gl/core'
-      - '@luma.gl/engine'
-      - '@luma.gl/shadertools'
-      - '@luma.gl/webgl'
-      - react
-
-  '@hms-dbmi/viv@0.21.0(682892a736d1d10c2d929b2464c0e937)':
-    dependencies:
-      '@vivjs/constants': 0.21.0
-      '@vivjs/extensions': 0.21.0(@deck.gl/core@9.2.11)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))
-      '@vivjs/layers': 0.21.0(f5ace54b53b72239a461a3179859574d)
-      '@vivjs/loaders': 0.21.0
-      '@vivjs/types': 0.21.0
-      '@vivjs/viewers': 0.21.0(682892a736d1d10c2d929b2464c0e937)
       '@vivjs/views': 0.21.0(f5ace54b53b72239a461a3179859574d)
     transitivePeerDependencies:
       - '@deck.gl/core'
@@ -11595,16 +11583,16 @@ snapshots:
     dependencies:
       '@types/yargs-parser': 21.0.3
 
-  '@uidotdev/usehooks@2.4.1(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
+  '@uidotdev/usehooks@2.4.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
-      react: 19.2.0
-      react-dom: 19.2.0(react@19.2.0)
+      react: 19.2.1
+      react-dom: 19.2.1(react@19.2.1)
 
-  '@uiw/react-json-view@2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
+  '@uiw/react-json-view@2.0.0-alpha.39(@babel/runtime@7.28.4)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
       '@babel/runtime': 7.28.4
-      react: 19.2.0
-      react-dom: 19.2.0(react@19.2.0)
+      react: 19.2.1
+      react-dom: 19.2.1(react@19.2.1)
 
   '@ungap/structured-clone@1.3.0': {}
 
@@ -11815,25 +11803,6 @@ snapshots:
       fast-deep-equal: 3.1.3
       lodash: 4.18.1
       react: 19.2.1
-    transitivePeerDependencies:
-      - '@deck.gl/core'
-      - '@deck.gl/geo-layers'
-      - '@deck.gl/layers'
-      - '@luma.gl/constants'
-      - '@luma.gl/core'
-      - '@luma.gl/engine'
-      - '@luma.gl/shadertools'
-      - '@luma.gl/webgl'
-
-  '@vivjs/viewers@0.21.0(682892a736d1d10c2d929b2464c0e937)':
-    dependencies:
-      '@deck.gl/react': 9.2.11(@deck.gl/core@9.2.11)(@deck.gl/widgets@9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
-      '@vivjs/constants': 0.21.0
-      '@vivjs/extensions': 0.21.0(@deck.gl/core@9.2.11)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))
-      '@vivjs/views': 0.21.0(f5ace54b53b72239a461a3179859574d)
-      fast-deep-equal: 3.1.3
-      lodash: 4.18.1
-      react: 19.2.0
     transitivePeerDependencies:
       - '@deck.gl/core'
       - '@deck.gl/geo-layers'
@@ -12998,35 +12967,6 @@ snapshots:
       ms: 2.1.3
 
   decimal.js@10.6.0: {}
-
-  deck.gl@9.2.11(@arcgis/core@4.34.5)(@luma.gl/constants@9.2.6)(@luma.gl/gltf@9.2.6(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))(@luma.gl/webgl@9.2.6(@luma.gl/core@9.2.6))(@math.gl/web-mercator@4.1.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0):
-    dependencies:
-      '@deck.gl/aggregation-layers': 9.2.11(@deck.gl/core@9.2.11)(@deck.gl/layers@9.2.11(@deck.gl/core@9.2.11)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))))(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))
-      '@deck.gl/arcgis': 9.2.11(@arcgis/core@4.34.5)(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/webgl@9.2.6(@luma.gl/core@9.2.6))
-      '@deck.gl/carto': 9.2.11(6b4ab9c7fbd4ee0293d55ee81ea831f6)
-      '@deck.gl/core': 9.2.11
-      '@deck.gl/extensions': 9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))
-      '@deck.gl/geo-layers': 9.2.11(@deck.gl/core@9.2.11)(@deck.gl/extensions@9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))))(@deck.gl/layers@9.2.11(@deck.gl/core@9.2.11)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))))(@deck.gl/mesh-layers@9.2.11(@deck.gl/core@9.2.11)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/gltf@9.2.6(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@loaders.gl/core@4.3.4)(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))
-      '@deck.gl/google-maps': 9.2.11(@deck.gl/core@9.2.11)(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/webgl@9.2.6(@luma.gl/core@9.2.6))
-      '@deck.gl/json': 9.2.11(@deck.gl/core@9.2.11)
-      '@deck.gl/layers': 9.2.11(@deck.gl/core@9.2.11)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))
-      '@deck.gl/mapbox': 9.2.11(@deck.gl/core@9.2.11)(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@math.gl/web-mercator@4.1.0)
-      '@deck.gl/mesh-layers': 9.2.11(@deck.gl/core@9.2.11)(@loaders.gl/core@4.3.4)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/gltf@9.2.6(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))
-      '@deck.gl/react': 9.2.11(@deck.gl/core@9.2.11)(@deck.gl/widgets@9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
-      '@deck.gl/widgets': 9.2.11(@deck.gl/core@9.2.11)(@luma.gl/core@9.2.6)
-      '@loaders.gl/core': 4.3.4
-      '@luma.gl/core': 9.2.6
-      '@luma.gl/engine': 9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))
-    optionalDependencies:
-      '@arcgis/core': 4.34.5
-      react: 19.2.0
-      react-dom: 19.2.0(react@19.2.0)
-    transitivePeerDependencies:
-      - '@luma.gl/constants'
-      - '@luma.gl/gltf'
-      - '@luma.gl/shadertools'
-      - '@luma.gl/webgl'
-      - '@math.gl/web-mercator'
 
   deck.gl@9.2.11(@arcgis/core@4.34.5)(@luma.gl/constants@9.2.6)(@luma.gl/gltf@9.2.6(@luma.gl/constants@9.2.6)(@luma.gl/core@9.2.6)(@luma.gl/engine@9.2.6(@luma.gl/core@9.2.6)(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6)))(@luma.gl/shadertools@9.2.6(@luma.gl/core@9.2.6))(@luma.gl/webgl@9.2.6(@luma.gl/core@9.2.6))(@math.gl/web-mercator@4.1.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1):
     dependencies:
@@ -16829,11 +16769,6 @@ snapshots:
     optionalDependencies:
       file-loader: 6.2.0(webpack@5.102.0)
 
-  use-sync-external-store@1.6.0(react@19.2.0):
-    dependencies:
-      react: 19.2.0
-    optional: true
-
   use-sync-external-store@1.6.0(react@19.2.1):
     dependencies:
       react: 19.2.1
@@ -17198,12 +17133,6 @@ snapshots:
   zstddec@0.1.0: {}
 
   zstddec@0.2.0-alpha.3: {}
-
-  zustand@5.0.8(@types/react@19.2.2)(react@19.2.0)(use-sync-external-store@1.6.0(react@19.2.0)):
-    optionalDependencies:
-      '@types/react': 19.2.2
-      react: 19.2.0
-      use-sync-external-store: 1.6.0(react@19.2.0)
 
   zustand@5.0.8(@types/react@19.2.2)(react@19.2.1)(use-sync-external-store@1.6.0(react@19.2.1)):
     optionalDependencies:

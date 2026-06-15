@@ -30,6 +30,7 @@
     "@hms-dbmi/viv": "catalog:",
     "@math.gl/core": "catalog:",
     "geotiff": "2.1.4-beta.0",
+    "zarrextra": "workspace:*",
     "zustand": "^5.0.8"
   },
   "devDependencies": {

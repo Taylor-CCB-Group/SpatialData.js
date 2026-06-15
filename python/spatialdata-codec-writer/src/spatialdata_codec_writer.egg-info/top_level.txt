@@ -1,0 +1,1 @@
+spatialdata_codec_writer

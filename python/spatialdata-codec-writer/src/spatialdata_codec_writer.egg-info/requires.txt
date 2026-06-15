@@ -1,0 +1,7 @@
+dask[array]>=2025.0
+imagecodecs>=2025.8.2
+numcodecs>=0.16
+numpy>=2.0
+ome-zarr>=0.13
+spatialdata>=0.7.2
+zarr>=3.1

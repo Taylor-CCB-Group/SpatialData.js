@@ -26,5 +26,11 @@ joining work on this repository.
 - Treat layers as independent views of spatial elements: it must be valid for
   multiple layer configs to represent the same underlying element with different
   visual properties, filters, or table-driven encodings.
+- Avoid type assertions (`as ...`) in TypeScript when a library overload,
+  local type guard, schema parser, discriminated union, or narrower API
+  contract can express the same fact. If an assertion is unavoidable at an
+  external boundary (for example an untyped WASM module or a TypeScript
+  correlation limitation), keep it local and add a short comment explaining why
+  the compiler cannot prove it.
 - Worktrees share `.git` but not working state. Documents intended to outlive
   the current branch must land on `main`.

@@ -1,0 +1,60 @@
+---
+sidebar_position: 6
+---
+
+# Codec fixture guide
+
+SpatialData codec fixtures live under `test-fixtures/codecs/` and are generated
+separately from the versioned `blobs()` fixtures. The first fixture is a small
+OME-Zarr/SpatialData image using the registered Zarr codec id
+`imagecodecs_jpeg2k`.
+
+## Try it in the browser
+
+From the repo root:
+
+```bash
+pnpm test:fixtures:generate:codecs
+pnpm --filter @spatialdata/vis dev
+```
+
+Open [http://127.0.0.1:5173/codec](http://127.0.0.1:5173/codec).
+
+The route registers `registerJpeg2kCodec()` from `zarrextra`, loads
+`/test-fixtures/codecs/jpeg2k.zarr`, and renders the image through the
+store-backed OME-Zarr path in `SpatialCanvasViewer`. It imports
+`@cornerstonejs/codec-openjpeg/decode` statically and passes that factory to
+`createOpenJpegDecoder()` so Vite can bundle the optional decoder package. The
+manifest is available at `/test-fixtures/codecs/jpeg2k.manifest.json`.
+
+The vis dev script starts the fixture server on port `38473` and proxies
+`/test-fixtures` through Vite on `5173`. Override the fixture server port with
+`SPATIALDATA_FIXTURE_PORT` if needed.
+
+## Python reference writer
+
+The fixture is written by the local package in
+`python/spatialdata-codec-writer/`.
+
+Useful commands:
+
+```bash
+UV_CACHE_DIR=.tmp/uv-cache uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --overwrite
+UV_CACHE_DIR=.tmp/uv-cache uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect ../../test-fixtures/codecs/jpeg2k.zarr
+```
+
+The manifest records shape, dtype, chunk shape, codec id, package versions, and
+representative decoded/encoded checksums. The writer validates representative
+chunks after writing so JS tests can compare decoded samples against Python.
+
+## JS codec flow
+
+`zarrextra` exposes:
+
+- `registerJpeg2kCodec()` for the registered `imagecodecs_jpeg2k` id.
+- `registerExperimentalHtj2kCodec()` for labelled non-standard HTJ2K tests.
+- `loadOmeZarrMultiscalesFromStore()` for loading multiscales from a
+  `zarr.Readable` store without going back through Viv's URL loader.
+
+`@spatialdata/vis` now prefers raster element stores (`images/<key>` and
+`labels/<key>`) and keeps Viv URL loading as a compatibility fallback.

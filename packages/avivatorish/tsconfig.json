@@ -12,6 +12,11 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "baseUrl": ".",
+    "paths": {
+      "zarrextra": ["../zarrextra/src/index.ts"],
+      "zarrextra/*": ["../zarrextra/src/*"]
+    },
     "types": ["react", "react-dom"]
   },
   "include": ["src", "vite.config.ts", "tests"],
