@@ -122,12 +122,12 @@ def _group_metadata(attributes: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
-def _image_attrs(datasets: list[dict[str, Any]]) -> dict[str, Any]:
+def _image_attrs(datasets: list[dict[str, Any]], image_key: str) -> dict[str, Any]:
     return {
         "ome": {
             "multiscales": [
                 {
-                    "name": "codec_image",
+                    "name": image_key,
                     "axes": [
                         {"name": "t", "type": "time"},
                         {"name": "c", "type": "channel"},
@@ -152,7 +152,7 @@ def _image_attrs(datasets: list[dict[str, Any]]) -> dict[str, Any]:
                 }
             ],
             "omero": {
-                "name": "codec_image",
+                "name": image_key,
                 "channels": [
                     {
                         "label": "channel_0",
@@ -165,6 +165,73 @@ def _image_attrs(datasets: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "spatialdata_attrs": {"version": "0.7.2"},
     }
+
+
+def _base_image_element(image: Any) -> Any:
+    children = getattr(image, "children", None)
+    if children is None or "scale0" not in children:
+        return image
+
+    scale0 = children["scale0"]
+    dataset = getattr(scale0, "ds", None)
+    if dataset is None:
+        return scale0
+    if "image" in dataset:
+        return dataset["image"]
+
+    data_vars = getattr(dataset, "data_vars", {})
+    for name in data_vars:
+        return dataset[name]
+    raise ValueError("Could not find an image variable in SpatialData multiscale image scale0")
+
+
+def image_to_tczyx(image: Any, dims: tuple[str, ...] | list[str] | None = None) -> np.ndarray:
+    """Return an image as a NumPy array with shape ``[t, c, z, y, x]``.
+
+    ``image`` can be a NumPy/Dask array, an xarray ``DataArray``, or a
+    SpatialData image element. When dimension names are available, this helper
+    uses them; otherwise it accepts common image shapes: ``yx``, ``cyx``,
+    ``czyx``, and already-normalized ``tczyx``.
+    """
+
+    image = _base_image_element(image)
+
+    if dims is None:
+        maybe_dims = getattr(image, "dims", None)
+        dims = tuple(str(dim) for dim in maybe_dims) if maybe_dims is not None else None
+
+    data = getattr(image, "data", image)
+    if hasattr(data, "compute"):
+        data = data.compute()
+    array = np.asarray(data)
+
+    if dims is not None:
+        normalized_dims = tuple(str(dim) for dim in dims)
+        if len(normalized_dims) != array.ndim:
+            raise ValueError(f"dims length {len(normalized_dims)} does not match array ndim {array.ndim}")
+        supported = ("t", "c", "z", "y", "x")
+        unsupported = [dim for dim in normalized_dims if dim not in supported]
+        if unsupported:
+            raise ValueError(f"Unsupported image dimensions: {unsupported}")
+        if "y" not in normalized_dims or "x" not in normalized_dims:
+            raise ValueError("Image dimensions must include 'y' and 'x'.")
+
+        present = [dim for dim in supported if dim in normalized_dims]
+        array = np.transpose(array, [normalized_dims.index(dim) for dim in present])
+        for axis_index, dim in enumerate(supported):
+            if dim not in present:
+                array = np.expand_dims(array, axis=axis_index)
+        return np.asarray(array)
+
+    if array.ndim == 2:
+        return array.reshape(1, 1, 1, *array.shape)
+    if array.ndim == 3:
+        return array.reshape(1, array.shape[0], 1, array.shape[1], array.shape[2])
+    if array.ndim == 4:
+        return array.reshape(1, *array.shape)
+    if array.ndim == 5:
+        return array
+    raise ValueError("image must have shape yx, cyx, czyx, or tczyx when dims are not provided")
 
 
 def _write_array_chunks(
@@ -208,7 +275,8 @@ def write_codec_spatialdata(
     path: str | Path,
     *,
     codec: CodecName = CODEC_JPEG2K,
-    image: np.ndarray | None = None,
+    image: Any | None = None,
+    image_key: str = "codec_image",
     chunks: tuple[int, int, int, int, int] = (1, 1, 1, 32, 32),
     multiscale: bool = True,
     overwrite: bool = False,
@@ -220,9 +288,11 @@ def write_codec_spatialdata(
         shutil.rmtree(store_path)
     store_path.mkdir(parents=True)
 
-    base = np.asarray(image if image is not None else _default_image())
+    base = image_to_tczyx(image if image is not None else _default_image())
     if base.ndim != 5:
         raise ValueError("image must have shape [t, c, z, y, x]")
+    if len(chunks) != 5:
+        raise ValueError("chunks must have shape [t, c, z, y, x]")
     if chunks[:3] != (1, 1, 1):
         raise ValueError("v1 codec fixtures require chunks beginning with (1, 1, 1)")
 
@@ -230,24 +300,27 @@ def write_codec_spatialdata(
     if multiscale:
         levels.append(_downsample2(base))
 
+    image_attrs = _image_attrs(
+        [
+            {
+                "path": str(level_index),
+                "coordinateTransformations": [
+                    {"type": "scale", "scale": [1, 1, 1, 2**level_index, 2**level_index]}
+                ],
+            }
+            for level_index in range(len(levels))
+        ],
+        image_key,
+    )
+
     metadata: dict[str, Any] = {
         "images": _group_metadata(),
-        "images/codec_image": _group_metadata(_image_attrs(
-            [
-                {
-                    "path": str(level_index),
-                    "coordinateTransformations": [
-                        {"type": "scale", "scale": [1, 1, 1, 2**level_index, 2**level_index]}
-                    ],
-                }
-                for level_index in range(len(levels))
-            ]
-        )),
+        f"images/{image_key}": _group_metadata(image_attrs),
     }
 
     chunk_refs: list[dict[str, Any]] = []
     for level_index, level in enumerate(levels):
-        array_path = f"images/codec_image/{level_index}"
+        array_path = f"images/{image_key}/{level_index}"
         metadata[array_path] = _array_metadata(level.shape, chunks, level.dtype, codec)
         chunk_refs.extend(_write_array_chunks(store_path, array_path, level, chunks, codec))
 
@@ -269,7 +342,7 @@ def write_codec_spatialdata(
         "format": "spatialdata-codec-fixture/v1",
         "codec": codec,
         "store": store_path.name,
-        "image_path": "images/codec_image",
+        "image_path": f"images/{image_key}",
         "shape": list(base.shape),
         "dtype": str(base.dtype),
         "chunks": list(chunks),
@@ -294,6 +367,45 @@ def write_codec_spatialdata(
         _write_json(manifest_path, manifest)
 
     return WrittenFixture(store_path=store_path, manifest_path=manifest_path, manifest=manifest)
+
+
+def write_codec_spatialdata_image(
+    path: str | Path,
+    spatialdata_or_path: Any,
+    *,
+    image_key: str,
+    codec: CodecName = CODEC_JPEG2K,
+    chunks: tuple[int, int, int, int, int] = (1, 1, 1, 32, 32),
+    multiscale: bool = True,
+    overwrite: bool = False,
+) -> WrittenFixture:
+    """Write one image from an existing SpatialData object/path with a codec.
+
+    This is a focused transcoder for image-reader fixtures and experiments. It
+    writes a new store containing the selected image under ``images/<image_key>``;
+    it does not yet preserve tables, shapes, points, labels, or arbitrary source
+    metadata from the input SpatialData object.
+    """
+
+    source = spatialdata_or_path
+    if isinstance(spatialdata_or_path, str | Path):
+        import spatialdata as sd
+
+        source = sd.read_zarr(spatialdata_or_path)
+
+    images = getattr(source, "images", None)
+    if images is None or image_key not in images:
+        raise KeyError(f"SpatialData object does not contain image {image_key!r}")
+
+    return write_codec_spatialdata(
+        path,
+        codec=codec,
+        image=image_to_tczyx(images[image_key]),
+        image_key=image_key,
+        chunks=chunks,
+        multiscale=multiscale,
+        overwrite=overwrite,
+    )
 
 
 def write_jpeg2k_fixture(path: str | Path, *, overwrite: bool = False) -> WrittenFixture:

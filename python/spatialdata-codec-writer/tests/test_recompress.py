@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import imagecodecs
+import numpy as np
+import pytest
+import zarr
+
+from spatialdata_codec_writer import JP2K_PRESETS, recompress_spatialdata, resolve_recompression_config
+
+
+def _write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True))
+
+
+def _group_meta(attributes: dict | None = None) -> dict:
+    return {"zarr_format": 3, "node_type": "group", "attributes": attributes or {}}
+
+
+def _raster_attrs(name: str, axes: list[str]) -> dict:
+    return {
+        "ome": {
+            "multiscales": [
+                {
+                    "name": name,
+                    "axes": [{"name": axis} for axis in axes],
+                    "datasets": [{"path": "0"}],
+                }
+            ]
+        }
+    }
+
+
+def _write_source_store(root: Path, *, image_dtype: str = "uint16") -> Path:
+    _write_json(root / "zarr.json", _group_meta({"spatialdata_attrs": {"version": "0.7.2"}}))
+    _write_json(root / "images" / "zarr.json", _group_meta())
+    _write_json(
+        root / "images" / "morphology" / "zarr.json",
+        _group_meta(_raster_attrs("morphology", ["c", "y", "x"])),
+    )
+    _write_json(root / "labels" / "zarr.json", _group_meta())
+    _write_json(
+        root / "labels" / "cells" / "zarr.json",
+        _group_meta(_raster_attrs("cells", ["y", "x"])),
+    )
+    _write_json(root / "tables" / "table" / "zarr.json", _group_meta({"kept": True}))
+
+    image = zarr.create_array(
+        store=str(root / "images" / "morphology" / "0"),
+        shape=(1, 8, 8),
+        chunks=(1, 4, 4),
+        dtype=image_dtype,
+        dimension_names=("c", "y", "x"),
+        zarr_format=3,
+    )
+    image[:] = np.arange(64, dtype=np.dtype(image_dtype)).reshape(1, 8, 8)
+
+    labels = zarr.create_array(
+        store=str(root / "labels" / "cells" / "0"),
+        shape=(8, 8),
+        chunks=(4, 4),
+        dtype="uint32",
+        dimension_names=("y", "x"),
+        zarr_format=3,
+    )
+    labels[:] = np.arange(64, dtype=np.uint32).reshape(8, 8)
+    return root
+
+
+def test_resolve_recompression_config_applies_cli_shortcuts() -> None:
+    config = resolve_recompression_config(
+        {"default_image": {"preset": "lossless"}},
+        image_key="morphology",
+        preset="balanced",
+        chunks=(1, 4, 4),
+    )
+
+    assert config["images"]["morphology"]["preset"] == "balanced"
+    assert config["images"]["morphology"]["chunks"] == (1, 4, 4)
+    assert config["default_image"]["preset"] == "lossless"
+
+
+def test_lossy_presets_are_not_extreme_low_bitrate() -> None:
+    assert JP2K_PRESETS["balanced"] == {"reversible": False, "level": 100}
+    assert JP2K_PRESETS["small"] == {"reversible": False, "level": 75}
+
+
+def test_recompress_spatialdata_rewrites_image_and_labels(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={
+            "images": {"morphology": {"preset": "lossless", "chunks": [1, 4, 4]}},
+            "default_labels": {"codec": "blosc", "clevel": 5},
+        },
+    )
+
+    assert (result.store_path / "tables" / "table" / "zarr.json").exists()
+    image_meta = json.loads(
+        (result.store_path / "images" / "morphology" / "0" / "zarr.json").read_text()
+    )
+    assert image_meta["codecs"] == [{"name": "imagecodecs_jpeg2k", "configuration": {}}]
+    assert image_meta["chunk_grid"]["configuration"]["chunk_shape"] == [1, 4, 4]
+
+    first_chunk = result.manifest["images"][0]["chunks_checked"][0]
+    encoded = result.store_path / "images" / "morphology" / "0" / "c" / "0" / "0" / "0"
+    decoded = imagecodecs.jpeg2k_decode(encoded.read_bytes())
+    assert first_chunk["source_sha256"] == first_chunk["decoded_sha256"]
+    assert int(decoded[0, 0]) == 0
+
+    label_meta = json.loads(
+        (result.store_path / "labels" / "cells" / "0" / "zarr.json").read_text()
+    )
+    assert [codec["name"] for codec in label_meta["codecs"]] == ["bytes", "blosc"]
+    assert result.manifest_path is not None
+    assert result.manifest_path.exists()
+
+
+def test_recompress_spatialdata_rejects_browser_unsupported_jp2k_dtype(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr", image_dtype="uint32")
+
+    with pytest.raises(TypeError, match="<=16-bit integer"):
+        recompress_spatialdata(
+            source,
+            tmp_path / "out.zarr",
+            config={"images": {"morphology": {"preset": "lossless"}}},
+        )
+
+
+def test_lossy_preset_records_non_lossless_manifest(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={
+            "images": {"morphology": {"preset": "small", "chunks": [1, 4, 4]}},
+            "default_labels": {"codec": None},
+        },
+    )
+
+    image_report = result.manifest["images"][0]
+    assert image_report["preset"] == "small"
+    assert image_report["lossless"] is False
+    assert image_report["encode_options"]["reversible"] is False

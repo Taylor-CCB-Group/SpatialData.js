@@ -39,13 +39,101 @@ The fixture is written by the local package in
 Useful commands:
 
 ```bash
-UV_CACHE_DIR=.tmp/uv-cache uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --overwrite
-UV_CACHE_DIR=.tmp/uv-cache uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect ../../test-fixtures/codecs/jpeg2k.zarr
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --overwrite
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect ../../test-fixtures/codecs/jpeg2k.zarr
 ```
 
 The manifest records shape, dtype, chunk shape, codec id, package versions, and
 representative decoded/encoded checksums. The writer validates representative
 chunks after writing so JS tests can compare decoded samples against Python.
+
+### Compressing an existing SpatialData image
+
+The Python package can also transcode one image from an existing SpatialData
+object or SpatialData Zarr path. This is useful for making ad hoc JP2K samples
+from real data while the JS reader work is evolving.
+
+```python
+import spatialdata as sd
+
+from spatialdata_codec_writer import write_codec_spatialdata_image
+
+sdata = sd.read_zarr("input.sdata.zarr")
+
+write_codec_spatialdata_image(
+    "histology-jp2k.zarr",
+    sdata,
+    image_key="histology",
+    codec="imagecodecs_jpeg2k",
+    chunks=(1, 1, 1, 256, 256),
+    overwrite=True,
+)
+```
+
+The equivalent CLI form is:
+
+```bash
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer write-image input.sdata.zarr histology-jp2k.zarr --image-key histology --chunks 1 1 1 256 256 --overwrite
+```
+
+This currently writes a new store containing the selected image under
+`images/<image_key>`. It does not preserve the rest of the source object yet,
+including tables, shapes, points, labels, or arbitrary source metadata. For
+SpatialData multiscale image elements, the writer uses `scale0` as the source
+image and can write a fresh multiscale output from it.
+
+### Whole-object recompression
+
+For larger or real examples, use the `recompress` command. It copies the source
+SpatialData store, rewrites configured image rasters with JP2K, and writes labels
+with Blosc/zstd by default.
+
+```bash
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
+```
+
+For repeatable per-raster settings, use JSON:
+
+```json
+{
+  "default_image": { "codec": "imagecodecs_jpeg2k", "preset": "lossless", "chunks": "auto" },
+  "images": {
+    "morphology_focus": { "preset": "balanced" },
+    "he_image": { "preset": "small" }
+  },
+  "default_labels": { "codec": "blosc", "clevel": 5 }
+}
+```
+
+JP2K presets are `lossless`, `balanced` (`level=100`), and `small`
+(`level=75`). Advanced
+`imagecodecs.jpeg2k_encode` options can be passed through per-image config with
+`encode_options`, or with supported top-level keys such as `level`,
+`reversible`, `codecformat`, and `numthreads`.
+
+Browser-targeted JP2K output is limited to `uint8`, `int8`, `uint16`, and
+`int16`. Labels are not JP2K-compressed in v1; they stay lossless through
+Blosc/zstd because integer IDs and wider dtypes such as `uint32` are not
+considered supported by the current JavaScript OpenJPEG path.
+
+Useful Xenium morphology experiment:
+
+```bash
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress /Users/ptodd/data/spatialdata/sdata_inputs/xenium_rep1_io_spatialdata_0.7.1.zarr /private/tmp/xenium-rep1-morphology-focus-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
+```
+
+When serving recompressed stores for browser experiments, disable HTTP caching
+or use a fresh output path after each rewrite. `http-server` defaults to
+cacheable responses, so overwriting a Zarr store in place can leave the browser
+with stale array metadata that points at the old codec while the chunk bytes have
+changed.
+
+```bash
+bunx http-server --cors -c-1 /private/tmp
+```
+
+Repo scripts may set `UV_CACHE_DIR=.tmp/uv-cache` for sandbox or CI cache
+isolation, but normal user-facing `uv run` commands do not need it.
 
 ## JS codec flow
 
