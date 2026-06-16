@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./workers": {
+      "types": "./dist/workers.d.ts",
+      "import": "./dist/workers.js"
     }
   },
   "files": [
@@ -29,6 +33,8 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@fideus-labs/fizarrita": "^1.4.1",
+    "@fideus-labs/worker-pool": "^1.0.0",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
@@ -42,6 +48,8 @@
     "directory": "packages/zarrextra"
   },
   "optionalDependencies": {
-    "@cornerstonejs/codec-openjpeg": "^1.3.0"
+    "@cornerstonejs/codec-openjpeg": "^1.3.0",
+    "@fideus-labs/fizarrita": "^1.4.1",
+    "@fideus-labs/worker-pool": "^1.0.0"
   }
 }
