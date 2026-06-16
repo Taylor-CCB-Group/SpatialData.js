@@ -132,6 +132,36 @@ def test_recompress_spatialdata_rejects_browser_unsupported_jp2k_dtype(tmp_path:
         )
 
 
+def test_recompress_sibling_keeps_original_and_adds_new_group(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={
+            "images": {"morphology": {"preset": "lossless", "chunks": [1, 4, 4]}},
+            "default_labels": {"codec": None},
+        },
+        sibling=True,
+    )
+
+    # Original group is untouched — still has its original zarr metadata (no JP2K codec).
+    original_meta = json.loads(
+        (result.store_path / "images" / "morphology" / "0" / "zarr.json").read_text()
+    )
+    assert original_meta["codecs"] != [{"name": "imagecodecs_jpeg2k", "configuration": {}}]
+
+    # Sibling group exists with the encoding-annotated name.
+    sibling_key = "morphology:jp2k_lossless"
+    sibling_meta = json.loads(
+        (result.store_path / "images" / sibling_key / "0" / "zarr.json").read_text()
+    )
+    assert sibling_meta["codecs"] == [{"name": "imagecodecs_jpeg2k", "configuration": {}}]
+
+    # Manifest records the sibling path, not the original.
+    assert result.manifest["images"][0]["path"] == f"images/{sibling_key}/0"
+
+
 def test_lossy_preset_records_non_lossless_manifest(tmp_path: Path) -> None:
     source = _write_source_store(tmp_path / "source.zarr")
 

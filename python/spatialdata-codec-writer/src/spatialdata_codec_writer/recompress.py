@@ -402,6 +402,11 @@ def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> P
     return source_path
 
 
+def _sibling_image_key(key: str, preset: str) -> str:
+    """Return the sibling image key for an image, e.g. ``morphology:jp2k_lossless``."""
+    return f"{key}:jp2k_{preset}"
+
+
 def recompress_spatialdata(
     source: str | Path | Any,
     dest: str | Path,
@@ -412,11 +417,20 @@ def recompress_spatialdata(
     image_key: str | None = None,
     preset: ImagePreset | None = None,
     chunks: ChunkSpec | None = None,
+    sibling: bool = False,
 ) -> RecompressedSpatialData:
     """Preserve a SpatialData store and recompress configured rasters.
 
-    Path sources are copied before raster replacement, which keeps tables, shapes,
-    points, and unconfigured rasters intact without loading the whole object.
+    When *sibling* is ``False`` (default) each configured image is rewritten
+    in-place with the new codec.  When *sibling* is ``True`` the original
+    image is kept and a new image group is added alongside it whose name is
+    ``{original_key}:jp2k_{preset}`` (e.g. ``morphology_focus:jp2k_lossless``).
+    This lets the original remain available for tools that lack the JP2K codec
+    while the compressed version is used where it is supported.
+
+    Path sources are copied before raster replacement, which keeps tables,
+    shapes, points, and unconfigured rasters intact without loading the whole
+    object.
     """
 
     dest_path = Path(dest)
@@ -457,13 +471,28 @@ def recompress_spatialdata(
             image_config = _deep_merge(default_image, resolved_config.get("images", {}).get(key, {}))
             if image_config.get("codec", CODEC_JPEG2K) != CODEC_JPEG2K:
                 raise ValueError(f"Unsupported image codec for {key!r}: {image_config.get('codec')!r}")
-            for dataset in _datasets_from_raster_group(dest_path / "images" / key):
-                raster_path = f"images/{key}/{dataset}"
+
+            if sibling:
+                dest_key = _sibling_image_key(key, image_config.get("preset", "lossless"))
+                # Copy the source group metadata (zarr.json + multiscales attrs) into the sibling key.
+                sib_group_path = dest_path / "images" / dest_key
+                if sib_group_path.exists():
+                    shutil.rmtree(sib_group_path)
+                sib_group_path.mkdir(parents=True)
+                src_group_meta = read_path / "images" / key / "zarr.json"
+                if src_group_meta.exists():
+                    shutil.copy2(src_group_meta, sib_group_path / "zarr.json")
+            else:
+                dest_key = key
+
+            for dataset in _datasets_from_raster_group(dest_path / "images" / key if not sibling else read_path / "images" / key):
+                source_raster = f"images/{key}/{dataset}"
+                dest_raster = f"images/{dest_key}/{dataset}"
                 image_reports.append(
                     _recompress_image_array(
-                        source_array_path=read_path / raster_path,
-                        dest_array_path=dest_path / raster_path,
-                        raster_path=raster_path,
+                        source_array_path=read_path / source_raster,
+                        dest_array_path=dest_path / dest_raster,
+                        raster_path=dest_raster,
                         config=image_config,
                     )
                 )

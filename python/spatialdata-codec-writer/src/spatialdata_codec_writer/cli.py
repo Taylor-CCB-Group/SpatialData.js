@@ -77,6 +77,7 @@ def _recompress(args: argparse.Namespace) -> None:
         image_key=args.image_key,
         preset=args.preset,
         chunks=_recompress_chunks(args.chunks),
+        sibling=args.sibling,
     )
     print(json.dumps(result.manifest, indent=2, sort_keys=True))
 
@@ -154,6 +155,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use 'auto' or pass one integer per raster axis for --image-key",
     )
     recompress.add_argument("--overwrite", action="store_true")
+    recompress.add_argument(
+        "--sibling",
+        action="store_true",
+        help=(
+            "Write compressed images as new sibling groups (e.g. morphology_focus:jp2k_lossless) "
+            "instead of replacing the originals in-place"
+        ),
+    )
     recompress.set_defaults(func=_recompress)
 
     inspect = subparsers.add_parser("inspect")
