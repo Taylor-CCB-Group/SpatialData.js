@@ -221,7 +221,7 @@ def _preset_encode_options(config: dict[str, Any]) -> dict[str, Any]:
     return options
 
 
-def _encode_jp2k_plane(plane: np.ndarray, encode_options: dict[str, Any]) -> bytes:
+def _encode_jp2k_plane(plane: np.ndarray, encode_options: dict[str, Any]) -> bytes | bytearray:
     return imagecodecs.jpeg2k_encode(np.asarray(plane), **encode_options)
 
 
@@ -242,7 +242,7 @@ def _recompress_image_array(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     source_meta = _read_json(source_array_path / "zarr.json")
-    source_array = zarr.open(str(source_array_path), mode="r")
+    source_array = zarr.open_array(str(source_array_path), mode="r")
     shape = tuple(int(value) for value in source_array.shape)
     dtype = np.dtype(source_array.dtype)
     _validate_jp2k_dtype(dtype, raster_path)
@@ -331,7 +331,7 @@ def _recompress_label_array(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     source_meta = _read_json(source_array_path / "zarr.json")
-    source_array = zarr.open(str(source_array_path), mode="r")
+    source_array = zarr.open_array(str(source_array_path), mode="r")
     shape = tuple(int(value) for value in source_array.shape)
     dtype = np.dtype(source_array.dtype)
     chunks = _normalize_chunks(config.get("chunks", source_array.chunks), shape, image=False)

@@ -19,7 +19,7 @@ def _chunks(value: list[int]) -> tuple[int, int, int, int, int]:
     return (value[0], value[1], value[2], value[3], value[4])
 
 
-def _recompress_chunks(value: list[str] | None) -> str | tuple[int, ...] | None:
+def _recompress_chunks(value: list[str] | None):
     if value is None:
         return None
     if len(value) == 1 and value[0] == "auto":

@@ -50,7 +50,7 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_bytes(_json_bytes(value))
 
 
-def _sha256(data: bytes) -> str:
+def _sha256(data: bytes | bytearray) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
@@ -75,7 +75,7 @@ def _extract_chunk(image: np.ndarray, chunks: tuple[int, ...], coords: tuple[int
     return padded
 
 
-def _encode_chunk_2d(chunk: np.ndarray, codec: str) -> bytes:
+def _encode_chunk_2d(chunk: np.ndarray, codec: str) -> bytes | bytearray:
     plane = np.asarray(chunk.reshape(chunk.shape[-2], chunk.shape[-1]))
     if codec == CODEC_JPEG2K:
         return imagecodecs.jpeg2k_encode(plane)
@@ -87,7 +87,7 @@ def _encode_chunk_2d(chunk: np.ndarray, codec: str) -> bytes:
     raise ValueError(f"Unsupported codec: {codec}")
 
 
-def _decode_chunk_2d(encoded: bytes, codec: str) -> np.ndarray:
+def _decode_chunk_2d(encoded: bytes | bytearray, codec: str) -> np.ndarray:
     if codec in {CODEC_JPEG2K, CODEC_HTJ2K_EXPERIMENTAL}:
         return imagecodecs.jpeg2k_decode(encoded)
     raise ValueError(f"Unsupported codec: {codec}")
