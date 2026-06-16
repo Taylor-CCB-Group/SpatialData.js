@@ -1,12 +1,8 @@
-import OpenJPEGJS from '@cornerstonejs/codec-openjpeg/decode';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useEffect, useMemo, useState } from 'react';
-import { createOpenJpegDecoder, registerJpeg2kCodec } from 'zarrextra';
 import { type LayerConfig, SpatialCanvasViewer, type ViewState } from '../../src/index';
 import { buildHeadlessLayersForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalJpeg2kCodecFixtureUrl, getLocalJpeg2kCodecManifestUrl } from './fixtureUrls';
-
-registerJpeg2kCodec({ decoder: createOpenJpegDecoder(OpenJPEGJS) });
 
 const panelStyle = {
   flexShrink: 0,

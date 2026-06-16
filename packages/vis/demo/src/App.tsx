@@ -1,6 +1,8 @@
+import { lazy, Suspense } from 'react';
 import Sketch from '../../src/Sketch';
-import CodecFixtureDemo from './CodecFixtureDemo';
 import HeadlessBlobsDemo from './HeadlessBlobsDemo';
+
+const CodecFixtureDemo = lazy(() => import('./CodecFixtureDemo'));
 
 type DemoRoute = 'sketch' | 'headless' | 'codec';
 
@@ -50,7 +52,9 @@ function App() {
         {route === 'headless' ? (
           <HeadlessBlobsDemo />
         ) : route === 'codec' ? (
-          <CodecFixtureDemo />
+          <Suspense fallback={<div style={{ padding: 16, color: '#888' }}>Loading codec demo...</div>}>
+            <CodecFixtureDemo />
+          </Suspense>
         ) : (
           <Sketch />
         )}

@@ -20,12 +20,12 @@ pnpm --filter @spatialdata/vis dev
 
 Open [http://127.0.0.1:5173/codec](http://127.0.0.1:5173/codec).
 
-The route registers `registerJpeg2kCodec()` from `zarrextra`, loads
-`/test-fixtures/codecs/jpeg2k.zarr`, and renders the image through the
-store-backed OME-Zarr path in `SpatialCanvasViewer`. It imports
-`@cornerstonejs/codec-openjpeg/decode` statically and passes that factory to
-`createOpenJpegDecoder()` so Vite can bundle the optional decoder package. The
-manifest is available at `/test-fixtures/codecs/jpeg2k.manifest.json`.
+The route calls `enableWorkerChunkDecode()` from `zarrextra/workers`, which uses
+[`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
+with a custom codec worker that registers JP2K support inside the worker before
+decode. It loads `/test-fixtures/codecs/jpeg2k.zarr` and renders through the
+store-backed OME-Zarr path in `SpatialCanvasViewer`. The manifest is available
+at `/test-fixtures/codecs/jpeg2k.manifest.json`.
 
 The vis dev script starts the fixture server on port `38473` and proxies
 `/test-fixtures` through Vite on `5173`. Override the fixture server port with
@@ -139,7 +139,9 @@ isolation, but normal user-facing `uv run` commands do not need it.
 
 `zarrextra` exposes:
 
-- `registerJpeg2kCodec()` for the registered `imagecodecs_jpeg2k` id.
+- `registerJpeg2kCodec()` for the registered `imagecodecs_jpeg2k` id (Node/CI).
+- `enableWorkerChunkDecode()` from `zarrextra/workers` for browser apps (fizarrita
+  worker pool + custom codec worker with JP2K registration).
 - `registerExperimentalHtj2kCodec()` for labelled non-standard HTJ2K tests.
 - `loadOmeZarrMultiscalesFromStore()` for loading multiscales from a
   `zarr.Readable` store without going back through Viv's URL loader.

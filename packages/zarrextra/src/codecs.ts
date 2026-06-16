@@ -7,6 +7,30 @@ type ChunkMetadata<D extends zarr.DataType = zarr.DataType> = {
   fillValue: zarr.Scalar<D> | null;
 };
 
+/** Chunk metadata from zarrita (camelCase) or fizarrita workers (snake_case). */
+type ChunkMetadataInput = Partial<ChunkMetadata> & {
+  data_type?: zarr.DataType;
+  chunk_shape?: number[];
+  fill_value?: zarr.Scalar<zarr.DataType> | null;
+};
+
+function normalizeChunkMetadata(meta: ChunkMetadataInput): ChunkMetadata {
+  const dataType = meta.dataType ?? meta.data_type;
+  const shape = meta.shape ?? meta.chunk_shape;
+  if (!dataType) {
+    throw new Error('Chunk metadata is missing dataType / data_type.');
+  }
+  if (!shape) {
+    throw new Error('Chunk metadata is missing shape / chunk_shape.');
+  }
+  return {
+    dataType,
+    shape,
+    codecs: meta.codecs ?? [],
+    fillValue: meta.fillValue ?? meta.fill_value ?? null,
+  };
+}
+
 type Codec = {
   kind?: 'array_to_array' | 'array_to_bytes' | 'bytes_to_bytes';
   encode(data: unknown): Promise<Uint8Array> | Uint8Array;
@@ -145,21 +169,45 @@ function createImageCodecEntry(
 ): () => Promise<CodecEntry> {
   return async () => ({
     kind: 'array_to_bytes',
-    fromConfig(config: unknown, meta: ChunkMetadata): Codec {
+    fromConfig(config: unknown, meta: ChunkMetadataInput): Codec {
+      const chunkMeta = normalizeChunkMetadata(meta);
       return {
         kind: 'array_to_bytes',
         encode: () => unsupportedEncode(codecName),
         async decode(encoded: Uint8Array) {
-          const decoded = await decoder(encoded, meta, config);
+          const decoded = await decoder(encoded, chunkMeta, config);
           return {
-            data: typedArrayFromDecodedBytes(decoded, meta),
-            shape: meta.shape,
-            stride: getStrides(meta.shape),
+            data: typedArrayFromDecodedBytes(decoded, chunkMeta),
+            shape: chunkMeta.shape,
+            stride: getStrides(chunkMeta.shape),
           };
         },
       };
     },
   });
+}
+
+/**
+ * Adapt zarrita's built-in registry codecs for fizarrita's worker metadata
+ * (`data_type`, `chunk_shape`) before fizarrita's codec worker loads.
+ */
+export function wrapZarrRegistryForFizarritaWorker() {
+  const { registry } = zarr;
+  for (const [id, factory] of [...registry.entries()]) {
+    registry.set(id, async () => {
+      const entry = await factory();
+      if (typeof entry.fromConfig !== 'function') {
+        return entry;
+      }
+      const fromConfig = entry.fromConfig.bind(entry);
+      return {
+        ...entry,
+        fromConfig(config: unknown, meta: ChunkMetadataInput) {
+          return fromConfig(config, normalizeChunkMetadata(meta));
+        },
+      };
+    });
+  }
 }
 
 export function createOpenJpegDecoder(

@@ -1,4 +1,5 @@
 import * as zarr from 'zarrita';
+import { getZarrChunk } from './chunkDecode';
 
 export type RasterSelection = Record<string, number> | number[];
 
@@ -201,11 +202,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     selection: Array<number | zarr.Slice | null>,
     signal?: AbortSignal
   ): Promise<zarr.Chunk<zarr.DataType>> {
-    const result = await zarr.get(this.data, selection, { signal });
-    if (typeof result !== 'object' || result === null || !('data' in result)) {
-      throw new Error('Expected chunk object from zarr.get().');
-    }
-    return result;
+    return await getZarrChunk(this.data, selection, { signal });
   }
 
   async getRaster({ selection, signal }: { selection: RasterSelection; signal?: AbortSignal }) {
