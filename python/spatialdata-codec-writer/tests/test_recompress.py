@@ -20,7 +20,7 @@ from spatialdata_codec_writer import (
 from spatialdata_codec_writer.codecs import decode_htj2k_plane, encode_image_plane
 from spatialdata_codec_writer.recompress import _preset_encode_options
 
-from synthetic_images import mandelbrot_plane
+from scripts.synthetic_images import mandelbrot_plane
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -118,6 +118,103 @@ def test_resolve_recompression_config_applies_quality_shortcut() -> None:
 
     assert config["images"]["morphology"]["quality"] == 0.001
     assert "preset" not in config["images"]["morphology"]
+
+
+def test_resolve_recompression_config_applies_shortcuts_to_all_images() -> None:
+    config = resolve_recompression_config(
+        {},
+        codec=CODEC_HTJ2K_OPENJPH,
+        quality=0.0005,
+        chunks="auto",
+    )
+
+    assert config["images"] == {}
+    assert config["default_image"]["codec"] == CODEC_HTJ2K_OPENJPH
+    assert config["default_image"]["quality"] == 0.0005
+    assert config["default_image"]["chunks"] == "auto"
+
+
+def _write_multi_image_store(root: Path) -> Path:
+    store = _write_source_store(root)
+    _write_json(
+        root / "images" / "histology" / "zarr.json",
+        _group_meta(_raster_attrs("histology", ["c", "y", "x"])),
+    )
+    image = zarr.create_array(
+        store=str(root / "images" / "histology" / "0"),
+        shape=(1, 8, 8),
+        chunks=(1, 4, 4),
+        dtype="uint16",
+        dimension_names=("c", "y", "x"),
+        zarr_format=3,
+    )
+    image[:] = (np.arange(64, dtype=np.uint16) * 2).reshape(1, 8, 8)
+    return store
+
+
+def test_recompress_spatialdata_applies_default_image_to_all_images(tmp_path: Path) -> None:
+    source = _write_multi_image_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        preset="lossless",
+        chunks=[1, 4, 4],
+        config={"default_labels": {"codec": None}},
+    )
+
+    assert {report["path"] for report in result.manifest["images"]} == {
+        "images/morphology/0",
+        "images/histology/0",
+    }
+    for image_key in ("morphology", "histology"):
+        image_meta = json.loads(
+            (result.store_path / "images" / image_key / "0" / "zarr.json").read_text()
+        )
+        assert image_meta["codecs"] == [{"name": "imagecodecs_jpeg2k", "configuration": {}}]
+
+
+@pytest.mark.skipif(
+    not htj2k_encode_available(),
+    reason="No HTJ2K encoder is available in this environment.",
+)
+def test_recompress_sibling_applies_to_all_images(tmp_path: Path) -> None:
+    source = _write_multi_image_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        codec=CODEC_HTJ2K_OPENJPH,
+        quality=0.0005,
+        chunks=[1, 4, 4],
+        config={"default_labels": {"codec": None}},
+        sibling=True,
+    )
+
+    assert {report["path"] for report in result.manifest["images"]} == {
+        "images/morphology:htj2k_q0.0005/0",
+        "images/histology:htj2k_q0.0005/0",
+    }
+    for image_key in ("morphology", "histology"):
+        original_meta = json.loads(
+            (result.store_path / "images" / image_key / "0" / "zarr.json").read_text()
+        )
+        assert original_meta["codecs"] != [
+            {"name": CODEC_HTJ2K_OPENJPH, "configuration": {}}
+        ]
+
+        sibling_meta = json.loads(
+            (
+                result.store_path
+                / "images"
+                / f"{image_key}:htj2k_q0.0005"
+                / "0"
+                / "zarr.json"
+            ).read_text()
+        )
+        assert sibling_meta["codecs"] == [
+            {"name": CODEC_HTJ2K_OPENJPH, "configuration": {}}
+        ]
 
 
 def test_preset_encode_options_quality_implies_lossy_htj2k() -> None:

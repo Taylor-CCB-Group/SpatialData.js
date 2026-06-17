@@ -49,6 +49,22 @@ uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer reco
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-htj2k.zarr --image-key morphology_focus --codec experimental.openjph_htj2k --preset balanced --chunks auto --overwrite
 ```
 
+To recompress **every** image with the same settings, omit `--image-key`; CLI flags update
+`default_image` and apply to all image groups in the store:
+
+```bash
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress \
+  input.sdata.zarr output-htj2k.zarr \
+  --codec experimental.openjph_htj2k \
+  --quality 0.0005 \
+  --chunks auto \
+  --sibling \
+  --overwrite
+```
+
+With `--sibling`, each original image is kept and a compressed sibling is added alongside it
+(e.g. `morphology_focus:htj2k_q0.0005`, `he_image:htj2k_q0.0005`).
+
 Parallel encoding defaults to one worker per CPU (`--workers N` to override).
 
 ### Custom HTJ2K `quality` (instead of `--preset`)

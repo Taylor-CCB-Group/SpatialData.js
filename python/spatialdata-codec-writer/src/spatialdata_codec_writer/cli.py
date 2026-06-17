@@ -20,8 +20,6 @@ def _recompress_chunks(value: list[str] | None):
 
 
 def _recompress(args: argparse.Namespace) -> None:
-    if args.quality is not None and args.image_key is None:
-        raise SystemExit("error: --quality requires --image-key")
     if args.quality is not None and args.reversible:
         raise SystemExit("error: --quality cannot be used with --reversible")
     if args.quality is not None and args.codec == "imagecodecs_jpeg2k":
@@ -63,23 +61,26 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument("source", help="Existing SpatialData Zarr store")
     recompress.add_argument("dest", help="Output SpatialData Zarr store")
     recompress.add_argument("--config", help="JSON recompression config")
-    recompress.add_argument("--image-key", help="Convenience shortcut for one image")
+    recompress.add_argument(
+        "--image-key",
+        help="Apply convenience flags to one image only (default: all images)",
+    )
     recompress.add_argument(
         "--codec",
         choices=["imagecodecs_jpeg2k", "experimental.openjph_htj2k"],
-        help="Image codec for --image-key",
+        help="Image codec (all images unless --image-key is set)",
     )
     recompress.add_argument(
         "--preset",
         choices=["lossless", "balanced", "small"],
-        help="Named image preset for --image-key (ignored when --quality is set)",
+        help="Named image preset (ignored when --quality is set)",
     )
     recompress.add_argument(
         "--quality",
         type=float,
         metavar="Q",
         help=(
-            "HTJ2K quantization factor for --image-key (lower = better fidelity, larger output). "
+            "HTJ2K quantization factor (lower = better fidelity, larger output). "
             "Implies lossy encoding; use with --codec experimental.openjph_htj2k. "
             "Overrides preset quality."
         ),
@@ -87,13 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument(
         "--reversible",
         action="store_true",
-        help="Force lossless HTJ2K for --image-key (cannot be combined with --quality)",
+        help="Force lossless HTJ2K (cannot be combined with --quality)",
     )
     recompress.add_argument(
         "--chunks",
         nargs="+",
         metavar="CHUNK",
-        help="Use 'auto' or pass one integer per raster axis for --image-key",
+        help="Use 'auto' or pass one integer per raster axis",
     )
     recompress.add_argument("--overwrite", action="store_true")
     recompress.add_argument(

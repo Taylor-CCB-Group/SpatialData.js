@@ -98,6 +98,29 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return out
 
 
+def _apply_image_shortcuts(
+    image_cfg: dict[str, Any],
+    *,
+    codec: str | None = None,
+    preset: ImagePreset | None = None,
+    chunks: ChunkSpec | None = None,
+    quality: float | None = None,
+    reversible: bool | None = None,
+) -> dict[str, Any]:
+    out = dict(image_cfg)
+    if codec is not None:
+        out["codec"] = codec
+    if preset is not None:
+        out["preset"] = preset
+    if chunks is not None:
+        out["chunks"] = chunks
+    if quality is not None:
+        out["quality"] = quality
+    if reversible is not None:
+        out["reversible"] = reversible
+    return out
+
+
 def resolve_recompression_config(
     config: str | Path | dict[str, Any] | None = None,
     *,
@@ -108,22 +131,33 @@ def resolve_recompression_config(
     quality: float | None = None,
     reversible: bool | None = None,
 ) -> dict[str, Any]:
-    """Return normalized recompression config after CLI shortcut expansion."""
+    """Return normalized recompression config after CLI shortcut expansion.
+
+    When *image_key* is set, shortcut flags apply to that image only. Otherwise
+    they update ``default_image`` and apply to every image in the store.
+    """
 
     resolved = _deep_merge(_default_config(), _load_config(config))
+    shortcuts = _apply_image_shortcuts(
+        {},
+        codec=codec,
+        preset=preset,
+        chunks=chunks,
+        quality=quality,
+        reversible=reversible,
+    )
     if image_key is not None:
-        image_cfg = dict(resolved.get("images", {}).get(image_key, {}))
-        if codec is not None:
-            image_cfg["codec"] = codec
-        if preset is not None:
-            image_cfg["preset"] = preset
-        if chunks is not None:
-            image_cfg["chunks"] = chunks
-        if quality is not None:
-            image_cfg["quality"] = quality
-        if reversible is not None:
-            image_cfg["reversible"] = reversible
+        image_cfg = _apply_image_shortcuts(
+            dict(resolved.get("images", {}).get(image_key, {})),
+            codec=codec,
+            preset=preset,
+            chunks=chunks,
+            quality=quality,
+            reversible=reversible,
+        )
         resolved.setdefault("images", {})[image_key] = image_cfg
+    elif shortcuts:
+        resolved["default_image"] = _deep_merge(resolved.get("default_image", {}), shortcuts)
     return resolved
 
 
