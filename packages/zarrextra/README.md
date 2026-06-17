@@ -67,6 +67,29 @@ registerJpeg2kCodec({ decoder: createOpenJpegDecoder(OpenJPEGJS) });
 experiments. Keep fixtures and datasets using that codec clearly labelled until
 there is community agreement on a registered codec id.
 
+```typescript
+import OpenJPHJS from '@cornerstonejs/codec-openjph';
+import { createOpenJphDecoder, registerExperimentalHtj2kCodec } from 'zarrextra';
+
+registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(OpenJPHJS) });
+```
+
+For offline encode (fixtures, recompress on macOS without native OpenJPH), use
+`encodeHtj2kPlane()` or `createOpenJphEncoder()` from the same package. Python
+`spatialdata-codec-writer` calls `scripts/encode-htj2k-plane.mjs` when native
+`imagecodecs` HTJ2K encode is unavailable.
+
+```typescript
+import { encodeHtj2kPlane } from 'zarrextra';
+
+const plane = new Uint16Array(width * height);
+// ... fill plane ...
+const encoded = await encodeHtj2kPlane(plane, { width, height }, {
+  reversible: false,
+  quality: 75,
+});
+```
+
 ## Worker-backed chunk decode (browser)
 
 JP2K and other codec work can block the main thread for a long time. For browser
@@ -83,16 +106,17 @@ disableWorkerChunkDecode();
 ```
 
 This uses a thin custom codec worker that registers zarrextra image codecs
-(including OpenJPEG for `imagecodecs_jpeg2k`) into `zarrita.registry` inside the
-worker before fizarrita's codec handler runs. Built-in zarrita codecs (bytes, zstd,
+(including OpenJPEG for `imagecodecs_jpeg2k` and OpenJPH for experimental HTJ2K)
+into `zarrita.registry` inside the worker before fizarrita's codec handler runs. Built-in zarrita codecs (bytes, zstd,
 blosc, …) are also adapted to fizarrita's worker metadata shape via
 `wrapZarrRegistryForFizarritaWorker()`. Main-thread `registerJpeg2kCodec()` is not
 required for that path.
 
 | Context | Setup |
 |---------|-------|
-| Node / CI | `registerJpeg2kCodec()` on the main thread |
-| Browser | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K data |
+| Node / CI | `registerJpeg2kCodec()` / `registerExperimentalHtj2kCodec()` on the main thread |
+| Browser | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K or HTJ2K data |
 
-Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`, and
-`@cornerstonejs/codec-openjpeg` (bundled into the worker script).
+Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
+`@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
+the worker script).

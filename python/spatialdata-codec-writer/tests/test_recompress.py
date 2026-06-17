@@ -17,7 +17,7 @@ from spatialdata_codec_writer import (
     recompress_spatialdata,
     resolve_recompression_config,
 )
-from spatialdata_codec_writer.recompress import _preset_encode_options
+from spatialdata_codec_writer.recompress import _encode_image_plane, _preset_encode_options
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -111,13 +111,13 @@ def test_lossy_presets_are_not_extreme_low_bitrate() -> None:
 
 
 def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
-    assert HTJ2K_PRESETS["balanced"] == {"reversible": False}
-    assert HTJ2K_PRESETS["small"] == {"reversible": False}
+    assert HTJ2K_PRESETS["balanced"] == {"reversible": False, "quality": 100}
+    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality": 75}
     assert "level" not in HTJ2K_PRESETS["balanced"]
     assert _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_EXPERIMENTAL,
-    ) == {"reversible": False}
+    ) == {"reversible": False, "quality": 100}
     assert _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_JPEG2K,
@@ -126,18 +126,15 @@ def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
 
 @pytest.mark.skipif(
     not htj2k_encode_available(),
-    reason="imagecodecs HTJ2K encode is not available in this environment.",
+    reason="No HTJ2K encoder is available in this environment.",
 )
 def test_htj2k_balanced_preset_produces_reasonable_chunk_size() -> None:
-    import imagecodecs
-    import numpy as np
-
     plane = np.random.randint(0, 4096, (256, 256), dtype=np.uint16)
     options = _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_EXPERIMENTAL,
     )
-    encoded = imagecodecs.htj2k_encode(plane, **options)
+    encoded = _encode_image_plane(plane, CODEC_HTJ2K_EXPERIMENTAL, options)
     assert len(encoded) > 10_000
 
 
@@ -270,7 +267,7 @@ def test_recompress_rejects_htj2k_when_encode_unavailable(tmp_path: Path) -> Non
 
 @pytest.mark.skipif(
     not htj2k_encode_available(),
-    reason="imagecodecs HTJ2K encode is not available in this environment.",
+    reason="No HTJ2K encoder is available in this environment.",
 )
 def test_recompress_spatialdata_rewrites_image_with_htj2k(tmp_path: Path) -> None:
     source = _write_source_store(tmp_path / "source.zarr")
@@ -308,7 +305,7 @@ def test_recompress_spatialdata_rewrites_image_with_htj2k(tmp_path: Path) -> Non
 
 @pytest.mark.skipif(
     not htj2k_encode_available(),
-    reason="imagecodecs HTJ2K encode is not available in this environment.",
+    reason="No HTJ2K encoder is available in this environment.",
 )
 def test_recompress_sibling_uses_htj2k_key(tmp_path: Path) -> None:
     source = _write_source_store(tmp_path / "source.zarr")

@@ -17,7 +17,7 @@ CODEC_HTJ2K_EXPERIMENTAL = "experimental.imagecodecs_htj2k"
 CodecName = Literal["imagecodecs_jpeg2k", "experimental.imagecodecs_htj2k"]
 
 
-def htj2k_encode_available() -> bool:
+def htj2k_native_encode_available() -> bool:
     """Return whether the installed imagecodecs build includes HTJ2K encode support."""
     htj2k = getattr(imagecodecs, "HTJ2K", None)
     if htj2k is not None and getattr(htj2k, "available", False):
@@ -31,6 +31,15 @@ def htj2k_encode_available() -> bool:
     except Exception:
         return False
     return True
+
+
+def htj2k_encode_available() -> bool:
+    """Return whether HTJ2K encode is available via native imagecodecs or the WASM helper."""
+    if htj2k_native_encode_available():
+        return True
+    from .htj2k_wasm import htj2k_wasm_encode_available
+
+    return htj2k_wasm_encode_available()
 
 
 @dataclass(frozen=True)
@@ -91,20 +100,39 @@ def _extract_chunk(image: np.ndarray, chunks: tuple[int, ...], coords: tuple[int
     return padded
 
 
-def _encode_chunk_2d(chunk: np.ndarray, codec: str) -> bytes | bytearray:
+def _encode_htj2k_plane(
+    plane: np.ndarray, encode_options: dict[str, Any] | None = None
+) -> bytes | bytearray:
+    options = encode_options or {}
+    if htj2k_native_encode_available():
+        htj2k_encoder = getattr(imagecodecs, "htj2k_encode", None)
+        if htj2k_encoder is not None:
+            return htj2k_encoder(plane, **options)
+        fallback = dict(options)
+        fallback.setdefault("codecformat", "jph")
+        return imagecodecs.jpeg2k_encode(plane, **fallback)
+
+    from .htj2k_wasm import encode_htj2k_plane_wasm, htj2k_wasm_encode_available, wasm_encode_options
+
+    if htj2k_wasm_encode_available():
+        reversible, quality = wasm_encode_options(options)
+        return encode_htj2k_plane_wasm(plane, reversible=reversible, quality=quality)
+
+    raise RuntimeError(
+        "No HTJ2K encoder is available. Install imagecodecs with OpenJPH support "
+        "(for example conda-forge imagecodecs), or run from this repository with "
+        "Node.js and @cornerstonejs/codec-openjph installed."
+    )
+
+
+def _encode_chunk_2d(
+    chunk: np.ndarray, codec: str, encode_options: dict[str, Any] | None = None
+) -> bytes | bytearray:
     plane = np.asarray(chunk.reshape(chunk.shape[-2], chunk.shape[-1]))
     if codec == CODEC_JPEG2K:
         return imagecodecs.jpeg2k_encode(plane)
     if codec == CODEC_HTJ2K_EXPERIMENTAL:
-        if not htj2k_encode_available():
-            raise RuntimeError(
-                "No HTJ2K-capable imagecodecs encoder is available. "
-                "Install an imagecodecs build with OpenJPH support (for example conda-forge imagecodecs)."
-            )
-        htj2k_encoder = getattr(imagecodecs, "htj2k_encode", None)
-        if htj2k_encoder is not None:
-            return htj2k_encoder(plane)
-        return imagecodecs.jpeg2k_encode(plane, codecformat="jph")
+        return _encode_htj2k_plane(plane, encode_options)
     raise ValueError(f"Unsupported codec: {codec}")
 
 

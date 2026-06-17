@@ -5,9 +5,11 @@ sidebar_position: 6
 # Codec fixture guide
 
 SpatialData codec fixtures live under `test-fixtures/codecs/` and are generated
-separately from the versioned `blobs()` fixtures. The first fixture is a small
-OME-Zarr/SpatialData image using the registered Zarr codec id
-`imagecodecs_jpeg2k`.
+separately from the versioned `blobs()` fixtures. The reference fixtures are
+small OME-Zarr/SpatialData images using:
+
+- `imagecodecs_jpeg2k` (registered JP2K codec id)
+- `experimental.imagecodecs_htj2k` (experimental HTJ2K codec id)
 
 ## Try it in the browser
 
@@ -22,10 +24,12 @@ Open [http://127.0.0.1:5173/codec](http://127.0.0.1:5173/codec).
 
 The route calls `enableWorkerChunkDecode()` from `zarrextra/workers`, which uses
 [`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
-with a custom codec worker that registers JP2K support inside the worker before
-decode. It loads `/test-fixtures/codecs/jpeg2k.zarr` and renders through the
-store-backed OME-Zarr path in `SpatialCanvasViewer`. The manifest is available
-at `/test-fixtures/codecs/jpeg2k.manifest.json`.
+with a custom codec worker that registers JP2K and experimental HTJ2K support
+inside the worker before decode. Use the codec selector on the page to switch
+between `/test-fixtures/codecs/jpeg2k.zarr` and
+`/test-fixtures/codecs/htj2k.zarr`. Manifests are at
+`/test-fixtures/codecs/jpeg2k.manifest.json` and
+`/test-fixtures/codecs/htj2k.manifest.json`.
 
 The vis dev script starts the fixture server on port `38473` and proxies
 `/test-fixtures` through Vite on `5173`. Override the fixture server port with
@@ -39,8 +43,9 @@ The fixture is written by the local package in
 Useful commands:
 
 ```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --overwrite
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --experimental-htj2k --overwrite
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect ../../test-fixtures/codecs/jpeg2k.zarr
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect ../../test-fixtures/codecs/htj2k.zarr
 ```
 
 The manifest records shape, dtype, chunk shape, codec id, package versions, and
@@ -85,8 +90,8 @@ image and can write a fresh multiscale output from it.
 ### Whole-object recompression
 
 For larger or real examples, use the `recompress` command. It copies the source
-SpatialData store, rewrites configured image rasters with JP2K, and writes labels
-with Blosc/zstd by default.
+SpatialData store, rewrites configured image rasters with JP2K or experimental
+HTJ2K, and writes labels with Blosc/zstd by default.
 
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
@@ -99,22 +104,35 @@ For repeatable per-raster settings, use JSON:
   "default_image": { "codec": "imagecodecs_jpeg2k", "preset": "lossless", "chunks": "auto" },
   "images": {
     "morphology_focus": { "preset": "balanced" },
-    "he_image": { "preset": "small" }
+    "he_image": { "preset": "small" },
+    "fast_preview": {
+      "codec": "experimental.imagecodecs_htj2k",
+      "preset": "lossless",
+      "chunks": "auto"
+    }
   },
   "default_labels": { "codec": "blosc", "clevel": 5 }
 }
 ```
 
-JP2K presets are `lossless`, `balanced` (`level=100`), and `small`
-(`level=75`). Advanced
-`imagecodecs.jpeg2k_encode` options can be passed through per-image config with
-`encode_options`, or with supported top-level keys such as `level`,
-`reversible`, `codecformat`, and `numthreads`.
+JP2K and HTJ2K share preset names (`lossless`, `balanced`, `small`). HTJ2K maps
+`balanced` / `small` to WASM `quality` 100 / 75 when native encode is unavailable.
+Advanced `imagecodecs.jpeg2k_encode` or `imagecodecs.htj2k_encode` options can be
+passed through per-image config with `encode_options`, or with supported top-level keys
+such as `level`, `quality`, `reversible`, `codecformat`, and `numthreads`. HTJ2K uses
+the experimental codec id `experimental.imagecodecs_htj2k`.
 
-Browser-targeted JP2K output is limited to `uint8`, `int8`, `uint16`, and
-`int16`. Labels are not JP2K-compressed in v1; they stay lossless through
+**HTJ2K encode on macOS PyPI wheels:** PyPI `imagecodecs` often ships HTJ2K as a stub
+(`HTJ2K.available == false`). When native encode is missing, the writer falls back to
+the OpenJPH WASM encoder via `scripts/encode-htj2k-plane.mjs` (requires Node.js and
+`@cornerstonejs/codec-openjph` from the monorepo install). Presets pass `quality`
+(0–100) to the WASM encoder; native `imagecodecs.htj2k_encode` ignores JP2K-style
+`level` values.
+
+Browser-targeted image codec output is limited to `uint8`, `int8`, `uint16`, and
+`int16`. Labels are not image-codec-compressed in v1; they stay lossless through
 Blosc/zstd because integer IDs and wider dtypes such as `uint32` are not
-considered supported by the current JavaScript OpenJPEG path.
+considered supported by the current JavaScript decoder paths.
 
 Useful Xenium morphology experiment:
 
@@ -141,8 +159,9 @@ isolation, but normal user-facing `uv run` commands do not need it.
 
 - `registerJpeg2kCodec()` for the registered `imagecodecs_jpeg2k` id (Node/CI).
 - `enableWorkerChunkDecode()` from `zarrextra/workers` for browser apps (fizarrita
-  worker pool + custom codec worker with JP2K registration).
-- `registerExperimentalHtj2kCodec()` for labelled non-standard HTJ2K tests.
+  worker pool + custom codec worker with JP2K and experimental HTJ2K registration).
+- `registerExperimentalHtj2kCodec()` for labelled non-standard HTJ2K tests and
+  Node/CI decode smoke tests (uses optional `@cornerstonejs/codec-openjph`).
 - `loadOmeZarrMultiscalesFromStore()` for loading multiscales from a
   `zarr.Readable` store without going back through Viv's URL loader.
 

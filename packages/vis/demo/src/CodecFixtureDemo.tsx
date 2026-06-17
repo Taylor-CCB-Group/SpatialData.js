@@ -2,7 +2,37 @@ import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useEffect, useMemo, useState } from 'react';
 import { type LayerConfig, SpatialCanvasViewer, type ViewState } from '../../src/index';
 import { buildHeadlessLayersForCoordinateSystem } from './buildHeadlessLayers';
-import { getLocalJpeg2kCodecFixtureUrl, getLocalJpeg2kCodecManifestUrl } from './fixtureUrls';
+import {
+  getLocalHtj2kCodecFixtureUrl,
+  getLocalHtj2kCodecManifestUrl,
+  getLocalJpeg2kCodecFixtureUrl,
+  getLocalJpeg2kCodecManifestUrl,
+} from './fixtureUrls';
+
+type CodecFixtureKind = 'jpeg2k' | 'htj2k';
+
+const FIXTURE_CONFIG: Record<
+  CodecFixtureKind,
+  {
+    label: string;
+    storeName: string;
+    getFixtureUrl: (origin?: string) => string;
+    getManifestUrl: (origin?: string) => string;
+  }
+> = {
+  jpeg2k: {
+    label: 'JP2K',
+    storeName: 'jpeg2k.zarr',
+    getFixtureUrl: getLocalJpeg2kCodecFixtureUrl,
+    getManifestUrl: getLocalJpeg2kCodecManifestUrl,
+  },
+  htj2k: {
+    label: 'HTJ2K (experimental)',
+    storeName: 'htj2k.zarr',
+    getFixtureUrl: getLocalHtj2kCodecFixtureUrl,
+    getManifestUrl: getLocalHtj2kCodecManifestUrl,
+  },
+};
 
 const panelStyle = {
   flexShrink: 0,
@@ -19,12 +49,15 @@ const viewerShellStyle = {
 };
 
 function CodecFixtureViewer({
+  fixtureKind,
   fixtureUrl,
   manifestUrl,
 }: {
+  fixtureKind: CodecFixtureKind;
   fixtureUrl: string;
   manifestUrl: string;
 }) {
+  const fixtureConfig = FIXTURE_CONFIG[fixtureKind];
   const { spatialData, loading, error } = useSpatialData();
   const coordinateSystems = useMemo(() => spatialData?.coordinateSystems ?? [], [spatialData]);
   const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
@@ -50,19 +83,19 @@ function CodecFixtureViewer({
   }, [spatialData, coordinateSystem]);
 
   const statusMessage = useMemo(() => {
-    if (loading) return 'Loading JP2K codec fixture...';
-    if (error) return `Failed to load JP2K fixture: ${error.message}`;
+    if (loading) return `Loading ${fixtureConfig.label} codec fixture...`;
+    if (error) return `Failed to load ${fixtureConfig.label} fixture: ${error.message}`;
     if (!spatialData) return 'No SpatialData loaded.';
     if (!coordinateSystem) return 'No coordinate system available.';
     if (layerOrder.length === 0) return 'No layers in this coordinate system.';
     return null;
-  }, [loading, error, spatialData, coordinateSystem, layerOrder.length]);
+  }, [loading, error, spatialData, coordinateSystem, layerOrder.length, fixtureConfig.label]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={panelStyle}>
         <div style={{ color: '#888', marginBottom: 6 }}>
-          Codec fixture <code>SpatialCanvasViewer</code> - local <code>jpeg2k.zarr</code>
+          Codec fixture <code>SpatialCanvasViewer</code> - local <code>{fixtureConfig.storeName}</code>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
           <a href={fixtureUrl} style={{ color: '#8af' }}>
@@ -72,6 +105,9 @@ function CodecFixtureViewer({
             Manifest
           </a>
           <span style={{ color: '#aaa' }}>
+            Codec: <code>{fixtureConfig.label}</code>
+          </span>
+          <span style={{ color: '#aaa' }}>
             Coordinate system: <code>{coordinateSystem ?? '-'}</code>
           </span>
           <span style={{ color: '#aaa' }}>
@@ -80,7 +116,7 @@ function CodecFixtureViewer({
         </div>
         {error ? (
           <div style={{ color: '#d99' }}>
-            Generate the fixture with <code>pnpm test:fixtures:generate:codecs</code>.
+            Generate fixtures with <code>pnpm test:fixtures:generate:codecs</code>.
           </div>
         ) : null}
       </div>
@@ -118,14 +154,39 @@ function CodecFixtureViewer({
 }
 
 export default function CodecFixtureDemo() {
-  const fixtureUrl = useMemo(() => getLocalJpeg2kCodecFixtureUrl(), []);
-  const manifestUrl = useMemo(() => getLocalJpeg2kCodecManifestUrl(), []);
+  const [fixtureKind, setFixtureKind] = useState<CodecFixtureKind>('jpeg2k');
+  const fixtureConfig = FIXTURE_CONFIG[fixtureKind];
+  const fixtureUrl = useMemo(() => fixtureConfig.getFixtureUrl(), [fixtureConfig]);
+  const manifestUrl = useMemo(() => fixtureConfig.getManifestUrl(), [fixtureConfig]);
 
   return (
-    <SpatialDataProvider source={fixtureUrl}>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-        <CodecFixtureViewer fixtureUrl={fixtureUrl} manifestUrl={manifestUrl} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <div style={panelStyle}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: '#ccc' }}>
+          Codec fixture
+          <select
+            value={fixtureKind}
+            onChange={(event) => setFixtureKind(event.target.value as CodecFixtureKind)}
+            style={{
+              background: '#2a2a2a',
+              color: '#eee',
+              border: '1px solid #444',
+              borderRadius: 4,
+              padding: '4px 8px',
+            }}
+          >
+            <option value="jpeg2k">JP2K (imagecodecs_jpeg2k)</option>
+            <option value="htj2k">HTJ2K (experimental.imagecodecs_htj2k)</option>
+          </select>
+        </label>
       </div>
-    </SpatialDataProvider>
+      <SpatialDataProvider key={fixtureKind} source={fixtureUrl}>
+        <CodecFixtureViewer
+          fixtureKind={fixtureKind}
+          fixtureUrl={fixtureUrl}
+          manifestUrl={manifestUrl}
+        />
+      </SpatialDataProvider>
+    </div>
   );
 }

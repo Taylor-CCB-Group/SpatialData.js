@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import * as zarr from 'zarrita';
-import { registerJpeg2kCodec, wrapZarrRegistryForFizarritaWorker } from '../src/codecs';
+import {
+  registerExperimentalHtj2kCodec,
+  registerJpeg2kCodec,
+  wrapZarrRegistryForFizarritaWorker,
+} from '../src/codecs';
 
 const encoder = new TextEncoder();
 
@@ -100,6 +104,73 @@ describe('codec registration', () => {
     }
   });
 
+  it('registers HTJ2K-compatible decoders in Zarrita', async () => {
+    const codecName = 'experimental.imagecodecs_htj2k';
+    const previous = zarr.registry.get(codecName);
+    zarr.registry.delete(codecName);
+
+    try {
+      const arrBefore = await zarr.open(createCodecArrayStore(codecName) as zarr.Readable, {
+        kind: 'array',
+      });
+      await expect(zarr.get(arrBefore, [null, null])).rejects.toThrow(/Unknown codec/);
+
+      registerExperimentalHtj2kCodec({
+        ids: [codecName],
+        decoder: () => new Uint8Array([9, 10, 11, 12]),
+      });
+
+      const arrAfter = await zarr.open(createCodecArrayStore(codecName) as zarr.Readable, {
+        kind: 'array',
+      });
+      const chunk = await zarr.get(arrAfter, [null, null]);
+
+      expect(typeof chunk).toBe('object');
+      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([9, 10, 11, 12]);
+    } finally {
+      if (previous) {
+        zarr.registry.set(codecName, previous);
+      } else {
+        zarr.registry.delete(codecName);
+      }
+    }
+  });
+
+  it('accepts fizarrita worker chunk metadata shape for HTJ2K (data_type, chunk_shape)', async () => {
+    const codecName = 'experimental.imagecodecs_htj2k';
+    const previous = zarr.registry.get(codecName);
+    zarr.registry.delete(codecName);
+
+    try {
+      registerExperimentalHtj2kCodec({
+        ids: [codecName],
+        decoder: () => new Uint8Array([13, 14, 15, 16]),
+      });
+
+      const factory = zarr.registry.get(codecName);
+      expect(factory).toBeDefined();
+      if (!factory) throw new Error('Expected codec factory to be registered.');
+
+      const entry = await factory();
+      const codec = entry.fromConfig({}, {
+        data_type: 'uint8',
+        chunk_shape: [2, 2],
+        codecs: [{ name: codecName, configuration: {} }],
+      });
+
+      const chunk = await codec.decode(new Uint8Array([99]));
+      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([13, 14, 15, 16]);
+      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+    } finally {
+      if (previous) {
+        zarr.registry.set(codecName, previous);
+      } else {
+        zarr.registry.delete(codecName);
+      }
+    }
+  });
+
   it('wrapZarrRegistryForFizarritaWorker adapts built-in codecs to fizarrita metadata', async () => {
     wrapZarrRegistryForFizarritaWorker();
     const factory = zarr.registry.get('bytes');
@@ -120,4 +191,53 @@ describe('codec registration', () => {
     expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([1, 2, 3, 4]);
     expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
   });
+
+  it('encodes and decodes a small HTJ2K plane with OpenJPH WASM', async () => {
+    let openjph: Record<string, unknown>;
+    try {
+      openjph = await import('@cornerstonejs/codec-openjph');
+    } catch {
+      console.warn(
+        'Skipping HTJ2K encode round-trip: @cornerstonejs/codec-openjph is not installed.'
+      );
+      return;
+    }
+
+    const { createOpenJphEncoder } = await import('../src/htj2k-encode');
+    const { createOpenJphDecoder } = await import('../src/codecs');
+    const factory = (openjph.default ?? openjph.OpenJPHJS ?? openjph) as Parameters<
+      typeof createOpenJphEncoder
+    >[0];
+    const width = 64;
+    const height = 64;
+    const plane = new Uint16Array(width * height);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        plane[y * width + x] = (x * 17 + y * 31) % 4096;
+      }
+    }
+
+    const encoder = createOpenJphEncoder(factory);
+    const encoded = await encoder(plane, { width, height }, { reversible: true, quality: 100 });
+    expect(encoded.byteLength).toBeGreaterThan(0);
+
+    const decoder = createOpenJphDecoder(factory);
+    const decoded = toUint16Array(await decoder(encoded, {
+      dataType: 'uint16',
+      shape: [height, width],
+      codecs: [{ name: 'experimental.imagecodecs_htj2k', configuration: {} }],
+      fillValue: 0,
+    }));
+    expect(decoded).toEqual(plane);
+  });
 });
+
+function toUint16Array(data: ArrayBuffer | ArrayBufferView): Uint16Array {
+  if (data instanceof Uint16Array) {
+    return data;
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new Uint16Array(data.buffer, data.byteOffset, data.byteLength / 2);
+  }
+  return new Uint16Array(data);
+}

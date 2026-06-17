@@ -42,7 +42,8 @@ def _generate_fixtures(args: argparse.Namespace) -> None:
             written.append(write_htj2k_fixture(output_dir / "htj2k.zarr", overwrite=args.overwrite))
         else:
             print(
-                "Skipping htj2k.zarr: imagecodecs HTJ2K encode is not available in this environment.",
+                "Skipping htj2k.zarr: no HTJ2K encoder is available "
+                "(native imagecodecs or Node WASM helper).",
                 file=sys.stderr,
             )
 

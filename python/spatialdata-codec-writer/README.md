@@ -144,22 +144,25 @@ JP2K presets:
 - `balanced`: writes near-lossless JP2K using `level=100`.
 - `small`: writes more compact JP2K using `level=75`.
 
-HTJ2K presets use the same names but different `imagecodecs.htj2k_encode` options.
-Do not pass JP2K rate-control `level` values to HTJ2K: with `reversible=False`,
-any `level>=1` collapses to minimum-quality output. Today:
+HTJ2K presets use the same names. When native `imagecodecs.htj2k_encode` is available,
+do not pass JP2K rate-control `level` values to HTJ2K. When the writer falls back to
+the OpenJPH WASM helper (`scripts/encode-htj2k-plane.mjs`), presets map to
+`setQuality(quality, reversible)`:
 
 - `lossless`: `reversible=True` (exact round-trip).
-- `balanced` / `small`: `reversible=False` without `level` (irreversible wavelet,
-  near-lossless at full bitrate until HTJ2K rate control is mapped explicitly).
+- `balanced`: `reversible=False`, `quality=100`.
+- `small`: `reversible=False`, `quality=75`.
 
 Per-image config may also pass advanced `imagecodecs.jpeg2k_encode` or
 `imagecodecs.htj2k_encode` options via `encode_options`, or by setting supported
-top-level options such as `level`, `reversible`, `codecformat`, and `numthreads`.
-For HTJ2K, only set `level` when you know the target encoder accepts it.
+top-level options such as `level`, `quality`, `reversible`, `codecformat`, and
+`numthreads`.
 
 HTJ2K recompression uses the experimental Zarr codec id
-`experimental.imagecodecs_htj2k` and requires an `imagecodecs` build with OpenJPH
-support. Sibling mode names HTJ2K outputs like `morphology_focus:htj2k_balanced`.
+`experimental.imagecodecs_htj2k`. On platforms without native OpenJPH in
+`imagecodecs`, encode requires Node.js and `@cornerstonejs/codec-openjph` from this
+repository (see `scripts/encode-htj2k-plane.mjs`). Sibling mode names HTJ2K outputs
+like `morphology_focus:htj2k_balanced`.
 
 Labels are not written with JP2K in v1. Label rasters are written with
 Blosc/zstd level 5 by default so integer IDs remain lossless and browser-safe.
@@ -199,27 +202,24 @@ behind the explicitly non-standard id `experimental.imagecodecs_htj2k` and is
 intended for experiments only until there is community/registry alignment.
 
 ```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --experimental-htj2k
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --experimental-htj2k --overwrite
 ```
 
-HTJ2K encoding requires an `imagecodecs` build with OpenJPH support
-(`imagecodecs.HTJ2K.available` is true). The PyPI wheel on some platforms omits
-HTJ2K; `conda-forge::imagecodecs` is a common source that includes it. When
-encode is unavailable, `generate-fixtures` still writes `jpeg2k.zarr` and skips
+HTJ2K encoding prefers native `imagecodecs` when `imagecodecs.HTJ2K.available` is
+true. Otherwise the writer uses the OpenJPH WASM encoder (`scripts/encode-htj2k-plane.mjs`)
+when Node.js and `@cornerstonejs/codec-openjph` are available from the monorepo install.
+If neither backend is available, `generate-fixtures` still writes `jpeg2k.zarr` and skips
 `htj2k.zarr` with a warning.
 
-### Future: WASM encode via SpatialData.ts
+### WASM encode via SpatialData.ts
 
-On platforms where native HTJ2K encode is missing, a plausible alternative is
-the OpenJPH WASM **encoder** already shipped in `@cornerstonejs/codec-openjph`
-(the decode side is wired in `zarrextra` today). That could thread through as
-either a Node helper subprocess called from Python, or as a TypeScript-first
-`recompress` / fixture writer in the monorepo (scripting, not only viz).
+The subprocess helper is implemented: Python passes each 2D plane to
+`scripts/encode-htj2k-plane.mjs`, which uses the same OpenJPH build as
+`zarrextra` decode. TypeScript callers can use `encodeHtj2kPlane()` /
+`createOpenJphEncoder()` from `zarrextra` directly.
 
-See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md) for shapes,
-shared contracts, and a suggested phasing — not implemented yet.
-
-Note that we already have experience of using this encoder with varying quality levels, so if this is genuinely missing from `imagecodecs.HTJ2K` then this is another reason that it would be of benefit.
+See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md) for contracts and
+future options (long-lived Node worker, TS-first recompress CLI).
 
 Repository scripts may set `UV_CACHE_DIR=.tmp/uv-cache` to keep sandbox and CI
 caches inside the working tree. That environment variable is not required for

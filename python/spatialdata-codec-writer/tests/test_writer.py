@@ -16,7 +16,7 @@ from spatialdata_codec_writer import (
 
 @pytest.mark.skipif(
     not htj2k_encode_available(),
-    reason="imagecodecs HTJ2K encode is not available in this environment.",
+    reason="No HTJ2K encoder is available in this environment.",
 )
 def test_write_htj2k_fixture(tmp_path: Path) -> None:
     fixture = write_htj2k_fixture(tmp_path / "htj2k.zarr")

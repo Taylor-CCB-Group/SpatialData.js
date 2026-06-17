@@ -15,6 +15,7 @@ from zarr.codecs import BloscCodec, BloscShuffle
 from .writer import (
     CODEC_HTJ2K_EXPERIMENTAL,
     CODEC_JPEG2K,
+    _encode_htj2k_plane,
     _package_version,
     _sha256,
     _write_json,
@@ -39,12 +40,12 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "small": {"reversible": False, "level": 75},
 }
 
-# imagecodecs.htj2k_encode does not use JP2K-style rate-control levels. With
-# reversible=False, any level>=1 collapses to minimum-quality output (~1 KiB/chunk).
+# Native imagecodecs.htj2k_encode ignores JP2K-style rate-control levels. The WASM
+# encoder maps preset quality through OpenJPH setQuality(quality, reversible).
 HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
-    "balanced": {"reversible": False},
-    "small": {"reversible": False},
+    "balanced": {"reversible": False, "quality": 100},
+    "small": {"reversible": False, "quality": 75},
 }
 
 
@@ -193,9 +194,10 @@ def _resolve_image_codec(config: dict[str, Any], raster_key: str) -> str:
         )
     if codec == CODEC_HTJ2K_EXPERIMENTAL and not htj2k_encode_available():
         raise RuntimeError(
-            f"HTJ2K recompression requested for {raster_key!r}, but imagecodecs HTJ2K encode "
-            "is not available. Install an imagecodecs build with OpenJPH support "
-            "(for example conda-forge imagecodecs)."
+            f"HTJ2K recompression requested for {raster_key!r}, but no HTJ2K encoder is "
+            "available. Install imagecodecs with OpenJPH support (for example conda-forge "
+            "imagecodecs), or run from this repository with Node.js and "
+            "@cornerstonejs/codec-openjph installed."
         )
     return codec
 
@@ -255,7 +257,7 @@ def _preset_encode_options(config: dict[str, Any], *, codec: str) -> dict[str, A
         )
     options = dict(presets[preset])
     options.update(config.get("encode_options", {}))
-    for key in ("level", "reversible", "codecformat", "numthreads"):
+    for key in ("level", "quality", "reversible", "codecformat", "numthreads"):
         if key in config:
             options[key] = config[key]
     return options
@@ -268,12 +270,7 @@ def _encode_image_plane(
     if codec == CODEC_JPEG2K:
         return imagecodecs.jpeg2k_encode(array, **encode_options)
     if codec == CODEC_HTJ2K_EXPERIMENTAL:
-        htj2k_encoder = getattr(imagecodecs, "htj2k_encode", None)
-        if htj2k_encoder is not None:
-            return htj2k_encoder(array, **encode_options)
-        options = dict(encode_options)
-        options.setdefault("codecformat", "jph")
-        return imagecodecs.jpeg2k_encode(array, **options)
+        return _encode_htj2k_plane(array, encode_options)
     raise ValueError(f"Unsupported image codec: {codec}")
 
 
