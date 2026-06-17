@@ -401,6 +401,9 @@ importers:
       '@cornerstonejs/codec-openjpeg':
         specifier: ^1.3.0
         version: 1.3.0
+      '@cornerstonejs/codec-openjph':
+        specifier: ^2.4.7
+        version: 2.4.7
       '@types/node':
         specifier: 'catalog:'
         version: 22.18.8
@@ -457,6 +460,9 @@ importers:
       '@cornerstonejs/codec-openjpeg':
         specifier: ^1.3.0
         version: 1.3.0
+      '@cornerstonejs/codec-openjph':
+        specifier: ^2.4.7
+        version: 2.4.7
       '@fideus-labs/fizarrita':
         specifier: ^1.4.1
         version: 1.4.1(zarrita@0.7.1)
@@ -1292,6 +1298,10 @@ packages:
 
   '@cornerstonejs/codec-openjpeg@1.3.0':
     resolution: {integrity: sha512-hP8WAZ63AcaDYmHbBVTY04x424AglXsRHrI6VBdW4eTiJ76f0heWrEodT9Sb3sNwazzYuyMOIZNndJPeVSeHcw==}
+    engines: {node: '>=0.14'}
+
+  '@cornerstonejs/codec-openjph@2.4.7':
+    resolution: {integrity: sha512-qvP4q4JDib7mi9r7LqKOwqz7YZ8gjtDX4ZCezeYf8+eb7MBXCz5uXAMeVF3yz9Axw4XiIMdB/pqXkm8tqCl13w==}
     engines: {node: '>=0.14'}
 
   '@csstools/cascade-layer-name-parser@2.0.5':
@@ -9071,6 +9081,8 @@ snapshots:
     optional: true
 
   '@cornerstonejs/codec-openjpeg@1.3.0': {}
+
+  '@cornerstonejs/codec-openjph@2.4.7': {}
 
   '@csstools/cascade-layer-name-parser@2.0.5(@csstools/css-parser-algorithms@3.0.5(@csstools/css-tokenizer@3.0.4))(@csstools/css-tokenizer@3.0.4)':
     dependencies:
