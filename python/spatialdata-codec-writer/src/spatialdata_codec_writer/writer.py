@@ -17,6 +17,22 @@ CODEC_HTJ2K_EXPERIMENTAL = "experimental.imagecodecs_htj2k"
 CodecName = Literal["imagecodecs_jpeg2k", "experimental.imagecodecs_htj2k"]
 
 
+def htj2k_encode_available() -> bool:
+    """Return whether the installed imagecodecs build includes HTJ2K encode support."""
+    htj2k = getattr(imagecodecs, "HTJ2K", None)
+    if htj2k is not None and getattr(htj2k, "available", False):
+        return True
+    plane = np.zeros((4, 4), dtype=np.uint16)
+    encoder = getattr(imagecodecs, "htj2k_encode", None)
+    if encoder is None:
+        return False
+    try:
+        encoder(plane)
+    except Exception:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class WrittenFixture:
     store_path: Path
@@ -80,15 +96,28 @@ def _encode_chunk_2d(chunk: np.ndarray, codec: str) -> bytes | bytearray:
     if codec == CODEC_JPEG2K:
         return imagecodecs.jpeg2k_encode(plane)
     if codec == CODEC_HTJ2K_EXPERIMENTAL:
-        encoder = getattr(imagecodecs, "jpeg2k_encode", None)
-        if encoder is None:
-            raise RuntimeError("No HTJ2K-capable imagecodecs encoder is available.")
-        return encoder(plane, codecformat="jph")
+        if not htj2k_encode_available():
+            raise RuntimeError(
+                "No HTJ2K-capable imagecodecs encoder is available. "
+                "Install an imagecodecs build with OpenJPH support (for example conda-forge imagecodecs)."
+            )
+        htj2k_encoder = getattr(imagecodecs, "htj2k_encode", None)
+        if htj2k_encoder is not None:
+            return htj2k_encoder(plane)
+        return imagecodecs.jpeg2k_encode(plane, codecformat="jph")
     raise ValueError(f"Unsupported codec: {codec}")
 
 
 def _decode_chunk_2d(encoded: bytes | bytearray, codec: str) -> np.ndarray:
-    if codec in {CODEC_JPEG2K, CODEC_HTJ2K_EXPERIMENTAL}:
+    if codec == CODEC_JPEG2K:
+        return imagecodecs.jpeg2k_decode(encoded)
+    if codec == CODEC_HTJ2K_EXPERIMENTAL:
+        htj2k_decoder = getattr(imagecodecs, "htj2k_decode", None)
+        if htj2k_decoder is not None:
+            try:
+                return htj2k_decoder(encoded)
+            except Exception:
+                pass
         return imagecodecs.jpeg2k_decode(encoded)
     raise ValueError(f"Unsupported codec: {codec}")
 

@@ -12,10 +12,19 @@ import numpy as np
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 
-from .writer import CODEC_JPEG2K, _package_version, _sha256, _write_json
+from .writer import (
+    CODEC_HTJ2K_EXPERIMENTAL,
+    CODEC_JPEG2K,
+    _package_version,
+    _sha256,
+    _write_json,
+    htj2k_encode_available,
+)
 
 ImagePreset = Literal["lossless", "balanced", "small"]
 ChunkSpec = Literal["auto"] | tuple[int, ...] | list[int]
+
+SUPPORTED_IMAGE_CODECS = frozenset({CODEC_JPEG2K, CODEC_HTJ2K_EXPERIMENTAL})
 
 SUPPORTED_BROWSER_JP2K_DTYPES = {
     np.dtype("uint8"),
@@ -28,6 +37,14 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
     "balanced": {"reversible": False, "level": 100},
     "small": {"reversible": False, "level": 75},
+}
+
+# imagecodecs.htj2k_encode does not use JP2K-style rate-control levels. With
+# reversible=False, any level>=1 collapses to minimum-quality output (~1 KiB/chunk).
+HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
+    "lossless": {"reversible": True},
+    "balanced": {"reversible": False},
+    "small": {"reversible": False},
 }
 
 
@@ -80,6 +97,7 @@ def resolve_recompression_config(
     config: str | Path | dict[str, Any] | None = None,
     *,
     image_key: str | None = None,
+    codec: str | None = None,
     preset: ImagePreset | None = None,
     chunks: ChunkSpec | None = None,
 ) -> dict[str, Any]:
@@ -88,6 +106,8 @@ def resolve_recompression_config(
     resolved = _deep_merge(_default_config(), _load_config(config))
     if image_key is not None:
         image_cfg = dict(resolved.get("images", {}).get(image_key, {}))
+        if codec is not None:
+            image_cfg["codec"] = codec
         if preset is not None:
             image_cfg["preset"] = preset
         if chunks is not None:
@@ -143,25 +163,41 @@ def _normalize_chunks(spec: ChunkSpec, shape: tuple[int, ...], *, image: bool) -
     return chunks
 
 
-def _validate_jp2k_dtype(dtype: np.dtype, raster_path: str) -> None:
+def _validate_browser_image_codec_dtype(dtype: np.dtype, raster_path: str) -> None:
     if dtype not in SUPPORTED_BROWSER_JP2K_DTYPES:
         supported = ", ".join(
             str(dtype) for dtype in sorted(SUPPORTED_BROWSER_JP2K_DTYPES, key=str)
         )
         raise TypeError(
-            f"JP2K browser fixtures support only <=16-bit integer dtypes ({supported}); "
+            f"Browser image codecs support only <=16-bit integer dtypes ({supported}); "
             f"{raster_path} has dtype {dtype}. Use Blosc for labels or skip this raster."
         )
 
 
-def _validate_jp2k_chunks(chunks: tuple[int, ...], raster_path: str) -> None:
+def _validate_browser_image_codec_chunks(chunks: tuple[int, ...], raster_path: str) -> None:
     if len(chunks) < 2:
         raise ValueError(f"{raster_path} must be at least 2D")
     non_spatial = chunks[:-2]
     if any(chunk != 1 for chunk in non_spatial):
         raise ValueError(
-            f"{raster_path} JP2K chunks must have singleton non-spatial axes; got {chunks}."
+            f"{raster_path} image codec chunks must have singleton non-spatial axes; got {chunks}."
         )
+
+
+def _resolve_image_codec(config: dict[str, Any], raster_key: str) -> str:
+    codec = config.get("codec", CODEC_JPEG2K)
+    if codec not in SUPPORTED_IMAGE_CODECS:
+        supported = ", ".join(sorted(SUPPORTED_IMAGE_CODECS))
+        raise ValueError(
+            f"Unsupported image codec for {raster_key!r}: {codec!r}; expected one of {supported}"
+        )
+    if codec == CODEC_HTJ2K_EXPERIMENTAL and not htj2k_encode_available():
+        raise RuntimeError(
+            f"HTJ2K recompression requested for {raster_key!r}, but imagecodecs HTJ2K encode "
+            "is not available. Install an imagecodecs build with OpenJPH support "
+            "(for example conda-forge imagecodecs)."
+        )
+    return codec
 
 
 def _chunk_grid(shape: tuple[int, ...], chunks: tuple[int, ...]) -> list[tuple[int, ...]]:
@@ -209,11 +245,15 @@ def _array_metadata_from_source(
     return meta
 
 
-def _preset_encode_options(config: dict[str, Any]) -> dict[str, Any]:
+def _preset_encode_options(config: dict[str, Any], *, codec: str) -> dict[str, Any]:
     preset = config.get("preset", "lossless")
-    if preset not in JP2K_PRESETS:
-        raise ValueError(f"Unknown JP2K preset {preset!r}; expected one of {sorted(JP2K_PRESETS)}")
-    options = dict(JP2K_PRESETS[preset])
+    presets = HTJ2K_PRESETS if codec == CODEC_HTJ2K_EXPERIMENTAL else JP2K_PRESETS
+    preset_family = "HTJ2K" if codec == CODEC_HTJ2K_EXPERIMENTAL else "JP2K"
+    if preset not in presets:
+        raise ValueError(
+            f"Unknown {preset_family} preset {preset!r}; expected one of {sorted(presets)}"
+        )
+    options = dict(presets[preset])
     options.update(config.get("encode_options", {}))
     for key in ("level", "reversible", "codecformat", "numthreads"):
         if key in config:
@@ -221,8 +261,34 @@ def _preset_encode_options(config: dict[str, Any]) -> dict[str, Any]:
     return options
 
 
-def _encode_jp2k_plane(plane: np.ndarray, encode_options: dict[str, Any]) -> bytes | bytearray:
-    return imagecodecs.jpeg2k_encode(np.asarray(plane), **encode_options)
+def _encode_image_plane(
+    plane: np.ndarray, codec: str, encode_options: dict[str, Any]
+) -> bytes | bytearray:
+    array = np.asarray(plane)
+    if codec == CODEC_JPEG2K:
+        return imagecodecs.jpeg2k_encode(array, **encode_options)
+    if codec == CODEC_HTJ2K_EXPERIMENTAL:
+        htj2k_encoder = getattr(imagecodecs, "htj2k_encode", None)
+        if htj2k_encoder is not None:
+            return htj2k_encoder(array, **encode_options)
+        options = dict(encode_options)
+        options.setdefault("codecformat", "jph")
+        return imagecodecs.jpeg2k_encode(array, **options)
+    raise ValueError(f"Unsupported image codec: {codec}")
+
+
+def _decode_image_plane(encoded: bytes | bytearray, codec: str) -> np.ndarray:
+    if codec == CODEC_JPEG2K:
+        return imagecodecs.jpeg2k_decode(encoded)
+    if codec == CODEC_HTJ2K_EXPERIMENTAL:
+        htj2k_decoder = getattr(imagecodecs, "htj2k_decode", None)
+        if htj2k_decoder is not None:
+            try:
+                return htj2k_decoder(encoded)
+            except Exception:
+                pass
+        return imagecodecs.jpeg2k_decode(encoded)
+    raise ValueError(f"Unsupported image codec: {codec}")
 
 
 def _sample_values(plane: np.ndarray) -> list[int | float]:
@@ -245,11 +311,12 @@ def _recompress_image_array(
     source_array = zarr.open_array(str(source_array_path), mode="r")
     shape = tuple(int(value) for value in source_array.shape)
     dtype = np.dtype(source_array.dtype)
-    _validate_jp2k_dtype(dtype, raster_path)
+    codec = _resolve_image_codec(config, raster_path)
+    _validate_browser_image_codec_dtype(dtype, raster_path)
 
     chunks = _normalize_chunks(config.get("chunks", "auto"), shape, image=True)
-    _validate_jp2k_chunks(chunks, raster_path)
-    encode_options = _preset_encode_options(config)
+    _validate_browser_image_codec_chunks(chunks, raster_path)
+    encode_options = _preset_encode_options(config, codec=codec)
     is_lossless = bool(encode_options.get("reversible", False))
 
     if dest_array_path.exists():
@@ -260,7 +327,7 @@ def _recompress_image_array(
         _array_metadata_from_source(
             source_meta,
             chunks=chunks,
-            codecs=[{"name": CODEC_JPEG2K, "configuration": {}}],
+            codecs=[{"name": codec, "configuration": {}}],
         ),
     )
 
@@ -271,7 +338,7 @@ def _recompress_image_array(
         selection = _chunk_slices(shape, chunks, coords)
         chunk = _pad_chunk(np.asarray(source_array[selection]), chunks)
         plane = chunk.reshape(chunk.shape[-2], chunk.shape[-1])
-        encoded = _encode_jp2k_plane(plane, encode_options)
+        encoded = _encode_image_plane(plane, codec, encode_options)
         encoded_bytes += len(encoded)
         chunk_count += 1
 
@@ -281,11 +348,11 @@ def _recompress_image_array(
         chunk_path.write_bytes(encoded)
 
         if len(chunks_checked) < 4:
-            decoded = imagecodecs.jpeg2k_decode(encoded)
+            decoded = _decode_image_plane(encoded, codec)
             decoded_plane = decoded.reshape(plane.shape)
             if is_lossless and not np.array_equal(decoded_plane, plane):
                 raise RuntimeError(
-                    f"Lossless JP2K self-validation failed for {raster_path} chunk {coords}"
+                    f"Lossless {codec} self-validation failed for {raster_path} chunk {coords}"
                 )
             chunks_checked.append(
                 {
@@ -299,7 +366,7 @@ def _recompress_image_array(
 
     return {
         "path": raster_path,
-        "codec": CODEC_JPEG2K,
+        "codec": codec,
         "preset": config.get("preset", "lossless"),
         "encode_options": encode_options,
         "shape": list(shape),
@@ -402,9 +469,15 @@ def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> P
     return source_path
 
 
-def _sibling_image_key(key: str, preset: str) -> str:
-    """Return the sibling image key for an image, e.g. ``morphology:jp2k_lossless``."""
-    return f"{key}:jp2k_{preset}"
+def _codec_sibling_suffix(codec: str) -> str:
+    if codec == CODEC_HTJ2K_EXPERIMENTAL:
+        return "htj2k"
+    return "jp2k"
+
+
+def _sibling_image_key(key: str, codec: str, preset: str) -> str:
+    """Return the sibling image key, e.g. ``morphology:jp2k_lossless``."""
+    return f"{key}:{_codec_sibling_suffix(codec)}_{preset}"
 
 
 def recompress_spatialdata(
@@ -415,6 +488,7 @@ def recompress_spatialdata(
     overwrite: bool = False,
     manifest: bool = True,
     image_key: str | None = None,
+    codec: str | None = None,
     preset: ImagePreset | None = None,
     chunks: ChunkSpec | None = None,
     sibling: bool = False,
@@ -424,9 +498,10 @@ def recompress_spatialdata(
     When *sibling* is ``False`` (default) each configured image is rewritten
     in-place with the new codec.  When *sibling* is ``True`` the original
     image is kept and a new image group is added alongside it whose name is
-    ``{original_key}:jp2k_{preset}`` (e.g. ``morphology_focus:jp2k_lossless``).
-    This lets the original remain available for tools that lack the JP2K codec
-    while the compressed version is used where it is supported.
+    ``{original_key}:{codec}_{preset}`` (e.g. ``morphology_focus:jp2k_lossless``
+    or ``morphology_focus:htj2k_balanced``). This lets the original remain
+    available for tools that lack the target codec while the compressed version
+    is used where it is supported.
 
     Path sources are copied before raster replacement, which keeps tables,
     shapes, points, and unconfigured rasters intact without loading the whole
@@ -453,6 +528,7 @@ def recompress_spatialdata(
         resolved_config = resolve_recompression_config(
             config,
             image_key=image_key,
+            codec=codec,
             preset=preset,
             chunks=chunks,
         )
@@ -469,11 +545,10 @@ def recompress_spatialdata(
         default_image = resolved_config.get("default_image", {})
         for key in image_keys:
             image_config = _deep_merge(default_image, resolved_config.get("images", {}).get(key, {}))
-            if image_config.get("codec", CODEC_JPEG2K) != CODEC_JPEG2K:
-                raise ValueError(f"Unsupported image codec for {key!r}: {image_config.get('codec')!r}")
+            codec = _resolve_image_codec(image_config, key)
 
             if sibling:
-                dest_key = _sibling_image_key(key, image_config.get("preset", "lossless"))
+                dest_key = _sibling_image_key(key, codec, image_config.get("preset", "lossless"))
                 # Copy the source group metadata (zarr.json + multiscales attrs) into the sibling key.
                 sib_group_path = dest_path / "images" / dest_key
                 if sib_group_path.exists():

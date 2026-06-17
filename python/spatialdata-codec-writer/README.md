@@ -113,6 +113,7 @@ without loading the full object.
 
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-htj2k.zarr --image-key morphology_focus --codec experimental.imagecodecs_htj2k --preset balanced --chunks auto --overwrite
 ```
 
 For repeatable runs, prefer a JSON config file:
@@ -122,7 +123,12 @@ For repeatable runs, prefer a JSON config file:
   "default_image": { "codec": "imagecodecs_jpeg2k", "preset": "lossless", "chunks": "auto" },
   "images": {
     "morphology_focus": { "preset": "balanced" },
-    "he_image": { "preset": "small" }
+    "he_image": { "preset": "small" },
+    "fast_preview": {
+      "codec": "experimental.imagecodecs_htj2k",
+      "preset": "lossless",
+      "chunks": "auto"
+    }
   },
   "default_labels": { "codec": "blosc", "clevel": 5 }
 }
@@ -138,9 +144,22 @@ JP2K presets:
 - `balanced`: writes near-lossless JP2K using `level=100`.
 - `small`: writes more compact JP2K using `level=75`.
 
-Per-image config may also pass advanced `imagecodecs.jpeg2k_encode` options via
-`encode_options`, or by setting supported top-level options such as `level`,
-`reversible`, `codecformat`, and `numthreads`.
+HTJ2K presets use the same names but different `imagecodecs.htj2k_encode` options.
+Do not pass JP2K rate-control `level` values to HTJ2K: with `reversible=False`,
+any `level>=1` collapses to minimum-quality output. Today:
+
+- `lossless`: `reversible=True` (exact round-trip).
+- `balanced` / `small`: `reversible=False` without `level` (irreversible wavelet,
+  near-lossless at full bitrate until HTJ2K rate control is mapped explicitly).
+
+Per-image config may also pass advanced `imagecodecs.jpeg2k_encode` or
+`imagecodecs.htj2k_encode` options via `encode_options`, or by setting supported
+top-level options such as `level`, `reversible`, `codecformat`, and `numthreads`.
+For HTJ2K, only set `level` when you know the target encoder accepts it.
+
+HTJ2K recompression uses the experimental Zarr codec id
+`experimental.imagecodecs_htj2k` and requires an `imagecodecs` build with OpenJPH
+support. Sibling mode names HTJ2K outputs like `morphology_focus:htj2k_balanced`.
 
 Labels are not written with JP2K in v1. Label rasters are written with
 Blosc/zstd level 5 by default so integer IDs remain lossless and browser-safe.
@@ -182,6 +201,25 @@ intended for experiments only until there is community/registry alignment.
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --experimental-htj2k
 ```
+
+HTJ2K encoding requires an `imagecodecs` build with OpenJPH support
+(`imagecodecs.HTJ2K.available` is true). The PyPI wheel on some platforms omits
+HTJ2K; `conda-forge::imagecodecs` is a common source that includes it. When
+encode is unavailable, `generate-fixtures` still writes `jpeg2k.zarr` and skips
+`htj2k.zarr` with a warning.
+
+### Future: WASM encode via SpatialData.ts
+
+On platforms where native HTJ2K encode is missing, a plausible alternative is
+the OpenJPH WASM **encoder** already shipped in `@cornerstonejs/codec-openjph`
+(the decode side is wired in `zarrextra` today). That could thread through as
+either a Node helper subprocess called from Python, or as a TypeScript-first
+`recompress` / fixture writer in the monorepo (scripting, not only viz).
+
+See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md) for shapes,
+shared contracts, and a suggested phasing — not implemented yet.
+
+Note that we already have experience of using this encoder with varying quality levels, so if this is genuinely missing from `imagecodecs.HTJ2K` then this is another reason that it would be of benefit.
 
 Repository scripts may set `UV_CACHE_DIR=.tmp/uv-cache` to keep sandbox and CI
 caches inside the working tree. That environment variable is not required for

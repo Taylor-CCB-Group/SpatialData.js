@@ -2,13 +2,36 @@ from pathlib import Path
 
 import imagecodecs
 import numpy as np
+import pytest
 
 from spatialdata_codec_writer import (
+    htj2k_encode_available,
     image_to_tczyx,
     write_codec_spatialdata,
     write_codec_spatialdata_image,
+    write_htj2k_fixture,
     write_jpeg2k_fixture,
 )
+
+
+@pytest.mark.skipif(
+    not htj2k_encode_available(),
+    reason="imagecodecs HTJ2K encode is not available in this environment.",
+)
+def test_write_htj2k_fixture(tmp_path: Path) -> None:
+    fixture = write_htj2k_fixture(tmp_path / "htj2k.zarr")
+
+    assert fixture.store_path.exists()
+    assert fixture.manifest_path.exists()
+    assert fixture.manifest["codec"] == "experimental.imagecodecs_htj2k"
+
+    first_chunk = fixture.manifest["chunks_checked"][0]
+    encoded = (fixture.store_path / first_chunk["path"]).read_bytes()
+    decoder = getattr(imagecodecs, "htj2k_decode", imagecodecs.jpeg2k_decode)
+    decoded = decoder(encoded)
+
+    assert decoded.shape == (32, 32)
+    assert int(decoded[0, 0]) == first_chunk["samples"][0]
 
 
 class FakeImage:

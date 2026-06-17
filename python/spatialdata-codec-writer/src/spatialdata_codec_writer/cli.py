@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .recompress import recompress_spatialdata
 from .writer import (
+    htj2k_encode_available,
     write_codec_spatialdata,
     write_codec_spatialdata_image,
     write_htj2k_fixture,
@@ -36,7 +38,13 @@ def _generate_fixtures(args: argparse.Namespace) -> None:
 
     written = [write_jpeg2k_fixture(output_dir / "jpeg2k.zarr", overwrite=args.overwrite)]
     if args.experimental_htj2k:
-        written.append(write_htj2k_fixture(output_dir / "htj2k.zarr", overwrite=args.overwrite))
+        if htj2k_encode_available():
+            written.append(write_htj2k_fixture(output_dir / "htj2k.zarr", overwrite=args.overwrite))
+        else:
+            print(
+                "Skipping htj2k.zarr: imagecodecs HTJ2K encode is not available in this environment.",
+                file=sys.stderr,
+            )
 
     for fixture in written:
         print(f"Wrote {fixture.store_path}")
@@ -75,6 +83,7 @@ def _recompress(args: argparse.Namespace) -> None:
         config=args.config,
         overwrite=args.overwrite,
         image_key=args.image_key,
+        codec=args.codec,
         preset=args.preset,
         chunks=_recompress_chunks(args.chunks),
         sibling=args.sibling,
@@ -144,9 +153,14 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument("--config", help="JSON recompression config")
     recompress.add_argument("--image-key", help="Convenience shortcut for one image")
     recompress.add_argument(
+        "--codec",
+        choices=["imagecodecs_jpeg2k", "experimental.imagecodecs_htj2k"],
+        help="Image codec for --image-key",
+    )
+    recompress.add_argument(
         "--preset",
         choices=["lossless", "balanced", "small"],
-        help="JP2K preset for --image-key",
+        help="Image preset for --image-key",
     )
     recompress.add_argument(
         "--chunks",

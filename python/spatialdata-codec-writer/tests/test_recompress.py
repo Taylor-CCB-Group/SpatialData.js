@@ -8,7 +8,16 @@ import numpy as np
 import pytest
 import zarr
 
-from spatialdata_codec_writer import JP2K_PRESETS, recompress_spatialdata, resolve_recompression_config
+from spatialdata_codec_writer import (
+    CODEC_HTJ2K_EXPERIMENTAL,
+    CODEC_JPEG2K,
+    HTJ2K_PRESETS,
+    JP2K_PRESETS,
+    htj2k_encode_available,
+    recompress_spatialdata,
+    resolve_recompression_config,
+)
+from spatialdata_codec_writer.recompress import _preset_encode_options
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -83,9 +92,53 @@ def test_resolve_recompression_config_applies_cli_shortcuts() -> None:
     assert config["default_image"]["preset"] == "lossless"
 
 
+def test_resolve_recompression_config_applies_codec_shortcut() -> None:
+    config = resolve_recompression_config(
+        {},
+        image_key="morphology",
+        codec=CODEC_HTJ2K_EXPERIMENTAL,
+        preset="lossless",
+    )
+
+    assert config["images"]["morphology"]["codec"] == CODEC_HTJ2K_EXPERIMENTAL
+    assert config["images"]["morphology"]["preset"] == "lossless"
+    assert config["default_image"]["codec"] == "imagecodecs_jpeg2k"
+
+
 def test_lossy_presets_are_not_extreme_low_bitrate() -> None:
     assert JP2K_PRESETS["balanced"] == {"reversible": False, "level": 100}
     assert JP2K_PRESETS["small"] == {"reversible": False, "level": 75}
+
+
+def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
+    assert HTJ2K_PRESETS["balanced"] == {"reversible": False}
+    assert HTJ2K_PRESETS["small"] == {"reversible": False}
+    assert "level" not in HTJ2K_PRESETS["balanced"]
+    assert _preset_encode_options(
+        {"preset": "balanced"},
+        codec=CODEC_HTJ2K_EXPERIMENTAL,
+    ) == {"reversible": False}
+    assert _preset_encode_options(
+        {"preset": "balanced"},
+        codec=CODEC_JPEG2K,
+    ) == {"reversible": False, "level": 100}
+
+
+@pytest.mark.skipif(
+    not htj2k_encode_available(),
+    reason="imagecodecs HTJ2K encode is not available in this environment.",
+)
+def test_htj2k_balanced_preset_produces_reasonable_chunk_size() -> None:
+    import imagecodecs
+    import numpy as np
+
+    plane = np.random.randint(0, 4096, (256, 256), dtype=np.uint16)
+    options = _preset_encode_options(
+        {"preset": "balanced"},
+        codec=CODEC_HTJ2K_EXPERIMENTAL,
+    )
+    encoded = imagecodecs.htj2k_encode(plane, **options)
+    assert len(encoded) > 10_000
 
 
 def test_recompress_spatialdata_rewrites_image_and_labels(tmp_path: Path) -> None:
@@ -178,3 +231,109 @@ def test_lossy_preset_records_non_lossless_manifest(tmp_path: Path) -> None:
     assert image_report["preset"] == "small"
     assert image_report["lossless"] is False
     assert image_report["encode_options"]["reversible"] is False
+
+
+def test_recompress_rejects_unknown_image_codec(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    with pytest.raises(ValueError, match="Unsupported image codec"):
+        recompress_spatialdata(
+            source,
+            tmp_path / "out.zarr",
+            config={"images": {"morphology": {"codec": "imagecodecs_jxl"}}},
+        )
+
+
+@pytest.mark.skipif(
+    htj2k_encode_available(),
+    reason="HTJ2K encode is available; unavailable-path test not applicable.",
+)
+def test_recompress_rejects_htj2k_when_encode_unavailable(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    with pytest.raises(RuntimeError, match="HTJ2K recompression requested"):
+        recompress_spatialdata(
+            source,
+            tmp_path / "out.zarr",
+            config={
+                "images": {
+                    "morphology": {
+                        "codec": CODEC_HTJ2K_EXPERIMENTAL,
+                        "preset": "lossless",
+                        "chunks": [1, 4, 4],
+                    }
+                },
+                "default_labels": {"codec": None},
+            },
+        )
+
+
+@pytest.mark.skipif(
+    not htj2k_encode_available(),
+    reason="imagecodecs HTJ2K encode is not available in this environment.",
+)
+def test_recompress_spatialdata_rewrites_image_with_htj2k(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={
+            "images": {
+                "morphology": {
+                    "codec": CODEC_HTJ2K_EXPERIMENTAL,
+                    "preset": "lossless",
+                    "chunks": [1, 4, 4],
+                }
+            },
+            "default_labels": {"codec": None},
+        },
+    )
+
+    image_meta = json.loads(
+        (result.store_path / "images" / "morphology" / "0" / "zarr.json").read_text()
+    )
+    assert image_meta["codecs"] == [
+        {"name": CODEC_HTJ2K_EXPERIMENTAL, "configuration": {}}
+    ]
+
+    first_chunk = result.manifest["images"][0]["chunks_checked"][0]
+    encoded = result.store_path / "images" / "morphology" / "0" / "c" / "0" / "0" / "0"
+    decoder = getattr(imagecodecs, "htj2k_decode", imagecodecs.jpeg2k_decode)
+    decoded = decoder(encoded.read_bytes())
+    assert first_chunk["source_sha256"] == first_chunk["decoded_sha256"]
+    assert int(decoded[0, 0]) == 0
+    assert result.manifest["images"][0]["codec"] == CODEC_HTJ2K_EXPERIMENTAL
+
+
+@pytest.mark.skipif(
+    not htj2k_encode_available(),
+    reason="imagecodecs HTJ2K encode is not available in this environment.",
+)
+def test_recompress_sibling_uses_htj2k_key(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={
+            "images": {
+                "morphology": {
+                    "codec": CODEC_HTJ2K_EXPERIMENTAL,
+                    "preset": "balanced",
+                    "chunks": [1, 4, 4],
+                }
+            },
+            "default_labels": {"codec": None},
+        },
+        sibling=True,
+    )
+
+    sibling_key = "morphology:htj2k_balanced"
+    sibling_meta = json.loads(
+        (result.store_path / "images" / sibling_key / "0" / "zarr.json").read_text()
+    )
+    assert sibling_meta["codecs"] == [
+        {"name": CODEC_HTJ2K_EXPERIMENTAL, "configuration": {}}
+    ]
+    assert result.manifest["images"][0]["path"] == f"images/{sibling_key}/0"
