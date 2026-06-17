@@ -5,7 +5,7 @@ export type Htj2kPlaneDtype = 'uint8' | 'int8' | 'uint16' | 'int16';
 export type Htj2kEncodeOptions = {
   /** Lossless when true. Defaults to true for fixture-style writes. */
   reversible?: boolean;
-  /** 0–100 when irreversible; ignored when reversible. Defaults to 100. */
+  /** OpenJPH quantization factor when irreversible (lower = higher fidelity, larger output). */
   quality?: number;
   locateFile?: RegisterImageCodecOptions['locateFile'];
 };
@@ -20,7 +20,8 @@ type Htj2kFrameInfo = {
 };
 
 type Htj2kEncoderClass = new () => {
-  setQuality(quality: number, reversible: boolean): void;
+  /** OpenJPH WASM API: `setQuality(reversible, quality)`; quality is a quantization factor (lower = better). */
+  setQuality(reversible: boolean, quality: number): void;
   getDecodedBuffer(frame: Htj2kFrameInfo): ArrayBufferView;
   encode(): void;
   getEncodedBuffer(): Uint8Array;
@@ -91,10 +92,10 @@ export function createOpenJphEncoder(
     }
 
     const reversible = encodeOptions.reversible ?? true;
-    const quality = encodeOptions.quality ?? 100;
+    const quality = encodeOptions.quality ?? 0;
     const frame = frameInfoForPlane(plane, size);
     const encoder = new Encoder();
-    encoder.setQuality(quality, reversible);
+    encoder.setQuality(reversible, quality);
 
     const buffer = encoder.getDecodedBuffer(frame);
     const target =
@@ -128,7 +129,7 @@ export async function loadOpenJphEncoder(
 export function planeArrayForDtype(
   dtype: Htj2kPlaneDtype,
   bytes: Uint8Array
-): Uint8Array | Uint16Array {
+) {
   switch (dtype) {
     case 'uint8':
       return bytes;

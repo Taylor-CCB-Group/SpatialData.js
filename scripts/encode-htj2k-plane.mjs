@@ -89,7 +89,7 @@ async function encodePlane(runtime, request) {
   };
 
   const encoder = new Encoder();
-  encoder.setQuality(quality, reversible);
+  encoder.setQuality(reversible, quality);
   const buffer = encoder.getDecodedBuffer(frame);
   const target =
     frame.bitsPerSample === 16

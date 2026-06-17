@@ -63,9 +63,9 @@ import { createOpenJpegDecoder, registerJpeg2kCodec } from 'zarrextra';
 registerJpeg2kCodec({ decoder: createOpenJpegDecoder(OpenJPEGJS) });
 ```
 
-`registerExperimentalHtj2kCodec()` is also available for non-standard HTJ2K
-experiments. Keep fixtures and datasets using that codec clearly labelled until
-there is community agreement on a registered codec id.
+`registerExperimentalHtj2kCodec()` registers decode for `experimental.openjph_htj2k`
+(new writes) and legacy `experimental.imagecodecs_htj2k` fixtures. Keep datasets
+using either id clearly labelled until there is community/registry alignment.
 
 ```typescript
 import OpenJPHJS from '@cornerstonejs/codec-openjph';
@@ -74,10 +74,10 @@ import { createOpenJphDecoder, registerExperimentalHtj2kCodec } from 'zarrextra'
 registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(OpenJPHJS) });
 ```
 
-For offline encode (fixtures, recompress on macOS without native OpenJPH), use
-`encodeHtj2kPlane()` or `createOpenJphEncoder()` from the same package. Python
-`spatialdata-codec-writer` calls `scripts/encode-htj2k-plane.mjs` when native
-`imagecodecs` HTJ2K encode is unavailable.
+For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
+`createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`
+calls `scripts/encode-htj2k-plane.mjs`; new stores use codec id
+`experimental.openjph_htj2k`.
 
 ```typescript
 import { encodeHtj2kPlane } from 'zarrextra';

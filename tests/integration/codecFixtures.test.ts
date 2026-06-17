@@ -97,7 +97,7 @@ describe('codec fixtures', () => {
     ensureCodecFixture();
     if (!existsSync(htj2kFixturePath) || !existsSync(htj2kManifestPath)) {
       console.warn(
-        'Skipping HTJ2K decode smoke test: htj2k.zarr was not generated (no HTJ2K encoder available).'
+        'Skipping HTJ2K decode smoke test: htj2k.zarr was not generated (OpenJPH WASM encoder unavailable).'
       );
       return;
     }

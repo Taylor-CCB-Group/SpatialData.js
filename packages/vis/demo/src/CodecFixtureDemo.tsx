@@ -27,7 +27,7 @@ const FIXTURE_CONFIG: Record<
     getManifestUrl: getLocalJpeg2kCodecManifestUrl,
   },
   htj2k: {
-    label: 'HTJ2K (experimental)',
+    label: 'HTJ2K (experimental.openjph_htj2k)',
     storeName: 'htj2k.zarr',
     getFixtureUrl: getLocalHtj2kCodecFixtureUrl,
     getManifestUrl: getLocalHtj2kCodecManifestUrl,
@@ -176,7 +176,7 @@ export default function CodecFixtureDemo() {
             }}
           >
             <option value="jpeg2k">JP2K (imagecodecs_jpeg2k)</option>
-            <option value="htj2k">HTJ2K (experimental.imagecodecs_htj2k)</option>
+            <option value="htj2k">HTJ2K (experimental.openjph_htj2k)</option>
           </select>
         </label>
       </div>

@@ -9,7 +9,9 @@ separately from the versioned `blobs()` fixtures. The reference fixtures are
 small OME-Zarr/SpatialData images using:
 
 - `imagecodecs_jpeg2k` (registered JP2K codec id)
-- `experimental.imagecodecs_htj2k` (experimental HTJ2K codec id)
+- `experimental.openjph_htj2k` (OpenJPH WASM HTJ2K codec id)
+
+Older fixtures may use `experimental.imagecodecs_htj2k`; the frontend decodes both.
 
 ## Try it in the browser
 
@@ -106,7 +108,7 @@ For repeatable per-raster settings, use JSON:
     "morphology_focus": { "preset": "balanced" },
     "he_image": { "preset": "small" },
     "fast_preview": {
-      "codec": "experimental.imagecodecs_htj2k",
+      "codec": "experimental.openjph_htj2k",
       "preset": "lossless",
       "chunks": "auto"
     }
@@ -115,19 +117,16 @@ For repeatable per-raster settings, use JSON:
 }
 ```
 
-JP2K and HTJ2K share preset names (`lossless`, `balanced`, `small`). HTJ2K maps
-`balanced` / `small` to WASM `quality` 100 / 75 when native encode is unavailable.
-Advanced `imagecodecs.jpeg2k_encode` or `imagecodecs.htj2k_encode` options can be
-passed through per-image config with `encode_options`, or with supported top-level keys
-such as `level`, `quality`, `reversible`, `codecformat`, and `numthreads`. HTJ2K uses
-the experimental codec id `experimental.imagecodecs_htj2k`.
+JP2K and HTJ2K share preset names (`lossless`, `balanced`, `small`). HTJ2K encode
+uses OpenJPH WASM (`experimental.openjph_htj2k`) via
+`HTJ2KEncoder.setQuality(reversible, quality)`. The quality argument is a float
+quantization factor (lower = higher fidelity, larger output) — not JP2K-style
+0–100. Presets map to `balanced: 0.005`, `small: 0.05`.
 
-**HTJ2K encode on macOS PyPI wheels:** PyPI `imagecodecs` often ships HTJ2K as a stub
-(`HTJ2K.available == false`). When native encode is missing, the writer falls back to
-the OpenJPH WASM encoder via `scripts/encode-htj2k-plane.mjs` (requires Node.js and
-`@cornerstonejs/codec-openjph` from the monorepo install). Presets pass `quality`
-(0–100) to the WASM encoder; native `imagecodecs.htj2k_encode` ignores JP2K-style
-`level` values.
+`generate-fixtures --experimental-htj2k` also writes
+`htj2k-quality-sweep.manifest.json`, encoding the same Mandelbrot plane at several
+qualities so you can confirm compression responds on detail-rich imagery. The main
+`htj2k.zarr` fixture also uses a Mandelbrot raster instead of a smooth gradient.
 
 Browser-targeted image codec output is limited to `uint8`, `int8`, `uint16`, and
 `int16`. Labels are not image-codec-compressed in v1; they stay lossless through
@@ -160,8 +159,8 @@ isolation, but normal user-facing `uv run` commands do not need it.
 - `registerJpeg2kCodec()` for the registered `imagecodecs_jpeg2k` id (Node/CI).
 - `enableWorkerChunkDecode()` from `zarrextra/workers` for browser apps (fizarrita
   worker pool + custom codec worker with JP2K and experimental HTJ2K registration).
-- `registerExperimentalHtj2kCodec()` for labelled non-standard HTJ2K tests and
-  Node/CI decode smoke tests (uses optional `@cornerstonejs/codec-openjph`).
+- `registerExperimentalHtj2kCodec()` for OpenJPH HTJ2K decode (`experimental.openjph_htj2k`
+  and legacy `experimental.imagecodecs_htj2k`) in Node/CI smoke tests.
 - `loadOmeZarrMultiscalesFromStore()` for loading multiscales from a
   `zarr.Readable` store without going back through Viv's URL loader.
 

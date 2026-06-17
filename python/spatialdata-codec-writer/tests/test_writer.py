@@ -4,6 +4,7 @@ import imagecodecs
 import numpy as np
 import pytest
 
+from spatialdata_codec_writer.writer import _decode_htj2k_plane
 from spatialdata_codec_writer import (
     htj2k_encode_available,
     image_to_tczyx,
@@ -23,12 +24,12 @@ def test_write_htj2k_fixture(tmp_path: Path) -> None:
 
     assert fixture.store_path.exists()
     assert fixture.manifest_path.exists()
-    assert fixture.manifest["codec"] == "experimental.imagecodecs_htj2k"
+    assert fixture.manifest["codec"] == "experimental.openjph_htj2k"
+    assert fixture.manifest["encoder"] == "openjph-wasm"
 
     first_chunk = fixture.manifest["chunks_checked"][0]
     encoded = (fixture.store_path / first_chunk["path"]).read_bytes()
-    decoder = getattr(imagecodecs, "htj2k_decode", imagecodecs.jpeg2k_decode)
-    decoded = decoder(encoded)
+    decoded = _decode_htj2k_plane(encoded)
 
     assert decoded.shape == (32, 32)
     assert int(decoded[0, 0]) == first_chunk["samples"][0]

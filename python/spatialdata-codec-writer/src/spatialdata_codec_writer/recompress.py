@@ -13,19 +13,23 @@ import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 
 from .writer import (
-    CODEC_HTJ2K_EXPERIMENTAL,
+    # CODEC_HTJ2K_LEGACY,
+    CODEC_HTJ2K_OPENJPH,
     CODEC_JPEG2K,
+    HTJ2K_ENCODER,
+    _decode_htj2k_plane,
     _encode_htj2k_plane,
     _package_version,
     _sha256,
     _write_json,
     htj2k_encode_available,
+    is_htj2k_codec,
 )
 
 ImagePreset = Literal["lossless", "balanced", "small"]
 ChunkSpec = Literal["auto"] | tuple[int, ...] | list[int]
 
-SUPPORTED_IMAGE_CODECS = frozenset({CODEC_JPEG2K, CODEC_HTJ2K_EXPERIMENTAL})
+SUPPORTED_IMAGE_CODECS = frozenset({CODEC_JPEG2K, CODEC_HTJ2K_OPENJPH})
 
 SUPPORTED_BROWSER_JP2K_DTYPES = {
     np.dtype("uint8"),
@@ -40,12 +44,11 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "small": {"reversible": False, "level": 75},
 }
 
-# Native imagecodecs.htj2k_encode ignores JP2K-style rate-control levels. The WASM
-# encoder maps preset quality through OpenJPH setQuality(quality, reversible).
+# OpenJPH WASM: setQuality(reversible, quality) with float quantization factor (lower = better).
 HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
-    "balanced": {"reversible": False, "quality": 100},
-    "small": {"reversible": False, "quality": 75},
+    "balanced": {"reversible": False, "quality": 0.005},
+    "small": {"reversible": False, "quality": 0.05},
 }
 
 
@@ -192,12 +195,11 @@ def _resolve_image_codec(config: dict[str, Any], raster_key: str) -> str:
         raise ValueError(
             f"Unsupported image codec for {raster_key!r}: {codec!r}; expected one of {supported}"
         )
-    if codec == CODEC_HTJ2K_EXPERIMENTAL and not htj2k_encode_available():
+    if codec == CODEC_HTJ2K_OPENJPH and not htj2k_encode_available():
         raise RuntimeError(
-            f"HTJ2K recompression requested for {raster_key!r}, but no HTJ2K encoder is "
-            "available. Install imagecodecs with OpenJPH support (for example conda-forge "
-            "imagecodecs), or run from this repository with Node.js and "
-            "@cornerstonejs/codec-openjph installed."
+            f"HTJ2K recompression requested for {raster_key!r}, but the OpenJPH WASM encoder "
+            "is not available. Run from this repository with Node.js and "
+            "@cornerstonejs/codec-openjph installed (pnpm install)."
         )
     return codec
 
@@ -249,8 +251,8 @@ def _array_metadata_from_source(
 
 def _preset_encode_options(config: dict[str, Any], *, codec: str) -> dict[str, Any]:
     preset = config.get("preset", "lossless")
-    presets = HTJ2K_PRESETS if codec == CODEC_HTJ2K_EXPERIMENTAL else JP2K_PRESETS
-    preset_family = "HTJ2K" if codec == CODEC_HTJ2K_EXPERIMENTAL else "JP2K"
+    presets = HTJ2K_PRESETS if codec == CODEC_HTJ2K_OPENJPH else JP2K_PRESETS
+    preset_family = "HTJ2K" if codec == CODEC_HTJ2K_OPENJPH else "JP2K"
     if preset not in presets:
         raise ValueError(
             f"Unknown {preset_family} preset {preset!r}; expected one of {sorted(presets)}"
@@ -269,7 +271,7 @@ def _encode_image_plane(
     array = np.asarray(plane)
     if codec == CODEC_JPEG2K:
         return imagecodecs.jpeg2k_encode(array, **encode_options)
-    if codec == CODEC_HTJ2K_EXPERIMENTAL:
+    if codec == CODEC_HTJ2K_OPENJPH:
         return _encode_htj2k_plane(array, encode_options)
     raise ValueError(f"Unsupported image codec: {codec}")
 
@@ -277,14 +279,8 @@ def _encode_image_plane(
 def _decode_image_plane(encoded: bytes | bytearray, codec: str) -> np.ndarray:
     if codec == CODEC_JPEG2K:
         return imagecodecs.jpeg2k_decode(encoded)
-    if codec == CODEC_HTJ2K_EXPERIMENTAL:
-        htj2k_decoder = getattr(imagecodecs, "htj2k_decode", None)
-        if htj2k_decoder is not None:
-            try:
-                return htj2k_decoder(encoded)
-            except Exception:
-                pass
-        return imagecodecs.jpeg2k_decode(encoded)
+    if is_htj2k_codec(codec):
+        return _decode_htj2k_plane(encoded)
     raise ValueError(f"Unsupported image codec: {codec}")
 
 
@@ -361,7 +357,7 @@ def _recompress_image_array(
                 }
             )
 
-    return {
+    report: dict[str, Any] = {
         "path": raster_path,
         "codec": codec,
         "preset": config.get("preset", "lossless"),
@@ -374,6 +370,9 @@ def _recompress_image_array(
         "lossless": is_lossless,
         "chunks_checked": chunks_checked,
     }
+    if is_htj2k_codec(codec):
+        report["encoder"] = HTJ2K_ENCODER
+    return report
 
 
 def _blosc_codec(dtype: np.dtype, clevel: int) -> BloscCodec:
@@ -467,7 +466,7 @@ def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> P
 
 
 def _codec_sibling_suffix(codec: str) -> str:
-    if codec == CODEC_HTJ2K_EXPERIMENTAL:
+    if is_htj2k_codec(codec):
         return "htj2k"
     return "jp2k"
 

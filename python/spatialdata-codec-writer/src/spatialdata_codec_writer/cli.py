@@ -11,6 +11,7 @@ from .writer import (
     write_codec_spatialdata,
     write_codec_spatialdata_image,
     write_htj2k_fixture,
+    write_htj2k_quality_sweep_manifest,
     write_jpeg2k_fixture,
 )
 
@@ -40,10 +41,13 @@ def _generate_fixtures(args: argparse.Namespace) -> None:
     if args.experimental_htj2k:
         if htj2k_encode_available():
             written.append(write_htj2k_fixture(output_dir / "htj2k.zarr", overwrite=args.overwrite))
+            sweep_path = write_htj2k_quality_sweep_manifest(
+                output_dir / "htj2k-quality-sweep.manifest.json"
+            )
+            print(f"Wrote {sweep_path}")
         else:
             print(
-                "Skipping htj2k.zarr: no HTJ2K encoder is available "
-                "(native imagecodecs or Node WASM helper).",
+                "Skipping htj2k.zarr: OpenJPH WASM HTJ2K encoder is not available.",
                 file=sys.stderr,
             )
 
@@ -114,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--image-key", default="codec_image")
     write.add_argument(
         "--codec",
-        choices=["imagecodecs_jpeg2k", "experimental.imagecodecs_htj2k"],
+        choices=["imagecodecs_jpeg2k", "experimental.openjph_htj2k"],
         default="imagecodecs_jpeg2k",
     )
     write.add_argument(
@@ -134,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     write_image.add_argument("--image-key", required=True)
     write_image.add_argument(
         "--codec",
-        choices=["imagecodecs_jpeg2k", "experimental.imagecodecs_htj2k"],
+        choices=["imagecodecs_jpeg2k", "experimental.openjph_htj2k"],
         default="imagecodecs_jpeg2k",
     )
     write_image.add_argument(
@@ -155,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument("--image-key", help="Convenience shortcut for one image")
     recompress.add_argument(
         "--codec",
-        choices=["imagecodecs_jpeg2k", "experimental.imagecodecs_htj2k"],
+        choices=["imagecodecs_jpeg2k", "experimental.openjph_htj2k"],
         help="Image codec for --image-key",
     )
     recompress.add_argument(

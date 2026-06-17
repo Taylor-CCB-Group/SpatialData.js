@@ -113,7 +113,7 @@ without loading the full object.
 
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-htj2k.zarr --image-key morphology_focus --codec experimental.imagecodecs_htj2k --preset balanced --chunks auto --overwrite
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-htj2k.zarr --image-key morphology_focus --codec experimental.openjph_htj2k --preset balanced --chunks auto --overwrite
 ```
 
 For repeatable runs, prefer a JSON config file:
@@ -125,7 +125,7 @@ For repeatable runs, prefer a JSON config file:
     "morphology_focus": { "preset": "balanced" },
     "he_image": { "preset": "small" },
     "fast_preview": {
-      "codec": "experimental.imagecodecs_htj2k",
+      "codec": "experimental.openjph_htj2k",
       "preset": "lossless",
       "chunks": "auto"
     }
@@ -144,25 +144,29 @@ JP2K presets:
 - `balanced`: writes near-lossless JP2K using `level=100`.
 - `small`: writes more compact JP2K using `level=75`.
 
-HTJ2K presets use the same names. When native `imagecodecs.htj2k_encode` is available,
-do not pass JP2K rate-control `level` values to HTJ2K. When the writer falls back to
-the OpenJPH WASM helper (`scripts/encode-htj2k-plane.mjs`), presets map to
-`setQuality(quality, reversible)`:
+HTJ2K encode uses OpenJPH WASM only (`scripts/encode-htj2k-plane.mjs`) and labels
+stores with `experimental.openjph_htj2k` (`encoder: openjph-wasm` in manifests).
+Presets call `HTJ2KEncoder.setQuality(reversible, quality)` with float
+quantization factors:
 
 - `lossless`: `reversible=True` (exact round-trip).
-- `balanced`: `reversible=False`, `quality=100`.
-- `small`: `reversible=False`, `quality=75`.
+- `balanced`: `reversible=False`, `quality=0.005`.
+- `small`: `reversible=False`, `quality=0.05`.
 
-Per-image config may also pass advanced `imagecodecs.jpeg2k_encode` or
-`imagecodecs.htj2k_encode` options via `encode_options`, or by setting supported
-top-level options such as `level`, `quality`, `reversible`, `codecformat`, and
-`numthreads`.
+Lower `quality` values preserve more detail and produce larger output. This is
+not JP2K-style 0–100 rate control.
 
-HTJ2K recompression uses the experimental Zarr codec id
-`experimental.imagecodecs_htj2k`. On platforms without native OpenJPH in
-`imagecodecs`, encode requires Node.js and `@cornerstonejs/codec-openjph` from this
-repository (see `scripts/encode-htj2k-plane.mjs`). Sibling mode names HTJ2K outputs
-like `morphology_focus:htj2k_balanced`.
+`generate-fixtures --experimental-htj2k` also emits
+`htj2k-quality-sweep.manifest.json` (Mandelbrot plane, multiple qualities). The
+`htj2k.zarr` fixture itself uses a Mandelbrot raster.
+
+Per-image config may also set `quality`, `reversible`, or `encode_options`.
+
+Encode requires Node.js and `@cornerstonejs/codec-openjph` from this repository
+(`pnpm install`). Native `imagecodecs` HTJ2K encode is not used; we may
+re-evaluate it later. The frontend still decodes legacy
+`experimental.imagecodecs_htj2k` stores. Sibling mode names HTJ2K outputs like
+`morphology_focus:htj2k_balanced`.
 
 Labels are not written with JP2K in v1. Label rasters are written with
 Blosc/zstd level 5 by default so integer IDs remain lossless and browser-safe.
@@ -197,29 +201,21 @@ and representative decoded checksums.
 
 ## Experimental HTJ2K
 
-JP2K uses the registered Zarr codec id `imagecodecs_jpeg2k`. HTJ2K support is
-behind the explicitly non-standard id `experimental.imagecodecs_htj2k` and is
-intended for experiments only until there is community/registry alignment.
+JP2K uses the registered Zarr codec id `imagecodecs_jpeg2k`. HTJ2K encode uses
+OpenJPH WASM and labels stores with `experimental.openjph_htj2k`
+(`encoder: openjph-wasm`). The frontend also decodes legacy
+`experimental.imagecodecs_htj2k` fixtures.
 
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --experimental-htj2k --overwrite
 ```
 
-HTJ2K encoding prefers native `imagecodecs` when `imagecodecs.HTJ2K.available` is
-true. Otherwise the writer uses the OpenJPH WASM encoder (`scripts/encode-htj2k-plane.mjs`)
-when Node.js and `@cornerstonejs/codec-openjph` are available from the monorepo install.
-If neither backend is available, `generate-fixtures` still writes `jpeg2k.zarr` and skips
-`htj2k.zarr` with a warning.
+HTJ2K encoding requires Node.js and `@cornerstonejs/codec-openjph` from the
+monorepo (`pnpm install`). If the encoder is unavailable, `generate-fixtures`
+still writes `jpeg2k.zarr` and skips `htj2k.zarr` with a warning.
 
-### WASM encode via SpatialData.ts
-
-The subprocess helper is implemented: Python passes each 2D plane to
-`scripts/encode-htj2k-plane.mjs`, which uses the same OpenJPH build as
-`zarrextra` decode. TypeScript callers can use `encodeHtj2kPlane()` /
-`createOpenJphEncoder()` from `zarrextra` directly.
-
-See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md) for contracts and
-future options (long-lived Node worker, TS-first recompress CLI).
+TypeScript callers can use `encodeHtj2kPlane()` / `createOpenJphEncoder()` from
+`zarrextra` directly. See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md).
 
 Repository scripts may set `UV_CACHE_DIR=.tmp/uv-cache` to keep sandbox and CI
 caches inside the working tree. That environment variable is not required for

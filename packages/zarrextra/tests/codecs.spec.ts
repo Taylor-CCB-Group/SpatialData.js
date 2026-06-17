@@ -104,8 +104,8 @@ describe('codec registration', () => {
     }
   });
 
-  it('registers HTJ2K-compatible decoders in Zarrita', async () => {
-    const codecName = 'experimental.imagecodecs_htj2k';
+  it('registers OpenJPH HTJ2K decoders in Zarrita', async () => {
+    const codecName = 'experimental.openjph_htj2k';
     const previous = zarr.registry.get(codecName);
     zarr.registry.delete(codecName);
 
@@ -137,7 +137,7 @@ describe('codec registration', () => {
     }
   });
 
-  it('accepts fizarrita worker chunk metadata shape for HTJ2K (data_type, chunk_shape)', async () => {
+  it('still decodes legacy experimental.imagecodecs_htj2k ids', async () => {
     const codecName = 'experimental.imagecodecs_htj2k';
     const previous = zarr.registry.get(codecName);
     zarr.registry.delete(codecName);
@@ -218,17 +218,61 @@ describe('codec registration', () => {
     }
 
     const encoder = createOpenJphEncoder(factory);
-    const encoded = await encoder(plane, { width, height }, { reversible: true, quality: 100 });
+    const encoded = await encoder(plane, { width, height }, { reversible: true, quality: 0 });
     expect(encoded.byteLength).toBeGreaterThan(0);
 
     const decoder = createOpenJphDecoder(factory);
     const decoded = toUint16Array(await decoder(encoded, {
       dataType: 'uint16',
       shape: [height, width],
-      codecs: [{ name: 'experimental.imagecodecs_htj2k', configuration: {} }],
+      codecs: [{ name: 'experimental.openjph_htj2k', configuration: {} }],
       fillValue: 0,
     }));
     expect(decoded).toEqual(plane);
+  });
+
+  it('lossy OpenJPH quality changes encoded size on a fractal plane', async () => {
+    let openjph: Record<string, unknown>;
+    try {
+      openjph = await import('@cornerstonejs/codec-openjph');
+    } catch {
+      console.warn(
+        'Skipping HTJ2K lossy quality test: @cornerstonejs/codec-openjph is not installed.'
+      );
+      return;
+    }
+
+    const { createOpenJphEncoder } = await import('../src/htj2k-encode');
+    const factory = (openjph.default ?? openjph.OpenJPHJS ?? openjph) as Parameters<
+      typeof createOpenJphEncoder
+    >[0];
+    const width = 64;
+    const height = 64;
+    const plane = new Uint16Array(width * height);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const cr = (x / width) * 3.5 - 2.5;
+        const ci = (y / height) * 2.0 - 1.0;
+        let zr = 0;
+        let zi = 0;
+        let iteration = 0;
+        while (zr * zr + zi * zi <= 4 && iteration < 255) {
+          const nr = zr * zr - zi * zi + cr;
+          zi = 2 * zr * zi + ci;
+          zr = nr;
+          iteration += 1;
+        }
+        plane[y * width + x] = (iteration * 16) % 4096;
+      }
+    }
+
+    const encoder = createOpenJphEncoder(factory);
+    const high = await encoder(plane, { width, height }, { reversible: false, quality: 0.001 });
+    const mid = await encoder(plane, { width, height }, { reversible: false, quality: 0.01 });
+    const low = await encoder(plane, { width, height }, { reversible: false, quality: 0.1 });
+
+    expect(high.byteLength).toBeGreaterThan(mid.byteLength);
+    expect(mid.byteLength).toBeGreaterThan(low.byteLength);
   });
 });
 

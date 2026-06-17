@@ -78,11 +78,13 @@ export function createWasmLocateFile(
 }
 
 const JPEG2K_CODEC_IDS = ['imagecodecs_jpeg2k', 'numcodecs.imagecodecs_jpeg2k', 'jpeg2k'];
-const HTJ2K_CODEC_IDS = [
+const HTJ2K_OPENJPH_CODEC_ID = 'experimental.openjph_htj2k';
+const HTJ2K_LEGACY_CODEC_IDS = [
   'experimental.imagecodecs_htj2k',
   'imagecodecs_htj2k',
   'numcodecs.imagecodecs_htj2k',
 ];
+const HTJ2K_CODEC_IDS = [HTJ2K_OPENJPH_CODEC_ID, ...HTJ2K_LEGACY_CODEC_IDS];
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (
   specifier: string
@@ -345,14 +347,14 @@ export function registerJpeg2kCodec(options: RegisterImageCodecOptions = {}) {
 }
 
 /**
- * Register experimental HTJ2K decode support.
+ * Register HTJ2K decode support for OpenJPH-encoded stores and legacy ids.
  *
- * This intentionally uses an experimental id by default. The id should not be
- * treated as a community standard until it is accepted into the codecs registry.
+ * New writes use `experimental.openjph_htj2k`. Older fixtures may use
+ * `experimental.imagecodecs_htj2k`; both decode through the same OpenJPH WASM path.
  */
 export function registerExperimentalHtj2kCodec(options: RegisterImageCodecOptions = {}) {
   registerImageCodec(
-    'experimental.imagecodecs_htj2k',
+    HTJ2K_OPENJPH_CODEC_ID,
     HTJ2K_CODEC_IDS,
     loadOpenJphDecoder,
     options
