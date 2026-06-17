@@ -48,7 +48,7 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
 HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
     "balanced": {"reversible": False, "quality": 0.005},
-    "small": {"reversible": False, "quality": 0.05},
+    "small": {"reversible": False, "quality": 0.01},
 }
 
 

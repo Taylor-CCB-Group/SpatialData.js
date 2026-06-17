@@ -4,7 +4,6 @@ import imagecodecs
 import numpy as np
 import pytest
 
-from spatialdata_codec_writer.writer import _decode_htj2k_plane
 from spatialdata_codec_writer import (
     htj2k_encode_available,
     image_to_tczyx,
@@ -13,6 +12,7 @@ from spatialdata_codec_writer import (
     write_htj2k_fixture,
     write_jpeg2k_fixture,
 )
+from spatialdata_codec_writer.writer import _decode_htj2k_plane
 
 
 @pytest.mark.skipif(

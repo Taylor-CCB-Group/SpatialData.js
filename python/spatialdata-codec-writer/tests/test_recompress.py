@@ -18,7 +18,8 @@ from spatialdata_codec_writer import (
     resolve_recompression_config,
 )
 from spatialdata_codec_writer.recompress import _encode_image_plane, _preset_encode_options
-from spatialdata_codec_writer.writer import _decode_htj2k_plane, _mandelbrot_plane
+from spatialdata_codec_writer.synthetic_images import mandelbrot_plane
+from spatialdata_codec_writer.writer import _decode_htj2k_plane
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -113,7 +114,7 @@ def test_lossy_presets_are_not_extreme_low_bitrate() -> None:
 
 def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
     assert HTJ2K_PRESETS["balanced"] == {"reversible": False, "quality": 0.005}
-    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality": 0.05}
+    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality": 0.01}
     assert "level" not in HTJ2K_PRESETS["balanced"]
     assert _preset_encode_options(
         {"preset": "balanced"},
@@ -130,7 +131,7 @@ def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
     reason="No HTJ2K encoder is available in this environment.",
 )
 def test_htj2k_balanced_preset_produces_reasonable_chunk_size() -> None:
-    plane = _mandelbrot_plane(256)
+    plane = mandelbrot_plane(256)
     options = _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_OPENJPH,

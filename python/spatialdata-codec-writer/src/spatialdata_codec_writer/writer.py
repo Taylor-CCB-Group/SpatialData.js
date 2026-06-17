@@ -40,6 +40,13 @@ class WrittenFixture:
     manifest: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class CodecImageWrite:
+    image_key: str
+    image: Any
+    encode_options: dict[str, Any] | None = None
+
+
 def _package_version(name: str) -> str | None:
     try:
         return metadata.version(name)
@@ -51,39 +58,6 @@ def _default_image() -> np.ndarray:
     y, x = np.mgrid[0:64, 0:64]
     image = ((x * 17 + y * 31) % 4096).astype(np.uint16)
     return image.reshape(1, 1, 1, 64, 64)
-
-
-def _mandelbrot_plane(size: int) -> np.ndarray:
-    plane = np.zeros((size, size), dtype=np.uint16)
-    for y in range(size):
-        for x in range(size):
-            cr = (x / size) * 3.5 - 2.5
-            ci = (y / size) * 2.0 - 1.0
-            zr = 0.0
-            zi = 0.0
-            iteration = 0
-            while zr * zr + zi * zi <= 4.0 and iteration < 255:
-                nr = zr * zr - zi * zi + cr
-                zi = 2.0 * zr * zi + ci
-                zr = nr
-                iteration += 1
-            plane[y, x] = (iteration * 16) % 4096
-    return plane
-
-
-def _fractal_image(size: int = 64) -> np.ndarray:
-    return _mandelbrot_plane(size).reshape(1, 1, 1, size, size)
-
-
-HTJ2K_QUALITY_SWEEP: tuple[dict[str, Any], ...] = (
-    {"label": "lossless", "reversible": True, "quality": 0.0},
-    {"label": "q0.001", "reversible": False, "quality": 0.001},
-    {"label": "q0.002", "reversible": False, "quality": 0.002},
-    {"label": "q0.005", "reversible": False, "quality": 0.005},
-    {"label": "q0.01", "reversible": False, "quality": 0.01},
-    {"label": "q0.05", "reversible": False, "quality": 0.05},
-    {"label": "q0.1", "reversible": False, "quality": 0.1},
-)
 
 
 def _downsample2(image: np.ndarray) -> np.ndarray:
@@ -308,72 +282,87 @@ def image_to_tczyx(image: Any, dims: tuple[str, ...] | list[str] | None = None) 
     raise ValueError("image must have shape yx, cyx, czyx, or tczyx when dims are not provided")
 
 
+def _is_lossless_encode(codec: str, encode_options: dict[str, Any] | None) -> bool:
+    if is_htj2k_codec(codec):
+        from .htj2k_encode import openjph_encode_options
+
+        reversible, _quality = openjph_encode_options(encode_options or {})
+        return reversible
+    if codec == CODEC_JPEG2K:
+        return bool((encode_options or {}).get("reversible", True))
+    raise ValueError(f"Unsupported codec: {codec}")
+
+
 def _write_array_chunks(
     store_path: Path,
     array_path: str,
     image: np.ndarray,
     chunks: tuple[int, ...],
     codec: str,
+    encode_options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    is_lossless = _is_lossless_encode(codec, encode_options)
     refs: list[dict[str, Any]] = []
     for coords in _chunk_grid(image.shape, chunks):
         chunk = _extract_chunk(image, chunks, coords)
-        encoded = _encode_chunk_2d(chunk, codec)
+        encoded = _encode_chunk_2d(chunk, codec, encode_options)
         chunk_rel = f"{array_path}/c/" + "/".join(str(c) for c in coords)
         chunk_path = store_path / chunk_rel
         chunk_path.parent.mkdir(parents=True, exist_ok=True)
         chunk_path.write_bytes(encoded)
 
-        decoded = _decode_chunk_2d(encoded, codec)
         expected_plane = chunk.reshape(chunk.shape[-2], chunk.shape[-1])
-        if not np.array_equal(decoded.reshape(expected_plane.shape), expected_plane):
-            raise RuntimeError(f"Codec self-validation failed for chunk {coords}")
-
-        refs.append(
-            {
-                "coords": list(coords),
-                "path": chunk_rel,
-                "encoded_sha256": _sha256(encoded),
-                "decoded_sha256": _sha256(expected_plane.tobytes()),
-                "samples": [
-                    int(expected_plane[0, 0]),
-                    int(expected_plane[0, min(1, expected_plane.shape[1] - 1)]),
-                    int(expected_plane[min(1, expected_plane.shape[0] - 1), 0]),
-                ],
-            }
-        )
+        if len(refs) < 4:
+            decoded = _decode_chunk_2d(encoded, codec).reshape(expected_plane.shape)
+            if is_lossless and not np.array_equal(decoded, expected_plane):
+                raise RuntimeError(f"Codec self-validation failed for chunk {coords}")
+            sample_plane = expected_plane if is_lossless else decoded
+            refs.append(
+                {
+                    "coords": list(coords),
+                    "path": chunk_rel,
+                    "encoded_sha256": _sha256(encoded),
+                    "decoded_sha256": _sha256(sample_plane.tobytes()),
+                    "samples": [
+                        int(sample_plane[0, 0]),
+                        int(sample_plane[0, min(1, sample_plane.shape[1] - 1)]),
+                        int(sample_plane[min(1, sample_plane.shape[0] - 1), 0]),
+                    ],
+                }
+            )
     return refs
 
 
-def write_codec_spatialdata(
-    path: str | Path,
-    *,
-    codec: CodecName = CODEC_JPEG2K,
-    image: Any | None = None,
-    image_key: str = "codec_image",
-    chunks: tuple[int, int, int, int, int] = (1, 1, 1, 32, 32),
-    multiscale: bool = True,
-    overwrite: bool = False,
-) -> WrittenFixture:
-    store_path = Path(path)
-    if store_path.exists():
-        if not overwrite:
-            raise FileExistsError(store_path)
-        shutil.rmtree(store_path)
-    store_path.mkdir(parents=True)
-
-    base = image_to_tczyx(image if image is not None else _default_image())
-    if base.ndim != 5:
-        raise ValueError("image must have shape [t, c, z, y, x]")
+def _validate_codec_chunks(chunks: tuple[int, int, int, int, int]) -> None:
     if len(chunks) != 5:
         raise ValueError("chunks must have shape [t, c, z, y, x]")
     if chunks[:3] != (1, 1, 1):
         raise ValueError("v1 codec fixtures require chunks beginning with (1, 1, 1)")
 
+
+def _multiscale_levels(base: np.ndarray, multiscale: bool) -> list[np.ndarray]:
     levels = [base]
     if multiscale:
         levels.append(_downsample2(base))
+    return levels
 
+
+def _add_codec_image_to_store(
+    store_path: Path,
+    metadata: dict[str, Any],
+    *,
+    image_key: str,
+    image: Any,
+    codec: str,
+    chunks: tuple[int, int, int, int, int],
+    multiscale: bool,
+    encode_options: dict[str, Any] | None,
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    base = image_to_tczyx(image)
+    if base.ndim != 5:
+        raise ValueError("image must have shape [t, c, z, y, x]")
+
+    levels = _multiscale_levels(base, multiscale)
     image_attrs = _image_attrs(
         [
             {
@@ -386,18 +375,19 @@ def write_codec_spatialdata(
         ],
         image_key,
     )
-
-    metadata: dict[str, Any] = {
-        "images": _group_metadata(),
-        f"images/{image_key}": _group_metadata(image_attrs),
-    }
+    metadata[f"images/{image_key}"] = _group_metadata(image_attrs)
 
     chunk_refs: list[dict[str, Any]] = []
     for level_index, level in enumerate(levels):
         array_path = f"images/{image_key}/{level_index}"
         metadata[array_path] = _array_metadata(level.shape, chunks, level.dtype, codec)
-        chunk_refs.extend(_write_array_chunks(store_path, array_path, level, chunks, codec))
+        chunk_refs.extend(
+            _write_array_chunks(store_path, array_path, level, chunks, codec, encode_options)
+        )
+    return base, chunk_refs
 
+
+def _finalize_codec_store(store_path: Path, metadata: dict[str, Any]) -> None:
     root_metadata = {
         "zarr_format": 3,
         "node_type": "group",
@@ -412,22 +402,76 @@ def write_codec_spatialdata(
     for node_path, node_metadata in metadata.items():
         _write_json(store_path / node_path / "zarr.json", node_metadata)
 
-    manifest = {
-        "format": "spatialdata-codec-fixture/v1",
+
+def _codec_packages() -> dict[str, str | None]:
+    return {
+        "imagecodecs": _package_version("imagecodecs"),
+        "numpy": _package_version("numpy"),
+        "spatialdata": _package_version("spatialdata"),
+        "zarr": _package_version("zarr"),
+    }
+
+
+def write_codec_spatialdata_images(
+    path: str | Path,
+    *,
+    images: list[CodecImageWrite],
+    codec: CodecName = CODEC_JPEG2K,
+    chunks: tuple[int, int, int, int, int] = (1, 1, 1, 32, 32),
+    multiscale: bool = True,
+    overwrite: bool = False,
+) -> WrittenFixture:
+    """Write several codec-compressed images into one SpatialData Zarr store."""
+    if not images:
+        raise ValueError("images must contain at least one CodecImageWrite entry.")
+
+    _validate_codec_chunks(chunks)
+    store_path = Path(path)
+    if store_path.exists():
+        if not overwrite:
+            raise FileExistsError(store_path)
+        shutil.rmtree(store_path)
+    store_path.mkdir(parents=True)
+
+    metadata: dict[str, Any] = {"images": _group_metadata()}
+    image_manifests: list[dict[str, Any]] = []
+    multiscale_levels = 2 if multiscale else 1
+
+    for spec in images:
+        if f"images/{spec.image_key}" in metadata:
+            raise ValueError(f"Duplicate image_key {spec.image_key!r}.")
+        base, chunk_refs = _add_codec_image_to_store(
+            store_path,
+            metadata,
+            image_key=spec.image_key,
+            image=spec.image,
+            codec=codec,
+            chunks=chunks,
+            multiscale=multiscale,
+            encode_options=spec.encode_options,
+        )
+        image_entry: dict[str, Any] = {
+            "image_key": spec.image_key,
+            "image_path": f"images/{spec.image_key}",
+            "shape": list(base.shape),
+            "dtype": str(base.dtype),
+            "chunks_checked": chunk_refs[:4],
+        }
+        if spec.encode_options is not None:
+            image_entry["encode_options"] = spec.encode_options
+            image_entry["lossless"] = _is_lossless_encode(codec, spec.encode_options)
+        image_manifests.append(image_entry)
+
+    _finalize_codec_store(store_path, metadata)
+
+    manifest: dict[str, Any] = {
+        "format": "spatialdata-codec-fixture/v2",
         "codec": codec,
         "store": store_path.name,
-        "image_path": f"images/{image_key}",
-        "shape": list(base.shape),
-        "dtype": str(base.dtype),
         "chunks": list(chunks),
-        "multiscale_levels": len(levels),
-        "packages": {
-            "imagecodecs": _package_version("imagecodecs"),
-            "numpy": _package_version("numpy"),
-            "spatialdata": _package_version("spatialdata"),
-            "zarr": _package_version("zarr"),
-        },
-        "chunks_checked": chunk_refs[:4],
+        "multiscale_levels": multiscale_levels,
+        "images": image_manifests,
+        "packages": _codec_packages(),
     }
     if is_htj2k_codec(codec):
         manifest["encoder"] = HTJ2K_ENCODER
@@ -443,6 +487,51 @@ def write_codec_spatialdata(
         _write_json(manifest_path, manifest)
 
     return WrittenFixture(store_path=store_path, manifest_path=manifest_path, manifest=manifest)
+
+
+def write_codec_spatialdata(
+    path: str | Path,
+    *,
+    codec: CodecName = CODEC_JPEG2K,
+    image: Any | None = None,
+    image_key: str = "codec_image",
+    chunks: tuple[int, int, int, int, int] = (1, 1, 1, 32, 32),
+    multiscale: bool = True,
+    overwrite: bool = False,
+    encode_options: dict[str, Any] | None = None,
+) -> WrittenFixture:
+    image_write = CodecImageWrite(
+        image_key=image_key,
+        image=image if image is not None else _default_image(),
+        encode_options=encode_options,
+    )
+    written = write_codec_spatialdata_images(
+        path,
+        images=[image_write],
+        codec=codec,
+        chunks=chunks,
+        multiscale=multiscale,
+        overwrite=overwrite,
+    )
+    image_manifest = written.manifest["images"][0]
+    manifest = {
+        **written.manifest,
+        "format": "spatialdata-codec-fixture/v1",
+        "image_path": image_manifest["image_path"],
+        "shape": image_manifest["shape"],
+        "dtype": image_manifest["dtype"],
+        "chunks_checked": image_manifest["chunks_checked"],
+    }
+    if "encode_options" in image_manifest:
+        manifest["encode_options"] = image_manifest["encode_options"]
+        manifest["lossless"] = image_manifest["lossless"]
+    del manifest["images"]
+    _write_json(written.manifest_path, manifest)
+    return WrittenFixture(
+        store_path=written.store_path,
+        manifest_path=written.manifest_path,
+        manifest=manifest,
+    )
 
 
 def write_codec_spatialdata_image(
@@ -486,69 +575,3 @@ def write_codec_spatialdata_image(
 
 def write_jpeg2k_fixture(path: str | Path, *, overwrite: bool = False) -> WrittenFixture:
     return write_codec_spatialdata(path, codec=CODEC_JPEG2K, overwrite=overwrite)
-
-
-def write_htj2k_fixture(path: str | Path, *, overwrite: bool = False) -> WrittenFixture:
-    return write_codec_spatialdata(
-        path,
-        codec=CODEC_HTJ2K_OPENJPH,
-        image=_fractal_image(),
-        overwrite=overwrite,
-    )
-
-
-def _plane_error_metrics(source: np.ndarray, decoded: np.ndarray) -> dict[str, float]:
-    diff = decoded.astype(np.float64) - source.astype(np.float64)
-    mse = float(np.mean(diff * diff))
-    return {
-        "rmse": float(np.sqrt(mse)),
-        "max_abs_error": float(np.max(np.abs(diff))),
-    }
-
-
-def write_htj2k_quality_sweep_manifest(path: str | Path) -> Path:
-    """Encode a Mandelbrot plane at several qualities and write a benchmark manifest."""
-    from .htj2k_encode import encode_htj2k_plane, htj2k_encode_available
-
-    if not htj2k_encode_available():
-        raise RuntimeError("OpenJPH WASM HTJ2K encoder is not available.")
-
-    plane = _mandelbrot_plane(64)
-    raw_bytes = int(plane.nbytes)
-    qualities: list[dict[str, Any]] = []
-    for entry in HTJ2K_QUALITY_SWEEP:
-        encoded = encode_htj2k_plane(
-            plane,
-            reversible=bool(entry["reversible"]),
-            quality=float(entry["quality"]),
-        )
-        decoded = _decode_htj2k_plane(encoded).reshape(plane.shape)
-        metrics = _plane_error_metrics(plane, decoded)
-        qualities.append(
-            {
-                **entry,
-                "encoded_bytes": len(encoded),
-                "compression_ratio": raw_bytes / len(encoded),
-                **metrics,
-            }
-        )
-
-    manifest_path = Path(path)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(
-        manifest_path,
-        {
-            "format": "spatialdata-htj2k-quality-sweep/v1",
-            "encoder": HTJ2K_ENCODER,
-            "api": "HTJ2KEncoder.setQuality(reversible, quality)",
-            "quality_note": (
-                "OpenJPH WASM quality is a quantization factor, not JP2K-style 0-100. "
-                "Lower values preserve more detail (larger output). Integer values above "
-                "~15 with irreversible=true produce degenerate minimum-bitrate output."
-            ),
-            "image": {"kind": "mandelbrot", "shape": list(plane.shape), "dtype": str(plane.dtype)},
-            "raw_bytes": raw_bytes,
-            "qualities": qualities,
-        },
-    )
-    return manifest_path

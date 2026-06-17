@@ -6,12 +6,15 @@ import sys
 from pathlib import Path
 
 from .recompress import recompress_spatialdata
+from .htj2k_fixtures import (
+    write_htj2k_encode_demo_fixtures,
+    write_htj2k_fixture,
+    write_htj2k_quality_sweep_manifest,
+)
 from .writer import (
     htj2k_encode_available,
     write_codec_spatialdata,
     write_codec_spatialdata_image,
-    write_htj2k_fixture,
-    write_htj2k_quality_sweep_manifest,
     write_jpeg2k_fixture,
 )
 
@@ -45,6 +48,8 @@ def _generate_fixtures(args: argparse.Namespace) -> None:
                 output_dir / "htj2k-quality-sweep.manifest.json"
             )
             print(f"Wrote {sweep_path}")
+            demo_path = write_htj2k_encode_demo_fixtures(output_dir, overwrite=args.overwrite)
+            print(f"Wrote {demo_path}")
         else:
             print(
                 "Skipping htj2k.zarr: OpenJPH WASM HTJ2K encoder is not available.",

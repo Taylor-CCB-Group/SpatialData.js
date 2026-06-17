@@ -1,3 +1,8 @@
+from .htj2k_fixtures import (
+    write_htj2k_encode_demo_fixtures,
+    write_htj2k_fixture,
+    write_htj2k_quality_sweep_manifest,
+)
 from .recompress import (
     HTJ2K_PRESETS,
     JP2K_PRESETS,
@@ -15,8 +20,6 @@ from .writer import (
     write_codec_spatialdata,
     write_codec_spatialdata_image,
     write_jpeg2k_fixture,
-    write_htj2k_fixture,
-    write_htj2k_quality_sweep_manifest,
 )
 
 __all__ = [
@@ -34,6 +37,7 @@ __all__ = [
     "write_codec_spatialdata",
     "write_codec_spatialdata_image",
     "write_jpeg2k_fixture",
+    "write_htj2k_encode_demo_fixtures",
     "write_htj2k_fixture",
     "write_htj2k_quality_sweep_manifest",
 ]

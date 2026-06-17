@@ -28,10 +28,13 @@ The route calls `enableWorkerChunkDecode()` from `zarrextra/workers`, which uses
 [`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
 with a custom codec worker that registers JP2K and experimental HTJ2K support
 inside the worker before decode. Use the codec selector on the page to switch
-between `/test-fixtures/codecs/jpeg2k.zarr` and
-`/test-fixtures/codecs/htj2k.zarr`. Manifests are at
+between `/test-fixtures/codecs/jpeg2k.zarr` and `/test-fixtures/codecs/htj2k-demo.zarr`.
+When HTJ2K is selected, the demo loads a single `htj2k-demo.zarr` store containing
+`mandelbrot_lossless`, `mandelbrot_balanced`, and `mandelbrot_small` image layers
+(512×512 Mandelbrot, two pyramid levels). Use the `SpatialCanvas` layer controls to
+toggle between presets. Manifests are at
 `/test-fixtures/codecs/jpeg2k.manifest.json` and
-`/test-fixtures/codecs/htj2k.manifest.json`.
+`/test-fixtures/codecs/htj2k-encode-demo.manifest.json`.
 
 The vis dev script starts the fixture server on port `38473` and proxies
 `/test-fixtures` through Vite on `5173`. Override the fixture server port with
@@ -121,12 +124,15 @@ JP2K and HTJ2K share preset names (`lossless`, `balanced`, `small`). HTJ2K encod
 uses OpenJPH WASM (`experimental.openjph_htj2k`) via
 `HTJ2KEncoder.setQuality(reversible, quality)`. The quality argument is a float
 quantization factor (lower = higher fidelity, larger output) — not JP2K-style
-0–100. Presets map to `balanced: 0.005`, `small: 0.05`.
+0–100. Presets map to `balanced: 0.005`, `small: 0.01`.
 
 `generate-fixtures --experimental-htj2k` also writes
 `htj2k-quality-sweep.manifest.json`, encoding the same Mandelbrot plane at several
-qualities so you can confirm compression responds on detail-rich imagery. The main
-`htj2k.zarr` fixture also uses a Mandelbrot raster instead of a smooth gradient.
+qualities so you can confirm compression responds on detail-rich imagery, and
+`htj2k-encode-demo.manifest.json` with three browser-viewable multiscale image
+layers in one store (`htj2k-demo.zarr`: `mandelbrot_lossless`, `mandelbrot_balanced`,
+`mandelbrot_small`) at 512×512 with 64×64 chunks. The main `htj2k.zarr` fixture
+remains a small 64×64 Mandelbrot raster for fast CI smoke tests.
 
 Browser-targeted image codec output is limited to `uint8`, `int8`, `uint16`, and
 `int16`. Labels are not image-codec-compressed in v1; they stay lossless through

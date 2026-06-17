@@ -36,7 +36,7 @@ Preset mapping:
 |--------|-----------------------------------|
 | `lossless` | `(true, 0)` |
 | `balanced` | `(false, 0.005)` |
-| `small` | `(false, 0.05)` |
+| `small` | `(false, 0.01)` |
 
 `quality` is a float quantization factor (lower = better fidelity, larger output).
 Integer values above ~15 with `reversible=false` produce degenerate output.

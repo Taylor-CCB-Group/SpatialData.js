@@ -151,14 +151,16 @@ quantization factors:
 
 - `lossless`: `reversible=True` (exact round-trip).
 - `balanced`: `reversible=False`, `quality=0.005`.
-- `small`: `reversible=False`, `quality=0.05`.
+- `small`: `reversible=False`, `quality=0.01`.
 
 Lower `quality` values preserve more detail and produce larger output. This is
 not JP2K-style 0–100 rate control.
 
 `generate-fixtures --experimental-htj2k` also emits
-`htj2k-quality-sweep.manifest.json` (Mandelbrot plane, multiple qualities). The
-`htj2k.zarr` fixture itself uses a Mandelbrot raster.
+`htj2k-quality-sweep.manifest.json` (Mandelbrot plane, multiple qualities) and
+`htj2k-encode-demo.manifest.json` (three 512×512 multiscale image layers in one
+`htj2k-demo.zarr` store at lossless / balanced / small presets). The small
+`htj2k.zarr` fixture remains for fast CI smoke tests.
 
 Per-image config may also set `quality`, `reversible`, or `encode_options`.
 
