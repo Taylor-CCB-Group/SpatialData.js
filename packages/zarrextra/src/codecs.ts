@@ -66,6 +66,17 @@ export type OpenJpegFactory = (opts?: {
   locateFile?: RegisterImageCodecOptions['locateFile'];
 }) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
+export type OpenJphFactory = (opts?: {
+  locateFile?: RegisterImageCodecOptions['locateFile'];
+}) => Promise<Record<string, unknown>> | Record<string, unknown>;
+
+/** Emscripten locateFile hook that resolves bundled codec WASM to a bundler URL. */
+export function createWasmLocateFile(
+  wasmUrl: string
+): NonNullable<RegisterImageCodecOptions['locateFile']> {
+  return (path, _prefix) => (path.endsWith('.wasm') ? wasmUrl : path);
+}
+
 const JPEG2K_CODEC_IDS = ['imagecodecs_jpeg2k', 'numcodecs.imagecodecs_jpeg2k', 'jpeg2k'];
 const HTJ2K_CODEC_IDS = [
   'experimental.imagecodecs_htj2k',
@@ -253,29 +264,29 @@ async function loadOpenJpegDecoder(options: RegisterImageCodecOptions): Promise<
   return createOpenJpegDecoder(factory as OpenJpegFactory, options);
 }
 
-async function loadOpenJphDecoder(options: RegisterImageCodecOptions): Promise<ImageCodecDecoder> {
-  const mod = await dynamicImport('@cornerstonejs/codec-openjph');
-  const factory = (mod.default ?? mod.OpenJPHJS ?? mod) as unknown;
-  if (typeof factory !== 'function') {
-    throw new Error('Could not find an OpenJPH factory export in @cornerstonejs/codec-openjph.');
-  }
+type Htj2kDecoderClass = new () => {
+  getEncodedBuffer(length: number): Uint8Array;
+  decode(): void;
+  getDecodedBuffer(): DecodedImageBytes;
+};
+
+export function createOpenJphDecoder(
+  factory: OpenJphFactory,
+  options: Pick<RegisterImageCodecOptions, 'locateFile'> = {}
+): ImageCodecDecoder {
   let runtimePromise: Promise<Record<string, unknown>> | undefined;
   async function getRuntime() {
     runtimePromise ??= Promise.resolve(
-      (factory as (opts?: { locateFile?: RegisterImageCodecOptions['locateFile'] }) => unknown)({
+      factory({
         locateFile: options.locateFile,
       })
-    ) as Promise<Record<string, unknown>>;
+    );
     return await runtimePromise;
   }
   return async (encoded) => {
     const runtime = await getRuntime();
     const Decoder = (runtime.HTJ2KDecoder ?? runtime.JPHDecoder ?? runtime.J2KDecoder) as
-      | (new () => {
-          getEncodedBuffer(length: number): Uint8Array;
-          decode(): void;
-          getDecodedBuffer(): DecodedImageBytes;
-        })
+      | Htj2kDecoderClass
       | undefined;
     if (!Decoder) {
       throw new Error(
@@ -287,6 +298,21 @@ async function loadOpenJphDecoder(options: RegisterImageCodecOptions): Promise<I
     decoder.decode();
     return decoder.getDecodedBuffer();
   };
+}
+
+async function loadOpenJphDecoder(options: RegisterImageCodecOptions): Promise<ImageCodecDecoder> {
+  const factoryMod = await dynamicImport('@cornerstonejs/codec-openjph/wasmjs').catch(() =>
+    dynamicImport('@cornerstonejs/codec-openjph')
+  );
+  const factory = (factoryMod.default ?? factoryMod.OpenJPHJS ?? factoryMod) as unknown;
+  if (typeof factory !== 'function') {
+    throw new Error('Could not find an OpenJPH factory export in @cornerstonejs/codec-openjph.');
+  }
+  const wasmMod = await dynamicImport('@cornerstonejs/codec-openjph/wasm').catch(() => null);
+  const wasmAsset = wasmMod ? ((wasmMod.default ?? wasmMod) as string | undefined) : undefined;
+  const locateFile =
+    options.locateFile ?? (wasmAsset ? createWasmLocateFile(wasmAsset) : undefined);
+  return createOpenJphDecoder(factory as OpenJphFactory, { locateFile });
 }
 
 function registerImageCodec(

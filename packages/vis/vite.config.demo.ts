@@ -25,6 +25,7 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  assetsInclude: ['**/*.wasm'],
   server: {
     host: '127.0.0.1',
     port: 5173,
