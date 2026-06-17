@@ -2,27 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
+import os
 from pathlib import Path
 
 from .recompress import recompress_spatialdata
-from .htj2k_fixtures import (
-    write_htj2k_encode_demo_fixtures,
-    write_htj2k_fixture,
-    write_htj2k_quality_sweep_manifest,
-)
-from .writer import (
-    htj2k_encode_available,
-    write_codec_spatialdata,
-    write_codec_spatialdata_image,
-    write_jpeg2k_fixture,
-)
-
-
-def _chunks(value: list[int]) -> tuple[int, int, int, int, int]:
-    if len(value) != 5:
-        raise argparse.ArgumentTypeError("chunks must contain exactly five integers: t c z y x")
-    return (value[0], value[1], value[2], value[3], value[4])
 
 
 def _recompress_chunks(value: list[str] | None):
@@ -34,56 +17,6 @@ def _recompress_chunks(value: list[str] | None):
         return tuple(int(part) for part in value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("chunks must be 'auto' or integer axis sizes") from exc
-
-
-def _generate_fixtures(args: argparse.Namespace) -> None:
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    written = [write_jpeg2k_fixture(output_dir / "jpeg2k.zarr", overwrite=args.overwrite)]
-    if args.experimental_htj2k:
-        if htj2k_encode_available():
-            written.append(write_htj2k_fixture(output_dir / "htj2k.zarr", overwrite=args.overwrite))
-            sweep_path = write_htj2k_quality_sweep_manifest(
-                output_dir / "htj2k-quality-sweep.manifest.json"
-            )
-            print(f"Wrote {sweep_path}")
-            demo_path = write_htj2k_encode_demo_fixtures(output_dir, overwrite=args.overwrite)
-            print(f"Wrote {demo_path}")
-        else:
-            print(
-                "Skipping htj2k.zarr: OpenJPH WASM HTJ2K encoder is not available.",
-                file=sys.stderr,
-            )
-
-    for fixture in written:
-        print(f"Wrote {fixture.store_path}")
-        print(f"Wrote {fixture.manifest_path}")
-
-
-def _write(args: argparse.Namespace) -> None:
-    fixture = write_codec_spatialdata(
-        args.path,
-        codec=args.codec,
-        image_key=args.image_key,
-        chunks=_chunks(args.chunks),
-        overwrite=args.overwrite,
-        multiscale=not args.single_scale,
-    )
-    print(json.dumps(fixture.manifest, indent=2, sort_keys=True))
-
-
-def _write_image(args: argparse.Namespace) -> None:
-    fixture = write_codec_spatialdata_image(
-        args.path,
-        args.source,
-        image_key=args.image_key,
-        codec=args.codec,
-        chunks=_chunks(args.chunks),
-        overwrite=args.overwrite,
-        multiscale=not args.single_scale,
-    )
-    print(json.dumps(fixture.manifest, indent=2, sort_keys=True))
 
 
 def _recompress(args: argparse.Namespace) -> None:
@@ -108,6 +41,7 @@ def _recompress(args: argparse.Namespace) -> None:
         quality=args.quality,
         reversible=True if args.reversible else None,
         sibling=args.sibling,
+        workers=args.workers,
     )
     print(json.dumps(result.manifest, indent=2, sort_keys=True))
 
@@ -120,53 +54,10 @@ def _inspect(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Write SpatialData codec fixtures")
+    parser = argparse.ArgumentParser(
+        description="Recompress SpatialData/OME-Zarr image stores with optional codecs"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    generate = subparsers.add_parser("generate-fixtures")
-    generate.add_argument("--output-dir", default="test-fixtures/codecs")
-    generate.add_argument("--overwrite", action="store_true")
-    generate.add_argument("--experimental-htj2k", action="store_true")
-    generate.set_defaults(func=_generate_fixtures)
-
-    write = subparsers.add_parser("write")
-    write.add_argument("path")
-    write.add_argument("--image-key", default="codec_image")
-    write.add_argument(
-        "--codec",
-        choices=["imagecodecs_jpeg2k", "experimental.openjph_htj2k"],
-        default="imagecodecs_jpeg2k",
-    )
-    write.add_argument(
-        "--chunks",
-        nargs=5,
-        type=int,
-        default=[1, 1, 1, 32, 32],
-        metavar=("T", "C", "Z", "Y", "X"),
-    )
-    write.add_argument("--single-scale", action="store_true")
-    write.add_argument("--overwrite", action="store_true")
-    write.set_defaults(func=_write)
-
-    write_image = subparsers.add_parser("write-image")
-    write_image.add_argument("source", help="Existing SpatialData Zarr store")
-    write_image.add_argument("path", help="Output SpatialData Zarr store")
-    write_image.add_argument("--image-key", required=True)
-    write_image.add_argument(
-        "--codec",
-        choices=["imagecodecs_jpeg2k", "experimental.openjph_htj2k"],
-        default="imagecodecs_jpeg2k",
-    )
-    write_image.add_argument(
-        "--chunks",
-        nargs=5,
-        type=int,
-        default=[1, 1, 1, 32, 32],
-        metavar=("T", "C", "Z", "Y", "X"),
-    )
-    write_image.add_argument("--single-scale", action="store_true")
-    write_image.add_argument("--overwrite", action="store_true")
-    write_image.set_defaults(func=_write_image)
 
     recompress = subparsers.add_parser("recompress")
     recompress.add_argument("source", help="Existing SpatialData Zarr store")
@@ -212,6 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Write compressed images as new sibling groups (e.g. morphology_focus:jp2k_lossless) "
             "instead of replacing the originals in-place"
         ),
+    )
+    recompress.add_argument(
+        "--workers",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="Parallel encoder workers (default: CPU count)",
     )
     recompress.set_defaults(func=_recompress)
 

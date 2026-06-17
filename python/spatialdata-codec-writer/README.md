@@ -1,127 +1,60 @@
 # spatialdata-codec-writer
 
-Reference writer for small SpatialData/OME-Zarr image stores that use optional
-image codecs such as JPEG 2000.
+Publishable Python tool for recompressing SpatialData/OME-Zarr image stores with
+optional browser-targeted codecs (JPEG 2000 and experimental HTJ2K, which is computationally cheaper).
 
-The package is structured as publishable Python code, but for now it lives in
-this repository as the fixture generator and reference implementation for the
-JavaScript `zarrextra`/Viv reader work.
+This is a working prototype that may be used for experimenting with writing non-standard
+stores that can as of this writing only be interpreted by the `spatialdata.js` runtime.
+It is hoped that if found to be of benefit, these codecs can be adopted more broadly.
+We may also review other options for comparison.
 
-## Install for local development
+The package vendors OpenJPH WASM and runs it through a pool of persistent Node.js
+encoder workers. **Runtime requirements:** Python 3.12+, Node.js on PATH, and
+`imagecodecs` for JP2K encode/decode validation.
 
-From the repository root:
+Codec test fixture generation lives in this repository under
+`python/spatialdata-codec-writer/scripts/` (not exported from the installed wheel).
+
+## Install
 
 ```bash
+pip install spatialdata-codec-writer
+```
+
+For local development in this monorepo:
+
+```bash
+pnpm test:codec-writer
+```
+
+(`openjphjs.js` / `openjphjs.wasm` are gitignored; the script vendors them from
+`@cornerstonejs/codec-openjph` before pytest.)
+
+Before building or running HTJ2K tests manually:
+
+```bash
+node scripts/vendor-openjph-for-python.mjs
 uv run --directory python/spatialdata-codec-writer pytest
 ```
-
-`uv run` resolves the pinned package dependencies from `pyproject.toml` and
-`uv.lock`. The runtime dependencies include `spatialdata`, `zarr`,
-`imagecodecs`, `ome-zarr`, `numpy`, `numcodecs`, and `dask`.
-
-## Generate codec fixtures
-
-Generate the JP2K fixture used by the JS integration tests:
-
-```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --overwrite
-```
-
-Inspect the generated manifest:
-
-```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect ../../test-fixtures/codecs/jpeg2k.zarr
-```
-
-The manifest records the written image path, shape, dtype, chunk shape, codec
-id, package versions, and representative chunk samples/checksums. The writer
-decodes chunks after writing them so the JS tests can compare against Python's
-reference output.
-
-## Write a small image store
-
-Use `write_codec_spatialdata` when you already have an image array or image-like
-object and want a small SpatialData/OME-Zarr store:
-
-```python
-import numpy as np
-
-from spatialdata_codec_writer import write_codec_spatialdata
-
-image = np.arange(2 * 64 * 64, dtype=np.uint16).reshape(2, 64, 64)
-
-written = write_codec_spatialdata(
-    "example-jp2k.zarr",
-    image=image,
-    image_key="histology",
-    codec="imagecodecs_jpeg2k",
-    chunks=(1, 1, 1, 32, 32),
-    overwrite=True,
-)
-
-print(written.manifest_path)
-```
-
-Images are normalized to `[t, c, z, y, x]`. If the object has named dimensions
-such as an xarray `DataArray` or SpatialData image element, those names are
-used. Without names, accepted shapes are `yx`, `cyx`, `czyx`, and `tczyx`.
-For SpatialData multiscale image elements, the writer uses `scale0` as the
-source image and can write a fresh multiscale output from it.
-
-## Compress one image from an existing SpatialData object
-
-Use `write_codec_spatialdata_image` to transcode one image from an existing
-SpatialData object or SpatialData Zarr path:
-
-```python
-import spatialdata as sd
-
-from spatialdata_codec_writer import write_codec_spatialdata_image
-
-sdata = sd.read_zarr("input.sdata.zarr")
-
-written = write_codec_spatialdata_image(
-    "histology-jp2k.zarr",
-    sdata,
-    image_key="histology",
-    codec="imagecodecs_jpeg2k",
-    chunks=(1, 1, 1, 256, 256),
-    overwrite=True,
-)
-
-print(written.manifest["image_path"])
-```
-
-The CLI has the same path-oriented workflow:
-
-```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer write-image input.sdata.zarr histology-jp2k.zarr --image-key histology --chunks 1 1 1 256 256 --overwrite
-```
-
-This is currently a focused image transcoder. It writes a new store containing
-the selected image under `images/<image_key>` and does not yet preserve tables,
-shapes, points, labels, or arbitrary source metadata from the input SpatialData
-object. When using the CLI source-path form, the input must be readable by the
-installed `spatialdata` Python package.
 
 ## Recompress an existing SpatialData store
 
 Use `recompress_spatialdata` or the `recompress` CLI when you want to preserve a
 whole SpatialData object and rewrite selected raster payloads. Path sources are
-copied first, so tables, shapes, points, and unconfigured rasters are preserved
-without loading the full object.
+copied first, so tables, shapes, points, root `spatialdata_attrs`, and
+unconfigured rasters are preserved without loading the full object.
 
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-htj2k.zarr --image-key morphology_focus --codec experimental.openjph_htj2k --preset balanced --chunks auto --overwrite
 ```
 
+Parallel encoding defaults to one worker per CPU (`--workers N` to override).
+
 ### Custom HTJ2K `quality` (instead of `--preset`)
 
 Presets are shortcuts. For per-dataset tuning, pass an explicit OpenJPH quantization
 factor. **Lower `quality` = higher fidelity and larger output** (not JP2K-style 0–100).
-
-CLI (requires `--image-key` and HTJ2K codec):
 
 ```bash
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress \
@@ -137,7 +70,7 @@ uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer reco
 With `--sibling`, the new image is named from the quality, e.g.
 `morphology_focus:htj2k_q0.001`.
 
-Equivalent JSON config (per image under `images`):
+Equivalent JSON config:
 
 ```json
 {
@@ -150,12 +83,6 @@ Equivalent JSON config (per image under `images`):
   }
 }
 ```
-
-You can also nest under `encode_options` (`"encode_options": { "quality": 0.001 }`).
-Setting `quality` implies lossy encoding (`reversible=false`) unless you also set
-`"reversible": true` (lossless ignores `quality`). A preset plus `quality` uses
-the preset as a base but **overrides** its quality and forces lossy unless
-`reversible` is explicitly true.
 
 For repeatable runs with multiple images, prefer a JSON config file:
 
@@ -181,89 +108,71 @@ uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer reco
 
 JP2K presets:
 
-- `lossless`: writes reversible JP2K and validates decoded chunks exactly.
-- `balanced`: writes near-lossless JP2K using `level=100`.
-- `small`: writes more compact JP2K using `level=75`.
+- `lossless`: reversible JP2K with exact round-trip validation.
+- `balanced`: near-lossless JP2K (`level=100`).
+- `small`: more compact JP2K (`level=75`).
 
-HTJ2K encode uses OpenJPH WASM only (`scripts/encode-htj2k-plane.mjs`) and labels
-stores with `experimental.openjph_htj2k` (`encoder: openjph-wasm` in manifests).
-Presets call `HTJ2KEncoder.setQuality(reversible, quality)` with float
-quantization factors:
+HTJ2K encode uses vendored OpenJPH WASM (`experimental.openjph_htj2k`,
+`encoder: openjph-wasm` in manifests). Presets call
+`HTJ2KEncoder.setQuality(reversible, quality)`:
 
-- `lossless`: `reversible=True` (exact round-trip).
-- `balanced`: `reversible=False`, `quality=0.0002` (roughly JP2K-balanced fidelity on Xenium morphology).
+- `lossless`: `reversible=True`.
+- `balanced`: `reversible=False`, `quality=0.0002`.
 - `small`: `reversible=False`, `quality=0.001`.
 
-Lower `quality` values preserve more detail and produce larger output. This is
-not JP2K-style 0–100 rate control. See
-[`docs/htj2k-wasm-encode-design.md`](docs/htj2k-wasm-encode-design.md) for calibration
-notes. A future codec-demo UI may expose interactive `q` sweeps on sample regions.
+See [`docs/htj2k-wasm-encode-design.md`](docs/htj2k-wasm-encode-design.md) for
+calibration notes.
 
-`generate-fixtures --experimental-htj2k` also emits
-`htj2k-quality-sweep.manifest.json` (Mandelbrot plane, multiple qualities) and
-`htj2k-encode-demo.manifest.json` (three 512×512 multiscale image layers in one
-`htj2k-demo.zarr` store at lossless / balanced / small presets). The small
-`htj2k.zarr` fixture remains for fast CI smoke tests.
+Labels are written with Blosc/zstd by default. Browser-targeted image codecs
+support `uint8`, `int8`, `uint16`, and `int16` only.
 
-Per-image config may also set top-level `quality`, `reversible`, or nested
-`encode_options` (see **Custom HTJ2K `quality`** above).
+The recompressor writes a sidecar manifest beside the output with the expanded
+config, per-raster metadata, encoded byte counts, package versions, and
+representative decoded checksums. Tool provenance lives in the manifest; source
+store root `spatialdata_attrs` are preserved from the copy.
 
-Encode requires Node.js and `@cornerstonejs/codec-openjph` from this repository
-(`pnpm install`). Native `imagecodecs` HTJ2K encode is not used; we may
-re-evaluate it later. The frontend still decodes legacy
-`experimental.imagecodecs_htj2k` stores. Sibling mode names HTJ2K outputs like
-`morphology_focus:htj2k_balanced` (presets) or `morphology_focus:htj2k_q0.001`
-(custom `--quality`).
-
-Labels are not written with JP2K in v1. Label rasters are written with
-Blosc/zstd level 5 by default so integer IDs remain lossless and browser-safe.
-
-Browser-targeted JP2K output is limited to `uint8`, `int8`, `uint16`, and
-`int16`. Wider integer, float, bool, and unknown dtypes are rejected for JP2K
-with a clear error. Python `imagecodecs` may support some wider data, but the
-current JavaScript OpenJPEG decoder path is not considered supported above
-16-bit.
-
-For a larger manual experiment:
+## Inspect manifests
 
 ```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress /Users/ptodd/data/spatialdata/sdata_inputs/xenium_rep1_io_spatialdata_0.7.1.zarr /private/tmp/xenium-rep1-morphology-focus-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer inspect output-jp2k.manifest.json
 ```
 
-When viewing recompressed stores in a browser during iterative experiments,
-serve them without HTTP caching or write each attempt to a fresh output path.
-For example:
+## Generate codec fixtures (monorepo dev only)
+
+Fixture generation is **not** part of the published CLI. From the repository root:
 
 ```bash
-bunx http-server --cors -c-1 /private/tmp
+pnpm test:fixtures:generate:codecs
 ```
 
-This matters when using `--overwrite`: a browser can otherwise keep stale Zarr
-metadata for up to the server cache lifetime and try to decode newly written
-chunks with an old codec pipeline.
-
-The recompressor writes a manifest beside the output with the expanded config,
-per-raster shape/dtype/chunk metadata, encoded byte counts, package versions,
-and representative decoded checksums.
-
-## Experimental HTJ2K
-
-JP2K uses the registered Zarr codec id `imagecodecs_jpeg2k`. HTJ2K encode uses
-OpenJPH WASM and labels stores with `experimental.openjph_htj2k`
-(`encoder: openjph-wasm`). The frontend also decodes legacy
-`experimental.imagecodecs_htj2k` fixtures.
+Or directly:
 
 ```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer generate-fixtures --output-dir ../../test-fixtures/codecs --experimental-htj2k --overwrite
+node scripts/vendor-openjph-for-python.mjs
+uv run --directory python/spatialdata-codec-writer python scripts/generate_codec_fixtures.py --output-dir ../../test-fixtures/codecs --experimental-htj2k --overwrite
 ```
 
-HTJ2K encoding requires Node.js and `@cornerstonejs/codec-openjph` from the
-monorepo (`pnpm install`). If the encoder is unavailable, `generate-fixtures`
-still writes `jpeg2k.zarr` and skips `htj2k.zarr` with a warning.
+Dev fixtures stamp root metadata with `experimental_codec_writer` (not a fake
+`spatialdata` library version) to signal they are codec test artifacts. See
+`docs/docs/vis/codec-fixtures.mdx` for browser demo instructions and a note on
+provenance standardization.
 
-TypeScript callers can use `encodeHtj2kPlane()` / `createOpenJphEncoder()` from
-`zarrextra` directly. See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md).
+## Python API
 
-Repository scripts may set `UV_CACHE_DIR=.tmp/uv-cache` to keep sandbox and CI
-caches inside the working tree. That environment variable is not required for
-normal local use.
+```python
+from spatialdata_codec_writer import recompress_spatialdata
+
+result = recompress_spatialdata(
+    "input.sdata.zarr",
+    "output-jp2k.zarr",
+    image_key="morphology_focus",
+    preset="balanced",
+    chunks="auto",
+    overwrite=True,
+    workers=4,
+)
+print(result.manifest_path)
+```
+
+TypeScript callers can use `encodeHtj2kPlane()` from `zarrextra` directly.
+See [htj2k-wasm-encode-design.md](docs/htj2k-wasm-encode-design.md).

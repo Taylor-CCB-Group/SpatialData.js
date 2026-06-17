@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from spatialdata_codec_writer import htj2k_encode_available, write_htj2k_quality_sweep_manifest
+from spatialdata_codec_writer import htj2k_encode_available
+
+from htj2k_fixtures import write_htj2k_quality_sweep_manifest
 
 
 @pytest.mark.skipif(

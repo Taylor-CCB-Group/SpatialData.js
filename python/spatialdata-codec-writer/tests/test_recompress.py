@@ -17,9 +17,10 @@ from spatialdata_codec_writer import (
     recompress_spatialdata,
     resolve_recompression_config,
 )
-from spatialdata_codec_writer.recompress import _encode_image_plane, _preset_encode_options
-from spatialdata_codec_writer.synthetic_images import mandelbrot_plane
-from spatialdata_codec_writer.writer import _decode_htj2k_plane
+from spatialdata_codec_writer.codecs import decode_htj2k_plane, encode_image_plane
+from spatialdata_codec_writer.recompress import _preset_encode_options
+
+from synthetic_images import mandelbrot_plane
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -159,7 +160,7 @@ def test_htj2k_balanced_preset_produces_reasonable_chunk_size() -> None:
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_OPENJPH,
     )
-    encoded = _encode_image_plane(plane, CODEC_HTJ2K_OPENJPH, options)
+    encoded = encode_image_plane(plane, CODEC_HTJ2K_OPENJPH, options)
     assert 1_000 < len(encoded) < plane.nbytes
 
 
@@ -205,6 +206,23 @@ def test_recompress_spatialdata_rejects_browser_unsupported_jp2k_dtype(tmp_path:
             tmp_path / "out.zarr",
             config={"images": {"morphology": {"preset": "lossless"}}},
         )
+
+
+def test_recompress_preserves_root_spatialdata_attrs(tmp_path: Path) -> None:
+    source = _write_source_store(tmp_path / "source.zarr")
+    original_attrs = json.loads((source / "zarr.json").read_text())["attributes"]
+
+    result = recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={
+            "images": {"morphology": {"preset": "lossless", "chunks": [1, 4, 4]}},
+            "default_labels": {"codec": None},
+        },
+    )
+
+    preserved = json.loads((result.store_path / "zarr.json").read_text())["attributes"]
+    assert preserved == original_attrs
 
 
 def test_recompress_sibling_keeps_original_and_adds_new_group(tmp_path: Path) -> None:
@@ -321,7 +339,7 @@ def test_recompress_spatialdata_rewrites_image_with_htj2k(tmp_path: Path) -> Non
 
     first_chunk = result.manifest["images"][0]["chunks_checked"][0]
     encoded = result.store_path / "images" / "morphology" / "0" / "c" / "0" / "0" / "0"
-    decoded = _decode_htj2k_plane(encoded.read_bytes())
+    decoded = decode_htj2k_plane(encoded.read_bytes())
     assert first_chunk["source_sha256"] == first_chunk["decoded_sha256"]
     assert int(decoded[0, 0]) == 0
     assert result.manifest["images"][0]["codec"] == CODEC_HTJ2K_OPENJPH

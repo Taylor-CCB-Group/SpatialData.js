@@ -4,16 +4,7 @@ import numpy as np
 
 
 def mandelbrot_plane(size: int) -> np.ndarray:
-    """
-    Return a uint16 Mandelbrot escape-time plane as a basic visual quality test.
-
-    This is a horribly slow and naive python implementation for now.
-
-    In future we may expand
-    - beyond image plane, volume/time dimensions for testing
-    - synthesise images with qualities that better approximate microscopy
-    - use webgpu or something to render the data (maybe do more of this scripting from js)
-    """
+    """Return a uint16 Mandelbrot escape-time plane as a basic visual quality test."""
     plane = np.zeros((size, size), dtype=np.uint16)
     for y in range(size):
         for x in range(size):

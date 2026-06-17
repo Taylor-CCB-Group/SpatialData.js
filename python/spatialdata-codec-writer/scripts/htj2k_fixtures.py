@@ -5,17 +5,16 @@ from typing import Any
 
 import numpy as np
 
-from .synthetic_images import fractal_tczyx_image, mandelbrot_plane
-from .writer import (
+from spatialdata_codec_writer.codecs import (
     CODEC_HTJ2K_OPENJPH,
-    CodecImageWrite,
     HTJ2K_ENCODER,
-    WrittenFixture,
-    _decode_htj2k_plane,
-    _write_json,
-    write_codec_spatialdata,
-    write_codec_spatialdata_images,
+    decode_htj2k_plane,
+    write_json,
 )
+from spatialdata_codec_writer.htj2k_encode import encode_htj2k_plane, htj2k_encode_available
+
+from fixture_writer import CodecImageWrite, WrittenFixture, write_codec_spatialdata, write_codec_spatialdata_images
+from synthetic_images import fractal_tczyx_image, mandelbrot_plane
 
 HTJ2K_ENCODE_DEMO_STORE = "htj2k-demo.zarr"
 
@@ -78,7 +77,6 @@ def write_htj2k_fixture(path: str | Path, *, overwrite: bool = False) -> Written
 
 
 def write_htj2k_encode_demo_fixtures(path: str | Path, *, overwrite: bool = False) -> Path:
-    """Write one multiscale Mandelbrot store with several HTJ2K quality presets."""
     output_dir = Path(path)
     output_dir.mkdir(parents=True, exist_ok=True)
     store_path = output_dir / HTJ2K_ENCODE_DEMO_STORE
@@ -124,7 +122,7 @@ def write_htj2k_encode_demo_fixtures(path: str | Path, *, overwrite: bool = Fals
         )
 
     manifest_path = output_dir / "htj2k-encode-demo.manifest.json"
-    _write_json(
+    write_json(
         manifest_path,
         {
             "format": "spatialdata-htj2k-encode-demo/v2",
@@ -153,9 +151,6 @@ def _plane_error_metrics(source: np.ndarray, decoded: np.ndarray) -> dict[str, f
 
 
 def write_htj2k_quality_sweep_manifest(path: str | Path) -> Path:
-    """Encode a Mandelbrot plane at several qualities and write a benchmark manifest."""
-    from .htj2k_encode import encode_htj2k_plane, htj2k_encode_available
-
     if not htj2k_encode_available():
         raise RuntimeError("OpenJPH WASM HTJ2K encoder is not available.")
 
@@ -168,7 +163,7 @@ def write_htj2k_quality_sweep_manifest(path: str | Path) -> Path:
             reversible=bool(entry["reversible"]),
             quality=float(entry["quality"]),
         )
-        decoded = _decode_htj2k_plane(encoded).reshape(plane.shape)
+        decoded = decode_htj2k_plane(encoded).reshape(plane.shape)
         metrics = _plane_error_metrics(plane, decoded)
         qualities.append(
             {
@@ -181,7 +176,7 @@ def write_htj2k_quality_sweep_manifest(path: str | Path) -> Path:
 
     manifest_path = Path(path)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(
+    write_json(
         manifest_path,
         {
             "format": "spatialdata-htj2k-quality-sweep/v1",

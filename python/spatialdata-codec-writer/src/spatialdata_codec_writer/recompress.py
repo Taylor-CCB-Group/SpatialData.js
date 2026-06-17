@@ -3,28 +3,30 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-import imagecodecs
 import numpy as np
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 
-from .writer import (
-    # CODEC_HTJ2K_LEGACY,
+from .codecs import (
     CODEC_HTJ2K_OPENJPH,
     CODEC_JPEG2K,
     HTJ2K_ENCODER,
-    _decode_htj2k_plane,
-    _encode_htj2k_plane,
-    _package_version,
-    _sha256,
-    _write_json,
-    htj2k_encode_available,
+    chunk_grid,
+    chunk_slices,
+    decode_image_plane,
+    encode_image_plane,
     is_htj2k_codec,
+    package_version,
+    pad_chunk,
+    sha256,
+    write_json,
 )
+from .htj2k_encode import configure_encoder_pool, htj2k_encode_available
 
 ImagePreset = Literal["lossless", "balanced", "small"]
 ChunkSpec = Literal["auto"] | tuple[int, ...] | list[int]
@@ -44,8 +46,6 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "small": {"reversible": False, "level": 75},
 }
 
-# OpenJPH WASM: setQuality(reversible, quality) with float quantization factor (lower = better).
-# Calibrated roughly against Xenium morphology uint16 chunks (see htj2k-wasm-encode-design.md).
 HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
     "balanced": {"reversible": False, "quality": 0.0002},
@@ -205,36 +205,9 @@ def _resolve_image_codec(config: dict[str, Any], raster_key: str) -> str:
     if codec == CODEC_HTJ2K_OPENJPH and not htj2k_encode_available():
         raise RuntimeError(
             f"HTJ2K recompression requested for {raster_key!r}, but the OpenJPH WASM encoder "
-            "is not available. Run from this repository with Node.js and "
-            "@cornerstonejs/codec-openjph installed (pnpm install)."
+            "is not available. Install spatialdata-codec-writer and ensure Node.js is on PATH."
         )
     return codec
-
-
-def _chunk_grid(shape: tuple[int, ...], chunks: tuple[int, ...]) -> list[tuple[int, ...]]:
-    ranges = [range((size + chunk - 1) // chunk) for size, chunk in zip(shape, chunks)]
-    out: list[tuple[int, ...]] = [()]
-    for values in ranges:
-        out = [(*prefix, value) for prefix in out for value in values]
-    return out
-
-
-def _chunk_slices(
-    shape: tuple[int, ...], chunks: tuple[int, ...], coords: tuple[int, ...]
-) -> tuple[slice, ...]:
-    slices = []
-    for coord, chunk, size in zip(coords, chunks, shape):
-        start = coord * chunk
-        slices.append(slice(start, min(start + chunk, size)))
-    return tuple(slices)
-
-
-def _pad_chunk(chunk: np.ndarray, chunks: tuple[int, ...]) -> np.ndarray:
-    if chunk.shape == chunks:
-        return chunk
-    padded = np.zeros(chunks, dtype=chunk.dtype)
-    padded[tuple(slice(0, size) for size in chunk.shape)] = chunk
-    return padded
 
 
 def _array_metadata_from_source(
@@ -296,25 +269,6 @@ def _sibling_image_label(image_config: dict[str, Any]) -> str:
     return str(preset)
 
 
-def _encode_image_plane(
-    plane: np.ndarray, codec: str, encode_options: dict[str, Any]
-) -> bytes | bytearray:
-    array = np.asarray(plane)
-    if codec == CODEC_JPEG2K:
-        return imagecodecs.jpeg2k_encode(array, **encode_options)
-    if codec == CODEC_HTJ2K_OPENJPH:
-        return _encode_htj2k_plane(array, encode_options)
-    raise ValueError(f"Unsupported image codec: {codec}")
-
-
-def _decode_image_plane(encoded: bytes | bytearray, codec: str) -> np.ndarray:
-    if codec == CODEC_JPEG2K:
-        return imagecodecs.jpeg2k_decode(encoded)
-    if is_htj2k_codec(codec):
-        return _decode_htj2k_plane(encoded)
-    raise ValueError(f"Unsupported image codec: {codec}")
-
-
 def _sample_values(plane: np.ndarray) -> list[int | float]:
     values = [
         plane[0, 0],
@@ -324,12 +278,19 @@ def _sample_values(plane: np.ndarray) -> list[int | float]:
     return [value.item() if hasattr(value, "item") else value for value in values]
 
 
+def _encode_chunk_task(
+    plane: np.ndarray, codec: str, encode_options: dict[str, Any]
+) -> bytes | bytearray:
+    return encode_image_plane(plane, codec, encode_options)
+
+
 def _recompress_image_array(
     *,
     source_array_path: Path,
     dest_array_path: Path,
     raster_path: str,
     config: dict[str, Any],
+    workers: int,
 ) -> dict[str, Any]:
     source_meta = _read_json(source_array_path / "zarr.json")
     source_array = zarr.open_array(str(source_array_path), mode="r")
@@ -346,7 +307,7 @@ def _recompress_image_array(
     if dest_array_path.exists():
         shutil.rmtree(dest_array_path)
     (dest_array_path / "c").mkdir(parents=True)
-    _write_json(
+    write_json(
         dest_array_path / "zarr.json",
         _array_metadata_from_source(
             source_meta,
@@ -355,24 +316,46 @@ def _recompress_image_array(
         ),
     )
 
-    chunks_checked: list[dict[str, Any]] = []
-    encoded_bytes = 0
-    chunk_count = 0
-    for coords in _chunk_grid(shape, chunks):
-        selection = _chunk_slices(shape, chunks, coords)
-        chunk = _pad_chunk(np.asarray(source_array[selection]), chunks)
+    chunk_jobs: list[tuple[tuple[int, ...], np.ndarray]] = []
+    for coords in chunk_grid(shape, chunks):
+        selection = chunk_slices(shape, chunks, coords)
+        chunk = pad_chunk(np.asarray(source_array[selection]), chunks)
         plane = chunk.reshape(chunk.shape[-2], chunk.shape[-1])
-        encoded = _encode_image_plane(plane, codec, encode_options)
-        encoded_bytes += len(encoded)
-        chunk_count += 1
+        chunk_jobs.append((coords, plane))
 
+    encoded_by_coords: dict[tuple[int, ...], tuple[bytes | bytearray, np.ndarray]] = {}
+    encoded_bytes = 0
+
+    if workers <= 1 or len(chunk_jobs) <= 1:
+        for coords, plane in chunk_jobs:
+            encoded = _encode_chunk_task(plane, codec, encode_options)
+            encoded_bytes += len(encoded)
+            encoded_by_coords[coords] = (encoded, plane)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_coords = {
+                executor.submit(_encode_chunk_task, plane, codec, encode_options): coords
+                for coords, plane in chunk_jobs
+            }
+            for future in as_completed(future_to_coords):
+                coords = future_to_coords[future]
+                plane = next(plane for c, plane in chunk_jobs if c == coords)
+                encoded = future.result()
+                encoded_bytes += len(encoded)
+                encoded_by_coords[coords] = (encoded, plane)
+
+    chunks_checked: list[dict[str, Any]] = []
+    chunk_count = 0
+    for coords, plane in chunk_jobs:
+        encoded, plane = encoded_by_coords[coords]
+        chunk_count += 1
         chunk_rel = Path("c").joinpath(*(str(coord) for coord in coords))
         chunk_path = dest_array_path / chunk_rel
         chunk_path.parent.mkdir(parents=True, exist_ok=True)
         chunk_path.write_bytes(encoded)
 
         if len(chunks_checked) < 4:
-            decoded = _decode_image_plane(encoded, codec)
+            decoded = decode_image_plane(encoded, codec)
             decoded_plane = decoded.reshape(plane.shape)
             if is_lossless and not np.array_equal(decoded_plane, plane):
                 raise RuntimeError(
@@ -381,9 +364,9 @@ def _recompress_image_array(
             chunks_checked.append(
                 {
                     "coords": list(coords),
-                    "encoded_sha256": _sha256(encoded),
-                    "decoded_sha256": _sha256(decoded_plane.tobytes()),
-                    "source_sha256": _sha256(plane.tobytes()),
+                    "encoded_sha256": sha256(encoded),
+                    "decoded_sha256": sha256(decoded_plane.tobytes()),
+                    "source_sha256": sha256(plane.tobytes()),
                     "samples": _sample_values(decoded_plane),
                 }
             )
@@ -448,8 +431,8 @@ def _recompress_label_array(
     )
 
     chunk_count = 0
-    for coords in _chunk_grid(shape, chunks):
-        selection = _chunk_slices(shape, chunks, coords)
+    for coords in chunk_grid(shape, chunks):
+        selection = chunk_slices(shape, chunks, coords)
         dest_array[selection] = source_array[selection]
         chunk_count += 1
 
@@ -483,7 +466,7 @@ def _refresh_consolidated_metadata(store_path: Path) -> None:
         "must_understand": False,
         "metadata": _collect_consolidated_metadata(store_path),
     }
-    _write_json(root_path, root_meta)
+    write_json(root_path, root_meta)
 
 
 def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> Path:
@@ -521,6 +504,7 @@ def recompress_spatialdata(
     quality: float | None = None,
     reversible: bool | None = None,
     sibling: bool = False,
+    workers: int | None = None,
 ) -> RecompressedSpatialData:
     """Preserve a SpatialData store and recompress configured rasters.
 
@@ -536,6 +520,11 @@ def recompress_spatialdata(
     shapes, points, and unconfigured rasters intact without loading the whole
     object.
     """
+
+    import os
+
+    worker_count = workers if workers is not None else (os.cpu_count() or 1)
+    configure_encoder_pool(worker_count)
 
     dest_path = Path(dest)
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
@@ -576,15 +565,14 @@ def recompress_spatialdata(
         default_image = resolved_config.get("default_image", {})
         for key in image_keys:
             image_config = _deep_merge(default_image, resolved_config.get("images", {}).get(key, {}))
-            codec = _resolve_image_codec(image_config, key)
+            resolved_codec = _resolve_image_codec(image_config, key)
 
             if sibling:
                 dest_key = _sibling_image_key(
                     key,
-                    codec,
+                    resolved_codec,
                     _sibling_image_label(image_config),
                 )
-                # Copy the source group metadata (zarr.json + multiscales attrs) into the sibling key.
                 sib_group_path = dest_path / "images" / dest_key
                 if sib_group_path.exists():
                     shutil.rmtree(sib_group_path)
@@ -595,7 +583,9 @@ def recompress_spatialdata(
             else:
                 dest_key = key
 
-            for dataset in _datasets_from_raster_group(dest_path / "images" / key if not sibling else read_path / "images" / key):
+            for dataset in _datasets_from_raster_group(
+                dest_path / "images" / key if not sibling else read_path / "images" / key
+            ):
                 source_raster = f"images/{key}/{dataset}"
                 dest_raster = f"images/{dest_key}/{dataset}"
                 image_reports.append(
@@ -604,6 +594,7 @@ def recompress_spatialdata(
                         dest_array_path=dest_path / dest_raster,
                         raster_path=dest_raster,
                         config=image_config,
+                        workers=worker_count,
                     )
                 )
 
@@ -637,16 +628,17 @@ def recompress_spatialdata(
             "config": resolved_config,
             "images": image_reports,
             "labels": label_reports,
+            "workers": worker_count,
             "packages": {
-                "imagecodecs": _package_version("imagecodecs"),
-                "numpy": _package_version("numpy"),
-                "spatialdata": _package_version("spatialdata"),
-                "zarr": _package_version("zarr"),
+                "imagecodecs": package_version("imagecodecs"),
+                "numpy": package_version("numpy"),
+                "spatialdata": package_version("spatialdata"),
+                "zarr": package_version("zarr"),
             },
         }
         manifest_path = dest_path.with_suffix(".manifest.json") if manifest else None
         if manifest_path is not None:
-            _write_json(manifest_path, manifest_data)
+            write_json(manifest_path, manifest_data)
         return RecompressedSpatialData(dest_path, manifest_path, manifest_data)
     finally:
         if temp_dir is not None:

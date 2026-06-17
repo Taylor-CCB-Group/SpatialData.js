@@ -1,8 +1,6 @@
-from pathlib import Path
-
 import numpy as np
 
-from spatialdata_codec_writer.synthetic_images import fractal_tczyx_image, mandelbrot_plane
+from synthetic_images import fractal_tczyx_image, mandelbrot_plane
 
 
 def test_mandelbrot_plane_shape_and_dtype() -> None:

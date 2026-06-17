@@ -1,18 +1,21 @@
 from pathlib import Path
 
 import imagecodecs
+import json
 import numpy as np
 import pytest
 
-from spatialdata_codec_writer import (
-    htj2k_encode_available,
+from spatialdata_codec_writer import htj2k_encode_available
+from spatialdata_codec_writer.codecs import decode_htj2k_plane
+
+from fixture_writer import (
     image_to_tczyx,
     write_codec_spatialdata,
     write_codec_spatialdata_image,
-    write_htj2k_fixture,
     write_jpeg2k_fixture,
 )
-from spatialdata_codec_writer.writer import _decode_htj2k_plane
+from htj2k_fixtures import write_htj2k_fixture
+from provenance import experimental_codec_writer_attrs
 
 
 @pytest.mark.skipif(
@@ -27,9 +30,12 @@ def test_write_htj2k_fixture(tmp_path: Path) -> None:
     assert fixture.manifest["codec"] == "experimental.openjph_htj2k"
     assert fixture.manifest["encoder"] == "openjph-wasm"
 
+    root_attrs = json.loads((fixture.store_path / "zarr.json").read_text())["attributes"]
+    assert root_attrs["spatialdata_attrs"] == experimental_codec_writer_attrs()
+
     first_chunk = fixture.manifest["chunks_checked"][0]
     encoded = (fixture.store_path / first_chunk["path"]).read_bytes()
-    decoded = _decode_htj2k_plane(encoded)
+    decoded = decode_htj2k_plane(encoded)
 
     assert decoded.shape == (32, 32)
     assert int(decoded[0, 0]) == first_chunk["samples"][0]

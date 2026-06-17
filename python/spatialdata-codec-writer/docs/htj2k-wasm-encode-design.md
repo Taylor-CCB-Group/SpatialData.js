@@ -1,8 +1,8 @@
 # HTJ2K OpenJPH WASM encode
 
-Status: **implemented** — the supported HTJ2K encode path uses OpenJPH WASM via
-`scripts/encode-htj2k-plane.mjs`. New stores are labelled
-`experimental.openjph_htj2k`.
+Status: **implemented** — HTJ2K encode uses vendored OpenJPH WASM inside a pool
+of persistent Node.js workers (`spatialdata_codec_writer/vendor/encode-plane.mjs`).
+New stores are labelled `experimental.openjph_htj2k`.
 
 Native `imagecodecs` HTJ2K encode is intentionally **not** used: PyPI wheels are
 often stub-only, conda installs are awkward, and the WASM encoder exposes
@@ -25,10 +25,16 @@ encode later; the frontend still decodes the legacy id
 
 ```
 Python spatialdata-codec-writer
-  → stdin JSON to scripts/encode-htj2k-plane.mjs
+  → EncoderPool (N persistent Node workers)
+  → vendored encode-plane.mjs --worker
   → OpenJPH HTJ2KEncoder.setQuality(reversible, quality).encode()
-  → stdout HTJ2K bytes
+  → HTJ2K bytes per chunk
 ```
+
+Vendoring: run `node scripts/vendor-openjph-for-python.mjs` at the monorepo root
+to copy `@cornerstonejs/codec-openjph` dist assets into the Python package wheel.
+The copied `vendor/openjph/` blobs are gitignored; CI and `pnpm test:codec-writer`
+run the vendor step after `pnpm install`.
 
 Preset mapping:
 
@@ -68,6 +74,7 @@ spatialdata-codec-writer recompress input.zarr output.zarr \
   --codec experimental.openjph_htj2k \
   --quality 0.001 \
   --sibling \
+  --workers 4 \
   --overwrite
 ```
 
@@ -95,7 +102,9 @@ Mandelbrot plane across several qualities.
 ## References
 
 - Python encode: [`htj2k_encode.py`](../src/spatialdata_codec_writer/htj2k_encode.py),
-  [`writer.py`](../src/spatialdata_codec_writer/writer.py)
-- Node helper: [`scripts/encode-htj2k-plane.mjs`](../../../scripts/encode-htj2k-plane.mjs)
+  [`codecs.py`](../src/spatialdata_codec_writer/codecs.py)
+- Vendored Node worker: [`vendor/encode-plane.mjs`](../src/spatialdata_codec_writer/vendor/encode-plane.mjs)
+- Vendor script: [`scripts/vendor-openjph-for-python.mjs`](../../../scripts/vendor-openjph-for-python.mjs)
+- Dev fixtures: [`scripts/generate_codec_fixtures.py`](../scripts/generate_codec_fixtures.py)
 - JS encode: [`packages/zarrextra/src/htj2k-encode.ts`](../../../packages/zarrextra/src/htj2k-encode.ts)
 - JS decode: [`packages/zarrextra/src/codecs.ts`](../../../packages/zarrextra/src/codecs.ts)

@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from spatialdata_codec_writer import htj2k_encode_available, write_htj2k_encode_demo_fixtures
-from spatialdata_codec_writer.htj2k_fixtures import HTJ2K_ENCODE_DEMO_STORE, htj2k_encode_demo_image_key
+from spatialdata_codec_writer import htj2k_encode_available
+
+from htj2k_fixtures import HTJ2K_ENCODE_DEMO_STORE, htj2k_encode_demo_image_key, write_htj2k_encode_demo_fixtures
 
 
 @pytest.mark.skipif(

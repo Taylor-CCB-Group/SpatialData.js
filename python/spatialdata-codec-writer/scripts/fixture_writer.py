@@ -1,36 +1,28 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import shutil
 from dataclasses import dataclass
-from importlib import metadata
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-import imagecodecs
 import numpy as np
 
-CODEC_JPEG2K = "imagecodecs_jpeg2k"
-CODEC_HTJ2K_OPENJPH = "experimental.openjph_htj2k"
-# Legacy label for stores written before OpenJPH WASM became the supported encoder.
-# The frontend still decodes this id; new writes use CODEC_HTJ2K_OPENJPH.
-CODEC_HTJ2K_LEGACY = "experimental.imagecodecs_htj2k"
-HTJ2K_CODECS = frozenset({CODEC_HTJ2K_OPENJPH, CODEC_HTJ2K_LEGACY})
-HTJ2K_ENCODER = "openjph-wasm"
+from spatialdata_codec_writer.codecs import (
+    CODEC_HTJ2K_OPENJPH,
+    CODEC_JPEG2K,
+    HTJ2K_ENCODER,
+    CodecName,
+    chunk_grid,
+    decode_image_plane,
+    encode_image_plane,
+    is_htj2k_codec,
+    package_version,
+    sha256,
+    write_json,
+)
+from spatialdata_codec_writer.htj2k_encode import openjph_encode_options
 
-CodecName = Literal["imagecodecs_jpeg2k", "experimental.openjph_htj2k"]
-
-
-def is_htj2k_codec(codec: str) -> bool:
-    return codec in HTJ2K_CODECS
-
-
-def htj2k_encode_available() -> bool:
-    """Return whether the OpenJPH WASM HTJ2K encoder is available."""
-    from .htj2k_encode import htj2k_encode_available as openjph_encode_available
-
-    return openjph_encode_available()
+from provenance import experimental_codec_writer_attrs
 
 
 @dataclass(frozen=True)
@@ -47,13 +39,6 @@ class CodecImageWrite:
     encode_options: dict[str, Any] | None = None
 
 
-def _package_version(name: str) -> str | None:
-    try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        return None
-
-
 def _default_image() -> np.ndarray:
     y, x = np.mgrid[0:64, 0:64]
     image = ((x * 17 + y * 31) % 4096).astype(np.uint16)
@@ -62,24 +47,6 @@ def _default_image() -> np.ndarray:
 
 def _downsample2(image: np.ndarray) -> np.ndarray:
     return image[..., ::2, ::2].copy()
-
-
-def _json_bytes(value: dict[str, Any]) -> bytes:
-    return json.dumps(value, indent=2, sort_keys=True).encode("utf-8")
-
-
-def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_json_bytes(value))
-
-
-def _sha256(data: bytes | bytearray) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _chunk_grid(shape: tuple[int, ...], chunks: tuple[int, ...]) -> list[tuple[int, ...]]:
-    ranges = [range((size + chunk - 1) // chunk) for size, chunk in zip(shape, chunks)]
-    return [(t, c, z, y, x) for t in ranges[0] for c in ranges[1] for z in ranges[2] for y in ranges[3] for x in ranges[4]]
 
 
 def _extract_chunk(image: np.ndarray, chunks: tuple[int, ...], coords: tuple[int, ...]) -> np.ndarray:
@@ -96,49 +63,6 @@ def _extract_chunk(image: np.ndarray, chunks: tuple[int, ...], coords: tuple[int
     padded_slices = tuple(slice(0, size) for size in chunk_data.shape)
     padded[padded_slices] = chunk_data
     return padded
-
-
-def _encode_htj2k_plane(
-    plane: np.ndarray, encode_options: dict[str, Any] | None = None
-) -> bytes | bytearray:
-    from .htj2k_encode import encode_htj2k_plane, htj2k_encode_available, openjph_encode_options
-
-    if not htj2k_encode_available():
-        raise RuntimeError(
-            "HTJ2K encode is not available. Run from this repository with Node.js and "
-            "@cornerstonejs/codec-openjph installed (pnpm install)."
-        )
-    reversible, quality = openjph_encode_options(encode_options or {})
-    return encode_htj2k_plane(plane, reversible=reversible, quality=quality)
-
-
-def _encode_chunk_2d(
-    chunk: np.ndarray, codec: str, encode_options: dict[str, Any] | None = None
-) -> bytes | bytearray:
-    plane = np.asarray(chunk.reshape(chunk.shape[-2], chunk.shape[-1]))
-    if codec == CODEC_JPEG2K:
-        return imagecodecs.jpeg2k_encode(plane)
-    if codec == CODEC_HTJ2K_OPENJPH:
-        return _encode_htj2k_plane(plane, encode_options)
-    raise ValueError(f"Unsupported codec: {codec}")
-
-
-def _decode_htj2k_plane(encoded: bytes | bytearray) -> np.ndarray:
-    """Decode an HTJ2K plane for validation (OpenJPH WASM or native imagecodecs)."""
-    htj2k = getattr(imagecodecs, "HTJ2K", None)
-    if htj2k is not None and getattr(htj2k, "available", False):
-        decoder = getattr(imagecodecs, "htj2k_decode", None)
-        if decoder is not None:
-            return decoder(encoded)
-    return imagecodecs.jpeg2k_decode(encoded)
-
-
-def _decode_chunk_2d(encoded: bytes | bytearray, codec: str) -> np.ndarray:
-    if codec == CODEC_JPEG2K:
-        return imagecodecs.jpeg2k_decode(encoded)
-    if is_htj2k_codec(codec):
-        return _decode_htj2k_plane(encoded)
-    raise ValueError(f"Unsupported codec: {codec}")
 
 
 def _array_metadata(shape: tuple[int, ...], chunks: tuple[int, ...], dtype: np.dtype, codec: str) -> dict[str, Any]:
@@ -211,7 +135,7 @@ def _image_attrs(datasets: list[dict[str, Any]], image_key: str) -> dict[str, An
                 ],
             },
         },
-        "spatialdata_attrs": {"version": "0.7.2"},
+        "spatialdata_attrs": experimental_codec_writer_attrs(),
     }
 
 
@@ -234,14 +158,7 @@ def _base_image_element(image: Any) -> Any:
 
 
 def image_to_tczyx(image: Any, dims: tuple[str, ...] | list[str] | None = None) -> np.ndarray:
-    """Return an image as a NumPy array with shape ``[t, c, z, y, x]``.
-
-    ``image`` can be a NumPy/Dask array, an xarray ``DataArray``, or a
-    SpatialData image element. When dimension names are available, this helper
-    uses them; otherwise it accepts common image shapes: ``yx``, ``cyx``,
-    ``czyx``, and already-normalized ``tczyx``.
-    """
-
+    """Return an image as a NumPy array with shape ``[t, c, z, y, x]``."""
     image = _base_image_element(image)
 
     if dims is None:
@@ -284,7 +201,7 @@ def image_to_tczyx(image: Any, dims: tuple[str, ...] | list[str] | None = None) 
 
 def _is_lossless_encode(codec: str, encode_options: dict[str, Any] | None) -> bool:
     if is_htj2k_codec(codec):
-        from .htj2k_encode import openjph_encode_options
+        from spatialdata_codec_writer.htj2k_encode import openjph_encode_options
 
         reversible, _quality = openjph_encode_options(encode_options or {})
         return reversible
@@ -303,9 +220,11 @@ def _write_array_chunks(
 ) -> list[dict[str, Any]]:
     is_lossless = _is_lossless_encode(codec, encode_options)
     refs: list[dict[str, Any]] = []
-    for coords in _chunk_grid(image.shape, chunks):
+    for coords in chunk_grid(image.shape, chunks):
         chunk = _extract_chunk(image, chunks, coords)
-        encoded = _encode_chunk_2d(chunk, codec, encode_options)
+        encoded = encode_image_plane(
+            chunk.reshape(chunk.shape[-2], chunk.shape[-1]), codec, encode_options or {}
+        )
         chunk_rel = f"{array_path}/c/" + "/".join(str(c) for c in coords)
         chunk_path = store_path / chunk_rel
         chunk_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,7 +232,7 @@ def _write_array_chunks(
 
         expected_plane = chunk.reshape(chunk.shape[-2], chunk.shape[-1])
         if len(refs) < 4:
-            decoded = _decode_chunk_2d(encoded, codec).reshape(expected_plane.shape)
+            decoded = decode_image_plane(encoded, codec).reshape(expected_plane.shape)
             if is_lossless and not np.array_equal(decoded, expected_plane):
                 raise RuntimeError(f"Codec self-validation failed for chunk {coords}")
             sample_plane = expected_plane if is_lossless else decoded
@@ -321,8 +240,8 @@ def _write_array_chunks(
                 {
                     "coords": list(coords),
                     "path": chunk_rel,
-                    "encoded_sha256": _sha256(encoded),
-                    "decoded_sha256": _sha256(sample_plane.tobytes()),
+                    "encoded_sha256": sha256(encoded),
+                    "decoded_sha256": sha256(sample_plane.tobytes()),
                     "samples": [
                         int(sample_plane[0, 0]),
                         int(sample_plane[0, min(1, sample_plane.shape[1] - 1)]),
@@ -391,25 +310,16 @@ def _finalize_codec_store(store_path: Path, metadata: dict[str, Any]) -> None:
     root_metadata = {
         "zarr_format": 3,
         "node_type": "group",
-        "attributes": {"spatialdata_attrs": {"version": "0.7.2"}},
+        "attributes": {"spatialdata_attrs": experimental_codec_writer_attrs()},
         "consolidated_metadata": {
             "kind": "inline",
             "must_understand": False,
             "metadata": metadata,
         },
     }
-    _write_json(store_path / "zarr.json", root_metadata)
+    write_json(store_path / "zarr.json", root_metadata)
     for node_path, node_metadata in metadata.items():
-        _write_json(store_path / node_path / "zarr.json", node_metadata)
-
-
-def _codec_packages() -> dict[str, str | None]:
-    return {
-        "imagecodecs": _package_version("imagecodecs"),
-        "numpy": _package_version("numpy"),
-        "spatialdata": _package_version("spatialdata"),
-        "zarr": _package_version("zarr"),
-    }
+        write_json(store_path / node_path / "zarr.json", node_metadata)
 
 
 def write_codec_spatialdata_images(
@@ -421,7 +331,6 @@ def write_codec_spatialdata_images(
     multiscale: bool = True,
     overwrite: bool = False,
 ) -> WrittenFixture:
-    """Write several codec-compressed images into one SpatialData Zarr store."""
     if not images:
         raise ValueError("images must contain at least one CodecImageWrite entry.")
 
@@ -471,20 +380,25 @@ def write_codec_spatialdata_images(
         "chunks": list(chunks),
         "multiscale_levels": multiscale_levels,
         "images": image_manifests,
-        "packages": _codec_packages(),
+        "packages": {
+            "imagecodecs": package_version("imagecodecs"),
+            "numpy": package_version("numpy"),
+            "spatialdata": package_version("spatialdata"),
+            "zarr": package_version("zarr"),
+        },
     }
     if is_htj2k_codec(codec):
         manifest["encoder"] = HTJ2K_ENCODER
     manifest_path = store_path.with_suffix(".manifest.json")
-    _write_json(manifest_path, manifest)
+    write_json(manifest_path, manifest)
 
     try:
         import spatialdata as sd
 
         sd.read_zarr(store_path)
-    except Exception as exc:  # pragma: no cover - diagnostic metadata is enough for fixture use.
+    except Exception as exc:  # pragma: no cover
         manifest["spatialdata_read_warning"] = str(exc)
-        _write_json(manifest_path, manifest)
+        write_json(manifest_path, manifest)
 
     return WrittenFixture(store_path=store_path, manifest_path=manifest_path, manifest=manifest)
 
@@ -526,7 +440,7 @@ def write_codec_spatialdata(
         manifest["encode_options"] = image_manifest["encode_options"]
         manifest["lossless"] = image_manifest["lossless"]
     del manifest["images"]
-    _write_json(written.manifest_path, manifest)
+    write_json(written.manifest_path, manifest)
     return WrittenFixture(
         store_path=written.store_path,
         manifest_path=written.manifest_path,
@@ -544,14 +458,6 @@ def write_codec_spatialdata_image(
     multiscale: bool = True,
     overwrite: bool = False,
 ) -> WrittenFixture:
-    """Write one image from an existing SpatialData object/path with a codec.
-
-    This is a focused transcoder for image-reader fixtures and experiments. It
-    writes a new store containing the selected image under ``images/<image_key>``;
-    it does not yet preserve tables, shapes, points, labels, or arbitrary source
-    metadata from the input SpatialData object.
-    """
-
     source = spatialdata_or_path
     if isinstance(spatialdata_or_path, str | Path):
         import spatialdata as sd

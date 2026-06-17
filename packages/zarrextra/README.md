@@ -76,8 +76,8 @@ registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(OpenJPHJS) });
 
 For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
 `createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`
-calls `scripts/encode-htj2k-plane.mjs`; new stores use codec id
-`experimental.openjph_htj2k`.
+uses vendored OpenJPH WASM with a persistent Node worker pool; new stores use
+codec id `experimental.openjph_htj2k`.
 
 ```typescript
 import { encodeHtj2kPlane } from 'zarrextra';
