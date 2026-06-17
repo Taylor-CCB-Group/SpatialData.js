@@ -19,7 +19,7 @@ def openjph_encode_options(encode_options: dict[str, Any]) -> tuple[bool, float]
     reversible = bool(encode_options.get("reversible", True))
     if reversible:
         return True, 0.0
-    quality = encode_options.get("quality", encode_options.get("level", 0.005))
+    quality = encode_options.get("quality", encode_options.get("level", 0.0002))
     return False, float(quality)
 
 

@@ -107,19 +107,42 @@ def test_resolve_recompression_config_applies_codec_shortcut() -> None:
     assert config["default_image"]["codec"] == "imagecodecs_jpeg2k"
 
 
+def test_resolve_recompression_config_applies_quality_shortcut() -> None:
+    config = resolve_recompression_config(
+        {},
+        image_key="morphology",
+        codec=CODEC_HTJ2K_OPENJPH,
+        quality=0.001,
+    )
+
+    assert config["images"]["morphology"]["quality"] == 0.001
+    assert "preset" not in config["images"]["morphology"]
+
+
+def test_preset_encode_options_quality_implies_lossy_htj2k() -> None:
+    assert _preset_encode_options(
+        {"quality": 0.001},
+        codec=CODEC_HTJ2K_OPENJPH,
+    ) == {"reversible": False, "quality": 0.001}
+    assert _preset_encode_options(
+        {"preset": "lossless", "quality": 0.001},
+        codec=CODEC_HTJ2K_OPENJPH,
+    ) == {"reversible": False, "quality": 0.001}
+
+
 def test_lossy_presets_are_not_extreme_low_bitrate() -> None:
     assert JP2K_PRESETS["balanced"] == {"reversible": False, "level": 100}
     assert JP2K_PRESETS["small"] == {"reversible": False, "level": 75}
 
 
 def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
-    assert HTJ2K_PRESETS["balanced"] == {"reversible": False, "quality": 0.005}
-    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality": 0.01}
+    assert HTJ2K_PRESETS["balanced"] == {"reversible": False, "quality": 0.0002}
+    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality": 0.001}
     assert "level" not in HTJ2K_PRESETS["balanced"]
     assert _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_OPENJPH,
-    ) == {"reversible": False, "quality": 0.005}
+    ) == {"reversible": False, "quality": 0.0002}
     assert _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_JPEG2K,

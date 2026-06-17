@@ -227,8 +227,9 @@ function Htj2kEncodeDemoPanel({
       </div>
       {htj2kDemo ? (
         <div style={{ color: '#888', marginBottom: 8 }}>
-          Toggle image layers in the sidebar to compare lossless vs lossy HTJ2K encoding at different
-          quantization factors.
+          Toggle <code>mandelbrot_*</code> layers to compare HTJ2K presets (balanced{' '}
+          <code>q=0.0002</code>, small <code>q=0.001</code>). Interactive per-<code>q</code>{' '}
+          transcoding in the viewer is planned for a later pass.
         </div>
       ) : null}
       {htj2kDemo ? (

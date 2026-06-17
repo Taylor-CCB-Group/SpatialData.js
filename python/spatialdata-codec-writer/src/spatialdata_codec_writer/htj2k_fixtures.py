@@ -21,6 +21,9 @@ HTJ2K_ENCODE_DEMO_STORE = "htj2k-demo.zarr"
 
 HTJ2K_QUALITY_SWEEP: tuple[dict[str, Any], ...] = (
     {"label": "lossless", "reversible": True, "quality": 0.0},
+    {"label": "q0.0001", "reversible": False, "quality": 0.0001},
+    {"label": "q0.0002", "reversible": False, "quality": 0.0002},
+    {"label": "q0.0005", "reversible": False, "quality": 0.0005},
     {"label": "q0.001", "reversible": False, "quality": 0.001},
     {"label": "q0.002", "reversible": False, "quality": 0.002},
     {"label": "q0.005", "reversible": False, "quality": 0.005},
@@ -34,14 +37,14 @@ HTJ2K_ENCODE_DEMO_CHUNKS: tuple[int, int, int, int, int] = (1, 1, 1, 64, 64)
 HTJ2K_ENCODE_DEMO_PRESETS: tuple[dict[str, Any], ...] = (
     {"label": "lossless", "suffix": "lossless", "encode_options": {"reversible": True}},
     {
-        "label": "balanced (q=0.005)",
+        "label": "balanced (q=0.0002)",
         "suffix": "balanced",
-        "encode_options": {"reversible": False, "quality": 0.005},
+        "encode_options": {"reversible": False, "quality": 0.0002},
     },
     {
-        "label": "small (q=0.01)",
+        "label": "small (q=0.001)",
         "suffix": "small",
-        "encode_options": {"reversible": False, "quality": 0.01},
+        "encode_options": {"reversible": False, "quality": 0.001},
     },
 )
 

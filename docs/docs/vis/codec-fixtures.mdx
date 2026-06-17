@@ -102,6 +102,23 @@ HTJ2K, and writes labels with Blosc/zstd by default.
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
 ```
 
+Custom HTJ2K quality (instead of a preset name):
+
+```bash
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress \
+  input.sdata.zarr output-htj2k.zarr \
+  --image-key morphology_focus \
+  --codec experimental.openjph_htj2k \
+  --quality 0.001 \
+  --chunks auto \
+  --sibling \
+  --overwrite
+```
+
+`--quality` requires `--image-key` and `--codec experimental.openjph_htj2k`.
+Lower values preserve more detail. With `--sibling`, the output image is named
+like `morphology_focus:htj2k_q0.001`.
+
 For repeatable per-raster settings, use JSON:
 
 ```json
@@ -109,6 +126,11 @@ For repeatable per-raster settings, use JSON:
   "default_image": { "codec": "imagecodecs_jpeg2k", "preset": "lossless", "chunks": "auto" },
   "images": {
     "morphology_focus": { "preset": "balanced" },
+    "morphology_focus_htj2k_tuned": {
+      "codec": "experimental.openjph_htj2k",
+      "quality": 0.001,
+      "chunks": "auto"
+    },
     "he_image": { "preset": "small" },
     "fast_preview": {
       "codec": "experimental.openjph_htj2k",
@@ -124,7 +146,11 @@ JP2K and HTJ2K share preset names (`lossless`, `balanced`, `small`). HTJ2K encod
 uses OpenJPH WASM (`experimental.openjph_htj2k`) via
 `HTJ2KEncoder.setQuality(reversible, quality)`. The quality argument is a float
 quantization factor (lower = higher fidelity, larger output) — not JP2K-style
-0–100. Presets map to `balanced: 0.005`, `small: 0.01`.
+0–100. Presets map to `balanced: 0.0002`, `small: 0.001` (calibrated roughly on
+Xenium morphology; see `python/spatialdata-codec-writer/docs/htj2k-wasm-encode-design.md`).
+Override with CLI `--quality 0.001` or per-image JSON `"quality": 0.001` (implies
+lossy unless `"reversible": true`). A future codec-demo UI may add interactive `q`
+exploration on sample regions.
 
 `generate-fixtures --experimental-htj2k` also writes
 `htj2k-quality-sweep.manifest.json`, encoding the same Mandelbrot plane at several

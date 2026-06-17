@@ -116,7 +116,48 @@ uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer reco
 uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress input.sdata.zarr output-htj2k.zarr --image-key morphology_focus --codec experimental.openjph_htj2k --preset balanced --chunks auto --overwrite
 ```
 
-For repeatable runs, prefer a JSON config file:
+### Custom HTJ2K `quality` (instead of `--preset`)
+
+Presets are shortcuts. For per-dataset tuning, pass an explicit OpenJPH quantization
+factor. **Lower `quality` = higher fidelity and larger output** (not JP2K-style 0–100).
+
+CLI (requires `--image-key` and HTJ2K codec):
+
+```bash
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress \
+  input.sdata.zarr output-htj2k.zarr \
+  --image-key morphology_focus \
+  --codec experimental.openjph_htj2k \
+  --quality 0.001 \
+  --chunks auto \
+  --sibling \
+  --overwrite
+```
+
+With `--sibling`, the new image is named from the quality, e.g.
+`morphology_focus:htj2k_q0.001`.
+
+Equivalent JSON config (per image under `images`):
+
+```json
+{
+  "images": {
+    "morphology_focus": {
+      "codec": "experimental.openjph_htj2k",
+      "quality": 0.001,
+      "chunks": "auto"
+    }
+  }
+}
+```
+
+You can also nest under `encode_options` (`"encode_options": { "quality": 0.001 }`).
+Setting `quality` implies lossy encoding (`reversible=false`) unless you also set
+`"reversible": true` (lossless ignores `quality`). A preset plus `quality` uses
+the preset as a base but **overrides** its quality and forces lossy unless
+`reversible` is explicitly true.
+
+For repeatable runs with multiple images, prefer a JSON config file:
 
 ```json
 {
@@ -150,11 +191,13 @@ Presets call `HTJ2KEncoder.setQuality(reversible, quality)` with float
 quantization factors:
 
 - `lossless`: `reversible=True` (exact round-trip).
-- `balanced`: `reversible=False`, `quality=0.005`.
-- `small`: `reversible=False`, `quality=0.01`.
+- `balanced`: `reversible=False`, `quality=0.0002` (roughly JP2K-balanced fidelity on Xenium morphology).
+- `small`: `reversible=False`, `quality=0.001`.
 
 Lower `quality` values preserve more detail and produce larger output. This is
-not JP2K-style 0–100 rate control.
+not JP2K-style 0–100 rate control. See
+[`docs/htj2k-wasm-encode-design.md`](docs/htj2k-wasm-encode-design.md) for calibration
+notes. A future codec-demo UI may expose interactive `q` sweeps on sample regions.
 
 `generate-fixtures --experimental-htj2k` also emits
 `htj2k-quality-sweep.manifest.json` (Mandelbrot plane, multiple qualities) and
@@ -162,13 +205,15 @@ not JP2K-style 0–100 rate control.
 `htj2k-demo.zarr` store at lossless / balanced / small presets). The small
 `htj2k.zarr` fixture remains for fast CI smoke tests.
 
-Per-image config may also set `quality`, `reversible`, or `encode_options`.
+Per-image config may also set top-level `quality`, `reversible`, or nested
+`encode_options` (see **Custom HTJ2K `quality`** above).
 
 Encode requires Node.js and `@cornerstonejs/codec-openjph` from this repository
 (`pnpm install`). Native `imagecodecs` HTJ2K encode is not used; we may
 re-evaluate it later. The frontend still decodes legacy
 `experimental.imagecodecs_htj2k` stores. Sibling mode names HTJ2K outputs like
-`morphology_focus:htj2k_balanced`.
+`morphology_focus:htj2k_balanced` (presets) or `morphology_focus:htj2k_q0.001`
+(custom `--quality`).
 
 Labels are not written with JP2K in v1. Label rasters are written with
 Blosc/zstd level 5 by default so integer IDs remain lossless and browser-safe.

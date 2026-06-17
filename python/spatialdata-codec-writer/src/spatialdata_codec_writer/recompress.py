@@ -45,10 +45,11 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
 }
 
 # OpenJPH WASM: setQuality(reversible, quality) with float quantization factor (lower = better).
+# Calibrated roughly against Xenium morphology uint16 chunks (see htj2k-wasm-encode-design.md).
 HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
-    "balanced": {"reversible": False, "quality": 0.005},
-    "small": {"reversible": False, "quality": 0.01},
+    "balanced": {"reversible": False, "quality": 0.0002},
+    "small": {"reversible": False, "quality": 0.001},
 }
 
 
@@ -104,6 +105,8 @@ def resolve_recompression_config(
     codec: str | None = None,
     preset: ImagePreset | None = None,
     chunks: ChunkSpec | None = None,
+    quality: float | None = None,
+    reversible: bool | None = None,
 ) -> dict[str, Any]:
     """Return normalized recompression config after CLI shortcut expansion."""
 
@@ -116,6 +119,10 @@ def resolve_recompression_config(
             image_cfg["preset"] = preset
         if chunks is not None:
             image_cfg["chunks"] = chunks
+        if quality is not None:
+            image_cfg["quality"] = quality
+        if reversible is not None:
+            image_cfg["reversible"] = reversible
         resolved.setdefault("images", {})[image_key] = image_cfg
     return resolved
 
@@ -250,19 +257,43 @@ def _array_metadata_from_source(
 
 
 def _preset_encode_options(config: dict[str, Any], *, codec: str) -> dict[str, Any]:
-    preset = config.get("preset", "lossless")
     presets = HTJ2K_PRESETS if codec == CODEC_HTJ2K_OPENJPH else JP2K_PRESETS
     preset_family = "HTJ2K" if codec == CODEC_HTJ2K_OPENJPH else "JP2K"
-    if preset not in presets:
-        raise ValueError(
-            f"Unknown {preset_family} preset {preset!r}; expected one of {sorted(presets)}"
-        )
-    options = dict(presets[preset])
-    options.update(config.get("encode_options", {}))
+    encode_options = dict(config.get("encode_options", {}))
+
+    preset = config.get("preset")
+    has_explicit_quality = "quality" in config or "quality" in encode_options
+    if preset is not None:
+        if preset not in presets:
+            raise ValueError(
+                f"Unknown {preset_family} preset {preset!r}; expected one of {sorted(presets)}"
+            )
+        options = dict(presets[preset])
+    elif has_explicit_quality and codec == CODEC_HTJ2K_OPENJPH:
+        options = {}
+    else:
+        options = dict(presets["lossless"])
+
+    options.update(encode_options)
     for key in ("level", "quality", "reversible", "codecformat", "numthreads"):
         if key in config:
             options[key] = config[key]
+
+    explicit_lossless = config.get("reversible") is True or encode_options.get("reversible") is True
+    if options.get("quality") is not None and not explicit_lossless:
+        options["reversible"] = False
+
     return options
+
+
+def _sibling_image_label(image_config: dict[str, Any]) -> str:
+    """Return a sibling suffix label from preset and/or explicit encode settings."""
+    encode_options = image_config.get("encode_options", {})
+    quality = image_config.get("quality", encode_options.get("quality"))
+    if quality is not None and image_config.get("reversible") is not True:
+        return f"q{float(quality):g}"
+    preset = image_config.get("preset", "lossless")
+    return str(preset)
 
 
 def _encode_image_plane(
@@ -487,6 +518,8 @@ def recompress_spatialdata(
     codec: str | None = None,
     preset: ImagePreset | None = None,
     chunks: ChunkSpec | None = None,
+    quality: float | None = None,
+    reversible: bool | None = None,
     sibling: bool = False,
 ) -> RecompressedSpatialData:
     """Preserve a SpatialData store and recompress configured rasters.
@@ -527,6 +560,8 @@ def recompress_spatialdata(
             codec=codec,
             preset=preset,
             chunks=chunks,
+            quality=quality,
+            reversible=reversible,
         )
 
         image_keys = list(resolved_config.get("images") or {})
@@ -544,7 +579,11 @@ def recompress_spatialdata(
             codec = _resolve_image_codec(image_config, key)
 
             if sibling:
-                dest_key = _sibling_image_key(key, codec, image_config.get("preset", "lossless"))
+                dest_key = _sibling_image_key(
+                    key,
+                    codec,
+                    _sibling_image_label(image_config),
+                )
                 # Copy the source group metadata (zarr.json + multiscales attrs) into the sibling key.
                 sib_group_path = dest_path / "images" / dest_key
                 if sib_group_path.exists():

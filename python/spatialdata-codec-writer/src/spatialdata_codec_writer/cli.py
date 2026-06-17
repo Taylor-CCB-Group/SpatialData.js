@@ -87,6 +87,15 @@ def _write_image(args: argparse.Namespace) -> None:
 
 
 def _recompress(args: argparse.Namespace) -> None:
+    if args.quality is not None and args.image_key is None:
+        raise SystemExit("error: --quality requires --image-key")
+    if args.quality is not None and args.reversible:
+        raise SystemExit("error: --quality cannot be used with --reversible")
+    if args.quality is not None and args.codec == "imagecodecs_jpeg2k":
+        raise SystemExit(
+            "error: --quality is for HTJ2K only; use --codec experimental.openjph_htj2k"
+        )
+
     result = recompress_spatialdata(
         args.source,
         args.dest,
@@ -96,6 +105,8 @@ def _recompress(args: argparse.Namespace) -> None:
         codec=args.codec,
         preset=args.preset,
         chunks=_recompress_chunks(args.chunks),
+        quality=args.quality,
+        reversible=True if args.reversible else None,
         sibling=args.sibling,
     )
     print(json.dumps(result.manifest, indent=2, sort_keys=True))
@@ -170,7 +181,22 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument(
         "--preset",
         choices=["lossless", "balanced", "small"],
-        help="Image preset for --image-key",
+        help="Named image preset for --image-key (ignored when --quality is set)",
+    )
+    recompress.add_argument(
+        "--quality",
+        type=float,
+        metavar="Q",
+        help=(
+            "HTJ2K quantization factor for --image-key (lower = better fidelity, larger output). "
+            "Implies lossy encoding; use with --codec experimental.openjph_htj2k. "
+            "Overrides preset quality."
+        ),
+    )
+    recompress.add_argument(
+        "--reversible",
+        action="store_true",
+        help="Force lossless HTJ2K for --image-key (cannot be combined with --quality)",
     )
     recompress.add_argument(
         "--chunks",
