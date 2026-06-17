@@ -1,2 +1,0 @@
-[console_scripts]
-spatialdata-codec-writer = spatialdata_codec_writer.cli:main
