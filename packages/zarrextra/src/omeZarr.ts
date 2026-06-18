@@ -79,27 +79,70 @@ function getOmeRootAttrs(attrs: Record<string, unknown>): OmeRootAttrs {
   return candidate;
 }
 
-function isInterleaved(shape: number[]) {
+function isInterleaved(shape: number[], labels?: string[]) {
   const lastDimSize = shape[shape.length - 1];
-  return lastDimSize === 3 || lastDimSize === 4;
+  if (lastDimSize !== 3 && lastDimSize !== 4) {
+    return false;
+  }
+  if (labels?.some((label) => label.toLowerCase() === 'c')) {
+    return false;
+  }
+  return true;
 }
 
-function getImageSize(source: { shape: number[] }) {
-  const [height, width] = spatialDimensions(source.shape);
+function axisIndex(labels: string[], axis: 'x' | 'y'): number {
+  const index = labels.findIndex((label) => label.toLowerCase() === axis);
+  if (index === -1) {
+    throw new Error(`OME-Zarr labels must include '${axis}' axis.`);
+  }
+  return index;
+}
+
+function spatialAxisIndices(shape: number[], labels: string[]): { xIndex: number; yIndex: number } {
+  if (isInterleaved(shape, labels)) {
+    const len = shape.length;
+    return { yIndex: len - 3, xIndex: len - 2 };
+  }
+  return { yIndex: axisIndex(labels, 'y'), xIndex: axisIndex(labels, 'x') };
+}
+
+function spatialDimensions(shape: number[], labels: string[]): [number, number] {
+  const { xIndex, yIndex } = spatialAxisIndices(shape, labels);
+  return [shape[yIndex] ?? 0, shape[xIndex] ?? 0];
+}
+
+function spatialDimensionsFromChunk(
+  chunkShape: number[],
+  sourceShape: number[],
+  labels: string[]
+): [number, number] {
+  if (isInterleaved(sourceShape, labels)) {
+    const [height, width] = chunkShape.slice(-3);
+    return [height ?? 0, width ?? 0];
+  }
+  if (chunkShape.length >= 2) {
+    const [height, width] = chunkShape.slice(-2);
+    return [height ?? 0, width ?? 0];
+  }
+  return [chunkShape[0] ?? 0, 0];
+}
+
+function getImageSize(source: { shape: number[]; labels: string[] }) {
+  const [height, width] = spatialDimensions(source.shape, source.labels);
   return { height, width };
-}
-
-function spatialDimensions(shape: number[]): [number, number] {
-  const [height, width] = shape.slice(isInterleaved(shape) ? -3 : -2);
-  return [height ?? 0, width ?? 0];
 }
 
 function prevPowerOf2(x: number): number {
   return 2 ** Math.floor(Math.log2(x));
 }
 
-function guessTileSize(arr: zarr.Array<zarr.DataType>): number {
-  const [yChunk, xChunk] = arr.chunks.slice(isInterleaved(arr.shape) ? -3 : -2);
+function guessTileSize(arr: zarr.Array<zarr.DataType>, labels: string[]): number {
+  if (isInterleaved(arr.shape, labels)) {
+    const [yChunk, xChunk] = arr.chunks.slice(-3);
+    return prevPowerOf2(Math.min(yChunk ?? 1, xChunk ?? 1));
+  }
+  const yChunk = arr.chunks[axisIndex(labels, 'y')];
+  const xChunk = arr.chunks[axisIndex(labels, 'x')];
   return prevPowerOf2(Math.min(yChunk ?? 1, xChunk ?? 1));
 }
 
@@ -172,17 +215,14 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     return normalizeDtype(this.data.dtype);
   }
 
-  private get xIndex() {
-    return this.data.shape.length - (isInterleaved(this.data.shape) ? 2 : 1);
-  }
-
   private chunkIndex(
     selection: RasterSelection,
     tile: { x: number | zarr.Slice | null; y: number | zarr.Slice | null }
   ) {
+    const { xIndex, yIndex } = spatialAxisIndices(this.data.shape, this.labels);
     const sel = this.indexer(selection);
-    sel[this.xIndex] = tile.x;
-    sel[this.xIndex - 1] = tile.y;
+    sel[xIndex] = tile.x;
+    sel[yIndex] = tile.y;
     return sel;
   }
 
@@ -213,7 +253,11 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
   async getRaster({ selection, signal }: { selection: RasterSelection; signal?: AbortSignal }) {
     const sel = this.chunkIndex(selection, { x: null, y: null });
     const result = await this.getRaw(sel, signal);
-    const [height, width] = spatialDimensions(result.shape);
+    const [height, width] = spatialDimensionsFromChunk(
+      result.shape,
+      this.data.shape,
+      this.labels
+    );
     return { data: result.data, width, height };
   }
 
@@ -231,7 +275,11 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     const [xSlice, ySlice] = this.getSlices(x, y);
     const sel = this.chunkIndex(selection, { x: xSlice, y: ySlice });
     const result = await this.getRaw(sel, signal);
-    const [height, width] = spatialDimensions(result.shape);
+    const [height, width] = spatialDimensionsFromChunk(
+      result.shape,
+      this.data.shape,
+      this.labels
+    );
     return { data: result.data, width, height };
   }
 
@@ -264,6 +312,6 @@ export async function loadOmeZarrMultiscalesFromStore(
   if (data.length === 0) {
     throw new Error('OME-Zarr multiscale dataset is empty or has no valid arrays.');
   }
-  const tileSize = guessTileSize(data[0]);
+  const tileSize = guessTileSize(data[0], labels);
   return data.map((arr: zarr.Array<zarr.DataType>) => new ZarrPixelSource(arr, labels, tileSize));
 }
