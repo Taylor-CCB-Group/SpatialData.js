@@ -20,7 +20,7 @@ from spatialdata_codec_writer import (
 from spatialdata_codec_writer.codecs import decode_htj2k_plane, encode_image_plane
 from spatialdata_codec_writer.recompress import _preset_encode_options
 
-from scripts.synthetic_images import mandelbrot_plane
+from synthetic_images import mandelbrot_plane
 
 
 def _write_json(path: Path, value: dict) -> None:
