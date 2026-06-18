@@ -43,6 +43,31 @@ export function setFizarritaGetWorker(impl: GetWorkerFn): void {
   getWorkerImpl = impl;
 }
 
+function rejectOnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
 export async function getZarrChunk<D extends zarr.DataType>(
   arr: zarr.Array<D>,
   selection: Array<number | zarr.Slice | null>,
@@ -56,12 +81,15 @@ export async function getZarrChunk<D extends zarr.DataType>(
           'Import from zarrextra/workers instead of setting the backend directly.'
       );
     }
-    const result = await getWorkerImpl(arr, selection, {
-      pool: backend.pool,
-      workerUrl: backend.options?.workerUrl,
-      useSharedArrayBuffer: backend.options?.useSharedArrayBuffer,
-      cache: backend.options?.cache,
-    });
+    const result = await rejectOnAbort(
+      getWorkerImpl(arr, selection, {
+        pool: backend.pool,
+        workerUrl: backend.options?.workerUrl,
+        useSharedArrayBuffer: backend.options?.useSharedArrayBuffer,
+        cache: backend.options?.cache,
+      }),
+      opts?.signal
+    );
     if (typeof result !== 'object' || result === null || !('data' in result)) {
       throw new Error('Expected chunk object from fizarrita getWorker().');
     }

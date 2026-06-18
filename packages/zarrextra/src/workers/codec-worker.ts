@@ -1,26 +1,5 @@
-import OpenJPHJS from '@cornerstonejs/codec-openjph';
-import openJphWasmUrl from '@cornerstonejs/codec-openjph/wasm?url';
-import OpenJPEGJS from '@cornerstonejs/codec-openjpeg/decode';
-import openJpegWasmUrl from '@cornerstonejs/codec-openjpeg/decodewasm?url';
-import {
-  createOpenJpegDecoder,
-  createOpenJphDecoder,
-  createWasmLocateFile,
-  registerExperimentalHtj2kCodec,
-  registerJpeg2kCodec,
-  wrapZarrRegistryForFizarritaWorker,
-} from '../codecs';
-
-wrapZarrRegistryForFizarritaWorker();
-registerJpeg2kCodec({
-  decoder: createOpenJpegDecoder(OpenJPEGJS, {
-    locateFile: createWasmLocateFile(openJpegWasmUrl),
-  }),
-});
-registerExperimentalHtj2kCodec({
-  decoder: createOpenJphDecoder(OpenJPHJS, {
-    locateFile: createWasmLocateFile(openJphWasmUrl),
-  }),
-});
-
+// Registration must run before fizarrita's codec-worker installs message handlers.
+// Use ordered static imports (not top-level await) so the worker is synchronously
+// ready when the browser marks the script as loaded.
+import './codec-worker-init';
 import '@fideus-labs/fizarrita/codec-worker';

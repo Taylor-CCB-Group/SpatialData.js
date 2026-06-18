@@ -100,7 +100,7 @@ to offload chunk decode to a Web Worker pool:
 ```typescript
 import { enableWorkerChunkDecode, disableWorkerChunkDecode } from 'zarrextra/workers';
 
-await enableWorkerChunkDecode();
+enableWorkerChunkDecode();
 // ... load JP2K-backed SpatialData and render tiles ...
 disableWorkerChunkDecode();
 ```

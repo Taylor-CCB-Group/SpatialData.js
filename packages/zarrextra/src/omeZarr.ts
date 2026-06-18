@@ -85,8 +85,13 @@ function isInterleaved(shape: number[]) {
 }
 
 function getImageSize(source: { shape: number[] }) {
-  const [height, width] = source.shape.slice(isInterleaved(source.shape) ? -3 : -2);
+  const [height, width] = spatialDimensions(source.shape);
   return { height, width };
+}
+
+function spatialDimensions(shape: number[]): [number, number] {
+  const [height, width] = shape.slice(isInterleaved(shape) ? -3 : -2);
+  return [height ?? 0, width ?? 0];
 }
 
 function prevPowerOf2(x: number): number {
@@ -188,8 +193,8 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     const yStart = y * this.tileSize;
     const yStop = Math.min((y + 1) * this.tileSize, height);
 
-    if (xStart === xStop || yStart === yStop) {
-      throw new BoundsCheckError('Tile slice is zero-sized.');
+    if (xStart >= xStop || yStart >= yStop) {
+      throw new BoundsCheckError('Tile slice is zero-sized or inverted.');
     }
     if (xStart < 0 || yStart < 0 || xStop > width || yStop > height) {
       throw new BoundsCheckError('Tile slice is out of bounds.');
@@ -208,8 +213,8 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
   async getRaster({ selection, signal }: { selection: RasterSelection; signal?: AbortSignal }) {
     const sel = this.chunkIndex(selection, { x: null, y: null });
     const result = await this.getRaw(sel, signal);
-    const [height, width] = result.shape.slice(-2);
-    return { data: result.data, width: width ?? 0, height: height ?? 0 };
+    const [height, width] = spatialDimensions(result.shape);
+    return { data: result.data, width, height };
   }
 
   async getTile({
@@ -226,8 +231,8 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     const [xSlice, ySlice] = this.getSlices(x, y);
     const sel = this.chunkIndex(selection, { x: xSlice, y: ySlice });
     const result = await this.getRaw(sel, signal);
-    const [height, width] = result.shape.slice(-2);
-    return { data: result.data, width: width ?? 0, height: height ?? 0 };
+    const [height, width] = spatialDimensions(result.shape);
+    return { data: result.data, width, height };
   }
 
   onTileError(err: Error) {
@@ -256,6 +261,9 @@ export async function loadOmeZarrMultiscalesFromStore(
   store: zarr.AsyncReadable
 ): Promise<VivCompatiblePixelSource[]> {
   const { data, labels } = await loadMultiscales(store);
+  if (data.length === 0) {
+    throw new Error('OME-Zarr multiscale dataset is empty or has no valid arrays.');
+  }
   const tileSize = guessTileSize(data[0]);
   return data.map((arr: zarr.Array<zarr.DataType>) => new ZarrPixelSource(arr, labels, tileSize));
 }

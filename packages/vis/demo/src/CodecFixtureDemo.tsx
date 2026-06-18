@@ -271,6 +271,8 @@ export default function CodecFixtureDemo() {
 
   useEffect(() => {
     if (fixtureKind !== 'htj2k') {
+      setHtj2kDemo(null);
+      setHtj2kDemoError(null);
       return;
     }
     let cancelled = false;
