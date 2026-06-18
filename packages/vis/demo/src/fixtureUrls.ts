@@ -27,6 +27,20 @@ export function getLocalJpeg2kCodecManifestUrl(origin?: string): string {
   return `${base}/test-fixtures/codecs/jpeg2k.manifest.json`;
 }
 
+/** URL for the multi-z Mandelbulb HTJ2K fixture (`[2,1,8,128,128]`). */
+export function getLocalMandelbulbCodecFixtureUrl(origin?: string): string {
+  const base =
+    origin ?? (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:5173');
+  return `${base}/test-fixtures/codecs/mandelbulb.zarr`;
+}
+
+/** URL for the Mandelbulb fixture manifest. */
+export function getLocalMandelbulbCodecManifestUrl(origin?: string): string {
+  const base =
+    origin ?? (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:5173');
+  return `${base}/test-fixtures/codecs/mandelbulb.manifest.json`;
+}
+
 /** URL for the HTJ2K encode-demo manifest (multiscale Mandelbrot, several quality presets). */
 export function getLocalHtj2kEncodeDemoManifestUrl(origin?: string): string {
   const base =

@@ -18,12 +18,15 @@ const uvCacheDir = join(projectRoot, '.tmp', 'uv-cache');
 const fixtureDir = join(projectRoot, 'test-fixtures', 'codecs');
 const jpeg2kFixturePath = join(fixtureDir, 'jpeg2k.zarr');
 const jpeg2kManifestPath = join(fixtureDir, 'jpeg2k.manifest.json');
+const mandelbulbFixturePath = join(fixtureDir, 'mandelbulb.zarr');
+const mandelbulbManifestPath = join(fixtureDir, 'mandelbulb.manifest.json');
 const htj2kFixturePath = join(fixtureDir, 'htj2k.zarr');
 const htj2kManifestPath = join(fixtureDir, 'htj2k.manifest.json');
 
 function ensureCodecFixture() {
   const hasJpeg2k = existsSync(jpeg2kFixturePath) && existsSync(jpeg2kManifestPath);
-  if (hasJpeg2k) {
+  const hasMandelbulb = existsSync(mandelbulbFixturePath) && existsSync(mandelbulbManifestPath);
+  if (hasJpeg2k && hasMandelbulb) {
     return;
   }
   mkdirSync(uvCacheDir, { recursive: true });
@@ -90,6 +93,47 @@ describe('codec fixtures', () => {
     expect(tile.width).toBe(32);
     expect(tile.height).toBe(32);
     expect(Number((tile.data as Uint16Array)[0])).toBe(manifest.chunks_checked[0].samples[0]);
+  }, 180000);
+
+  it('can decode the Mandelbulb HTJ2K fixture across t/z selections', async () => {
+    ensureCodecFixture();
+    if (!existsSync(mandelbulbFixturePath) || !existsSync(mandelbulbManifestPath)) {
+      console.warn(
+        'Skipping Mandelbulb HTJ2K decode smoke test: mandelbulb.zarr was not generated (OpenJPH WASM encoder unavailable).'
+      );
+      return;
+    }
+    try {
+      await import('@cornerstonejs/codec-openjph');
+    } catch {
+      console.warn(
+        'Skipping Mandelbulb HTJ2K decode smoke test: @cornerstonejs/codec-openjph is not installed.'
+      );
+      return;
+    }
+
+    registerExperimentalHtj2kCodec();
+    const sdata = await readZarr(new FileSystemStore(mandelbulbFixturePath));
+    const image = sdata.images?.mandelbulb;
+    expect(image).toBeDefined();
+    if (!image) throw new Error('Expected mandelbulb image to be available.');
+
+    const manifest = JSON.parse(readFileSync(mandelbulbManifestPath, 'utf8'));
+    expect(manifest.codec).toBe('experimental.openjph_htj2k');
+    expect(manifest.shape).toEqual([2, 1, 8, 128, 128]);
+
+    const [source] = await loadOmeZarrMultiscalesFromStore(image.getStore());
+    expect(source.shape).toEqual([2, 1, 8, 128, 128]);
+
+    const tileTz0 = await source.getTile({ x: 0, y: 0, selection: { t: 0, c: 0, z: 0 } });
+    const tileTz1 = await source.getTile({ x: 0, y: 0, selection: { t: 1, c: 0, z: 2 } });
+
+    expect(tileTz0.width).toBe(128);
+    expect(tileTz0.height).toBe(128);
+    expect(Number((tileTz0.data as Uint16Array)[0])).toBe(manifest.chunks_checked[0].samples[0]);
+    expect(Number((tileTz1.data as Uint16Array)[0])).not.toBe(
+      Number((tileTz0.data as Uint16Array)[0])
+    );
   }, 180000);
 
   it('can decode the HTJ2K fixture when the optional WASM decoder is installed', async () => {

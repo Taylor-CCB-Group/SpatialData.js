@@ -23,6 +23,7 @@ from htj2k_fixtures import (
     write_htj2k_fixture,
     write_htj2k_quality_sweep_manifest,
 )
+from mandelbulb_fixtures import write_mandelbulb_fixture
 
 
 def _chunks(value: list[int]) -> tuple[int, int, int, int, int]:
@@ -38,6 +39,9 @@ def _generate_fixtures(args: argparse.Namespace) -> None:
     written = [write_jpeg2k_fixture(output_dir / "jpeg2k.zarr", overwrite=args.overwrite)]
     if args.experimental_htj2k:
         if htj2k_encode_available():
+            written.append(
+                write_mandelbulb_fixture(output_dir / "mandelbulb.zarr", overwrite=args.overwrite)
+            )
             written.append(write_htj2k_fixture(output_dir / "htj2k.zarr", overwrite=args.overwrite))
             sweep_path = write_htj2k_quality_sweep_manifest(
                 output_dir / "htj2k-quality-sweep.manifest.json"
@@ -47,7 +51,7 @@ def _generate_fixtures(args: argparse.Namespace) -> None:
             print(f"Wrote {demo_path}")
         else:
             print(
-                "Skipping htj2k.zarr: OpenJPH WASM HTJ2K encoder is not available.",
+                "Skipping mandelbulb.zarr and htj2k.zarr: OpenJPH WASM HTJ2K encoder is not available.",
                 file=sys.stderr,
             )
 

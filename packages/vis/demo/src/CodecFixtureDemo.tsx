@@ -7,9 +7,11 @@ import {
   getLocalHtj2kEncodeDemoManifestUrl,
   getLocalJpeg2kCodecFixtureUrl,
   getLocalJpeg2kCodecManifestUrl,
+  getLocalMandelbulbCodecFixtureUrl,
+  getLocalMandelbulbCodecManifestUrl,
 } from './fixtureUrls';
 
-type CodecFixtureKind = 'jpeg2k' | 'htj2k';
+type CodecFixtureKind = 'jpeg2k' | 'mandelbulb' | 'htj2k';
 
 type Htj2kEncodeDemoVariant = {
   label: string;
@@ -30,6 +32,14 @@ type Htj2kEncodeDemoManifest = {
   variants: Htj2kEncodeDemoVariant[];
 };
 
+type MandelbulbFixtureManifest = {
+  format: string;
+  codec: string;
+  shape: number[];
+  chunks: number[];
+  image_path: string;
+};
+
 const FIXTURE_CONFIG: Record<
   CodecFixtureKind,
   {
@@ -44,6 +54,12 @@ const FIXTURE_CONFIG: Record<
     storeName: 'jpeg2k.zarr',
     getFixtureUrl: getLocalJpeg2kCodecFixtureUrl,
     getManifestUrl: getLocalJpeg2kCodecManifestUrl,
+  },
+  mandelbulb: {
+    label: 'HTJ2K Mandelbulb',
+    storeName: 'mandelbulb.zarr',
+    getFixtureUrl: getLocalMandelbulbCodecFixtureUrl,
+    getManifestUrl: getLocalMandelbulbCodecManifestUrl,
   },
   htj2k: {
     label: 'HTJ2K (experimental.openjph_htj2k)',
@@ -186,6 +202,58 @@ function HeadlessCodecFixtureViewer({
   );
 }
 
+function MandelbulbFixturePanel({
+  fixtureUrl,
+  manifestUrl,
+  manifest,
+}: {
+  fixtureUrl: string;
+  manifestUrl: string;
+  manifest: MandelbulbFixtureManifest | null;
+}) {
+  const [t, c, z, height, width] = manifest?.shape ?? [];
+
+  return (
+    <div style={panelStyle}>
+      <div style={{ color: '#888', marginBottom: 6 }}>
+        Mandelbulb volume <code>SpatialCanvas</code> - local{' '}
+        <code>{manifest?.image_path ?? 'images/mandelbulb'}</code>
+        {manifest ? (
+          <>
+            {' '}
+            · codec <code>{manifest.codec}</code>
+          </>
+        ) : null}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
+        <a href={fixtureUrl} style={{ color: '#8af' }}>
+          Store
+        </a>
+        <a href={manifestUrl} style={{ color: '#8af' }}>
+          Manifest
+        </a>
+        {manifest ? (
+          <>
+            <span style={{ color: '#aaa' }}>
+              Shape:{' '}
+              <code>
+                t={t} c={c} z={z} {width}×{height}
+              </code>
+            </span>
+            <span style={{ color: '#aaa' }}>
+              Chunks: <code>{manifest.chunks.join(', ')}</code>
+            </span>
+          </>
+        ) : null}
+      </div>
+      <div style={{ color: '#888' }}>
+        Use the image layer panel to scrub <code>t</code> and <code>z</code> selections across the
+        encoded volume.
+      </div>
+    </div>
+  );
+}
+
 function Htj2kEncodeDemoPanel({
   fixtureUrl,
   manifestUrl,
@@ -266,6 +334,10 @@ export default function CodecFixtureDemo() {
   const [fixtureKind, setFixtureKind] = useState<CodecFixtureKind>('jpeg2k');
   const [htj2kDemo, setHtj2kDemo] = useState<Htj2kEncodeDemoManifest | null>(null);
   const [htj2kDemoError, setHtj2kDemoError] = useState<string | null>(null);
+  const [mandelbulbManifest, setMandelbulbManifest] = useState<MandelbulbFixtureManifest | null>(
+    null
+  );
+  const [mandelbulbManifestError, setMandelbulbManifestError] = useState<string | null>(null);
 
   const fixtureConfig = FIXTURE_CONFIG[fixtureKind];
 
@@ -273,26 +345,49 @@ export default function CodecFixtureDemo() {
     if (fixtureKind !== 'htj2k') {
       setHtj2kDemo(null);
       setHtj2kDemoError(null);
+    }
+    if (fixtureKind !== 'mandelbulb') {
+      setMandelbulbManifest(null);
+      setMandelbulbManifestError(null);
+    }
+    if (fixtureKind !== 'htj2k' && fixtureKind !== 'mandelbulb') {
       return;
     }
+
     let cancelled = false;
-    const manifestUrl = getLocalHtj2kEncodeDemoManifestUrl();
+    const activeKind = fixtureKind;
+    const manifestUrl =
+      activeKind === 'htj2k'
+        ? getLocalHtj2kEncodeDemoManifestUrl()
+        : getLocalMandelbulbCodecManifestUrl();
+
     fetch(manifestUrl)
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`${response.status} ${response.statusText}`);
         }
-        return (await response.json()) as Htj2kEncodeDemoManifest;
+        return await response.json();
       })
       .then((manifest) => {
         if (cancelled) return;
-        setHtj2kDemo(manifest);
-        setHtj2kDemoError(null);
+        if (activeKind === 'htj2k') {
+          setHtj2kDemo(manifest as Htj2kEncodeDemoManifest);
+          setHtj2kDemoError(null);
+        } else {
+          setMandelbulbManifest(manifest as MandelbulbFixtureManifest);
+          setMandelbulbManifestError(null);
+        }
       })
       .catch((error: unknown) => {
         if (cancelled) return;
-        setHtj2kDemo(null);
-        setHtj2kDemoError(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        if (activeKind === 'htj2k') {
+          setHtj2kDemo(null);
+          setHtj2kDemoError(message);
+        } else {
+          setMandelbulbManifest(null);
+          setMandelbulbManifestError(message);
+        }
       });
     return () => {
       cancelled = true;
@@ -313,6 +408,7 @@ export default function CodecFixtureDemo() {
             style={selectStyle}
           >
             <option value="jpeg2k">JP2K (imagecodecs_jpeg2k)</option>
+            <option value="mandelbulb">HTJ2K Mandelbulb volume (t/z)</option>
             <option value="htj2k">HTJ2K encode demo (experimental.openjph_htj2k)</option>
           </select>
         </label>
@@ -322,10 +418,27 @@ export default function CodecFixtureDemo() {
             <code>pnpm test:fixtures:generate:codecs</code>.
           </div>
         ) : null}
+        {mandelbulbManifestError ? (
+          <div style={{ color: '#d99', marginTop: 8 }}>
+            Mandelbulb manifest unavailable ({mandelbulbManifestError}). Run{' '}
+            <code>pnpm test:fixtures:generate:codecs</code>.
+          </div>
+        ) : null}
       </div>
       {fixtureKind === 'htj2k' ? (
         <SpatialDataProvider source={fixtureUrl}>
           <Htj2kEncodeDemoPanel fixtureUrl={fixtureUrl} manifestUrl={manifestUrl} htj2kDemo={htj2kDemo} />
+          <div style={viewerShellStyle}>
+            <SpatialCanvas />
+          </div>
+        </SpatialDataProvider>
+      ) : fixtureKind === 'mandelbulb' ? (
+        <SpatialDataProvider source={fixtureUrl}>
+          <MandelbulbFixturePanel
+            fixtureUrl={fixtureUrl}
+            manifestUrl={manifestUrl}
+            manifest={mandelbulbManifest}
+          />
           <div style={viewerShellStyle}>
             <SpatialCanvas />
           </div>

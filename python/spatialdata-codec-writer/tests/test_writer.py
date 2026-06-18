@@ -15,6 +15,11 @@ from fixture_writer import (
     write_jpeg2k_fixture,
 )
 from htj2k_fixtures import write_htj2k_fixture
+from mandelbulb_fixtures import (
+    MANDELBULB_FIXTURE_CHUNKS,
+    MANDELBULB_FIXTURE_IMAGE_KEY,
+    write_mandelbulb_fixture,
+)
 from provenance import experimental_codec_writer_attrs
 
 
@@ -64,6 +69,29 @@ def test_write_jpeg2k_fixture(tmp_path: Path) -> None:
     decoded = imagecodecs.jpeg2k_decode(encoded)
 
     assert decoded.shape == (32, 32)
+    assert int(decoded[0, 0]) == first_chunk["samples"][0]
+
+
+@pytest.mark.skipif(
+    not htj2k_encode_available(),
+    reason="No HTJ2K encoder is available in this environment.",
+)
+def test_write_mandelbulb_fixture(tmp_path: Path) -> None:
+    fixture = write_mandelbulb_fixture(tmp_path / "mandelbulb.zarr")
+
+    assert fixture.store_path.exists()
+    assert fixture.manifest_path.exists()
+    assert fixture.manifest["codec"] == "experimental.openjph_htj2k"
+    assert fixture.manifest["encoder"] == "openjph-wasm"
+    assert fixture.manifest["image_path"] == f"images/{MANDELBULB_FIXTURE_IMAGE_KEY}"
+    assert fixture.manifest["shape"] == [2, 1, 8, 128, 128]
+    assert list(fixture.manifest["chunks"]) == list(MANDELBULB_FIXTURE_CHUNKS)
+
+    first_chunk = fixture.manifest["chunks_checked"][0]
+    encoded = (fixture.store_path / first_chunk["path"]).read_bytes()
+    decoded = decode_htj2k_plane(encoded)
+
+    assert decoded.shape == (128, 128)
     assert int(decoded[0, 0]) == first_chunk["samples"][0]
 
 

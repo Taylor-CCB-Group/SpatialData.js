@@ -15,4 +15,4 @@ pnpm --filter @spatialdata/vis dev
 ```
 
 - http://127.0.0.1:5173/headless loads the versioned `blobs.zarr` fixture.
-- http://127.0.0.1:5173/codec loads the JP2K OME-Zarr codec fixture and registers `zarrextra`'s JP2K decoder.
+- http://127.0.0.1:5173/codec loads local codec fixtures (JP2K smoke test, HTJ2K Mandelbulb volume, HTJ2K encode demo).
