@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 spatialdata-codec-writer = "spatialdata_codec_writer.cli:main"
+spatialdata-codec-writer-write-synthetic = "spatialdata_codec_writer.synthetic_cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

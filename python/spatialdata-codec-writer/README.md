@@ -175,20 +175,26 @@ provenance standardization.
 
 ### Manual multi-dimensional volumes
 
-Default generated fixtures use shape `[1, 1, 1, H, W]`. For ad-hoc experiments
-with larger `t` / `z` stacks, use the scripts helpers directly (not exported from
-the wheel):
+Default generated fixtures use shape `[1, 1, 1, H, W]`. For ad-hoc synthetic stores, use
+`write-synthetic`:
 
-```python
-from synthetic_images import volume_tczyx
-from fixture_writer import write_codec_spatialdata
+```bash
+# From the monorepo root (pnpm forwards extra args after --)
+pnpm write-synthetic -- ~/data/spatialdata/sdata_inputs/mandelbulb.zarr \
+  --pattern mandelbulb --size 1024 --z 128 --t 1 --c 1 \
+  --image-key mandelbulb --chunk-spatial 256 --overwrite
 
-volume = volume_tczyx(128, t=5, z=10, pattern="mandelbulb")
-write_codec_spatialdata("out.zarr", image=volume, chunks=(1, 1, 1, 64, 64))
+# Or directly via uv
+node scripts/vendor-openjph-for-python.mjs
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer-write-synthetic \
+  ~/path/out.zarr --pattern indexed --size 64 --t 2 --z 3 --codec imagecodecs_jpeg2k
 ```
 
-Use `pattern="indexed"` when you need deterministic per-slice sample values for
-tests. Richer, biologically motivated or compression-aware synthesis is planned
+Patterns: `mandelbulb` (default), `indexed`, `mandelbrot` (single 2D plane), `fractal`
+(legacy fixture shape). HTJ2K is the default codec; use `--preset balanced` or
+`--quality 0.001` for lossy output.
+
+Richer, biologically motivated or compression-aware synthesis is planned
 possibly as future JS-side tooling rather than growing this Python module further.
 
 ## Python API

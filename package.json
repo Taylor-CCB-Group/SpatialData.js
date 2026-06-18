@@ -21,6 +21,7 @@
     "test:fixtures:generate:0.6.1": "uv run python/scripts/generate_fixtures.py --version 0.6.1",
     "test:fixtures:generate:0.7.2": "uv run python/scripts/generate_fixtures.py --version 0.7.2",
     "test:fixtures:generate:codecs": "node scripts/vendor-openjph-for-python.mjs && UV_CACHE_DIR=.tmp/uv-cache uv run --directory python/spatialdata-codec-writer python scripts/generate_codec_fixtures.py --output-dir ../../test-fixtures/codecs --experimental-htj2k --overwrite",
+    "write-synthetic": "node scripts/vendor-openjph-for-python.mjs && uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer-write-synthetic",
     "test:codec-writer": "node scripts/vendor-openjph-for-python.mjs && UV_CACHE_DIR=.tmp/uv-cache uv run --directory python/spatialdata-codec-writer pytest",
     "test:server": "node scripts/test-server.js",
     "test:proxy": "node scripts/cors-proxy.js",
