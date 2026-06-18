@@ -106,6 +106,10 @@ def volume_tczyx(
     """Return a synthetic volume with shape ``[t, c, z, y, x]``."""
     if t < 1 or c < 1 or z < 1 or size < 1:
         raise ValueError("t, c, z, and size must be positive integers.")
+    if pattern not in ("mandelbulb", "indexed"):
+        raise ValueError(
+            f"Unsupported pattern {pattern!r}; expected 'mandelbulb' or 'indexed'."
+        )
 
     volume = np.zeros((t, c, z, size, size), dtype=np.uint16)
     for t_index in range(t):

@@ -58,3 +58,8 @@ def test_volume_tczyx_mandelbulb_smoke() -> None:
 def test_volume_tczyx_rejects_non_positive_dimensions() -> None:
     with pytest.raises(ValueError):
         volume_tczyx(8, t=0, z=1)
+
+
+def test_volume_tczyx_rejects_unsupported_pattern() -> None:
+    with pytest.raises(ValueError, match="Unsupported pattern 'typo'"):
+        volume_tczyx(8, pattern="typo")
