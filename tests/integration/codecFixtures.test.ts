@@ -23,8 +23,7 @@ const htj2kManifestPath = join(fixtureDir, 'htj2k.manifest.json');
 
 function ensureCodecFixture() {
   const hasJpeg2k = existsSync(jpeg2kFixturePath) && existsSync(jpeg2kManifestPath);
-  const hasHtj2k = existsSync(htj2kFixturePath) && existsSync(htj2kManifestPath);
-  if (hasJpeg2k && hasHtj2k) {
+  if (hasJpeg2k) {
     return;
   }
   mkdirSync(uvCacheDir, { recursive: true });

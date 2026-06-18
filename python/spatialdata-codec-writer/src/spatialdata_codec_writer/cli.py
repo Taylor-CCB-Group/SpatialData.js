@@ -19,10 +19,17 @@ def _recompress_chunks(value: list[str] | None):
         raise argparse.ArgumentTypeError("chunks must be 'auto' or integer axis sizes") from exc
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("--workers must be a positive integer")
+    return parsed
+
+
 def _recompress(args: argparse.Namespace) -> None:
     if args.quality is not None and args.reversible:
         raise SystemExit("error: --quality cannot be used with --reversible")
-    if args.quality is not None and args.codec == "imagecodecs_jpeg2k":
+    if args.quality is not None and args.codec != "experimental.openjph_htj2k":
         raise SystemExit(
             "error: --quality is for HTJ2K only; use --codec experimental.openjph_htj2k"
         )
@@ -107,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recompress.add_argument(
         "--workers",
-        type=int,
+        type=_positive_int,
         default=os.cpu_count() or 1,
         help="Parallel encoder workers (default: CPU count)",
     )

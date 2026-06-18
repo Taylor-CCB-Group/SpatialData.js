@@ -150,7 +150,7 @@ considered supported by the current JavaScript decoder paths.
 Useful Xenium morphology experiment:
 
 ```bash
-uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress /Users/ptodd/data/spatialdata/sdata_inputs/xenium_rep1_io_spatialdata_0.7.1.zarr /private/tmp/xenium-rep1-morphology-focus-jp2k.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
+uv run --directory python/spatialdata-codec-writer spatialdata-codec-writer recompress /path/to/input.zarr /path/to/output.zarr --image-key morphology_focus --preset balanced --chunks auto --overwrite
 ```
 
 When serving recompressed stores for browser experiments, disable HTTP caching

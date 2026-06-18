@@ -9,8 +9,10 @@ from pathlib import Path
 
 # Allow imports from this scripts package when run via uv/python -m
 _SCRIPTS_DIR = Path(__file__).resolve().parent
+_SRC_DIR = str(_SCRIPTS_DIR.parent / "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR.parent / "src"))
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from spatialdata_codec_writer.htj2k_encode import htj2k_encode_available

@@ -36,7 +36,15 @@ const vendorRoot = join(
 );
 mkdirSync(vendorRoot, { recursive: true });
 
-for (const name of ['openjphjs.js', 'openjphjs.wasm']) {
+const requiredArtifacts = ['openjphjs.js', 'openjphjs.wasm'];
+for (const name of requiredArtifacts) {
+  const source = join(openjphRoot, 'dist', name);
+  if (!existsSync(source)) {
+    throw new Error(`Required OpenJPH artifact not found: ${source}`);
+  }
+}
+
+for (const name of requiredArtifacts) {
   const source = join(openjphRoot, 'dist', name);
   const dest = join(vendorRoot, name);
   copyFileSync(source, dest);

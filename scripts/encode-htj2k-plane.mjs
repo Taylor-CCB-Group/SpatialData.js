@@ -71,7 +71,7 @@ async function encodePlane(runtime, request) {
 
   const { width, height, dtype } = request;
   const reversible = request.reversible ?? true;
-  const quality = request.quality ?? 100;
+  const quality = request.quality ?? 0;
   const planeBytes = Buffer.from(request.plane, 'base64');
   const plane = planeArrayForDtype(dtype, planeBytes);
   const expectedValues = width * height;

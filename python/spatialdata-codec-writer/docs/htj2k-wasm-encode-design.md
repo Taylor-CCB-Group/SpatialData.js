@@ -23,7 +23,7 @@ encode later; the frontend still decodes the legacy id
 
 ## Encode flow
 
-```
+```text
 Python spatialdata-codec-writer
   → EncoderPool (N persistent Node workers)
   → vendored encode-plane.mjs --worker

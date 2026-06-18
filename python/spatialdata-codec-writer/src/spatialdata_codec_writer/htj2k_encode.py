@@ -72,7 +72,7 @@ class OpenJphEncoderWorker:
             [node, str(_ENCODE_SCRIPT), "--worker"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             bufsize=0,
         )
         if self._proc.stdin is None or self._proc.stdout is None:
@@ -85,6 +85,11 @@ class OpenJphEncoderWorker:
                 self._proc.stdin.close()
             if self._proc.poll() is None:
                 self._proc.wait(timeout=5)
+                if self._proc.poll() is None:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=5)
+                    if self._proc.poll() is None:
+                        self._proc.kill()
             self._proc = None  # type: ignore[assignment]
 
     def encode_plane(
@@ -164,11 +169,12 @@ def configure_encoder_pool(workers: int | None = None) -> None:
 def get_encoder_pool(workers: int | None = None) -> EncoderPool:
     global _pool, _pool_workers
     with _pool_lock:
+        effective_workers = workers if workers is not None else _pool_workers
         if _pool is None or (workers is not None and workers != _pool_workers):
             if _pool is not None:
                 _pool.close()
-            _pool_workers = workers
-            _pool = EncoderPool(workers=workers)
+            _pool_workers = effective_workers
+            _pool = EncoderPool(workers=effective_workers)
         return _pool
 
 

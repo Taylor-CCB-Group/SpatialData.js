@@ -86,6 +86,10 @@ def encode_image_plane(
 
 
 def chunk_grid(shape: tuple[int, ...], chunks: tuple[int, ...]) -> list[tuple[int, ...]]:
+    if len(shape) != len(chunks):
+        raise ValueError(
+            f"shape and chunks must have the same length (got {len(shape)} and {len(chunks)})"
+        )
     ranges = [range((size + chunk - 1) // chunk) for size, chunk in zip(shape, chunks)]
     out: list[tuple[int, ...]] = [()]
     for values in ranges:
@@ -96,6 +100,11 @@ def chunk_grid(shape: tuple[int, ...], chunks: tuple[int, ...]) -> list[tuple[in
 def chunk_slices(
     shape: tuple[int, ...], chunks: tuple[int, ...], coords: tuple[int, ...]
 ) -> tuple[slice, ...]:
+    if not (len(shape) == len(chunks) == len(coords)):
+        raise ValueError(
+            "shape, chunks, and coords must have the same length "
+            f"(got {len(shape)}, {len(chunks)}, and {len(coords)})"
+        )
     slices = []
     for coord, chunk, size in zip(coords, chunks, shape):
         start = coord * chunk

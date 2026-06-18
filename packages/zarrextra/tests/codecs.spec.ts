@@ -172,24 +172,32 @@ describe('codec registration', () => {
   });
 
   it('wrapZarrRegistryForFizarritaWorker adapts built-in codecs to fizarrita metadata', async () => {
-    wrapZarrRegistryForFizarritaWorker();
-    const factory = zarr.registry.get('bytes');
-    expect(factory).toBeDefined();
-    if (!factory) throw new Error('Expected bytes codec factory to be registered.');
+    const previousEntries = new Map(zarr.registry.entries());
+    try {
+      wrapZarrRegistryForFizarritaWorker();
+      const factory = zarr.registry.get('bytes');
+      expect(factory).toBeDefined();
+      if (!factory) throw new Error('Expected bytes codec factory to be registered.');
 
-    const entry = await factory();
-    const codec = entry.fromConfig(
-      { endian: 'little' },
-      {
-        data_type: 'uint8',
-        chunk_shape: [2, 2],
-        codecs: [{ name: 'bytes', configuration: { endian: 'little' } }],
+      const entry = await factory();
+      const codec = entry.fromConfig(
+        { endian: 'little' },
+        {
+          data_type: 'uint8',
+          chunk_shape: [2, 2],
+          codecs: [{ name: 'bytes', configuration: { endian: 'little' } }],
+        }
+      );
+
+      const chunk = await codec.decode(new Uint8Array([1, 2, 3, 4]));
+      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([1, 2, 3, 4]);
+      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+    } finally {
+      zarr.registry.clear();
+      for (const [key, value] of previousEntries) {
+        zarr.registry.set(key, value);
       }
-    );
-
-    const chunk = await codec.decode(new Uint8Array([1, 2, 3, 4]));
-    expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([1, 2, 3, 4]);
-    expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+    }
   });
 
   it('encodes and decodes a small HTJ2K plane with OpenJPH WASM', async () => {

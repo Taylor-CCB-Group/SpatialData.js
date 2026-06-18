@@ -318,6 +318,52 @@ def _encode_chunk_task(
     return encode_image_plane(plane, codec, encode_options)
 
 
+def _chunk_plane(
+    source_array: Any, shape: tuple[int, ...], chunks: tuple[int, ...], coords: tuple[int, ...]
+) -> np.ndarray:
+    selection = chunk_slices(shape, chunks, coords)
+    chunk = pad_chunk(np.asarray(source_array[selection]), chunks)
+    return chunk.reshape(chunk.shape[-2], chunk.shape[-1])
+
+
+def _write_encoded_chunk(
+    dest_array_path: Path, coords: tuple[int, ...], encoded: bytes | bytearray
+) -> None:
+    chunk_rel = Path("c").joinpath(*(str(coord) for coord in coords))
+    chunk_path = dest_array_path / chunk_rel
+    chunk_path.parent.mkdir(parents=True, exist_ok=True)
+    chunk_path.write_bytes(encoded)
+
+
+def _maybe_record_chunk_check(
+    *,
+    chunks_checked: list[dict[str, Any]],
+    coords: tuple[int, ...],
+    encoded: bytes | bytearray,
+    plane: np.ndarray,
+    codec: str,
+    raster_path: str,
+    is_lossless: bool,
+) -> None:
+    if len(chunks_checked) >= 4:
+        return
+    decoded = decode_image_plane(encoded, codec)
+    decoded_plane = decoded.reshape(plane.shape)
+    if is_lossless and not np.array_equal(decoded_plane, plane):
+        raise RuntimeError(
+            f"Lossless {codec} self-validation failed for {raster_path} chunk {coords}"
+        )
+    chunks_checked.append(
+        {
+            "coords": list(coords),
+            "encoded_sha256": sha256(encoded),
+            "decoded_sha256": sha256(decoded_plane.tobytes()),
+            "source_sha256": sha256(plane.tobytes()),
+            "samples": _sample_values(decoded_plane),
+        }
+    )
+
+
 def _recompress_image_array(
     *,
     source_array_path: Path,
@@ -350,60 +396,49 @@ def _recompress_image_array(
         ),
     )
 
-    chunk_jobs: list[tuple[tuple[int, ...], np.ndarray]] = []
-    for coords in chunk_grid(shape, chunks):
-        selection = chunk_slices(shape, chunks, coords)
-        chunk = pad_chunk(np.asarray(source_array[selection]), chunks)
-        plane = chunk.reshape(chunk.shape[-2], chunk.shape[-1])
-        chunk_jobs.append((coords, plane))
-
-    encoded_by_coords: dict[tuple[int, ...], tuple[bytes | bytearray, np.ndarray]] = {}
+    chunk_coords_list = list(chunk_grid(shape, chunks))
+    chunks_checked: list[dict[str, Any]] = []
     encoded_bytes = 0
+    chunk_count = 0
 
-    if workers <= 1 or len(chunk_jobs) <= 1:
-        for coords, plane in chunk_jobs:
+    if workers <= 1 or len(chunk_coords_list) <= 1:
+        for coords in chunk_coords_list:
+            plane = _chunk_plane(source_array, shape, chunks, coords)
             encoded = _encode_chunk_task(plane, codec, encode_options)
             encoded_bytes += len(encoded)
-            encoded_by_coords[coords] = (encoded, plane)
+            chunk_count += 1
+            _write_encoded_chunk(dest_array_path, coords, encoded)
+            _maybe_record_chunk_check(
+                chunks_checked=chunks_checked,
+                coords=coords,
+                encoded=encoded,
+                plane=plane,
+                codec=codec,
+                raster_path=raster_path,
+                is_lossless=is_lossless,
+            )
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_coords = {
-                executor.submit(_encode_chunk_task, plane, codec, encode_options): coords
-                for coords, plane in chunk_jobs
+            future_to_job = {
+                executor.submit(_encode_chunk_task, plane, codec, encode_options): (coords, plane)
+                for coords in chunk_coords_list
+                for plane in [_chunk_plane(source_array, shape, chunks, coords)]
             }
-            for future in as_completed(future_to_coords):
-                coords = future_to_coords[future]
-                plane = next(plane for c, plane in chunk_jobs if c == coords)
+            for future in as_completed(future_to_job):
+                coords, plane = future_to_job[future]
                 encoded = future.result()
                 encoded_bytes += len(encoded)
-                encoded_by_coords[coords] = (encoded, plane)
-
-    chunks_checked: list[dict[str, Any]] = []
-    chunk_count = 0
-    for coords, plane in chunk_jobs:
-        encoded, plane = encoded_by_coords[coords]
-        chunk_count += 1
-        chunk_rel = Path("c").joinpath(*(str(coord) for coord in coords))
-        chunk_path = dest_array_path / chunk_rel
-        chunk_path.parent.mkdir(parents=True, exist_ok=True)
-        chunk_path.write_bytes(encoded)
-
-        if len(chunks_checked) < 4:
-            decoded = decode_image_plane(encoded, codec)
-            decoded_plane = decoded.reshape(plane.shape)
-            if is_lossless and not np.array_equal(decoded_plane, plane):
-                raise RuntimeError(
-                    f"Lossless {codec} self-validation failed for {raster_path} chunk {coords}"
+                chunk_count += 1
+                _write_encoded_chunk(dest_array_path, coords, encoded)
+                _maybe_record_chunk_check(
+                    chunks_checked=chunks_checked,
+                    coords=coords,
+                    encoded=encoded,
+                    plane=plane,
+                    codec=codec,
+                    raster_path=raster_path,
+                    is_lossless=is_lossless,
                 )
-            chunks_checked.append(
-                {
-                    "coords": list(coords),
-                    "encoded_sha256": sha256(encoded),
-                    "decoded_sha256": sha256(decoded_plane.tobytes()),
-                    "source_sha256": sha256(plane.tobytes()),
-                    "samples": _sample_values(decoded_plane),
-                }
-            )
 
     report: dict[str, Any] = {
         "path": raster_path,

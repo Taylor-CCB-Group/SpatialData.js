@@ -43,7 +43,9 @@ def test_encoder_pool_round_trip() -> None:
 )
 def test_encode_htj2k_plane_uses_global_pool() -> None:
     shutdown_encoder_pool()
-    plane = np.zeros((8, 8), dtype=np.uint16)
-    encoded = encode_htj2k_plane(plane, reversible=True, quality=0.0)
-    assert len(encoded) > 0
-    shutdown_encoder_pool()
+    try:
+        plane = np.zeros((8, 8), dtype=np.uint16)
+        encoded = encode_htj2k_plane(plane, reversible=True, quality=0.0)
+        assert len(encoded) > 0
+    finally:
+        shutdown_encoder_pool()
