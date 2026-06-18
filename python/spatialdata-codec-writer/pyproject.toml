@@ -35,6 +35,9 @@ package = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.basedpyright]
+extraPaths = ["scripts"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

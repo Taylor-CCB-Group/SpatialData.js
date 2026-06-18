@@ -9,7 +9,8 @@
     "editor.formatOnSave": true
   },
   "python.analysis.extraPaths": [
-    "${workspaceFolder}/python"
+    "${workspaceFolder}/python",
+    "${workspaceFolder}/python/spatialdata-codec-writer/scripts"
   ]
 }
 
