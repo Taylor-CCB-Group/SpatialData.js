@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Vendor OpenJPH for spatialdata-codec-writer
+        run: node scripts/vendor-openjph-for-python.mjs
+
       - name: Build packages
         run: pnpm build
 
@@ -50,6 +53,9 @@ jobs:
 
       - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.2)
         run: pnpm test:fixtures:generate
+
+      - name: Run spatialdata-codec-writer tests
+        run: uv run --directory python/spatialdata-codec-writer pytest
 
       - name: Run unit tests
         run: pnpm test:unit

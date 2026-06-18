@@ -1,34 +1,35 @@
-import type {
-  ElementName,
-  BadFileHandler,
-  SDataProps,
-  ZarrTree,
-  LazyZarrArray,
-  ZAttrsAny,
-  Result,
-  TableColumnData,
-} from '../types';
-import { ATTRS_KEY } from '../types';
-import { Ok, Err } from '../types';
 import * as ad from 'anndata.js';
+import { createPrefixedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
-import SpatialDataShapesSource from './VShapesSource';
-import SpatialDataTableSource from './VTableSource';
 import {
-  rasterAttrsSchema,
-  shapesAttrsSchema,
-  pointsAttrsSchema,
+  type CoordinateTransformation,
+  type PointsAttrs,
   type RasterAttrs,
   type ShapesAttrs,
-  type PointsAttrs,
-  type CoordinateTransformation,
-  tableAttrsSchema,
   type TableAttrs,
+  pointsAttrsSchema,
+  rasterAttrsSchema,
+  shapesAttrsSchema,
+  tableAttrsSchema,
 } from '../schemas';
-import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
-import SpatialDataPointsSource from './VPointsSource';
 import type { ShapesRenderData } from '../shapes';
 import { isSpatialData, loadFeatureRowIndexByFeatureIndex } from '../tableAssociations';
+import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
+import type {
+  BadFileHandler,
+  ElementName,
+  LazyZarrArray,
+  Result,
+  SDataProps,
+  TableColumnData,
+  ZAttrsAny,
+  ZarrTree,
+} from '../types';
+import { ATTRS_KEY } from '../types';
+import { Err, Ok } from '../types';
+import SpatialDataPointsSource from './VPointsSource';
+import SpatialDataShapesSource from './VShapesSource';
+import SpatialDataTableSource from './VTableSource';
 
 /**
  * Parameters for creating element instances.
@@ -40,34 +41,6 @@ export type ElementParams<T extends ElementName = ElementName> = {
   key: string;
   onBadFiles?: BadFileHandler;
 };
-
-function toAbsolutePath(path: string): zarr.AbsolutePath {
-  const trimmed = path.replace(/^\/+|\/+$/g, '');
-  return (trimmed ? `/${trimmed}` : '/') as zarr.AbsolutePath;
-}
-
-function joinAbsolutePath(prefix: string, key: zarr.AbsolutePath): zarr.AbsolutePath {
-  const normalizedPrefix = toAbsolutePath(prefix);
-  if (normalizedPrefix === '/') {
-    return key;
-  }
-  if (key === '/') {
-    return normalizedPrefix;
-  }
-  return `${normalizedPrefix}${key}` as zarr.AbsolutePath;
-}
-
-function createPrefixedStore(store: zarr.Readable, prefix: string): zarr.Readable {
-  return {
-    async get(key: zarr.AbsolutePath, opts?: zarr.GetOptions) {
-      return await store.get(joinAbsolutePath(prefix, key), opts);
-    },
-    getRange: store.getRange
-      ? async (key: zarr.AbsolutePath, range: zarr.RangeQuery, opts?: zarr.GetOptions) =>
-          await store.getRange?.(joinAbsolutePath(prefix, key), range, opts)
-      : undefined,
-  };
-}
 
 // ============================================
 // Abstract Base Classes
@@ -386,6 +359,16 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
    */
   get scaleLevels(): string[] {
     return this.attrs.multiscales[0]?.datasets.map((d) => d.path) ?? [];
+  }
+
+  /**
+   * Store view rooted at this raster element.
+   *
+   * Consumers that need codec-aware array loading should use this instead of
+   * reconstructing a URL and letting downstream libraries create their own store.
+   */
+  getStore(): zarr.AsyncReadable {
+    return createPrefixedStore(this.sdata.rootStore.zarritaStore, this.path);
   }
 
   /**

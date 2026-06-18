@@ -1,0 +1,46 @@
+[project]
+name = "spatialdata-codec-writer"
+version = "0.1.0"
+description = "Recompress SpatialData/OME-Zarr image stores with optional JP2K and HTJ2K codecs"
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "SpatialData.ts contributors" }]
+dependencies = [
+    "dask[array]>=2025.0",
+    "imagecodecs>=2025.8.2",
+    "numcodecs>=0.16",
+    "numpy>=2.0",
+    "ome-zarr>=0.13",
+    "spatialdata>=0.7.2",
+    "zarr>=3.1",
+]
+
+[project.scripts]
+spatialdata-codec-writer = "spatialdata_codec_writer.cli:main"
+spatialdata-codec-writer-write-synthetic = "spatialdata_codec_writer.synthetic_cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spatialdata_codec_writer = ["vendor/openjph/*", "vendor/encode-plane.mjs"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.basedpyright]
+extraPaths = ["scripts"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+

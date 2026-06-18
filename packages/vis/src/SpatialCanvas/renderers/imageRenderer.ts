@@ -5,8 +5,11 @@
  * OME-Zarr and other multiscale image formats.
  */
 
-import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
 import type { Matrix4 } from '@math.gl/core';
+import {
+  type OmeZarrMultiscalesSource,
+  loadOmeZarrMultiscalesData,
+} from '@spatialdata/avivatorish';
 import type { ImageElement, LabelsElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
 
@@ -61,13 +64,18 @@ export function extractChannelConfig(config: {
   channelsVisible: boolean[];
   selections: Partial<{ z: number; c: number; t: number }>[];
 } {
-  const defaults = {
-    colors: [[255, 255, 255]] as [number, number, number][],
-    contrastLimits: [[0, 65535]] as [number, number][],
+  const defaults: {
+    colors: [number, number, number][];
+    contrastLimits: [number, number][];
+    channelsVisible: boolean[];
+    selections: Partial<{ z: number; c: number; t: number }>[];
+  } = {
+    colors: [[255, 255, 255]],
+    contrastLimits: [[0, 65535]],
     channelsVisible: [true],
     // Don't provide default selections - they should be built from loader dimensions
     // TODO - fix types wrt optional entries
-    selections: [] as Partial<{ z: number; c: number; t: number }>[],
+    selections: [],
   };
 
   if (!config.channels) {
@@ -90,19 +98,25 @@ export function extractChannelConfig(config: {
  */
 export async function createImageLoader(
   element: ImageElement | LabelsElement,
-  fetchMultiscales: (url: string) => Promise<unknown> = loadOmeZarrMultiscalesData
+  fetchMultiscales: (
+    source: OmeZarrMultiscalesSource
+  ) => Promise<unknown> = loadOmeZarrMultiscalesData
 ): Promise<unknown> {
-  if (!element.url) {
+  const store = element.getStore();
+
+  if (!store && !element.url) {
     throw new Error(
-      `SpatialCanvas currently requires a URL-backed raster source for '${element.path}'. ` +
-        'Store-backed Viv loading is not implemented yet.'
+      `SpatialCanvas requires a store-backed or URL-backed raster source for '${element.path}'.`
     );
   }
 
   try {
-    return await fetchMultiscales(element.url);
+    return await fetchMultiscales({ store, url: element.url });
   } catch (error) {
-    console.error(`[ImageRenderer] Failed to create loader for ${element.url}:`, error);
+    console.error(
+      `[ImageRenderer] Failed to create loader for ${element.url ?? element.path}:`,
+      error
+    );
     throw error;
   }
 }

@@ -15,13 +15,17 @@ export default defineConfig({
   root: path.resolve(__dirname, 'demo'),
   plugins: [react()],
   resolve: {
-    alias: {
+    alias: [
       ...createWorkspaceSourceAliases(workspaceRoot),
-      react: reactRoot,
-      'react-dom': reactDomRoot,
-    },
+      { find: 'react', replacement: reactRoot },
+      { find: 'react-dom', replacement: reactDomRoot },
+    ],
     dedupe: ['react', 'react-dom'],
   },
+  worker: {
+    format: 'es',
+  },
+  assetsInclude: ['**/*.wasm'],
   server: {
     host: '127.0.0.1',
     port: 5173,

@@ -1,17 +1,44 @@
+import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import dts from 'vite-plugin-dts';
-import path from 'node:path';
 
-export function createWorkspaceSourceAliases(rootDir: string) {
-  return {
-    '@spatialdata/avivatorish': path.resolve(rootDir, 'packages/avivatorish/src/index.ts'),
-    '@spatialdata/core': path.resolve(rootDir, 'packages/core/src/index.ts'),
-    '@spatialdata/layers': path.resolve(rootDir, 'packages/layers/src/index.ts'),
-    '@spatialdata/react': path.resolve(rootDir, 'packages/react/src/index.ts'),
-    '@spatialdata/vis': path.resolve(rootDir, 'packages/vis/src/index.ts'),
-    zarrextra: path.resolve(rootDir, 'packages/zarrextra/src/index.ts'),
-  };
+export type WorkspaceAlias = {
+  find: string | RegExp;
+  replacement: string;
+};
+
+export function createWorkspaceSourceAliases(rootDir: string): WorkspaceAlias[] {
+  return [
+    {
+      find: 'zarrextra/workers',
+      replacement: path.resolve(rootDir, 'packages/zarrextra/src/workers/index.ts'),
+    },
+    {
+      find: /^zarrextra$/,
+      replacement: path.resolve(rootDir, 'packages/zarrextra/src/index.ts'),
+    },
+    {
+      find: '@spatialdata/avivatorish',
+      replacement: path.resolve(rootDir, 'packages/avivatorish/src/index.ts'),
+    },
+    {
+      find: '@spatialdata/core',
+      replacement: path.resolve(rootDir, 'packages/core/src/index.ts'),
+    },
+    {
+      find: '@spatialdata/layers',
+      replacement: path.resolve(rootDir, 'packages/layers/src/index.ts'),
+    },
+    {
+      find: '@spatialdata/react',
+      replacement: path.resolve(rootDir, 'packages/react/src/index.ts'),
+    },
+    {
+      find: '@spatialdata/vis',
+      replacement: path.resolve(rootDir, 'packages/vis/src/index.ts'),
+    },
+  ];
 }
 
 interface DefineConfigOptions {
@@ -28,20 +55,13 @@ export function defineViteConfig(options: DefineConfigOptions) {
     plugins: [
       react(),
       dts({
-        // Keep the plugin fully anchored to this package
         root: pkgRoot,
         tsconfigPath: path.resolve(pkgRoot, 'tsconfig.json'),
-
-        // Emit types into dist and make a top-level index.d.ts
         outDir: path.resolve(pkgRoot, 'dist'),
-        entryRoot: 'src', // IMPORTANT: relative to root, not absolute
+        entryRoot: 'src',
         insertTypesEntry: true,
         strictOutput: true,
-
-        // Don’t rewrite tsconfig "paths" to relative imports
         pathsToAliases: false,
-
-        // Only process source; keep configs/tests out
         include: ['src'],
         exclude: [
           'dist/**',
@@ -51,9 +71,6 @@ export function defineViteConfig(options: DefineConfigOptions) {
           '**/*.spec.*',
           '**/*.stories.*',
         ],
-
-        // Optional: if you don’t want .d.ts.map files
-        // compilerOptions: { declarationMap: false },
       }),
     ],
     build: {

@@ -6,6 +6,8 @@ This package provides helper functions and types for:
 - Parsing zarr store contents into a tree structure
 - Working with consolidated metadata
 - Serializing zarr tree structures
+- Registering additional Zarrita codecs, including JP2K (`imagecodecs_jpeg2k`)
+- Loading OME-Zarr multiscales from an existing Zarrita store for Viv-compatible viewers
 - Result type for explicit error handling
 
 ## Result Type
@@ -39,3 +41,82 @@ if (result.ok) {
 ## API
 
 See the TypeScript definitions for full API documentation.
+
+## Codec registration
+
+`registerJpeg2kCodec()` registers decode support for the standard
+`imagecodecs_jpeg2k` codec id from the Zarr codecs registry. The default decoder
+uses the optional `@cornerstonejs/codec-openjpeg` package.
+
+```typescript
+import { registerJpeg2kCodec } from 'zarrextra';
+
+registerJpeg2kCodec();
+```
+
+Applications can pass a custom decoder for alternate WASM loading or tests:
+
+```typescript
+import OpenJPEGJS from '@cornerstonejs/codec-openjpeg/decode';
+import { createOpenJpegDecoder, registerJpeg2kCodec } from 'zarrextra';
+
+registerJpeg2kCodec({ decoder: createOpenJpegDecoder(OpenJPEGJS) });
+```
+
+`registerExperimentalHtj2kCodec()` registers decode for `experimental.openjph_htj2k`
+(new writes) and legacy `experimental.imagecodecs_htj2k` fixtures. Keep datasets
+using either id clearly labelled until there is community/registry alignment.
+
+```typescript
+import OpenJPHJS from '@cornerstonejs/codec-openjph';
+import { createOpenJphDecoder, registerExperimentalHtj2kCodec } from 'zarrextra';
+
+registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(OpenJPHJS) });
+```
+
+For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
+`createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`
+uses vendored OpenJPH WASM with a persistent Node worker pool; new stores use
+codec id `experimental.openjph_htj2k`.
+
+```typescript
+import { encodeHtj2kPlane } from 'zarrextra';
+
+const plane = new Uint16Array(width * height);
+// ... fill plane ...
+const encoded = await encodeHtj2kPlane(plane, { width, height }, {
+  reversible: false,
+  quality: 75,
+});
+```
+
+## Worker-backed chunk decode (browser)
+
+JP2K and other codec work can block the main thread for a long time. For browser
+apps, use the optional `zarrextra/workers` entry with
+[`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
+to offload chunk decode to a Web Worker pool:
+
+```typescript
+import { enableWorkerChunkDecode, disableWorkerChunkDecode } from 'zarrextra/workers';
+
+enableWorkerChunkDecode();
+// ... load JP2K-backed SpatialData and render tiles ...
+disableWorkerChunkDecode();
+```
+
+This uses a thin custom codec worker that registers zarrextra image codecs
+(including OpenJPEG for `imagecodecs_jpeg2k` and OpenJPH for experimental HTJ2K)
+into `zarrita.registry` inside the worker before fizarrita's codec handler runs. Built-in zarrita codecs (bytes, zstd,
+blosc, …) are also adapted to fizarrita's worker metadata shape via
+`wrapZarrRegistryForFizarritaWorker()`. Main-thread `registerJpeg2kCodec()` is not
+required for that path.
+
+| Context | Setup |
+|---------|-------|
+| Node / CI | `registerJpeg2kCodec()` / `registerExperimentalHtj2kCodec()` on the main thread |
+| Browser | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K or HTJ2K data |
+
+Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
+`@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
+the worker script).
