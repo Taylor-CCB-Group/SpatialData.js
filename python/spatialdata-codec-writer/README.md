@@ -173,6 +173,24 @@ Dev fixtures stamp root metadata with `experimental_codec_writer` (not a fake
 `docs/docs/vis/codec-fixtures.mdx` for browser demo instructions and a note on
 provenance standardization.
 
+### Manual multi-dimensional volumes
+
+Default generated fixtures use shape `[1, 1, 1, H, W]`. For ad-hoc experiments
+with larger `t` / `z` stacks, use the scripts helpers directly (not exported from
+the wheel):
+
+```python
+from synthetic_images import volume_tczyx
+from fixture_writer import write_codec_spatialdata
+
+volume = volume_tczyx(128, t=5, z=10, pattern="mandelbulb")
+write_codec_spatialdata("out.zarr", image=volume, chunks=(1, 1, 1, 64, 64))
+```
+
+Use `pattern="indexed"` when you need deterministic per-slice sample values for
+tests. Richer, biologically motivated or compression-aware synthesis is planned
+possibly as future JS-side tooling rather than growing this Python module further.
+
 ## Python API
 
 ```python
