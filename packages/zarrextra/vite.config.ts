@@ -36,7 +36,7 @@ export default defineConfig({
       },
     },
     sourcemap: true,
-    target: 'es2020',
+    target: 'es2022',
   },
   test: {
     globals: true,
