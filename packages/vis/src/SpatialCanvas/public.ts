@@ -26,6 +26,17 @@ export {
   SpatialCanvasViewer,
   useSpatialCanvasRenderer,
 } from './SpatialCanvasViewer';
+export {
+  renderStackOrder,
+  renderStackToLayerInputs,
+  resolveRenderStackHostLayers,
+  sortLayersByRenderStackOrder,
+} from './renderStackAdapters';
+export type {
+  RenderStackHostLayerResolver,
+  RenderStackLayerInputs,
+  UnknownRenderStackHostLayerHandler,
+} from './renderStackAdapters';
 export type {
   SpatialCanvasViewerProps,
   SpatialCanvasViewerRenderTooltip,

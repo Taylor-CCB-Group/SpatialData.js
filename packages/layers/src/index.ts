@@ -49,3 +49,22 @@ export {
   migrateSpatialLayerProps,
   SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
 } from './spatialLayerProps';
+export {
+  getRenderStackEntryIds,
+  getRenderStackHostLayerIds,
+  renderStackEntrySchema,
+  renderStackGroupEntrySchema,
+  renderStackHostEntrySchema,
+  renderStackSchema,
+  renderStackSpatialElementTypeSchema,
+  renderStackSpatialEntrySchema,
+  RENDER_STACK_SCHEMA_VERSION,
+} from './renderStack';
+export type {
+  RenderStack,
+  RenderStackEntry,
+  RenderStackGroupEntry,
+  RenderStackHostEntry,
+  RenderStackSpatialElementType,
+  RenderStackSpatialEntry,
+} from './renderStack';

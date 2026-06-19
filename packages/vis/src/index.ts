@@ -1,9 +1,26 @@
 export {
   SpatialLayer,
+  getRenderStackEntryIds,
+  getRenderStackHostLayerIds,
   migrateSpatialLayerProps,
+  renderStackEntrySchema,
+  renderStackGroupEntrySchema,
+  renderStackHostEntrySchema,
+  renderStackSchema,
+  renderStackSpatialElementTypeSchema,
+  renderStackSpatialEntrySchema,
   spatialLayerPropsSchema,
+  RENDER_STACK_SCHEMA_VERSION,
 } from '@spatialdata/layers';
-export type { SpatialLayerProps } from '@spatialdata/layers';
+export type {
+  RenderStack,
+  RenderStackEntry,
+  RenderStackGroupEntry,
+  RenderStackHostEntry,
+  RenderStackSpatialElementType,
+  RenderStackSpatialEntry,
+  SpatialLayerProps,
+} from '@spatialdata/layers';
 
 export { default as Sketch } from './Sketch';
 export { default as SpatialDataTree } from './Tree';
@@ -25,8 +42,12 @@ export {
   useViewStateUrl,
   SpatialViewer,
   composeSpatialDeckLayers,
+  renderStackOrder,
+  renderStackToLayerInputs,
+  resolveRenderStackHostLayers,
   shouldRenderInternalTooltip,
   shouldAutoFitSpatialView,
+  sortLayersByRenderStackOrder,
   useSpatialCanvasRenderer,
 } from './SpatialCanvas/public';
 export type {
@@ -48,5 +69,8 @@ export type {
   SpatialFeatureTooltipSection,
   SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltipProps,
+  RenderStackHostLayerResolver,
+  RenderStackLayerInputs,
+  UnknownRenderStackHostLayerHandler,
 } from './SpatialCanvas/public';
 export { SpatialFeatureTooltip } from './SpatialCanvas/public';

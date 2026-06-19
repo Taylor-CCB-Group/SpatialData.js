@@ -4,11 +4,16 @@ sidebar_position: 1
 
 # `@spatialdata/layers`
 
-The **deck.gl–native** package for composable spatial rendering: a top-level **`SpatialLayer`** `CompositeLayer` and a versioned, JSON-serializable **`SpatialLayerProps`** contract.
+The **deck.gl–native** package for composable spatial rendering: a canonical
+ordered **`RenderStack`** contract, a top-level **`SpatialLayer`**
+`CompositeLayer`, and versioned, JSON-serializable **`SpatialLayerProps`**.
 
 ## Role
 
 - **`SpatialLayer`** — validates props and will orchestrate Viv / scatter / shapes sublayers as they are ported from `@spatialdata/vis` and MDV-style stacks.
+- **`RenderStack`** — ordered saved/render state for SpatialData entries, host
+  overlay descriptors, and reserved group entries. This replaces public
+  dependence on parallel `layers` maps plus `layerOrder` arrays.
 - **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — runtime validation and migrations for saved views, URL state, and integrators (e.g. MDV chart config).
 
 ## Relationships
@@ -17,8 +22,8 @@ The **deck.gl–native** package for composable spatial rendering: a top-level *
 |--------|-----------------|
 | `@spatialdata/core` | SpatialData on Zarr: elements, transforms, read APIs |
 | `@spatialdata/avivatorish` | OME loaders, tile cache, channel stats, Zustand image state |
-| `@spatialdata/layers` | How data enters **deck** via `SpatialLayer` + props |
-| `@spatialdata/vis` | **SpatialCanvas** React shell: UI ↔ props |
+| `@spatialdata/layers` | Canonical render-stack schema and how data enters **deck** via `SpatialLayer` + props |
+| `@spatialdata/vis` | **SpatialCanvas** React/Viv adapter: render stack ↔ resources ↔ viewport |
 
 ## API tiers
 
@@ -54,6 +59,43 @@ load-bearing:
 The migration test is the same as shapes: MDV or Vitessce should be able to
 drive hide/fade/color/radius state without knowing whether the renderer used JS
 arrays, deck binary attributes, or GeoArrow batches underneath.
+
+## Render stack contract
+
+The public saved/render order is `renderStack.entries`, not a separate
+`layerOrder` array:
+
+```ts
+import type { RenderStack } from '@spatialdata/layers';
+
+const renderStack: RenderStack = {
+  schemaVersion: 1,
+  entries: [
+    {
+      kind: 'spatial',
+      id: 'image-morphology',
+      source: { elementType: 'image', elementKey: 'morphology_focus' },
+      props: { opacity: 0.8 },
+    },
+    {
+      kind: 'host',
+      id: 'deck:scatter',
+      source: { hostLayerId: 'deck:scatter' },
+    },
+    {
+      kind: 'group',
+      id: 'group:future-blend',
+      children: ['image-morphology', 'deck:scatter'],
+      props: { blendMode: 'reserved' },
+    },
+  ],
+};
+```
+
+`source` holds structural identity. `props` holds renderer inputs. Resource
+resolvers and deck/Viv `updateTriggers` decide what actually invalidates IO,
+geometry, attributes, or tile data; do not add a second visual-vs-structural
+prop registry.
 
 ## React-agnostic usage
 

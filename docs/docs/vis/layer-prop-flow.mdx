@@ -51,6 +51,10 @@ refetches. The fix is upstream stability, not downstream caching.
 
 ### For `useLayerData` (the producer)
 
+- The public ordered input is moving toward `RenderStack` (`renderStack.entries`)
+  from `@spatialdata/layers`. The resolver may normalize that into lookup maps
+  internally, but entry order and identity come from the stack, not a parallel
+  public `layerOrder` array.
 - `loader`: same object reference until the underlying element changes.
 - `selections`: same array reference until the selected values change. Memoize
   with `useMemo` keyed on a stable signature of the selection values.

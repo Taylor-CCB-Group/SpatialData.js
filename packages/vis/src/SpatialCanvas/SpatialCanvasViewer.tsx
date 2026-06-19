@@ -1,4 +1,5 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
+import type { RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import {
@@ -19,6 +20,14 @@ import {
 import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
+import {
+  renderStackOrder,
+  renderStackToLayerInputs,
+  resolveRenderStackHostLayers,
+  sortLayersByRenderStackOrder,
+  type RenderStackHostLayerResolver,
+  type UnknownRenderStackHostLayerHandler,
+} from './renderStackAdapters';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import { useLayerData } from './useLayerData';
 import { getAvailableElements } from './utils';
@@ -30,10 +39,16 @@ export type SpatialCanvasViewerRenderTooltip =
 export interface SpatialCanvasViewerProps {
   spatialData?: SpatialData | null;
   coordinateSystem: string | null;
-  layers: Record<string, LayerConfig>;
-  layerOrder: string[];
+  renderStack?: RenderStack;
+  /** @deprecated Prefer `renderStack.entries`. */
+  layers?: Record<string, LayerConfig>;
+  /** @deprecated Prefer `renderStack.entries`. */
+  layerOrder?: string[];
   viewState: ViewState | null;
   onViewStateChange: (viewState: ViewState) => void;
+  hostLayerResolver?: RenderStackHostLayerResolver;
+  onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
+  /** @deprecated Prefer host entries with `hostLayerResolver`. */
   deckLayers?: Layer[];
   deckProps?: Partial<DeckGLProps>;
   onHover?: (info: PickingInfo) => void;
@@ -93,8 +108,11 @@ export function shouldRenderInternalTooltip(
 export interface UseSpatialCanvasRendererOptions {
   spatialData?: SpatialData | null;
   coordinateSystem: string | null;
-  layers: Record<string, LayerConfig>;
-  layerOrder: string[];
+  renderStack?: RenderStack;
+  /** @deprecated Prefer `renderStack.entries`. */
+  layers?: Record<string, LayerConfig>;
+  /** @deprecated Prefer `renderStack.entries`. */
+  layerOrder?: string[];
   /**
    * Current view state.  When `undefined` the auto-fit effect is skipped
    * entirely, letting the caller manage auto-fit externally (e.g. in a
@@ -108,6 +126,9 @@ export interface UseSpatialCanvasRendererOptions {
   onViewStateChange?: (viewState: ViewState) => void;
   width: number;
   height: number;
+  hostLayerResolver?: RenderStackHostLayerResolver;
+  onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
+  /** @deprecated Prefer host entries with `hostLayerResolver`. */
   deckLayers?: Layer[];
   autoFit?: boolean;
 }
@@ -115,12 +136,15 @@ export interface UseSpatialCanvasRendererOptions {
 export function useSpatialCanvasRenderer({
   spatialData,
   coordinateSystem,
+  renderStack,
   layers,
   layerOrder,
   viewState,
   onViewStateChange,
   width,
   height,
+  hostLayerResolver,
+  onUnknownHostLayer,
   deckLayers: externalDeckLayers,
   autoFit = true,
 }: UseSpatialCanvasRendererOptions) {
@@ -131,26 +155,46 @@ export function useSpatialCanvasRenderer({
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
+  const layerInputs = useMemo(() => {
+    if (renderStack) {
+      return renderStackToLayerInputs(renderStack);
+    }
+    return { layers: layers ?? {}, layerOrder: layerOrder ?? [] };
+  }, [layerOrder, layers, renderStack]);
+
+  const hostDeckLayers = useMemo(
+    () => resolveRenderStackHostLayers(renderStack, hostLayerResolver, onUnknownHostLayer),
+    [hostLayerResolver, onUnknownHostLayer, renderStack]
+  );
+
+  const resolvedLayerOrder = useMemo(
+    () => renderStackOrder(renderStack, layerInputs.layerOrder),
+    [layerInputs.layerOrder, renderStack]
+  );
+
   const layerData = useLayerData(
-    layers,
-    layerOrder,
+    layerInputs.layers,
+    layerInputs.layerOrder,
     availableElements,
     coordinateSystem,
     spatialData ?? undefined
   );
 
   const generatedDeckLayers = layerData.getLayers();
-  const deckLayers = useMemo(
-    () => composeSpatialDeckLayers(generatedDeckLayers, externalDeckLayers),
-    [generatedDeckLayers, externalDeckLayers]
-  );
+  const deckLayers = useMemo(() => {
+    const composed = composeSpatialDeckLayers(generatedDeckLayers, [
+      ...hostDeckLayers,
+      ...(externalDeckLayers ?? []),
+    ]);
+    return renderStack ? sortLayersByRenderStackOrder(composed, resolvedLayerOrder) : composed;
+  }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, renderStack, resolvedLayerOrder]);
   const vivLayerProps = layerData.getVivLayerProps();
 
   const enabledLayerIds = useMemo(() => {
-    return new Set(layerOrder.filter((id) => layers[id]?.visible));
-  }, [layers, layerOrder]);
+    return new Set(layerInputs.layerOrder.filter((id) => layerInputs.layers[id]?.visible));
+  }, [layerInputs.layerOrder, layerInputs.layers]);
   const hasEnabledLayers = enabledLayerIds.size > 0;
-  const hasExternalDeckLayers = (externalDeckLayers?.length ?? 0) > 0;
+  const hasExternalDeckLayers = (externalDeckLayers?.length ?? 0) > 0 || hostDeckLayers.length > 0;
   const hasRenderableInputs = hasEnabledLayers || hasExternalDeckLayers;
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
 
@@ -194,6 +238,7 @@ export function useSpatialCanvasRenderer({
     hasExternalDeckLayers,
     hasLayersDrawn,
     hasRenderableInputs,
+    layerOrder: resolvedLayerOrder,
     vivLayerProps,
   };
 }
@@ -230,10 +275,13 @@ const overlayStyle: CSSProperties = {
 function SpatialCanvasViewerInner({
   spatialData,
   coordinateSystem,
+  renderStack,
   layers,
   layerOrder,
   viewState,
   onViewStateChange,
+  hostLayerResolver,
+  onUnknownHostLayer,
   deckLayers: externalDeckLayers,
   deckProps,
   onHover,
@@ -259,12 +307,15 @@ function SpatialCanvasViewerInner({
   const renderer = useSpatialCanvasRenderer({
     spatialData,
     coordinateSystem,
+    renderStack,
     layers,
     layerOrder,
     viewState,
     onViewStateChange,
     width: vw,
     height: vh,
+    hostLayerResolver,
+    onUnknownHostLayer,
     deckLayers: externalDeckLayers,
     autoFit,
   });
@@ -402,7 +453,7 @@ function SpatialCanvasViewerInner({
               viewState={viewState}
               onViewStateChange={onViewStateChange}
               layers={renderer.deckLayers}
-              layerOrder={layerOrder}
+              layerOrder={renderer.layerOrder}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={handleHover}
               onClick={handleClick}

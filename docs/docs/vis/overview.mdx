@@ -23,6 +23,7 @@ semantics, see [Feature table associations and annotation columns](./feature-tab
 ## `@spatialdata/layers`
 
 - **`SpatialLayer`** `CompositeLayer` and versioned **`SpatialLayerProps`** (Zod + `schemaVersion` + **`migrateSpatialLayerProps`**).
+- The canonical home for **`RenderStack`** saved/render order, including SpatialData entries, host overlay descriptors, and reserved group entries.
 - The deck-native place for **sub**layers: image, scatter, shapes, points, contours — including future **GeoArrow / Parquet** paths for vectors. (Sublayer factories are still being wired; the schema and class are scaffolded.)
 - **No MobX**; plain TypeScript and deck APIs.
 
@@ -43,7 +44,7 @@ Details: [Layers package overview](../layers/overview).
 
 | Tier | Typical use |
 |------|-------------|
-| **Deck / SpatialLayer** | Non-React or custom `DeckGL` apps; versioned props |
+| **RenderStack / Deck / SpatialLayer** | Non-React or custom `DeckGL` apps; ordered stack, host overlay descriptors, versioned props |
 | **Headless avivatorish** | Loaders, cache, `getSingleSelectionStats` |
 | **Zustand + VivProvider** | MDV-style embeds |
 | **SpatialCanvas** | Batteries-included SpatialData React UI |
