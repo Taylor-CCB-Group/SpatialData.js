@@ -133,7 +133,7 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             {JSON.stringify(
               {
                 elementKind: lastFeatureHover.elementKind,
-                elementKey: lastFeatureHover.element.key,
+                elementKey: lastFeatureHover.spatialElement.key,
                 featureId: lastFeatureHover.featureId,
                 rowIndex: lastFeatureHover.rowIndex,
               },
@@ -177,8 +177,8 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             onFeatureHover={setLastFeatureHover}
             onFeatureClick={(event) => {
               if (event.elementKind !== 'labels') return;
-              if (event.element.key !== 'blobs_labels') return;
-              console.log(event.labelId, event.element);
+              if (event.spatialElement.key !== 'blobs_labels') return;
+              console.log(event.labelId, event.spatialElement);
             }}
             style={{ width: '100%', height: '100%' }}
           />

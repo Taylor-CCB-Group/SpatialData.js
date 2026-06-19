@@ -159,7 +159,7 @@ export interface LabelsLoaderData extends LabelsTooltipMetadata {
 export interface ShapeFeaturePickEventData {
   elementKind: 'shapes';
   layerId: string;
-  element: ShapesElement;
+  spatialElement: ShapesElement;
   featureId: string;
   featureIndex: number;
   rowIndex?: number;
@@ -170,7 +170,7 @@ export interface ShapeFeaturePickEventData {
 export interface LabelFeaturePickEventData {
   elementKind: 'labels';
   layerId: string;
-  element: LabelsElement;
+  spatialElement: LabelsElement;
   featureId: string;
   labelId: string;
   channelIndex?: number;
@@ -1476,7 +1476,7 @@ export function useLayerData(
         return {
           elementKind: 'labels',
           layerId,
-          element: elem.element,
+          spatialElement: elem.element,
           featureId: pickedLabel.labelId,
           labelId: pickedLabel.labelId,
           channelIndex: pickedLabel.channelIndex,
@@ -1497,7 +1497,7 @@ export function useLayerData(
       return {
         elementKind: 'shapes',
         layerId: shapeEvent.layerId,
-        element: elem.element,
+        spatialElement: elem.element,
         featureId: shapeEvent.featureId,
         featureIndex: shapeEvent.featureIndex,
         rowIndex: shapeEvent.rowIndex,
