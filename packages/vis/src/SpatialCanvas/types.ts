@@ -112,11 +112,14 @@ export interface LabelsLayerConfig extends BaseLayerConfig {
   };
 }
 
-export type LayerConfig =
-  | ImageLayerConfig
-  | ShapesLayerConfig
-  | PointsLayerConfig
-  | LabelsLayerConfig;
+export interface LayerConfigByType {
+  image: ImageLayerConfig;
+  shapes: ShapesLayerConfig;
+  points: PointsLayerConfig;
+  labels: LabelsLayerConfig;
+}
+
+export type LayerConfig<T extends LayerType = LayerType> = LayerConfigByType[T];
 
 // ============================================
 // Element Availability Types

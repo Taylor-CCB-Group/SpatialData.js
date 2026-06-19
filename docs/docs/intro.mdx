@@ -138,7 +138,7 @@ React components and the SpatialCanvas stack (Viv images + deck vectors).
 **Two entry modes:**
 
 1. **Batteries included** — `SpatialCanvas` with coordinate-system picker, layer list, properties panels, tooltips.
-2. **Headless / controlled** — `SpatialCanvasViewer` or `useSpatialCanvasRenderer`: same render path, **your** state for `layers`, `layerOrder`, `viewState`, plus optional `deckLayers` for app overlays.
+2. **Headless / controlled** — `SpatialCanvasViewer` or `useSpatialCanvasRenderer`: same render path, **your** state for `renderStack.entries` and `viewState`, plus host overlay descriptors resolved by your app at runtime.
 
 The vis package is more experimental than `core`/`layers` because of the
 Viv/deck/luma dependency stack. The near-term goal is an MDV-consumable
@@ -154,18 +154,28 @@ that smoke test.
 ### Headless vis example
 
 ```tsx
-import { SpatialCanvasViewer, type LayerConfig } from '@spatialdata/vis';
+import { SpatialCanvasViewer, type RenderStack } from '@spatialdata/vis';
+
+const renderStack: RenderStack = {
+  schemaVersion: 1,
+  entries: [
+    { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'morphology' } },
+    { kind: 'host', id: 'deck:selection', source: { hostLayerId: 'deck:selection' } },
+    { kind: 'spatial', id: 'shapes', source: { elementType: 'shapes', elementKey: 'cells' } },
+  ],
+};
 
 <SpatialCanvasViewer
   spatialData={spatialData}
   coordinateSystem="global"
-  layers={layers}
-  layerOrder={['image', 'shapes']}
+  renderStack={renderStack}
   viewState={viewState}
   onViewStateChange={setViewState}
-  deckLayers={myMdvOverlays}
+  hostLayerResolver={(entry) =>
+    entry.source.hostLayerId === 'deck:selection' ? mySelectionLayer : undefined
+  }
   renderTooltip={false}
-  onShapeHover={handleShapeHover}
+  onFeatureHover={handleFeatureHover}
 />
 ```
 

@@ -31,7 +31,7 @@ import { useState } from 'react';
 import { readZarr } from '@spatialdata/core';
 import {
   SpatialCanvasViewer,
-  type LayerConfig,
+  type RenderStack,
   type ViewState,
 } from '@spatialdata/vis';
 
@@ -39,41 +39,43 @@ const [spatialData, setSpatialData] = useState<Awaited<ReturnType<typeof readZar
 const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
 const [viewState, setViewState] = useState<ViewState | null>(null);
 
-const layers: Record<string, LayerConfig> = {
-  image: {
-    id: 'image',
-    type: 'image',
-    elementKey: 'my_image',
-    visible: true,
-    opacity: 1,
-  },
-  shapes: {
-    id: 'shapes',
-    type: 'shapes',
-    elementKey: 'cell_shapes',
-    visible: true,
-    opacity: 1,
-    fillColor: [100, 149, 237, 180],
-    fillColorByColumn: { columnName: 'cell_type', mode: 'categorical' },
-    tooltipFields: ['cell_type'],
-  },
+const renderStack: RenderStack = {
+  schemaVersion: 1,
+  entries: [
+    {
+      kind: 'spatial',
+      id: 'image',
+      source: { elementType: 'image', elementKey: 'my_image' },
+      props: { opacity: 1 },
+    },
+    {
+      kind: 'spatial',
+      id: 'shapes',
+      source: { elementType: 'shapes', elementKey: 'cell_shapes' },
+      props: {
+        opacity: 1,
+        fillColor: [100, 149, 237, 180],
+        fillColorByColumn: { columnName: 'cell_type', mode: 'categorical' },
+        tooltipFields: ['cell_type'],
+      },
+    },
+  ],
 };
-const layerOrder = ['image', 'shapes'];
 
 // After loading:
 <SpatialCanvasViewer
   spatialData={spatialData}
   coordinateSystem={coordinateSystem}
-  layers={layers}
-  layerOrder={layerOrder}
+  renderStack={renderStack}
   viewState={viewState}
   onViewStateChange={setViewState}
   style={{ width: '100%', height: '100%' }}
 />
 ```
 
-**You own all state.** Change `layers`, `layerOrder`, or `viewState` from your
-app store (MobX, zustand, React state, Leva, etc.) and the viewer re-renders.
+**You own all state.** Change `renderStack` or `viewState` from your app store
+(MobX, zustand, React state, Leva, etc.) and the viewer re-renders. Keep
+structural identity in `entry.source`; use `entry.props` for renderer inputs.
 
 ## Hook-only composition (custom layout)
 
@@ -84,18 +86,19 @@ import { useMeasure } from '@uidotdev/usehooks';
 import { useSpatialCanvasRenderer } from '@spatialdata/vis';
 import { SpatialViewer } from '@spatialdata/vis';
 
-function MyViewport({ spatialData, coordinateSystem, layers, layerOrder, viewState, onViewStateChange }) {
+function MyViewport({ spatialData, coordinateSystem, renderStack, viewState, onViewStateChange }) {
   const [ref, { width, height }] = useMeasure();
   const renderer = useSpatialCanvasRenderer({
     spatialData,
     coordinateSystem,
-    layers,
-    layerOrder,
+    renderStack,
     viewState,
     onViewStateChange,
     width: width ?? 0,
     height: height ?? 0,
-    deckLayers: myCustomScatterLayer ? [myCustomScatterLayer] : undefined,
+    hostLayerResolver: (entry) => {
+      if (entry.source.hostLayerId === 'deck:scatter') return myCustomScatterLayer;
+    },
   });
 
   return (
@@ -105,7 +108,8 @@ function MyViewport({ spatialData, coordinateSystem, layers, layerOrder, viewSta
         height={height ?? 0}
         viewState={viewState}
         onViewStateChange={onViewStateChange}
-        deckLayers={renderer.deckLayers}
+        layers={renderer.deckLayers}
+        layerOrder={renderer.layerOrder}
         vivLayerProps={renderer.vivLayerProps}
       />
     </div>
@@ -114,12 +118,13 @@ function MyViewport({ spatialData, coordinateSystem, layers, layerOrder, viewSta
 ```
 
 `useSpatialCanvasRenderer` returns `deckLayers`, `vivLayerProps`, loading
-flags, bounds helpers, and shape pick/tooltip resolvers — same as inside
+flags, bounds helpers, and feature pick/tooltip resolvers — same as inside
 `SpatialCanvasViewer`.
 
-## MDV-style overlays
+## MDV-style host overlays
 
-Pass app-built deck layers **above** SpatialData-generated layers:
+Use host overlay descriptors when app-built deck layers need to interleave with
+SpatialData entries:
 
 ```tsx
 import { ScatterplotLayer } from 'deck.gl';
@@ -133,7 +138,17 @@ const mdvScatter = new ScatterplotLayer({
 
 <SpatialCanvasViewer
   /* ...controlled props... */
-  deckLayers={[mdvScatter]}
+  renderStack={{
+    schemaVersion: 1,
+    entries: [
+      { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'my_image' } },
+      { kind: 'host', id: 'deck:scatter', source: { hostLayerId: 'deck:scatter' } },
+      { kind: 'spatial', id: 'shapes', source: { elementType: 'shapes', elementKey: 'cell_shapes' } },
+    ],
+  }}
+  hostLayerResolver={(entry) => {
+    if (entry.source.hostLayerId === 'deck:scatter') return mdvScatter;
+  }}
   deckProps={{
     controller: true,
     getCursor: ({ isDragging }) => (isDragging ? 'grabbing' : 'default'),
@@ -141,22 +156,30 @@ const mdvScatter = new ScatterplotLayer({
 />
 ```
 
-Composition order is always: **SpatialData layers first**, then `deckLayers`,
-then scale bar (inside `SpatialViewer`).
+The older `deckLayers` prop remains as a compatibility tail for simple overlays
+that always sit above SpatialData output. It should not be used for saved MDV
+layer-stack interleaving.
 
 ## Tooltips: internal, external, or off
 
 | `renderTooltip` | Behaviour |
 |-----------------|-----------|
 | `undefined` (default) | Built-in `SpatialFeatureTooltip` on hover |
-| `false` | No internal tooltip; use `onHover` / `onShapeHover` |
+| `false` | No internal tooltip; use `onFeatureHover` / raw `onHover` |
 | `(props) => <MyTooltip {...props} />` | Custom renderer; optional `tooltipContainer` for portals |
 
 ```tsx
 <SpatialCanvasViewer
   renderTooltip={false}
-  onShapeHover={(event) => {
-    // event.featureId, event.rowIndex, event.pickInfo, ...
+  onFeatureHover={(event) => {
+    // event.elementKind is "shapes" or "labels".
+    // event.spatialElement.key, event.featureId, event.rowIndex, event.tooltip, event.pickInfo, ...
+  }}
+  onFeatureClick={(event) => {
+    if (event.elementKind !== 'labels') return;
+    if (event.spatialElement.key !== 'blobs_labels') return;
+
+    // event.labelId and event.spatialElement are narrowed here.
   }}
   onHover={(info) => {
     // raw deck PickingInfo for custom layers
@@ -167,14 +190,55 @@ then scale bar (inside `SpatialViewer`).
 For MDV-style outer-container tooltips, set `renderTooltip={false}` and route
 picks through your existing portal hook.
 
+## Serializable props vs runtime listeners
+
+`renderStack.entries` is the saved, serializable contract. Put element identity,
+visibility, opacity, channel selections, tooltip field names, feature-state
+records, and other renderer props there. Do not put functions, MobX observables,
+deck.gl layer instances, DOM refs, or event handlers in `entry.props`.
+
+Runtime attachments live beside the stack:
+
+- `hostLayerResolver(entry)` turns a host descriptor into one or more deck.gl
+  layers for this running application.
+- `onFeatureHover` / `onFeatureClick` receive a typed SpatialData feature event
+  for shapes and labels. The payload includes the stable stack `layerId`,
+  `elementKind` for TypeScript narrowing, resolved `spatialElement` (use
+  `event.spatialElement.kind` and `event.spatialElement.key`), current
+  `spatialData`, `featureId`, optional table `rowIndex`, the raw `pickInfo`, and
+  the same tooltip payload used by `SpatialFeatureTooltip` when available.
+- `onShapeHover` / `onShapeClick` remain as shape-only compatibility callbacks.
+- raw `onHover` / `onClick` remain available for host layers or lower-level deck
+  integrations.
+
+### Planned event API
+
+In a follow-up breaking experimental pass, `onFeatureHover` and
+`onFeatureClick` should be superseded by SpatialData-scoped element callbacks:
+`onSpatialElementMove`, `onSpatialElementOver`, `onSpatialElementOut`, and
+`onSpatialElementClick`.
+
+Those events should cover SpatialData-backed images, labels, shapes, and points.
+Each event should carry `layerId`, `elementKind`, `spatialElement`,
+`coordinateSystem`, `spatialData`, and `pickInfo`. Shapes and labels should also
+carry feature-specific fields such as `featureId`, `labelId`, `featureIndex`,
+`rowIndex`, `object`, and `tooltip` when available. `onSpatialElementOver` and
+`onSpatialElementOut` should be synthesized from hover transitions; for shapes
+and labels, those transitions should be per feature rather than only per layer.
+
+Raw deck `onHover` and `onClick` remain the escape hatch for host layers and
+custom deck.gl layers. This planned API does not add custom SpatialData-aware
+host layer events or invent feature semantics for images and points beyond what
+deck's `pickInfo` already provides.
+
 ## Shapes: table-driven colour and filter state
 
-MDV should drive styling by updating `layers[layerId]` — not by reaching into
-vis internals:
+MDV should drive styling by updating the target stack entry props — not by
+reaching into vis internals:
 
 ```ts
-layers[shapesId] = {
-  ...layers[shapesId],
+entry.props = {
+  ...entry.props,
   fillColorByColumn: { columnName: 'leiden', mode: 'categorical' },
   featureState: {
     hiddenFeatureIds: filteredOutIds,
@@ -221,11 +285,11 @@ The dev script starts the fixture server on port **38473** (override with
 
 Suggested experiments (matching the [MDV integration roadmap](./mdv-integration)):
 
-1. **Fixed stack** — hard-code `layers` / `layerOrder` for one fixture URL.
+1. **Fixed stack** — hard-code `renderStack.entries` for one fixture URL.
 2. **External controls** — Leva panel for coordinate system, visibility, opacity, channel colours.
-3. **Custom deck layer** — one `ScatterplotLayer` above the image.
+3. **Host overlay** — one `ScatterplotLayer` interleaved by descriptor and resolver.
 4. **Controlled view** — save/restore `viewState` in `sessionStorage`.
-5. **External tooltips** — `renderTooltip={false}` + log `onShapeHover` payloads.
+5. **External tooltips** — `renderTooltip={false}` + log `onFeatureHover` payloads.
 
 Install the prerelease for MDV smoke tests:
 
@@ -247,8 +311,8 @@ Before treating the API as stable for MDV:
 
 - [x] `SpatialCanvasViewer` exported from `@spatialdata/vis`
 - [x] `useSpatialCanvasRenderer`, `composeSpatialDeckLayers`, `shouldAutoFitSpatialView`, `shouldRenderInternalTooltip` exported
-- [x] Controlled `coordinateSystem`, `layers`, `layerOrder`, `viewState`
-- [x] `deckLayers` / `deckProps` passthrough
+- [x] Controlled `coordinateSystem`, `renderStack`, `viewState`
+- [x] Host overlay descriptors with `hostLayerResolver`; `deckLayers` / `deckProps` passthrough remains for compatibility
 - [x] `renderTooltip={false}` for external tooltip ownership
 - [x] `demo/headless` route with local `blobs.zarr` fixture
 - [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)

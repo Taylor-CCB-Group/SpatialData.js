@@ -1,4 +1,5 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
+import type { RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import {
@@ -19,25 +20,60 @@ import {
 import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
+import {
+  renderStackOrder,
+  renderStackToLayerInputs,
+  resolveRenderStackHostLayers,
+  sortLayersByRenderStackOrder,
+  type RenderStackHostLayerResolver,
+  type RenderStackLayerInputs,
+  type UnknownRenderStackHostLayerHandler,
+} from './renderStackAdapters';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
-import { useLayerData } from './useLayerData';
+import {
+  type LabelFeaturePickEventData,
+  type ShapeFeaturePickEventData,
+  useLayerData,
+} from './useLayerData';
 import { getAvailableElements } from './utils';
 
 export type SpatialCanvasViewerRenderTooltip =
   | false
   | ((props: SpatialCanvasTooltipRenderProps) => ReactNode);
 
+type SpatialFeaturePickEventRuntimeFields = {
+  coordinateSystem: string | null;
+  spatialData?: SpatialData | null;
+  pickInfo: PickingInfo;
+};
+
+export type ShapesSpatialFeaturePickEvent = ShapeFeaturePickEventData &
+  SpatialFeaturePickEventRuntimeFields;
+
+export type LabelsSpatialFeaturePickEvent = LabelFeaturePickEventData &
+  SpatialFeaturePickEventRuntimeFields;
+
+export type SpatialFeaturePickEvent = ShapesSpatialFeaturePickEvent | LabelsSpatialFeaturePickEvent;
+
 export interface SpatialCanvasViewerProps {
   spatialData?: SpatialData | null;
   coordinateSystem: string | null;
-  layers: Record<string, LayerConfig>;
-  layerOrder: string[];
+  renderStack?: RenderStack;
+  /** @deprecated Prefer `renderStack.entries`. */
+  layers?: Record<string, LayerConfig>;
+  /** @deprecated Prefer `renderStack.entries`. */
+  layerOrder?: string[];
   viewState: ViewState | null;
   onViewStateChange: (viewState: ViewState) => void;
+  hostLayerResolver?: RenderStackHostLayerResolver;
+  onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
+  /** @deprecated Prefer host entries with `hostLayerResolver`. */
   deckLayers?: Layer[];
   deckProps?: Partial<DeckGLProps>;
   onHover?: (info: PickingInfo) => void;
   onClick?: (info: PickingInfo) => void;
+  onFeatureHover?: (event: SpatialFeaturePickEvent) => void;
+  onFeatureClick?: (event: SpatialFeaturePickEvent) => void;
   onShapeHover?: (event: ShapesLayerPickEvent) => void;
   onShapeClick?: (event: ShapesLayerPickEvent) => void;
   renderTooltip?: SpatialCanvasViewerRenderTooltip;
@@ -93,8 +129,7 @@ export function shouldRenderInternalTooltip(
 export interface UseSpatialCanvasRendererOptions {
   spatialData?: SpatialData | null;
   coordinateSystem: string | null;
-  layers: Record<string, LayerConfig>;
-  layerOrder: string[];
+  renderStack: RenderStack;
   /**
    * Current view state.  When `undefined` the auto-fit effect is skipped
    * entirely, letting the caller manage auto-fit externally (e.g. in a
@@ -108,22 +143,40 @@ export interface UseSpatialCanvasRendererOptions {
   onViewStateChange?: (viewState: ViewState) => void;
   width: number;
   height: number;
-  deckLayers?: Layer[];
+  hostLayerResolver?: RenderStackHostLayerResolver;
+  onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
   autoFit?: boolean;
 }
 
-export function useSpatialCanvasRenderer({
+interface UseSpatialCanvasRendererFromLayerInputsOptions {
+  spatialData?: SpatialData | null;
+  coordinateSystem: string | null;
+  layerInputs: RenderStackLayerInputs;
+  renderOrder?: string[];
+  viewState?: ViewState | null;
+  onViewStateChange?: (viewState: ViewState) => void;
+  width: number;
+  height: number;
+  hostDeckLayers?: Layer[];
+  externalDeckLayers?: Layer[];
+  sortDeckLayers?: boolean;
+  autoFit?: boolean;
+}
+
+export function useSpatialCanvasRendererFromLayerInputs({
   spatialData,
   coordinateSystem,
-  layers,
-  layerOrder,
+  layerInputs,
+  renderOrder,
   viewState,
   onViewStateChange,
   width,
   height,
-  deckLayers: externalDeckLayers,
+  hostDeckLayers,
+  externalDeckLayers,
+  sortDeckLayers,
   autoFit = true,
-}: UseSpatialCanvasRendererOptions) {
+}: UseSpatialCanvasRendererFromLayerInputsOptions) {
   const availableElements = useMemo(() => {
     if (!spatialData || !coordinateSystem) {
       return getEmptyElementsByType();
@@ -131,26 +184,32 @@ export function useSpatialCanvasRenderer({
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
+  const resolvedLayerOrder = renderOrder ?? layerInputs.layerOrder;
+
   const layerData = useLayerData(
-    layers,
-    layerOrder,
+    layerInputs.layers,
+    layerInputs.layerOrder,
     availableElements,
     coordinateSystem,
     spatialData ?? undefined
   );
 
   const generatedDeckLayers = layerData.getLayers();
-  const deckLayers = useMemo(
-    () => composeSpatialDeckLayers(generatedDeckLayers, externalDeckLayers),
-    [generatedDeckLayers, externalDeckLayers]
-  );
+  const deckLayers = useMemo(() => {
+    const composed = composeSpatialDeckLayers(generatedDeckLayers, [
+      ...(hostDeckLayers ?? []),
+      ...(externalDeckLayers ?? []),
+    ]);
+    return sortDeckLayers ? sortLayersByRenderStackOrder(composed, resolvedLayerOrder) : composed;
+  }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, resolvedLayerOrder, sortDeckLayers]);
   const vivLayerProps = layerData.getVivLayerProps();
 
   const enabledLayerIds = useMemo(() => {
-    return new Set(layerOrder.filter((id) => layers[id]?.visible));
-  }, [layers, layerOrder]);
+    return new Set(layerInputs.layerOrder.filter((id) => layerInputs.layers[id]?.visible));
+  }, [layerInputs.layerOrder, layerInputs.layers]);
   const hasEnabledLayers = enabledLayerIds.size > 0;
-  const hasExternalDeckLayers = (externalDeckLayers?.length ?? 0) > 0;
+  const hasExternalDeckLayers =
+    (externalDeckLayers?.length ?? 0) > 0 || (hostDeckLayers?.length ?? 0) > 0;
   const hasRenderableInputs = hasEnabledLayers || hasExternalDeckLayers;
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
 
@@ -194,8 +253,46 @@ export function useSpatialCanvasRenderer({
     hasExternalDeckLayers,
     hasLayersDrawn,
     hasRenderableInputs,
+    layerOrder: resolvedLayerOrder,
     vivLayerProps,
   };
+}
+
+export function useSpatialCanvasRenderer({
+  spatialData,
+  coordinateSystem,
+  renderStack,
+  viewState,
+  onViewStateChange,
+  width,
+  height,
+  hostLayerResolver,
+  onUnknownHostLayer,
+  autoFit = true,
+}: UseSpatialCanvasRendererOptions) {
+  const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
+  const hostDeckLayers = useMemo(
+    () => resolveRenderStackHostLayers(renderStack, hostLayerResolver, onUnknownHostLayer),
+    [hostLayerResolver, onUnknownHostLayer, renderStack]
+  );
+  const resolvedLayerOrder = useMemo(
+    () => renderStackOrder(renderStack, layerInputs.layerOrder),
+    [layerInputs.layerOrder, renderStack]
+  );
+
+  return useSpatialCanvasRendererFromLayerInputs({
+    spatialData,
+    coordinateSystem,
+    layerInputs,
+    renderOrder: resolvedLayerOrder,
+    viewState,
+    onViewStateChange,
+    width,
+    height,
+    hostDeckLayers,
+    sortDeckLayers: true,
+    autoFit,
+  });
 }
 
 const viewerRootStyle: CSSProperties = {
@@ -230,14 +327,19 @@ const overlayStyle: CSSProperties = {
 function SpatialCanvasViewerInner({
   spatialData,
   coordinateSystem,
+  renderStack,
   layers,
   layerOrder,
   viewState,
   onViewStateChange,
+  hostLayerResolver,
+  onUnknownHostLayer,
   deckLayers: externalDeckLayers,
   deckProps,
   onHover,
   onClick,
+  onFeatureHover,
+  onFeatureClick,
   onShapeHover,
   onShapeClick,
   renderTooltip,
@@ -256,16 +358,32 @@ function SpatialCanvasViewerInner({
 
   const vw = width ?? 0;
   const vh = height ?? 0;
-  const renderer = useSpatialCanvasRenderer({
+  const layerInputs = useMemo(() => {
+    if (renderStack) {
+      return renderStackToLayerInputs(renderStack);
+    }
+    return { layers: layers ?? {}, layerOrder: layerOrder ?? [] };
+  }, [layerOrder, layers, renderStack]);
+  const hostDeckLayers = useMemo(
+    () => resolveRenderStackHostLayers(renderStack, hostLayerResolver, onUnknownHostLayer),
+    [hostLayerResolver, onUnknownHostLayer, renderStack]
+  );
+  const resolvedLayerOrder = useMemo(
+    () => renderStackOrder(renderStack, layerInputs.layerOrder),
+    [layerInputs.layerOrder, renderStack]
+  );
+  const renderer = useSpatialCanvasRendererFromLayerInputs({
     spatialData,
     coordinateSystem,
-    layers,
-    layerOrder,
+    layerInputs,
+    renderOrder: resolvedLayerOrder,
     viewState,
     onViewStateChange,
     width: vw,
     height: vh,
-    deckLayers: externalDeckLayers,
+    hostDeckLayers,
+    externalDeckLayers,
+    sortDeckLayers: Boolean(renderStack),
     autoFit,
   });
   const hoverPickLayerIds = useMemo(
@@ -282,6 +400,18 @@ function SpatialCanvasViewerInner({
       }
       const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
       const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (featurePickEvent) {
+        onFeatureHover?.({
+          ...featurePickEvent,
+          coordinateSystem,
+          spatialData,
+          pickInfo: info,
+        });
+      }
       const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
         index: info.index,
         object: info.object,
@@ -307,10 +437,12 @@ function SpatialCanvasViewerInner({
       aggregateHoverTooltips,
       coordinateSystem,
       hoverPickLayerIds,
+      onFeatureHover,
       onHover,
       onShapeHover,
       renderTooltip,
       renderer,
+      spatialData,
     ]
   );
 
@@ -322,6 +454,18 @@ function SpatialCanvasViewerInner({
       }
       const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
       const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
+        index: info.index,
+        object: info.object,
+      });
+      if (featurePickEvent) {
+        onFeatureClick?.({
+          ...featurePickEvent,
+          coordinateSystem,
+          spatialData,
+          pickInfo: info,
+        });
+      }
       const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
         index: info.index,
         object: info.object,
@@ -334,7 +478,7 @@ function SpatialCanvasViewerInner({
         });
       }
     },
-    [coordinateSystem, onClick, onShapeClick, renderer]
+    [coordinateSystem, onClick, onFeatureClick, onShapeClick, renderer, spatialData]
   );
 
   const handleViewerRef = useCallback(
@@ -402,7 +546,7 @@ function SpatialCanvasViewerInner({
               viewState={viewState}
               onViewStateChange={onViewStateChange}
               layers={renderer.deckLayers}
-              layerOrder={layerOrder}
+              layerOrder={renderer.layerOrder}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={handleHover}
               onClick={handleClick}

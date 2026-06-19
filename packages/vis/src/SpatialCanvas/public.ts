@@ -16,6 +16,7 @@ export { useSpatialViewState, useViewStateUrl } from './hooks';
 export { createSpatialCanvasStore } from './stores';
 export type { SpatialCanvasStoreApi } from './stores';
 export type * from './types';
+export { layerConfig } from './layerConfig';
 export { SpatialViewer } from './SpatialViewer';
 export type { SpatialViewerProps } from './SpatialViewer';
 export { VivSpatialViewer } from './VivSpatialViewer';
@@ -26,7 +27,21 @@ export {
   SpatialCanvasViewer,
   useSpatialCanvasRenderer,
 } from './SpatialCanvasViewer';
+export {
+  renderStackOrder,
+  renderStackToLayerInputs,
+  resolveRenderStackHostLayers,
+  sortLayersByRenderStackOrder,
+} from './renderStackAdapters';
 export type {
+  RenderStackHostLayerResolver,
+  RenderStackLayerInputs,
+  UnknownRenderStackHostLayerHandler,
+} from './renderStackAdapters';
+export type {
+  LabelsSpatialFeaturePickEvent,
+  ShapesSpatialFeaturePickEvent,
+  SpatialFeaturePickEvent,
   SpatialCanvasViewerProps,
   SpatialCanvasViewerRenderTooltip,
 } from './SpatialCanvasViewer';

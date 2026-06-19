@@ -39,6 +39,18 @@ export type View = { id: string } & any; // Viv View type
 export type VivPickInfo = PickingInfo<any, any> & { tile?: any };
 type VivZoom = number | readonly number[] | null | undefined;
 type VivLoader = { meta?: { physicalSizes?: { x?: { size: number; unit: string } } } };
+type VivDefaultInitialViewStateWithModelMatrix = (
+  loader: object,
+  viewSize: { width: number; height: number },
+  zoomBackOff?: number,
+  use3d?: boolean,
+  modelMatrix?: ImageLayerConfig['modelMatrix']
+) => object;
+
+// Viv's 0.21 declaration says `modelMatrix` is boolean, but the runtime calls
+// Matrix4 methods on it. Keep the compatibility cast at this external boundary.
+const getDefaultInitialViewStateWithModelMatrix =
+  getDefaultInitialViewState as unknown as VivDefaultInitialViewStateWithModelMatrix;
 
 export function normalizeVivZoom(zoom: VivZoom): number {
   if (Array.isArray(zoom)) {
@@ -255,7 +267,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       typeof firstLayerWithLoader.loader === 'object'
     ) {
       try {
-        const defaultState = getDefaultInitialViewState(
+        const defaultState = getDefaultInitialViewStateWithModelMatrix(
           firstLayerWithLoader.loader,
           {
             width: this.props.width,

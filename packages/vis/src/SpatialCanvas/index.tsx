@@ -25,7 +25,10 @@ import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
-import { shouldAutoFitSpatialView, useSpatialCanvasRenderer } from './SpatialCanvasViewer';
+import {
+  shouldAutoFitSpatialView,
+  useSpatialCanvasRendererFromLayerInputs,
+} from './SpatialCanvasViewer';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -37,7 +40,8 @@ import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import type { SpatialCanvasStoreApi } from './stores';
-import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
+import { layerConfig } from './layerConfig';
+import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
@@ -414,11 +418,10 @@ function SpatialCanvasInner({
     isBlocking,
     isLoading,
     vivLayerProps,
-  } = useSpatialCanvasRenderer({
+  } = useSpatialCanvasRendererFromLayerInputs({
     spatialData,
     coordinateSystem,
-    layers,
-    layerOrder,
+    layerInputs: { layers, layerOrder },
     // viewState and onViewStateChange are omitted: auto-fit and pan handling
     // are managed entirely by ViewerSection so this hook never re-runs on pan.
     width: vw,
@@ -488,13 +491,12 @@ function SpatialCanvasInner({
       if (existing) {
         actions.toggleLayerVisibility(layerId);
       } else {
-        const config: LayerConfig = {
+        const config = layerConfig(element.type, {
           id: layerId,
-          type: element.type,
           elementKey: element.key,
           visible: true,
           opacity: 1,
-        };
+        });
         actions.addLayer(config);
       }
     },

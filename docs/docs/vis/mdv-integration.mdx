@@ -81,14 +81,13 @@ Current surface:
 <SpatialCanvasViewer
   spatialData={spatialData}
   coordinateSystem={coordinateSystem}
-  layers={layers}
-  layerOrder={layerOrder}
+  renderStack={renderStack}
   viewState={viewState}
   onViewStateChange={setViewState}
-  deckLayers={mdvDeckLayers}
+  hostLayerResolver={resolveMdvHostLayer}
   deckProps={deckProps}
   renderTooltip={false}
-  onShapeHover={onShapeHover}
+  onFeatureHover={onFeatureHover}
 />
 ```
 
@@ -96,10 +95,11 @@ Implementation status:
 
 - [x] Split viewer core (`SpatialCanvasViewer` / `useSpatialCanvasRenderer`) from `SpatialCanvas` UI shell.
 - [x] Export `SpatialCanvasViewer` from public `@spatialdata/vis` entry.
-- [x] Controlled `coordinateSystem`, `layers`, `layerOrder`, and `viewState`.
-- [x] `deckLayers` / `deckProps` for MDV scatter, gates, contours, ROI overlays.
+- [x] Controlled `coordinateSystem`, `renderStack`, and `viewState`.
+- [x] Host overlay descriptors plus `hostLayerResolver` for MDV scatter, gates, contours, ROI overlays.
+- [x] Deprecated compatibility path for `layers`, `layerOrder`, and `deckLayers`.
 - [x] `showLoadingOverlay` and `renderTooltip={false}` for external tooltip ownership.
-- [x] `onShapeHover` / `onShapeClick` for feature-aware picking.
+- [x] `onFeatureHover` / `onFeatureClick` for shape and label picking, with `onShapeHover` / `onShapeClick` kept as compatibility callbacks.
 - [ ] Stable externally supplied Viv/deck view id or layer id suffix (`getVivId` compatibility).
 - [ ] Viv extension prop audit once MDV merge lands (low risk; versions already aligned).
 
@@ -115,9 +115,9 @@ Adapter responsibilities:
 
 - derive `source` / SpatialData store URL from MDV project state
 - select the active coordinate system from MDV region metadata
-- map MDV chart config to `LayerConfig[]`
+- map MDV chart config to `renderStack.entries`
 - map MDV view state to `SpatialCanvas` view state
-- pass existing MDV deck layers:
+- resolve existing MDV deck layers from host overlay descriptors:
   - scatterplot layer
   - grey/background scatter layer
   - selection layer
@@ -130,6 +130,61 @@ Adapter responsibilities:
 - keep MDV keyboard/selection behavior around the viewer container
 
 The first-pass chart can deliberately avoid replacing the channel dialog and most image editing UI. It only needs enough layer config to render an image/labels/shapes baseline and enough view-state synchronization to sanity-check against the current Viv chart.
+
+## Render stack and MDV state model
+
+The next MDV pass should treat `@spatialdata/layers` **`RenderStack`** as the
+canonical saved/render order:
+
+```ts
+const renderStack = {
+  schemaVersion: 1,
+  entries: [
+    { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'morphology' } },
+    { kind: 'host', id: 'deck:scatter', source: { hostLayerId: 'deck:scatter' } },
+    { kind: 'spatial', id: 'labels', source: { elementType: 'labels', elementKey: 'cells' } },
+  ],
+};
+```
+
+Host overlays are descriptors in saved config. MDV owns the runtime resolver
+that turns `deck:scatter`, gates, selections, contours, or ROI descriptors into
+deck.gl layers. This avoids storing raw deck layer instances in project state
+and avoids parallel `stackOrder` / `layerOrder` arrays.
+
+Listeners follow the same split. Saved `renderStack.entries[*].props` should
+contain serializable renderer input only. MDV-owned callbacks such as
+`onFeatureHover` / `onFeatureClick`, tooltip portal wiring, and host overlay
+factories are runtime attachments supplied beside the stack. The feature events
+cover shapes and labels and include the same tooltip payload that built-in
+SpatialData.js tooltips use, so MDV does not need to decode deck.gl pick objects
+for normal table-backed hover/click interactions.
+
+### Constrained MobX
+
+MobX is acceptable for MDV-facing direct-edit control state, but it should be
+kept out of `@spatialdata/layers` and out of the default `@spatialdata/vis`
+renderer contract:
+
+- Use small **MobX control islands** for layer rows and controls.
+- Let each observer component read only the observable fields it renders.
+- Do not pass broad observable stack/config objects into MUI, dnd-kit, deck.gl,
+  Viv, or non-observer components; pass plain values at those boundaries.
+- Sliders should patch renderer-visible props immediately and persist config
+  intentionally, not through periodic whole-stack snapshots.
+- Avoid `toJS` on large stack/config objects during drag interactions.
+
+React Compiler adoption makes this boundary more important. MobX `observer`
+components rely on observable reads rather than React's immutable-prop
+memoization assumptions, so MobX-heavy components should be explicit islands
+that can be excluded from compiler optimization or marked with `"use no memo"`
+where needed. The default SpatialData.js viewer path should remain
+plain-object and compiler-friendly.
+
+Acceptance for the MDV UI path is separate from tile-fetch correctness: opacity
+dragging should not re-render the whole layer dialog/list, should not show a
+periodic stop-start GUI cadence, and should not create large stack snapshots on
+every granular mutation.
 
 ## Tables, AnnData.js, and zarrita `DataLoader`
 
@@ -155,9 +210,9 @@ integrators can read `obs`, `var`, selected `X` columns, `obsm`, and future
 into `anndata.js` where possible; SpatialData.js should thin-wrap table
 elements and preserve Python association semantics.
 
-MDV should pass resolved **`featureState`** and **`fillColorByColumn`** on
-`ShapesLayerConfig` when selection or colour mappings change — not re-load
-geometry. See [Feature table associations](./feature-table-associations).
+MDV should pass resolved **`featureState`** and **`fillColorByColumn`** on the
+target shapes stack entry props when selection or colour mappings change — not
+re-load geometry. See [Feature table associations](./feature-table-associations).
 
 ## Phase 3: layer styling, filtering, and highlighting
 

@@ -1,7 +1,12 @@
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useEffect, useMemo, useState } from 'react';
-import { type LayerConfig, SpatialCanvas, SpatialCanvasViewer, type ViewState } from '../../src/index';
-import { buildHeadlessLayersForCoordinateSystem } from './buildHeadlessLayers';
+import {
+  type RenderStack,
+  SpatialCanvas,
+  SpatialCanvasViewer,
+  type ViewState,
+} from '../../src/index';
+import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import {
   getLocalHtj2kEncodeDemoFixtureUrl,
   getLocalHtj2kEncodeDemoManifestUrl,
@@ -110,8 +115,7 @@ function HeadlessCodecFixtureViewer({
   const { spatialData, loading, error } = useSpatialData();
   const coordinateSystems = useMemo(() => spatialData?.coordinateSystems ?? [], [spatialData]);
   const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
-  const [layers, setLayers] = useState<Record<string, LayerConfig>>({});
-  const [layerOrder, setLayerOrder] = useState<string[]>([]);
+  const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 1, entries: [] });
   const [viewState, setViewState] = useState<ViewState | null>(null);
 
   useEffect(() => {
@@ -125,9 +129,7 @@ function HeadlessCodecFixtureViewer({
     if (!spatialData || !coordinateSystem) {
       return;
     }
-    const built = buildHeadlessLayersForCoordinateSystem(spatialData, coordinateSystem);
-    setLayers(built.layers);
-    setLayerOrder(built.layerOrder);
+    setRenderStack(buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem));
     setViewState(null);
   }, [spatialData, coordinateSystem]);
 
@@ -136,15 +138,23 @@ function HeadlessCodecFixtureViewer({
     if (error) return `Failed to load ${fixtureConfig.label} fixture: ${error.message}`;
     if (!spatialData) return 'No SpatialData loaded.';
     if (!coordinateSystem) return 'No coordinate system available.';
-    if (layerOrder.length === 0) return 'No layers in this coordinate system.';
+    if (renderStack.entries.length === 0) return 'No layers in this coordinate system.';
     return null;
-  }, [loading, error, spatialData, coordinateSystem, layerOrder.length, fixtureConfig.label]);
+  }, [
+    loading,
+    error,
+    spatialData,
+    coordinateSystem,
+    renderStack.entries.length,
+    fixtureConfig.label,
+  ]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={panelStyle}>
         <div style={{ color: '#888', marginBottom: 6 }}>
-          Codec fixture <code>SpatialCanvasViewer</code> - local <code>{fixtureConfig.storeName}</code>
+          Codec fixture <code>SpatialCanvasViewer</code> - local{' '}
+          <code>{fixtureConfig.storeName}</code>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
           <a href={fixtureUrl} style={{ color: '#8af' }}>
@@ -160,7 +170,7 @@ function HeadlessCodecFixtureViewer({
             Coordinate system: <code>{coordinateSystem ?? '-'}</code>
           </span>
           <span style={{ color: '#aaa' }}>
-            Layers: <code>{layerOrder.length}</code>
+            Layers: <code>{renderStack.entries.length}</code>
           </span>
         </div>
         {error ? (
@@ -189,8 +199,7 @@ function HeadlessCodecFixtureViewer({
           <SpatialCanvasViewer
             spatialData={spatialData}
             coordinateSystem={coordinateSystem}
-            layers={layers}
-            layerOrder={layerOrder}
+            renderStack={renderStack}
             viewState={viewState}
             onViewStateChange={setViewState}
             renderTooltip={false}
@@ -269,7 +278,8 @@ function Htj2kEncodeDemoPanel({
   return (
     <div style={panelStyle}>
       <div style={{ color: '#888', marginBottom: 6 }}>
-        HTJ2K encode demo <code>SpatialCanvas</code> - local <code>{htj2kDemo?.store ?? 'htj2k-demo.zarr'}</code>
+        HTJ2K encode demo <code>SpatialCanvas</code> - local{' '}
+        <code>{htj2kDemo?.store ?? 'htj2k-demo.zarr'}</code>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
         <a href={fixtureUrl} style={{ color: '#8af' }}>
@@ -319,7 +329,9 @@ function Htj2kEncodeDemoPanel({
                 <td style={{ padding: '4px 8px' }}>{variant.label}</td>
                 <td style={{ padding: '4px 8px' }}>{formatBytes(variant.encoded_bytes)}</td>
                 <td style={{ padding: '4px 8px' }}>
-                  {variant.compression_ratio != null ? `${variant.compression_ratio.toFixed(1)}×` : '-'}
+                  {variant.compression_ratio != null
+                    ? `${variant.compression_ratio.toFixed(1)}×`
+                    : '-'}
                 </td>
               </tr>
             ))}
@@ -427,7 +439,11 @@ export default function CodecFixtureDemo() {
       </div>
       {fixtureKind === 'htj2k' ? (
         <SpatialDataProvider source={fixtureUrl}>
-          <Htj2kEncodeDemoPanel fixtureUrl={fixtureUrl} manifestUrl={manifestUrl} htj2kDemo={htj2kDemo} />
+          <Htj2kEncodeDemoPanel
+            fixtureUrl={fixtureUrl}
+            manifestUrl={manifestUrl}
+            htj2kDemo={htj2kDemo}
+          />
           <div style={viewerShellStyle}>
             <SpatialCanvas />
           </div>

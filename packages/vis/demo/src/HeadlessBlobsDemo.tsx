@@ -1,8 +1,12 @@
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { SpatialCanvasViewer, type LayerConfig, type ViewState } from '../../src/index';
-import type { ShapesLayerPickEvent } from '../../src/SpatialCanvas/types';
-import { buildHeadlessLayersForCoordinateSystem } from './buildHeadlessLayers';
+import {
+  SpatialCanvasViewer,
+  type RenderStack,
+  type SpatialFeaturePickEvent,
+  type ViewState,
+} from '../../src/index';
+import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 
 const panelStyle = {
@@ -22,14 +26,13 @@ const viewerShellStyle = {
 function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
   const { spatialData, loading, error } = useSpatialData();
   const coordinateSystems = useMemo(() => spatialData?.coordinateSystems ?? [], [spatialData]);
-  const tables = spatialData?.getAssociatedTables("shapes", "blobs_multipolygons");
-  console.log(tables);
+  // const tables = spatialData?.getAssociatedTables("shapes", "blobs_multipolygons");
+  // console.log(tables);
 
   const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
-  const [layers, setLayers] = useState<Record<string, LayerConfig>>({});
-  const [layerOrder, setLayerOrder] = useState<string[]>([]);
+  const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 1, entries: [] });
   const [viewState, setViewState] = useState<ViewState | null>(null);
-  const [lastShapeHover, setLastShapeHover] = useState<ShapesLayerPickEvent | null>(null);
+  const [lastFeatureHover, setLastFeatureHover] = useState<SpatialFeaturePickEvent | null>(null);
 
   useEffect(() => {
     if (!spatialData || coordinateSystems.length === 0) {
@@ -42,18 +45,17 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
     if (!spatialData || !coordinateSystem) {
       return;
     }
-    const built = buildHeadlessLayersForCoordinateSystem(spatialData, coordinateSystem);
-    setLayers(built.layers);
-    setLayerOrder(built.layerOrder);
+    setRenderStack(buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem));
     setViewState(null);
   }, [spatialData, coordinateSystem]);
 
   const toggleLayerVisibility = useCallback((layerId: string) => {
-    setLayers((prev) => {
-      const existing = prev[layerId];
-      if (!existing) return prev;
-      return { ...prev, [layerId]: { ...existing, visible: !existing.visible } };
-    });
+    setRenderStack((prev) => ({
+      ...prev,
+      entries: prev.entries.map((entry) =>
+        entry.id === layerId ? { ...entry, visible: !entry.visible } : entry
+      ),
+    }));
   }, []);
 
   const statusMessage = useMemo(() => {
@@ -61,16 +63,15 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
     if (error) return `Failed to load fixture: ${error.message}`;
     if (!spatialData) return 'No SpatialData loaded.';
     if (!coordinateSystem) return 'No coordinate system available.';
-    if (layerOrder.length === 0) return 'No layers in this coordinate system.';
+    if (renderStack.entries.length === 0) return 'No layers in this coordinate system.';
     return null;
-  }, [loading, error, spatialData, coordinateSystem, layerOrder.length]);
+  }, [loading, error, spatialData, coordinateSystem, renderStack.entries.length]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={panelStyle}>
         <div style={{ color: '#888', marginBottom: 6 }}>
-          Headless <code>SpatialCanvasViewer</code> — local{' '}
-          <code>blobs.zarr</code> (v0.7.2)
+          Headless <code>SpatialCanvasViewer</code> — local <code>blobs.zarr</code> (v0.7.2)
         </div>
         <div style={{ marginBottom: 8, wordBreak: 'break-all' }}>
           <span style={{ color: '#666' }}>Fixture: </span>
@@ -97,28 +98,27 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             Coordinate system: <code>{coordinateSystem ?? '—'}</code>
           </div>
         )}
-        {layerOrder.length > 0 ? (
+        {renderStack.entries.length > 0 ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             <span style={{ color: '#999' }}>Layers</span>
-            {layerOrder.map((layerId) => {
-              const config = layers[layerId];
-              if (!config) return null;
+            {renderStack.entries.map((entry) => {
+              if (entry.kind !== 'spatial') return null;
               return (
-                <label key={layerId} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <label key={entry.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <input
                     type="checkbox"
-                    checked={config.visible}
-                    onChange={() => toggleLayerVisibility(layerId)}
+                    checked={entry.visible}
+                    onChange={() => toggleLayerVisibility(entry.id)}
                   />
                   <span>
-                    {config.type}:{config.elementKey}
+                    {entry.source.elementType}:{entry.source.elementKey}
                   </span>
                 </label>
               );
             })}
           </div>
         ) : null}
-        {lastShapeHover ? (
+        {lastFeatureHover ? (
           <pre
             style={{
               marginTop: 8,
@@ -132,9 +132,10 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
           >
             {JSON.stringify(
               {
-                featureId: lastShapeHover.featureId,
-                featureIndex: lastShapeHover.featureIndex,
-                rowIndex: lastShapeHover.rowIndex,
+                elementKind: lastFeatureHover.elementKind,
+                elementKey: lastFeatureHover.spatialElement.key,
+                featureId: lastFeatureHover.featureId,
+                rowIndex: lastFeatureHover.rowIndex,
               },
               null,
               2
@@ -159,11 +160,9 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             {statusMessage}
             {error ? (
               <div style={{ marginTop: 12, fontSize: 11, color: '#a88' }}>
-                Ensure fixtures exist:{' '}
-                <code>pnpm test:fixtures:generate:0.7.2</code>
+                Ensure fixtures exist: <code>pnpm test:fixtures:generate:0.7.2</code>
                 <br />
-                The dev script also starts a fixture server proxied at{' '}
-                <code>/test-fixtures</code>.
+                The dev script also starts a fixture server proxied at <code>/test-fixtures</code>.
               </div>
             ) : null}
           </div>
@@ -171,12 +170,16 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
           <SpatialCanvasViewer
             spatialData={spatialData}
             coordinateSystem={coordinateSystem}
-            layers={layers}
-            layerOrder={layerOrder}
+            renderStack={renderStack}
             viewState={viewState}
             onViewStateChange={setViewState}
             renderTooltip={false}
-            onShapeHover={setLastShapeHover}
+            onFeatureHover={setLastFeatureHover}
+            onFeatureClick={(event) => {
+              if (event.elementKind !== 'labels') return;
+              if (event.spatialElement.key !== 'blobs_labels') return;
+              console.log(event.labelId, event.spatialElement);
+            }}
             style={{ width: '100%', height: '100%' }}
           />
         )}
