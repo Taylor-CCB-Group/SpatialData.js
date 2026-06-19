@@ -25,7 +25,10 @@ import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
-import { shouldAutoFitSpatialView, useSpatialCanvasRenderer } from './SpatialCanvasViewer';
+import {
+  shouldAutoFitSpatialView,
+  useSpatialCanvasRendererFromLayerInputs,
+} from './SpatialCanvasViewer';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -414,11 +417,10 @@ function SpatialCanvasInner({
     isBlocking,
     isLoading,
     vivLayerProps,
-  } = useSpatialCanvasRenderer({
+  } = useSpatialCanvasRendererFromLayerInputs({
     spatialData,
     coordinateSystem,
-    layers,
-    layerOrder,
+    layerInputs: { layers, layerOrder },
     // viewState and onViewStateChange are omitted: auto-fit and pan handling
     // are managed entirely by ViewerSection so this hook never re-runs on pan.
     width: vw,

@@ -156,6 +156,31 @@ export interface LabelsLoaderData extends LabelsTooltipMetadata {
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
+export interface ShapeFeaturePickEventData {
+  elementType: 'shapes';
+  layerId: string;
+  elementKey: string;
+  featureId: string;
+  featureIndex: number;
+  rowIndex?: number;
+  object: ShapeFeatureRenderDatum;
+  tooltip?: SpatialFeatureTooltipData;
+}
+
+export interface LabelFeaturePickEventData {
+  elementType: 'labels';
+  layerId: string;
+  elementKey: string;
+  featureId: string;
+  labelId: string;
+  channelIndex?: number;
+  rowIndex?: number;
+  object?: unknown;
+  tooltip?: SpatialFeatureTooltipData;
+}
+
+export type SpatialFeaturePickEventData = ShapeFeaturePickEventData | LabelFeaturePickEventData;
+
 interface UseLayerDataResult {
   /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
   getLayers: () => Layer[];
@@ -174,6 +199,11 @@ interface UseLayerDataResult {
     layerId: string,
     pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
   ) => SpatialFeatureTooltipData | undefined;
+  /** Resolve stable feature metadata from a picked deck object for runtime listeners. */
+  getFeaturePickEvent: (
+    layerId: string,
+    pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+  ) => SpatialFeaturePickEventData | undefined;
   /** Resolve stable shape feature metadata from a picked deck object. */
   getShapePickEvent: (
     layerId: string,
@@ -230,6 +260,25 @@ function serializeColorByFeatureId(
   if (!colors || Object.keys(colors).length === 0) return '';
   const entries = Object.entries(colors).sort(([a], [b]) => a.localeCompare(b));
   return `\x02${entries.length}:${JSON.stringify(entries)}`;
+}
+
+function getPickedLabelObject(
+  object: unknown
+): { labelId: string; channelIndex?: number; object: unknown } | undefined {
+  if (!object || typeof object !== 'object') {
+    return undefined;
+  }
+  const rawLabelId = Reflect.get(object, 'labelId');
+  const labelId = rawLabelId === undefined || rawLabelId === null ? '' : String(rawLabelId);
+  if (!labelId) {
+    return undefined;
+  }
+  const rawChannelIndex = Reflect.get(object, 'channelIndex');
+  const channelIndex =
+    typeof rawChannelIndex === 'number' && Number.isFinite(rawChannelIndex)
+      ? rawChannelIndex
+      : undefined;
+  return { labelId, channelIndex, object };
 }
 
 function serializeRasterSelections(selections: RasterSelection[]): string {
@@ -1269,14 +1318,11 @@ export function useLayerData(
       };
 
       if (elem.type === 'labels') {
-        const pickedObject = pickInfo.object as
-          | { labelId?: number | string; channelIndex?: number }
-          | undefined;
-        const rawLabelId = pickedObject?.labelId;
-        const labelId = rawLabelId === undefined || rawLabelId === null ? '' : String(rawLabelId);
-        if (!labelId) {
+        const pickedLabel = getPickedLabelObject(pickInfo.object);
+        if (!pickedLabel) {
           return undefined;
         }
+        const { labelId } = pickedLabel;
 
         const loadedLabelData = loadedDataRef.current.labels.get(elem.key);
         const config = layersRef.current[layerId];
@@ -1389,6 +1435,54 @@ export function useLayerData(
     []
   );
 
+  const getFeaturePickEvent = useCallback(
+    (
+      layerId: string,
+      pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
+    ): SpatialFeaturePickEventData | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem) {
+        return undefined;
+      }
+
+      if (elem.type === 'labels') {
+        const pickedLabel = getPickedLabelObject(pickInfo.object);
+        if (!pickedLabel) {
+          return undefined;
+        }
+        const rowIndex = loadedDataRef.current.labels
+          .get(elem.key)
+          ?.tooltipRowIndexByFeatureId?.get(pickedLabel.labelId);
+        return {
+          elementType: 'labels',
+          layerId,
+          elementKey: elem.key,
+          featureId: pickedLabel.labelId,
+          labelId: pickedLabel.labelId,
+          channelIndex: pickedLabel.channelIndex,
+          rowIndex,
+          object: pickedLabel.object,
+          tooltip: getFeatureTooltip(layerId, pickInfo),
+        };
+      }
+
+      if (elem.type !== 'shapes') {
+        return undefined;
+      }
+
+      const shapeEvent = getShapePickEvent(layerId, pickInfo);
+      if (!shapeEvent) {
+        return undefined;
+      }
+      return {
+        elementType: 'shapes',
+        ...shapeEvent,
+        tooltip: getFeatureTooltip(layerId, pickInfo),
+      };
+    },
+    [getFeatureTooltip, getShapePickEvent]
+  );
+
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
     const vivProps: ImageLayerConfig[] = [];
     const loaded = loadedDataRef.current;
@@ -1476,6 +1570,7 @@ export function useLayerData(
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
+    getFeaturePickEvent,
     getShapePickEvent,
     isLoading,
     isBlocking,

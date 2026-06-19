@@ -32,19 +32,20 @@ MDV is the **source of truth** for viewer state. `SpatialCanvasViewer` is a **co
 MDV passes and updates (from chart / datastore / MobX):
 
 - `spatialData`, `coordinateSystem`
-- `layers` (`Record<string, LayerConfig>`) — visibility, opacity, per-layer style, and (for shapes v1) filter/colour driven by table rows
-- `layerOrder`
+- `renderStack.entries` — canonical order plus visibility, opacity, per-layer style, and (for shapes v1) filter/colour driven by table rows
 - `viewState` + `onViewStateChange`
-- optional `deckLayers` / `deckProps` for overlays MDV builds directly
+- `hostLayerResolver` for overlays MDV builds directly, plus optional `deckProps`
 
-When MDV selection or colour mappings change, MDV updates `layers` (and/or `deckLayers`) and React re-renders the viewer. This repo loads SpatialData geometry/images and maps **MDV’s layer config** to deck.gl layers.
+When MDV selection or colour mappings change, MDV updates the relevant stack
+entry props and React re-renders the viewer. This repo loads SpatialData
+geometry/images and maps **MDV’s render stack** to Viv/deck output.
 
 ### What `@spatialdata/vis` owns
 
 - SpatialData-backed discovery and async loading (images, shapes, labels)
 - Viv image path and labels bitmask path
-- Turning **caller-supplied** `LayerConfig` into deck layers (`useLayerData` / renderers)
-- Composing generated layers with caller `deckLayers` / `deckProps.layers`
+- Turning **caller-supplied** render stack entries into deck layers (`useLayerData` / renderers)
+- Composing generated layers with host overlays resolved from stack descriptors
 - Stable picking/tooltip hooks keyed by layer id (for MDV tooltip portals)
 
 ### What MDV owns (v1)
@@ -66,7 +67,9 @@ When MDV selection or colour mappings change, MDV updates `layers` (and/or `deck
 
 ### Custom deck layers (additive, not a replacement for state)
 
-MDV can still pass layers it constructs entirely in app code (for example from `spatial_context.ts`) via `deckLayers` or `deckProps.layers`. Those sit **above** SpatialData-generated layers in the composed stack.
+MDV can still resolve layers it constructs entirely in app code (for example
+from `spatial_context.ts`) from host overlay descriptors in `renderStack.entries`.
+Those can interleave with SpatialData-generated layers in the composed stack.
 
 Over time, patterns that repeat in MDV (shared shape styling, common overlays) may move into `@spatialdata/vis` or `@spatialdata/layers`; v1 does not require that migration.
 
@@ -94,14 +97,14 @@ Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; no
 
 ### Bespoke layer extension path
 
-- Primary extension for **state-owned** SpatialData layers: MDV-controlled `layers` + `layerOrder`
-- Primary extension for **fully custom** deck layers: `deckLayers` / `deckProps.layers` on `SpatialCanvasViewer`
-- Composition order: SpatialData-generated layers, then MDV `deckLayers`, with scale bar last (see `composeSpatialDeckLayers`)
+- Primary extension for **state-owned** SpatialData layers: MDV-controlled `renderStack.entries`
+- Primary extension for **fully custom** deck layers: host overlay entries plus `hostLayerResolver`
+- Composition order: canonical render-stack order, with unmanaged deck layers treated as compatibility output
 
 Practical checks for this branch:
 
-- [ ] MDV can drive a shapes layer only by updating `layers` props (no `SpatialCanvas` zustand store)
-- [ ] An MDV-style custom layer from `spatial_context.ts` can be supplied via `deckLayers` without importing `packages/vis/src/*` internals
+- [ ] MDV can drive a shapes layer only by updating render stack entry props (no `SpatialCanvas` zustand store)
+- [ ] An MDV-style custom layer from `spatial_context.ts` can be supplied through a host overlay resolver without importing `packages/vis/src/*` internals
 
 ## Release checklist (this branch)
 
@@ -135,11 +138,10 @@ Practical checks for this branch:
 
 - [x] `SpatialCanvasViewer` renders with externally controlled:
   - `coordinateSystem`
-  - `layers`
-  - `layerOrder`
+  - `renderStack`
   - `viewState`
-- [x] It composes caller deck layers above SpatialData-rendered layers.
-- [x] It allows MDV-owned tooltip flow (`renderTooltip={false}`, `onShapeHover`).
+- [x] It composes host overlays with SpatialData-rendered layers.
+- [x] It allows MDV-owned tooltip flow (`renderTooltip={false}`, `onFeatureHover`).
 - [x] It supports MDV-owned controller settings through `deckProps`.
 
 ### 3) MDV touchpoint checks

@@ -38,6 +38,7 @@ export type {
   UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
 export type {
+  SpatialFeaturePickEvent,
   SpatialCanvasViewerProps,
   SpatialCanvasViewerRenderTooltip,
 } from './SpatialCanvasViewer';

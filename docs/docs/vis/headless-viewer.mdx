@@ -96,7 +96,9 @@ function MyViewport({ spatialData, coordinateSystem, renderStack, viewState, onV
     onViewStateChange,
     width: width ?? 0,
     height: height ?? 0,
-    deckLayers: myCustomScatterLayer ? [myCustomScatterLayer] : undefined,
+    hostLayerResolver: (entry) => {
+      if (entry.source.hostLayerId === 'deck:scatter') return myCustomScatterLayer;
+    },
   });
 
   return (
@@ -116,7 +118,7 @@ function MyViewport({ spatialData, coordinateSystem, renderStack, viewState, onV
 ```
 
 `useSpatialCanvasRenderer` returns `deckLayers`, `vivLayerProps`, loading
-flags, bounds helpers, and shape pick/tooltip resolvers — same as inside
+flags, bounds helpers, and feature pick/tooltip resolvers — same as inside
 `SpatialCanvasViewer`.
 
 ## MDV-style host overlays
@@ -163,14 +165,15 @@ layer-stack interleaving.
 | `renderTooltip` | Behaviour |
 |-----------------|-----------|
 | `undefined` (default) | Built-in `SpatialFeatureTooltip` on hover |
-| `false` | No internal tooltip; use `onHover` / `onShapeHover` |
+| `false` | No internal tooltip; use `onFeatureHover` / raw `onHover` |
 | `(props) => <MyTooltip {...props} />` | Custom renderer; optional `tooltipContainer` for portals |
 
 ```tsx
 <SpatialCanvasViewer
   renderTooltip={false}
-  onShapeHover={(event) => {
-    // event.featureId, event.rowIndex, event.pickInfo, ...
+  onFeatureHover={(event) => {
+    // event.elementType is "shapes" or "labels".
+    // event.featureId, event.rowIndex, event.tooltip, event.pickInfo, ...
   }}
   onHover={(info) => {
     // raw deck PickingInfo for custom layers
@@ -180,6 +183,25 @@ layer-stack interleaving.
 
 For MDV-style outer-container tooltips, set `renderTooltip={false}` and route
 picks through your existing portal hook.
+
+## Serializable props vs runtime listeners
+
+`renderStack.entries` is the saved, serializable contract. Put element identity,
+visibility, opacity, channel selections, tooltip field names, feature-state
+records, and other renderer props there. Do not put functions, MobX observables,
+deck.gl layer instances, DOM refs, or event handlers in `entry.props`.
+
+Runtime attachments live beside the stack:
+
+- `hostLayerResolver(entry)` turns a host descriptor into one or more deck.gl
+  layers for this running application.
+- `onFeatureHover` / `onFeatureClick` receive a typed SpatialData feature event
+  for shapes and labels. The payload includes the stable stack `layerId`,
+  `elementKey`, `featureId`, optional table `rowIndex`, the raw `pickInfo`, and
+  the same tooltip payload used by `SpatialFeatureTooltip` when available.
+- `onShapeHover` / `onShapeClick` remain as shape-only compatibility callbacks.
+- raw `onHover` / `onClick` remain available for host layers or lower-level deck
+  integrations.
 
 ## Shapes: table-driven colour and filter state
 
@@ -239,7 +261,7 @@ Suggested experiments (matching the [MDV integration roadmap](./mdv-integration)
 2. **External controls** — Leva panel for coordinate system, visibility, opacity, channel colours.
 3. **Host overlay** — one `ScatterplotLayer` interleaved by descriptor and resolver.
 4. **Controlled view** — save/restore `viewState` in `sessionStorage`.
-5. **External tooltips** — `renderTooltip={false}` + log `onShapeHover` payloads.
+5. **External tooltips** — `renderTooltip={false}` + log `onFeatureHover` payloads.
 
 Install the prerelease for MDV smoke tests:
 

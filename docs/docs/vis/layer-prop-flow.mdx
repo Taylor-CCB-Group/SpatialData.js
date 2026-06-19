@@ -232,6 +232,21 @@ frame.
   `@spatialdata/layers` colour encoder. Do not add local feature-to-row
   precedence rules in `SpatialCanvas` or layer modules.
 
+### Runtime attachments are not layer props
+
+`renderStack.entries[*].props` is for serializable renderer input. Runtime
+functions and objects must stay outside that bag:
+
+- host overlay factories belong in `hostLayerResolver`
+- feature listeners belong in `onFeatureHover` / `onFeatureClick`
+- raw deck listeners belong in `onHover` / `onClick` or `deckProps`
+- tooltip portals belong in `tooltipContainer`
+
+These runtime attachments may read the resolved feature payload, including the
+same `SpatialFeatureTooltipData` used by built-in tooltips, but they must not be
+part of resource cache keys. Changing a listener should not reload images,
+geometry, bounds, shape prebuilds, or feature-state runtimes.
+
 ### Layer contract (`@spatialdata/layers`)
 
 - **`buildShapeFeatureStateRuntime`**: converts serializable `featureState`
