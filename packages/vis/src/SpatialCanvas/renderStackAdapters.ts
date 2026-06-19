@@ -4,13 +4,8 @@ import type {
   RenderStackSpatialEntry,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
-import type {
-  ImageLayerConfig,
-  LabelsLayerConfig,
-  LayerConfig,
-  PointsLayerConfig,
-  ShapesLayerConfig,
-} from './types';
+import { layerConfig } from './layerConfig';
+import type { LayerConfig } from './types';
 
 export type RenderStackHostLayerResolver = (
   entry: RenderStackHostEntry
@@ -29,26 +24,18 @@ function numberProp(props: Record<string, unknown>, key: string, fallback: numbe
 }
 
 function spatialEntryToLayerConfig(entry: RenderStackSpatialEntry): LayerConfig {
-  const base = {
-    ...entry.props,
-    id: entry.id,
-    elementKey: entry.source.elementKey,
-    visible: entry.visible,
-    opacity: numberProp(entry.props, 'opacity', 1),
-  };
-
-  // RenderStack props are JSON/runtime extension data. This is the narrow
-  // adapter boundary where they become the richer SpatialCanvas layer union.
-  switch (entry.source.elementType) {
-    case 'image':
-      return { ...base, type: 'image' } as ImageLayerConfig;
-    case 'shapes':
-      return { ...base, type: 'shapes' } as ShapesLayerConfig;
-    case 'points':
-      return { ...base, type: 'points' } as PointsLayerConfig;
-    case 'labels':
-      return { ...base, type: 'labels' } as LabelsLayerConfig;
-  }
+  // RenderStack props are JSON/runtime extension data. This is the narrow adapter
+  // boundary where they merge with typed SpatialCanvas layer fields.
+  return layerConfig(
+    entry.source.elementType,
+    {
+      id: entry.id,
+      elementKey: entry.source.elementKey,
+      visible: entry.visible,
+      opacity: numberProp(entry.props, 'opacity', 1),
+    },
+    entry.props
+  );
 }
 
 export function renderStackToLayerInputs(renderStack: RenderStack): RenderStackLayerInputs {

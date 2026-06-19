@@ -16,6 +16,7 @@ export { useSpatialViewState, useViewStateUrl } from './hooks';
 export { createSpatialCanvasStore } from './stores';
 export type { SpatialCanvasStoreApi } from './stores';
 export type * from './types';
+export { layerConfig } from './layerConfig';
 export { SpatialViewer } from './SpatialViewer';
 export type { SpatialViewerProps } from './SpatialViewer';
 export { VivSpatialViewer } from './VivSpatialViewer';

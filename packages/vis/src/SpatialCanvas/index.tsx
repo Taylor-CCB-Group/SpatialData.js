@@ -40,7 +40,8 @@ import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import type { SpatialCanvasStoreApi } from './stores';
-import type { AvailableElement, ElementsByType, LayerConfig, ViewState } from './types';
+import { layerConfig } from './layerConfig';
+import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
@@ -490,13 +491,12 @@ function SpatialCanvasInner({
       if (existing) {
         actions.toggleLayerVisibility(layerId);
       } else {
-        const config: LayerConfig = {
+        const config = layerConfig(element.type, {
           id: layerId,
-          type: element.type,
           elementKey: element.key,
           visible: true,
           opacity: 1,
-        };
+        });
         actions.addLayer(config);
       }
     },

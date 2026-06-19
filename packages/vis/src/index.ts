@@ -49,6 +49,7 @@ export {
   shouldAutoFitSpatialView,
   sortLayersByRenderStackOrder,
   useSpatialCanvasRenderer,
+  layerConfig,
 } from './SpatialCanvas/public';
 export type {
   SpatialCanvasStoreApi,
@@ -57,6 +58,7 @@ export type {
   SpatialCanvasStore,
   ViewState,
   LayerConfig,
+  LayerConfigByType,
   LayerType,
   AvailableElement,
   ElementsByType,
