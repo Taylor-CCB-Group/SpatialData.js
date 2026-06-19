@@ -1,6 +1,6 @@
 {
   "name": "@spatialdata/avivatorish",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Viv loaders, channel stats, and Zustand state (Avivator/MDV lineage) for spatial images",
   "type": "module",
   "module": "./dist/index.js",
