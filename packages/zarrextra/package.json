@@ -1,6 +1,6 @@
 {
   "name": "zarrextra",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Extra utilities for working with zarr stores using zarrita",
   "type": "module",
   "module": "./dist/index.js",
