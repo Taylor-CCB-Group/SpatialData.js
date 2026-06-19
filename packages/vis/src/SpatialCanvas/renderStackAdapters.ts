@@ -81,7 +81,7 @@ export function resolveRenderStackHostLayers(
     }
     if (Array.isArray(resolved)) {
       const compact = resolved.filter(Boolean);
-      layers.push(...(compact.length === 1 ? [compact[0].clone({ id: entry.id })] : compact));
+      layers.push(...compact.map((layer) => layer.clone({ id: entry.id })));
     } else {
       layers.push(resolved.clone({ id: entry.id }));
     }

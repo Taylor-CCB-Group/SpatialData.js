@@ -77,6 +77,29 @@ describe('render stack adapters', () => {
     expect(resolved.map((layer) => layer.id)).toEqual(['deck:scatter']);
   });
 
+  it('resolves multi-layer host descriptors into deck layers with stack ids', () => {
+    const stack = renderStackSchema.parse({
+      entries: [{ kind: 'host', id: 'deck:selection', source: { hostLayerId: 'selection' } }],
+    });
+    const resolved = resolveRenderStackHostLayers(stack, () => {
+      return [
+        new ScatterplotLayer({ id: 'runtime-selection-fill', data: [], getPosition: [0, 0] }),
+        new ScatterplotLayer({ id: 'runtime-selection-outline', data: [], getPosition: [0, 0] }),
+      ];
+    });
+
+    expect(resolved.map((layer) => layer.id)).toEqual(['deck:selection', 'deck:selection']);
+    expect(
+      sortLayersByRenderStackOrder(
+        [
+          new ScatterplotLayer({ id: 'spatial-labels', data: [], getPosition: [0, 0] }),
+          ...resolved,
+        ],
+        ['deck:selection', 'spatial-labels']
+      ).map((layer) => layer.id)
+    ).toEqual(['deck:selection', 'deck:selection', 'spatial-labels']);
+  });
+
   it('reports unknown host descriptors', () => {
     const stack = renderStackSchema.parse({
       entries: [{ kind: 'host', id: 'deck:missing', source: { hostLayerId: 'missing' } }],

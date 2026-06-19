@@ -12,30 +12,36 @@ export const renderStackSpatialElementTypeSchema = z.enum([
 
 const jsonishRecordSchema = z.record(z.string(), z.unknown()).default({});
 
-const renderStackEntryBaseSchema = z.object({
-  /** Stable logical id for saved config, UI rows, host overlays, and deck layer ordering. */
-  id: z.string().min(1),
-  /** Visibility is common stack state, independent of renderer-specific props. */
-  visible: z.boolean().optional().default(true),
-  /** Renderer props for this entry. Keep structural source identity out of this bag. */
-  props: jsonishRecordSchema.optional().default({}),
-});
+const renderStackEntryBaseSchema = z
+  .object({
+    /** Stable logical id for saved config, UI rows, host overlays, and deck layer ordering. */
+    id: z.string().min(1),
+    /** Visibility is common stack state, independent of renderer-specific props. */
+    visible: z.boolean().optional().default(true),
+    /** Renderer props for this entry. Keep structural source identity out of this bag. */
+    props: jsonishRecordSchema.optional().default({}),
+  })
+  .strict();
 
 export const renderStackSpatialEntrySchema = renderStackEntryBaseSchema.extend({
   kind: z.literal('spatial'),
-  source: z.object({
-    elementType: renderStackSpatialElementTypeSchema,
-    elementKey: z.string().min(1),
-    coordinateSystem: z.string().optional(),
-  }),
+  source: z
+    .object({
+      elementType: renderStackSpatialElementTypeSchema,
+      elementKey: z.string().min(1),
+      coordinateSystem: z.string().optional(),
+    })
+    .strict(),
 });
 
 export const renderStackHostEntrySchema = renderStackEntryBaseSchema.extend({
   kind: z.literal('host'),
-  source: z.object({
-    /** Host-owned stable descriptor, e.g. `deck:scatter` or `deck:selection`. */
-    hostLayerId: z.string().min(1),
-  }),
+  source: z
+    .object({
+      /** Host-owned stable descriptor, e.g. `deck:scatter` or `deck:selection`. */
+      hostLayerId: z.string().min(1),
+    })
+    .strict(),
 });
 
 export const renderStackGroupEntrySchema = renderStackEntryBaseSchema.extend({
@@ -53,10 +59,33 @@ export const renderStackEntrySchema = z.discriminatedUnion('kind', [
   renderStackGroupEntrySchema,
 ]);
 
-export const renderStackSchema = z.object({
-  schemaVersion: z.literal(RENDER_STACK_SCHEMA_VERSION).default(RENDER_STACK_SCHEMA_VERSION),
-  entries: z.array(renderStackEntrySchema).default([]),
-});
+export const renderStackSchema = z
+  .object({
+    schemaVersion: z.literal(RENDER_STACK_SCHEMA_VERSION).default(RENDER_STACK_SCHEMA_VERSION),
+    entries: z.array(renderStackEntrySchema).default([]),
+  })
+  .strict()
+  .superRefine((renderStack, ctx) => {
+    const seen = new Set<string>();
+    const duplicateIds = new Set<string>();
+
+    for (const entry of renderStack.entries) {
+      if (seen.has(entry.id)) {
+        duplicateIds.add(entry.id);
+      }
+      seen.add(entry.id);
+    }
+
+    if (duplicateIds.size > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entries'],
+        message: `Render stack entry ids must be unique; duplicate ids: ${Array.from(
+          duplicateIds
+        ).join(', ')}`,
+      });
+    }
+  });
 
 export type RenderStackSpatialElementType = z.infer<typeof renderStackSpatialElementTypeSchema>;
 export type RenderStackSpatialEntry = z.infer<typeof renderStackSpatialEntrySchema>;

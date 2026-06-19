@@ -46,6 +46,57 @@ describe('renderStackSchema', () => {
 
     expect(result.success).toBe(false);
   });
+
+  it('rejects duplicate stack entry ids', () => {
+    const result = renderStackSchema.safeParse({
+      entries: [
+        {
+          kind: 'spatial',
+          id: 'labels-cells',
+          source: { elementType: 'labels', elementKey: 'cells' },
+        },
+        {
+          kind: 'host',
+          id: 'labels-cells',
+          source: { hostLayerId: 'deck:selection' },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]).toMatchObject({
+        path: ['entries'],
+        message: 'Render stack entry ids must be unique; duplicate ids: labels-cells',
+      });
+    }
+  });
+
+  it('rejects unknown keys outside renderer props', () => {
+    const result = renderStackSchema.safeParse({
+      unexpected: true,
+      entries: [
+        {
+          kind: 'spatial',
+          id: 'labels-cells',
+          source: {
+            elementType: 'labels',
+            elementKey: 'cells',
+            unexpected: true,
+          },
+          unexpected: true,
+          props: { extensionProp: true },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path.join('.'))).toEqual(
+        expect.arrayContaining(['', 'entries.0', 'entries.0.source'])
+      );
+    }
+  });
 });
 
 describe('render-stack entry schemas', () => {
