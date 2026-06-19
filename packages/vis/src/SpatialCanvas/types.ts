@@ -95,6 +95,7 @@ export interface PointsLayerConfig extends BaseLayerConfig {
   // should be able to filter etc. Some kind of LOD...
   pointSize?: number;
   color?: [number, number, number, number];
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

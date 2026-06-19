@@ -21,13 +21,13 @@ import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import {
+  type RenderStackHostLayerResolver,
+  type RenderStackLayerInputs,
+  type UnknownRenderStackHostLayerHandler,
   renderStackOrder,
   renderStackToLayerInputs,
   resolveRenderStackHostLayers,
   sortLayersByRenderStackOrder,
-  type RenderStackHostLayerResolver,
-  type RenderStackLayerInputs,
-  type UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import {
@@ -85,6 +85,7 @@ export interface SpatialCanvasViewerProps {
    * When true (default), hover tooltips aggregate picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 interface AutoFitInput {
@@ -146,6 +147,7 @@ export interface UseSpatialCanvasRendererOptions {
   hostLayerResolver?: RenderStackHostLayerResolver;
   onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
   autoFit?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -161,6 +163,7 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   externalDeckLayers?: Layer[];
   sortDeckLayers?: boolean;
   autoFit?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -176,6 +179,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   externalDeckLayers,
   sortDeckLayers,
   autoFit = true,
+  experimentalOptimizations = 'auto',
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   const availableElements = useMemo(() => {
     if (!spatialData || !coordinateSystem) {
@@ -191,7 +195,8 @@ export function useSpatialCanvasRendererFromLayerInputs({
     layerInputs.layerOrder,
     availableElements,
     coordinateSystem,
-    spatialData ?? undefined
+    spatialData ?? undefined,
+    experimentalOptimizations
   );
 
   const generatedDeckLayers = layerData.getLayers();
@@ -269,6 +274,7 @@ export function useSpatialCanvasRenderer({
   hostLayerResolver,
   onUnknownHostLayer,
   autoFit = true,
+  experimentalOptimizations = 'auto',
 }: UseSpatialCanvasRendererOptions) {
   const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
   const hostDeckLayers = useMemo(
@@ -292,6 +298,7 @@ export function useSpatialCanvasRenderer({
     hostDeckLayers,
     sortDeckLayers: true,
     autoFit,
+    experimentalOptimizations,
   });
 }
 
@@ -348,6 +355,7 @@ function SpatialCanvasViewerInner({
   autoFit = true,
   style,
   aggregateHoverTooltips = true,
+  experimentalOptimizations = 'auto',
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -385,6 +393,7 @@ function SpatialCanvasViewerInner({
     externalDeckLayers,
     sortDeckLayers: Boolean(renderStack),
     autoFit,
+    experimentalOptimizations,
   });
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),

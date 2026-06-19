@@ -494,6 +494,10 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
     });
     return renderData;
   }
+
+  async loadShapesInBounds(options: Parameters<SpatialDataShapesSource['loadShapesInBounds']>[1]) {
+    return this.vShapes.loadShapesInBounds(`shapes/${this.key}`, options);
+  }
 }
 
 // ============================================
@@ -533,6 +537,14 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     //IsADirectoryError: [Errno 21] Is a directory: '/MySpatialData.zarr/points/key/points.parquet'
     //we have points.parquet/part.0.parquet etc.
     return this.vPoints.loadPoints(`points/${this.key}`);
+  }
+
+  async getPointsTilingMetadata() {
+    return this.vPoints.getPointsTilingMetadata(`points/${this.key}`);
+  }
+
+  async loadPointsInBounds(options: Parameters<SpatialDataPointsSource['loadPointsInBounds']>[1]) {
+    return this.vPoints.loadPointsInBounds(`points/${this.key}`, options);
   }
 }
 

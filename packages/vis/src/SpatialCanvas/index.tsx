@@ -39,8 +39,8 @@ import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
-import type { SpatialCanvasStoreApi } from './stores';
 import { layerConfig } from './layerConfig';
+import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
@@ -365,12 +365,14 @@ interface SpatialCanvasInnerProps {
    * When true (default), hover tooltips include picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
   aggregateHoverTooltips = true,
+  experimentalOptimizations = 'auto',
 }: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [measureRef, { width, height }] = useMeasure();
@@ -426,6 +428,7 @@ function SpatialCanvasInner({
     // are managed entirely by ViewerSection so this hook never re-runs on pan.
     width: vw,
     height: vh,
+    experimentalOptimizations,
   });
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
@@ -869,6 +872,7 @@ export interface SpatialCanvasProps {
    * When true (default), hover tooltips aggregate picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 /**
@@ -924,6 +928,7 @@ export default function SpatialCanvas({
   tooltipContainer,
   renderTooltip,
   aggregateHoverTooltips,
+  experimentalOptimizations,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -932,6 +937,7 @@ export default function SpatialCanvas({
           tooltipContainer={tooltipContainer}
           renderTooltip={renderTooltip}
           aggregateHoverTooltips={aggregateHoverTooltips}
+          experimentalOptimizations={experimentalOptimizations}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

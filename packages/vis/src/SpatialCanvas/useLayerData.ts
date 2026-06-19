@@ -23,6 +23,7 @@ import {
   type LabelsElement,
   type LabelsTooltipMetadata,
   type PointsElement,
+  type PointsTilingMetadata,
   type ShapesElement,
   type ShapesRenderData,
   type ShapesTooltipMetadata,
@@ -101,6 +102,7 @@ export interface WorldBoundsCacheEntry {
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
+  pointTilingMetadata: Map<string, PointsTilingMetadata | null>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
   labels: Map<string, LabelsLoaderData>;
   /**
@@ -315,6 +317,33 @@ function getWorldBoundsCacheKey(elem: AvailableElement): string {
   return `${elem.type}:${elem.key}`;
 }
 
+function transformAxisAlignedBounds(
+  bounds: AxisAlignedBounds,
+  modelMatrix: Matrix4
+): AxisAlignedBounds | null {
+  const corners: [number, number, number][] = [
+    [bounds.minX, bounds.minY, 0],
+    [bounds.maxX, bounds.minY, 0],
+    [bounds.maxX, bounds.maxY, 0],
+    [bounds.minX, bounds.maxY, 0],
+  ];
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const corner of corners) {
+    const transformed = modelMatrix.transformAsPoint(corner);
+    if (!Number.isFinite(transformed[0]) || !Number.isFinite(transformed[1])) {
+      return null;
+    }
+    minX = Math.min(minX, transformed[0]);
+    minY = Math.min(minY, transformed[1]);
+    maxX = Math.max(maxX, transformed[0]);
+    maxY = Math.max(maxY, transformed[1]);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 export function resolveLayerElement(
   layerId: string,
   config: LayerConfig | undefined,
@@ -448,7 +477,8 @@ export function useLayerData(
   layerOrder: string[],
   availableElements: ElementsByType,
   coordinateSystem: string | null,
-  spatialData?: SpatialData
+  spatialData?: SpatialData,
+  experimentalOptimizations: 'auto' | 'off' = 'auto'
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -456,6 +486,7 @@ export function useLayerData(
   const loadedDataRef = useRef<LoadedData>({
     shapes: new Map(),
     points: new Map(),
+    pointTilingMetadata: new Map(),
     images: new Map(),
     labels: new Map(),
     shapePrebuiltData: new Map(),
@@ -546,6 +577,7 @@ export function useLayerData(
         loadFillColor: boolean;
         loadImage: boolean;
         loadPoints: boolean;
+        loadPointTilingMetadata: boolean;
         loadLabels: boolean;
       }> = [];
 
@@ -575,6 +607,7 @@ export function useLayerData(
               loadFillColor,
               loadImage: false,
               loadPoints: false,
+              loadPointTilingMetadata: false,
               loadLabels: false,
             });
           }
@@ -592,20 +625,32 @@ export function useLayerData(
               loadFillColor: false,
               loadImage: false,
               loadPoints: false,
+              loadPointTilingMetadata: false,
               loadLabels,
             });
           }
-        } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
-          toLoad.push({
-            layerId,
-            element: elem,
-            loadGeometry: false,
-            loadTooltip: false,
-            loadFillColor: false,
-            loadImage: false,
-            loadPoints: true,
-            loadLabels: false,
-          });
+        } else if (config.type === 'points') {
+          const wantsOptimized =
+            experimentalOptimizations !== 'off' && config.experimentalOptimizations !== 'off';
+          const metadataKnown = loaded.pointTilingMetadata.has(elem.key);
+          const tiledMetadata = loaded.pointTilingMetadata.get(elem.key);
+          const loadPointTilingMetadata = wantsOptimized && !metadataKnown;
+          const loadPoints =
+            !loaded.points.has(elem.key) &&
+            (!wantsOptimized || (metadataKnown && tiledMetadata === null));
+          if (loadPointTilingMetadata || loadPoints) {
+            toLoad.push({
+              layerId,
+              element: elem,
+              loadGeometry: false,
+              loadTooltip: false,
+              loadFillColor: false,
+              loadImage: false,
+              loadPoints,
+              loadPointTilingMetadata,
+              loadLabels: false,
+            });
+          }
         } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
           toLoad.push({
             layerId,
@@ -615,6 +660,7 @@ export function useLayerData(
             loadFillColor: false,
             loadImage: true,
             loadPoints: false,
+            loadPointTilingMetadata: false,
             loadLabels: false,
           });
         }
@@ -633,6 +679,7 @@ export function useLayerData(
             loadFillColor,
             loadImage,
             loadPoints,
+            loadPointTilingMetadata,
             loadLabels,
           }) => {
             if (element.type === 'shapes') {
@@ -769,17 +816,38 @@ export function useLayerData(
                   }
                 }
               }
-            } else if (element.type === 'points' && loadPoints) {
-              try {
-                setLayerResourceStatus(layerId, 'geometry', 'loading');
-                // todo better type-guards etc here.
-                const e = element.element as PointsElement;
-                const data = await e.loadPoints();
-                loadedDataRef.current.points.set(element.key, data);
-                setLayerResourceStatus(layerId, 'geometry', 'ready');
-              } catch (error) {
-                setLayerResourceStatus(layerId, 'geometry', 'error');
-                console.error(`Failed to load points for ${layerId}:`, error);
+            } else if (element.type === 'points') {
+              const e = element.element as PointsElement;
+              if (loadPointTilingMetadata) {
+                try {
+                  setLayerResourceStatus(layerId, 'geometry', 'loading');
+                  const metadata = await e.getPointsTilingMetadata();
+                  const renderableMetadata =
+                    metadata?.supportsRowGroupRangeReads && metadata.bounds ? metadata : null;
+                  loadedDataRef.current.pointTilingMetadata.set(element.key, renderableMetadata);
+                  setLayerResourceStatus(
+                    layerId,
+                    'geometry',
+                    renderableMetadata ? 'ready' : 'idle'
+                  );
+                  notifyLoadedDataChanged();
+                } catch (error) {
+                  loadedDataRef.current.pointTilingMetadata.set(element.key, null);
+                  setLayerResourceStatus(layerId, 'geometry', 'error');
+                  console.error(`Failed to inspect point tiling metadata for ${layerId}:`, error);
+                  notifyLoadedDataChanged();
+                }
+              }
+              if (loadPoints) {
+                try {
+                  setLayerResourceStatus(layerId, 'geometry', 'loading');
+                  const data = await e.loadPoints();
+                  loadedDataRef.current.points.set(element.key, data);
+                  setLayerResourceStatus(layerId, 'geometry', 'ready');
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'geometry', 'error');
+                  console.error(`Failed to load points for ${layerId}:`, error);
+                }
               }
             } else if (element.type === 'image' && loadImage) {
               try {
@@ -1048,6 +1116,7 @@ export function useLayerData(
     spatialData,
     setLayerResourceStatus,
     notifyLoadedDataChanged,
+    experimentalOptimizations,
   ]);
 
   const reloadElement = useCallback((type: string, key: string) => {
@@ -1064,6 +1133,7 @@ export function useLayerData(
       }
     } else if (type === 'points') {
       loaded.points.delete(key);
+      loaded.pointTilingMetadata.delete(key);
       loaded.worldBounds.delete(`points:${key}`);
     } else if (type === 'image') {
       loaded.images.delete(key);
@@ -1093,7 +1163,10 @@ export function useLayerData(
       return loadedDataRef.current.shapes.has(elem.key);
     }
     if (elem.type === 'points') {
-      return loadedDataRef.current.points.has(elem.key);
+      return (
+        loadedDataRef.current.points.has(elem.key) ||
+        Boolean(loadedDataRef.current.pointTilingMetadata.get(elem.key)?.bounds)
+      );
     }
     if (elem.type === 'image') {
       return loadedDataRef.current.images.has(elem.key);
@@ -1134,13 +1207,19 @@ export function useLayerData(
         }
         if (elem.type === 'points') {
           const pointData = loaded.points.get(elem.key);
-          if (!pointData) return null;
+          const tilingMetadata = loaded.pointTilingMetadata.get(elem.key);
+          if (!pointData && !tilingMetadata?.bounds) return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
             getWorldBoundsCacheKey(elem),
-            pointData,
+            pointData ?? tilingMetadata,
             elem.transform,
-            () => boundsFromPoints(pointData, elem.transform, false)
+            () =>
+              pointData
+                ? boundsFromPoints(pointData, elem.transform, false)
+                : tilingMetadata?.bounds
+                  ? transformAxisAlignedBounds(tilingMetadata.bounds, elem.transform)
+                  : null
           );
         }
         if (elem.type === 'image') {
@@ -1238,7 +1317,8 @@ export function useLayerData(
         }
       } else if (config.type === 'points') {
         const pointData = loaded.points.get(elem.key);
-        if (pointData) {
+        const pointTilingMetadata = loaded.pointTilingMetadata.get(elem.key) ?? undefined;
+        if (pointData || pointTilingMetadata) {
           const layer = renderPointsLayer({
             element: elem.element as PointsElement,
             id: layerId,
@@ -1248,6 +1328,7 @@ export function useLayerData(
             pointSize: config.pointSize,
             color: config.color,
             pointData,
+            pointTilingMetadata,
           });
           if (layer) deckLayers.push(layer);
         }
