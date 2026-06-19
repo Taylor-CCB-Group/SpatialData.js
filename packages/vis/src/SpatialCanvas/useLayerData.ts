@@ -157,9 +157,9 @@ export interface LabelsLoaderData extends LabelsTooltipMetadata {
 }
 
 export interface ShapeFeaturePickEventData {
-  elementType: 'shapes';
+  elementKind: 'shapes';
   layerId: string;
-  elementKey: string;
+  element: ShapesElement;
   featureId: string;
   featureIndex: number;
   rowIndex?: number;
@@ -168,9 +168,9 @@ export interface ShapeFeaturePickEventData {
 }
 
 export interface LabelFeaturePickEventData {
-  elementType: 'labels';
+  elementKind: 'labels';
   layerId: string;
-  elementKey: string;
+  element: LabelsElement;
   featureId: string;
   labelId: string;
   channelIndex?: number;
@@ -289,6 +289,26 @@ function serializeRasterSelections(selections: RasterSelection[]): string {
 
 function getElementMapKey(config: Pick<LayerConfig, 'type' | 'elementKey'>): string {
   return `${config.type}:${config.elementKey}`;
+}
+
+function isLabelsAvailableElement(element: AvailableElement): element is Omit<
+  AvailableElement,
+  'type' | 'element'
+> & {
+  type: 'labels';
+  element: LabelsElement;
+} {
+  return element.type === 'labels' && element.element.kind === 'labels';
+}
+
+function isShapesAvailableElement(element: AvailableElement): element is Omit<
+  AvailableElement,
+  'type' | 'element'
+> & {
+  type: 'shapes';
+  element: ShapesElement;
+} {
+  return element.type === 'shapes' && element.element.kind === 'shapes';
 }
 
 function getWorldBoundsCacheKey(elem: AvailableElement): string {
@@ -1317,7 +1337,7 @@ export function useLayerData(
         layerId,
       };
 
-      if (elem.type === 'labels') {
+      if (isLabelsAvailableElement(elem)) {
         const pickedLabel = getPickedLabelObject(pickInfo.object);
         if (!pickedLabel) {
           return undefined;
@@ -1356,7 +1376,7 @@ export function useLayerData(
         );
       }
 
-      if (elem.type !== 'shapes') {
+      if (!isShapesAvailableElement(elem)) {
         return undefined;
       }
 
@@ -1445,7 +1465,7 @@ export function useLayerData(
         return undefined;
       }
 
-      if (elem.type === 'labels') {
+      if (isLabelsAvailableElement(elem)) {
         const pickedLabel = getPickedLabelObject(pickInfo.object);
         if (!pickedLabel) {
           return undefined;
@@ -1454,9 +1474,9 @@ export function useLayerData(
           .get(elem.key)
           ?.tooltipRowIndexByFeatureId?.get(pickedLabel.labelId);
         return {
-          elementType: 'labels',
+          elementKind: 'labels',
           layerId,
-          elementKey: elem.key,
+          element: elem.element,
           featureId: pickedLabel.labelId,
           labelId: pickedLabel.labelId,
           channelIndex: pickedLabel.channelIndex,
@@ -1466,7 +1486,7 @@ export function useLayerData(
         };
       }
 
-      if (elem.type !== 'shapes') {
+      if (!isShapesAvailableElement(elem)) {
         return undefined;
       }
 
@@ -1475,8 +1495,13 @@ export function useLayerData(
         return undefined;
       }
       return {
-        elementType: 'shapes',
-        ...shapeEvent,
+        elementKind: 'shapes',
+        layerId: shapeEvent.layerId,
+        element: elem.element,
+        featureId: shapeEvent.featureId,
+        featureIndex: shapeEvent.featureIndex,
+        rowIndex: shapeEvent.rowIndex,
+        object: shapeEvent.object,
         tooltip: getFeatureTooltip(layerId, pickInfo),
       };
     },

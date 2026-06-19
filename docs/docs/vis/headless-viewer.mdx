@@ -172,8 +172,14 @@ layer-stack interleaving.
 <SpatialCanvasViewer
   renderTooltip={false}
   onFeatureHover={(event) => {
-    // event.elementType is "shapes" or "labels".
-    // event.featureId, event.rowIndex, event.tooltip, event.pickInfo, ...
+    // event.elementKind is "shapes" or "labels".
+    // event.element.key, event.featureId, event.rowIndex, event.tooltip, event.pickInfo, ...
+  }}
+  onFeatureClick={(event) => {
+    if (event.elementKind !== 'labels') return;
+    if (event.element.key !== 'blobs_labels') return;
+
+    // event.labelId and event.element are narrowed here.
   }}
   onHover={(info) => {
     // raw deck PickingInfo for custom layers
@@ -197,8 +203,10 @@ Runtime attachments live beside the stack:
   layers for this running application.
 - `onFeatureHover` / `onFeatureClick` receive a typed SpatialData feature event
   for shapes and labels. The payload includes the stable stack `layerId`,
-  `elementKey`, `featureId`, optional table `rowIndex`, the raw `pickInfo`, and
-  the same tooltip payload used by `SpatialFeatureTooltip` when available.
+  `elementKind` for TypeScript narrowing, resolved `element` (use
+  `event.element.kind` and `event.element.key`), current `spatialData`,
+  `featureId`, optional table `rowIndex`, the raw `pickInfo`, and the same
+  tooltip payload used by `SpatialFeatureTooltip` when available.
 - `onShapeHover` / `onShapeClick` remain as shape-only compatibility callbacks.
 - raw `onHover` / `onClick` remain available for host layers or lower-level deck
   integrations.

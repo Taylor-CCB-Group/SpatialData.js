@@ -30,17 +30,30 @@ import {
   type UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
-import { type SpatialFeaturePickEventData, useLayerData } from './useLayerData';
+import {
+  type LabelFeaturePickEventData,
+  type ShapeFeaturePickEventData,
+  useLayerData,
+} from './useLayerData';
 import { getAvailableElements } from './utils';
 
 export type SpatialCanvasViewerRenderTooltip =
   | false
   | ((props: SpatialCanvasTooltipRenderProps) => ReactNode);
 
-export type SpatialFeaturePickEvent = SpatialFeaturePickEventData & {
+type SpatialFeaturePickEventRuntimeFields = {
   coordinateSystem: string | null;
+  spatialData?: SpatialData | null;
   pickInfo: PickingInfo;
 };
+
+export type ShapesSpatialFeaturePickEvent = ShapeFeaturePickEventData &
+  SpatialFeaturePickEventRuntimeFields;
+
+export type LabelsSpatialFeaturePickEvent = LabelFeaturePickEventData &
+  SpatialFeaturePickEventRuntimeFields;
+
+export type SpatialFeaturePickEvent = ShapesSpatialFeaturePickEvent | LabelsSpatialFeaturePickEvent;
 
 export interface SpatialCanvasViewerProps {
   spatialData?: SpatialData | null;
@@ -188,13 +201,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
       ...(externalDeckLayers ?? []),
     ]);
     return sortDeckLayers ? sortLayersByRenderStackOrder(composed, resolvedLayerOrder) : composed;
-  }, [
-    externalDeckLayers,
-    generatedDeckLayers,
-    hostDeckLayers,
-    resolvedLayerOrder,
-    sortDeckLayers,
-  ]);
+  }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, resolvedLayerOrder, sortDeckLayers]);
   const vivLayerProps = layerData.getVivLayerProps();
 
   const enabledLayerIds = useMemo(() => {
@@ -401,6 +408,7 @@ function SpatialCanvasViewerInner({
         onFeatureHover?.({
           ...featurePickEvent,
           coordinateSystem,
+          spatialData,
           pickInfo: info,
         });
       }
@@ -434,6 +442,7 @@ function SpatialCanvasViewerInner({
       onShapeHover,
       renderTooltip,
       renderer,
+      spatialData,
     ]
   );
 
@@ -453,6 +462,7 @@ function SpatialCanvasViewerInner({
         onFeatureClick?.({
           ...featurePickEvent,
           coordinateSystem,
+          spatialData,
           pickInfo: info,
         });
       }
@@ -468,7 +478,7 @@ function SpatialCanvasViewerInner({
         });
       }
     },
-    [coordinateSystem, onClick, onFeatureClick, onShapeClick, renderer]
+    [coordinateSystem, onClick, onFeatureClick, onShapeClick, renderer, spatialData]
   );
 
   const handleViewerRef = useCallback(
