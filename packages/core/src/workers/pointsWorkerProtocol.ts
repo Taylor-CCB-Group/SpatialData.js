@@ -5,6 +5,20 @@ export type ParquetRowGroupBytesChunk = {
   schemaBytes: Uint8Array;
   rowGroupBytes: Uint8Array;
   rowGroupIndex: number;
+  /** Dataset-wide row group index (for morton sentinel handling). */
+  globalRowGroupIndex?: number;
+};
+
+export type ParquetWorkerPayload = {
+  parts?: Uint8Array[];
+  rowGroups?: ParquetRowGroupBytesChunk[];
+};
+
+export type PointsBounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 };
 
 export type PointsWorkerRequest =
@@ -46,18 +60,49 @@ export type PointsWorkerRequest =
     }
   | {
       type: 'scanParquetFeatureCounts';
-      parts: Uint8Array[];
+      parts?: Uint8Array[];
+      rowGroups?: ParquetRowGroupBytesChunk[];
       featureKey: string;
       featureCodeColumnName?: string;
     }
   | {
-      type: 'scanParquetByFeatureCodes';
+      type: 'scanParquetFeatureCatalog';
+      rowGroups?: ParquetRowGroupBytesChunk[];
       parts: Uint8Array[];
+      columns: string[];
+      featureKey: string;
+      featureCodeColumnName?: string;
+      skipMortonSentinels?: boolean;
+    }
+  | {
+      type: 'decodeParquetGeometryCapped';
+      parts?: Uint8Array[];
+      rowGroups?: ParquetRowGroupBytesChunk[];
+      axisNames: string[];
+      columns: string[];
+      maxRows: number;
+      featureKey?: string;
+      featureCodeColumnName?: string;
+      featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
+    }
+  | {
+      type: 'scanParquetByFeatureCodes';
+      parts?: Uint8Array[];
+      rowGroups?: ParquetRowGroupBytesChunk[];
       axisNames: string[];
       featureKey: string;
       featureCodeColumnName?: string;
       featureCodes: readonly number[];
       memoryCap: number;
+    }
+  | {
+      type: 'scanMortonRowGroupsInBounds';
+      rowGroups: ParquetRowGroupBytesChunk[];
+      bounds: PointsBounds;
+      axisNames: string[];
+      mortonCodeColumnName: string;
+      featureCodeColumnName?: string;
+      featureCodes?: readonly number[];
     };
 
 export type PointsWorkerColumnarResult = {
@@ -66,9 +111,10 @@ export type PointsWorkerColumnarResult = {
   xs: Float32Array;
   ys: Float32Array;
   zs?: Float32Array;
+  featureCodes?: Int32Array;
 };
 
-export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind'> & {
+export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind' | 'featureCodes'> & {
   kind: 'columnarScan';
   matchedRows: number;
   scannedRows: number;

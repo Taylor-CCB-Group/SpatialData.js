@@ -394,4 +394,26 @@ PY`,
     expect(decodeSpy).toHaveBeenCalled();
     expect([...featureCodes!]).toEqual([...workerCodes]);
   });
+
+  it('delegates oversized feature catalog scan to the points worker when enabled', async () => {
+    const workerCatalog = {
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'gene_a' },
+        { code: 1, name: 'gene_b' },
+      ],
+    };
+    vi.spyOn(pointsWorkerClient, 'ensurePointsWorker').mockImplementation(() => {});
+    vi.spyOn(pointsWorkerClient, 'isPointsWorkerEnabled').mockReturnValue(true);
+    const catalogSpy = vi
+      .spyOn(pointsWorkerClient, 'scanParquetFeatureCatalogInWorker')
+      .mockResolvedValue(workerCatalog);
+    vi.spyOn(source, 'resolveParquetRowCount' as keyof SpatialDataPointsSource).mockResolvedValue(
+      5_000_000
+    );
+
+    const catalog = await source.listPointsFeatures('points/transcripts');
+    expect(catalogSpy).toHaveBeenCalled();
+    expect(catalog).toEqual(workerCatalog);
+  });
 });

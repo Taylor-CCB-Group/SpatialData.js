@@ -679,6 +679,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     schemaBytes: Uint8Array;
     rowGroupBytes: Uint8Array;
     rowGroupIndex: number;
+    globalRowGroupIndex: number;
   } | null> {
     const { store } = this.storeRoot;
     if (!store.getRange) {
@@ -709,14 +710,12 @@ export default class SpatialDataTableSource extends AnnDataSource {
         schemaBytes: part.schemaBytes,
         rowGroupBytes,
         rowGroupIndex: relativeRowGroupIndex,
+        globalRowGroupIndex: rowGroupIndex,
       };
     }
     return null;
   }
 
-  /**
-   * Row-group byte payloads for up to {@link maxRows}, suitable for worker-side decode.
-   */
   protected async readParquetRowGroupsBytesCapped(
     parquetPath: string,
     maxRows: number
@@ -755,6 +754,31 @@ export default class SpatialDataTableSource extends AnnDataSource {
       }
     }
     return chunks;
+  }
+
+  /**
+   * Row-group and part byte payloads for worker-side parquet decode.
+   */
+  protected async readParquetWorkerPayload(
+    parquetPath: string,
+    options: { maxRows: number; fullPartsForFallback?: boolean }
+  ): Promise<{
+    rowGroups: Array<{
+      schemaBytes: Uint8Array;
+      rowGroupBytes: Uint8Array;
+      rowGroupIndex: number;
+    }>;
+    parts: Uint8Array[];
+  }> {
+    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    const rowGroups = canUseRowGroups
+      ? await this.readParquetRowGroupsBytesCapped(parquetPath, options.maxRows)
+      : [];
+    const partsMaxRows = options.fullPartsForFallback
+      ? Number.POSITIVE_INFINITY
+      : options.maxRows;
+    const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, partsMaxRows);
+    return { rowGroups, parts };
   }
 
   async loadParquetRowGroupByGroupIndex(

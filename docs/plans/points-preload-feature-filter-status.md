@@ -129,15 +129,15 @@ The points worker is **enabled in the vis demo** via
 | Operation | Worker? | Notes |
 |-----------|---------|-------|
 | Feature filter on preloaded batch | **Yes** | `filterColumnarByFeatureCodesInWorker` in `PointsLayer` |
-| Geometry preload (`loadPoints`) | **No** | Main thread; `loadParquetTableCapped` |
+| Geometry preload (`loadPoints`) | **Yes** | `decodeParquetGeometryCappedInWorker`; main-thread fallback |
 | Row feature codes (`loadRowFeatureCodes`) | **Yes** | Worker decode via row-group bytes or part bytes; main-thread fallback |
-| Feature catalog (large, dict-only) | **No** | Main thread; **full `loadParquetTable`** fallback |
-| Feature counts | **Sometimes** | Only exposed when an explicit feature-code column validates code/name mapping |
-| Opt-in full-dataset filter scan | **Yes** | `fullDatasetFeatureScan: true` + `loadPointsMatchingFeatureCodes` |
+| Feature catalog (large, dict-only) | **Yes** | `scanParquetFeatureCatalogInWorker`; dict fallback via full parts in worker |
+| Feature counts | **Yes** | `scanParquetFeatureCountsInWorker` (row groups or parts); main-thread fallback |
+| Morton viewport tiles | **Yes** | `scanMortonRowGroupsInBoundsInWorker`; main-thread fallback |
+| Opt-in full-dataset filter scan | **Yes** | `scanParquetByFeatureCodesInWorker` (row groups or parts) |
 
-**Takeaway:** workers are used for **in-memory filter** after preload, not for
-the heavy parquet paths that still dominate startup and catalog time. This is an
-inconsistency worth cleaning up.
+**Takeaway:** parquet decode and table scans run on the points worker when enabled;
+main thread does metadata resolution and async byte-range I/O only.
 
 ---
 

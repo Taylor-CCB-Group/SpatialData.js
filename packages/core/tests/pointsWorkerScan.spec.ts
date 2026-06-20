@@ -2,7 +2,9 @@ import { tableFromArrays, tableToIPC } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import {
   decodeParquetRowGroupsToTable,
+  extractGeometryColumnar,
   extractRowFeatureCodesFromTable,
+  scanFeatureCatalogFromPayload,
 } from '../src/workers/pointsWorkerScan.js';
 
 function mockReadParquetRowGroup(
@@ -64,5 +66,57 @@ describe('extractRowFeatureCodesFromTable with featureCodeByName', () => {
       featureCodeByName
     );
     expect([...codes]).toEqual([0, 1, 0]);
+  });
+});
+
+describe('extractGeometryColumnar', () => {
+  it('returns float32 axis columns', () => {
+    const table = tableFromArrays({
+      x: [0, 1],
+      y: [2, 3],
+    });
+    const geometry = extractGeometryColumnar(table, ['x', 'y']);
+    expect(geometry.shape).toEqual([2, 2]);
+    expect([...geometry.xs]).toEqual([0, 1]);
+    expect([...geometry.ys]).toEqual([2, 3]);
+  });
+});
+
+function mockReadParquet(
+  rows: Array<{ name: string; code: number }>
+): (bytes: Uint8Array, options?: { columns?: string[] }) => { intoIPCStream(): Uint8Array } {
+  return () => {
+    const table = tableFromArrays({
+      feature_name: rows.map((row) => row.name),
+      feature_name_codes: Int32Array.from(rows.map((row) => row.code)),
+    });
+    return { intoIPCStream: () => tableToIPC(table) };
+  };
+}
+
+describe('scanFeatureCatalogFromPayload', () => {
+  it('accumulates catalog entries from row groups', async () => {
+    const catalog = await scanFeatureCatalogFromPayload(
+      mockReadParquet([]),
+      mockReadParquetRowGroup([
+        [
+          { name: 'gene_a', code: 0 },
+          { name: 'gene_b', code: 1 },
+        ],
+      ]),
+      {
+        rowGroups: [
+          { schemaBytes: new Uint8Array(0), rowGroupBytes: new Uint8Array(0), rowGroupIndex: 0 },
+        ],
+        parts: [new Uint8Array(0)],
+        columns: ['feature_name', 'feature_name_codes'],
+        featureKey: 'feature_name',
+        featureCodeColumnName: 'feature_name_codes',
+      }
+    );
+    expect(catalog?.entries).toEqual([
+      { code: 0, name: 'gene_a' },
+      { code: 1, name: 'gene_b' },
+    ]);
   });
 });

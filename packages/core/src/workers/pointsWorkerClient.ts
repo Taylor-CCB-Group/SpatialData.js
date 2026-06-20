@@ -4,6 +4,8 @@ import type { PointsFeatureCatalog } from '../pointsTiling.js';
 import {
   columnarDataFromWorkerResult,
   type ParquetRowGroupBytesChunk,
+  type ParquetWorkerPayload,
+  type PointsBounds,
   type PointsWorkerMessage,
   type PointsWorkerRequest,
   type PointsWorkerResponse,
@@ -64,21 +66,36 @@ function postRequest<T>(request: PointsWorkerRequest, transferables: Transferabl
   });
 }
 
-function transferablesForDecodeRowFeatureCodes(
-  request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
+export function transferablesForParquetPayload(
+  parts?: Uint8Array[],
+  rowGroups?: ParquetRowGroupBytesChunk[]
 ): Transferable[] {
   const transferables: Transferable[] = [];
-  if (request.parts) {
-    for (const part of request.parts) {
+  if (parts) {
+    for (const part of parts) {
       transferables.push(part.buffer);
     }
   }
-  if (request.rowGroups) {
-    for (const chunk of request.rowGroups) {
+  if (rowGroups) {
+    for (const chunk of rowGroups) {
       transferables.push(chunk.schemaBytes.buffer, chunk.rowGroupBytes.buffer);
     }
   }
   return transferables;
+}
+
+function transferablesForRequest(request: PointsWorkerRequest): Transferable[] {
+  switch (request.type) {
+    case 'decodeParquetRowFeatureCodes':
+    case 'scanParquetFeatureCounts':
+    case 'decodeParquetGeometryCapped':
+    case 'scanParquetByFeatureCodes':
+    case 'scanParquetFeatureCatalog':
+      return transferablesForParquetPayload(request.parts, request.rowGroups);
+    case 'scanMortonRowGroupsInBounds':
+      return transferablesForParquetPayload(undefined, request.rowGroups);
+  }
+  return [];
 }
 
 export function isPointsWorkerEnabled(): boolean {
@@ -187,12 +204,87 @@ export async function decodeParquetRowFeatureCodesInWorker(
   };
   const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
     request,
-    transferablesForDecodeRowFeatureCodes(request)
+    transferablesForRequest(request)
   );
   if (result.kind !== 'rowFeatureCodes') {
     throw new Error('Unexpected points worker response for decodeParquetRowFeatureCodes');
   }
   return result.codes;
+}
+
+export type ScanParquetFeatureCatalogInput = {
+  rowGroups?: ParquetRowGroupBytesChunk[];
+  parts: Uint8Array[];
+  columns: string[];
+  featureKey: string;
+  featureCodeColumnName?: string;
+  skipMortonSentinels?: boolean;
+};
+
+export async function scanParquetFeatureCatalogInWorker(
+  input: ScanParquetFeatureCatalogInput
+): Promise<PointsFeatureCatalog | null> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled() || input.parts.length === 0) {
+    return null;
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCatalog' }> = {
+    type: 'scanParquetFeatureCatalog',
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
+  if (result.kind !== 'catalog') {
+    throw new Error('Unexpected points worker response for scanParquetFeatureCatalog');
+  }
+  return result.catalog;
+}
+
+export type DecodeParquetGeometryCappedInput = ParquetWorkerPayload & {
+  axisNames: string[];
+  columns: string[];
+  maxRows: number;
+  featureKey?: string;
+  featureCodeColumnName?: string;
+  featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
+};
+
+export async function decodeParquetGeometryCappedInWorker(
+  input: DecodeParquetGeometryCappedInput
+): Promise<{
+  shape: number[];
+  data: ArrayLike<number>[];
+  featureCodes?: Int32Array;
+} | null> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    return null;
+  }
+  if (!input.parts?.length && !input.rowGroups?.length) {
+    return null;
+  }
+  if (input.parts?.length && input.rowGroups?.length) {
+    throw new Error('decodeParquetGeometryCappedInWorker requires parts or rowGroups, not both');
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'decodeParquetGeometryCapped' }> = {
+    type: 'decodeParquetGeometryCapped',
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
+  if (result.kind !== 'columnar') {
+    throw new Error('Unexpected points worker response for decodeParquetGeometryCapped');
+  }
+  const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
+  return {
+    shape: result.shape,
+    data,
+    featureCodes: result.featureCodes,
+  };
 }
 
 export async function countFeatureCodesInWorker(
@@ -221,21 +313,29 @@ export async function countFeatureCodesInWorker(
   return counts;
 }
 
+export type ScanParquetFeatureCountsInput = ParquetWorkerPayload & {
+  featureKey: string;
+  featureCodeColumnName?: string;
+};
+
 export async function scanParquetFeatureCountsInWorker(
-  parts: Uint8Array[],
-  featureKey: string,
-  featureCodeColumnName?: string
-): Promise<Map<number, number>> {
+  input: ScanParquetFeatureCountsInput
+): Promise<Map<number, number> | null> {
   ensurePointsWorker();
   if (!isPointsWorkerEnabled()) {
-    throw new Error('Points worker is required for scanParquetFeatureCountsInWorker');
+    return null;
   }
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  if (!input.parts?.length && !input.rowGroups?.length) {
+    return null;
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }> = {
     type: 'scanParquetFeatureCounts',
-    parts,
-    featureKey,
-    featureCodeColumnName,
-  });
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
   if (result.kind !== 'featureCounts') {
     throw new Error('Unexpected points worker response for scanParquetFeatureCounts');
   }
@@ -246,33 +346,36 @@ export async function scanParquetFeatureCountsInWorker(
   return counts;
 }
 
+export type ScanParquetByFeatureCodesInput = ParquetWorkerPayload & {
+  axisNames: string[];
+  featureKey: string;
+  featureCodeColumnName?: string;
+  featureCodes: readonly number[];
+  memoryCap: number;
+};
+
 export async function scanParquetByFeatureCodesInWorker(
-  parts: Uint8Array[],
-  options: {
-    axisNames: string[];
-    featureKey: string;
-    featureCodeColumnName?: string;
-    featureCodes: readonly number[];
-    memoryCap: number;
-  }
+  input: ScanParquetByFeatureCodesInput
 ): Promise<{
   data: PointsColumnarData;
   matchedRows: number;
   scannedRows: number;
-}> {
+} | null> {
   ensurePointsWorker();
   if (!isPointsWorkerEnabled()) {
-    throw new Error('Points worker is required for scanParquetByFeatureCodesInWorker');
+    return null;
   }
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  if (!input.parts?.length && !input.rowGroups?.length) {
+    return null;
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }> = {
     type: 'scanParquetByFeatureCodes',
-    parts,
-    axisNames: options.axisNames,
-    featureKey: options.featureKey,
-    featureCodeColumnName: options.featureCodeColumnName,
-    featureCodes: options.featureCodes,
-    memoryCap: options.memoryCap,
-  });
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
   if (result.kind !== 'columnarScan') {
     throw new Error('Unexpected points worker response for scanParquetByFeatureCodes');
   }
@@ -281,6 +384,36 @@ export async function scanParquetByFeatureCodesInWorker(
     matchedRows: result.matchedRows,
     scannedRows: result.scannedRows,
   };
+}
+
+export type ScanMortonRowGroupsInBoundsInput = {
+  rowGroups: ParquetRowGroupBytesChunk[];
+  bounds: PointsBounds;
+  axisNames: string[];
+  mortonCodeColumnName: string;
+  featureCodeColumnName?: string;
+  featureCodes?: readonly number[];
+};
+
+export async function scanMortonRowGroupsInBoundsInWorker(
+  input: ScanMortonRowGroupsInBoundsInput
+): Promise<PointsColumnarData | null> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled() || input.rowGroups.length === 0) {
+    return null;
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'scanMortonRowGroupsInBounds' }> = {
+    type: 'scanMortonRowGroupsInBounds',
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
+  if (result.kind !== 'columnar') {
+    throw new Error('Unexpected points worker response for scanMortonRowGroupsInBounds');
+  }
+  return columnarDataFromWorkerResult(result);
 }
 
 export async function decodeParquetPartsInWorker(

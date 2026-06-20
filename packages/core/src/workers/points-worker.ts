@@ -9,11 +9,14 @@ import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } f
 import {
   countFeatureCodesFromArray,
   decodeParquetPartsToTable,
-  decodeParquetRowGroupsToTable,
+  decodeParquetPayloadToTable,
+  extractGeometryColumnar,
   extractRowFeatureCodesFromTable,
+  histogramToSortedArrays,
+  scanFeatureCatalogFromPayload,
+  scanMortonTableInBounds,
   scanTableByFeatureCodes,
   scanTableFeatureCounts,
-  histogramToSortedArrays,
 } from './pointsWorkerScan.js';
 
 type ParquetWasmTableLike = { intoIPCStream(): Uint8Array };
@@ -112,27 +115,13 @@ async function handleDecodeParquetRowFeatureCodes(
   request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
 ): Promise<PointsWorkerResponse> {
   const parquetModule = await getParquetModule();
-  let table;
-  if (request.rowGroups?.length) {
-    if (!parquetModule.readParquetRowGroup) {
-      return { ok: false, error: 'parquet-wasm readParquetRowGroup is unavailable in points worker' };
-    }
-    table = await decodeParquetRowGroupsToTable(
-      parquetModule.readParquetRowGroup,
-      request.rowGroups,
-      request.columns,
-      request.maxRows
-    );
-  } else if (request.parts?.length) {
-    table = await decodeParquetPartsToTable(
-      parquetModule.readParquet,
-      request.parts,
-      request.columns,
-      request.maxRows
-    );
-  } else {
-    return { ok: false, error: 'decodeParquetRowFeatureCodes requires parts or rowGroups' };
-  }
+  const table = await decodeParquetPayloadToTable(
+    parquetModule.readParquet,
+    parquetModule.readParquetRowGroup,
+    request,
+    request.columns,
+    request.maxRows
+  );
   const featureCodeByName = request.featureCodeEntries
     ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
     : undefined;
@@ -152,6 +141,55 @@ async function handleDecodeParquetRowFeatureCodes(
   };
 }
 
+async function handleScanParquetFeatureCatalog(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCatalog' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  const catalog = await scanFeatureCatalogFromPayload(
+    parquetModule.readParquet,
+    parquetModule.readParquetRowGroup,
+    request
+  );
+  if (!catalog) {
+    return { ok: false, error: 'No features found in parquet catalog scan' };
+  }
+  return { ok: true, result: { kind: 'catalog', catalog } };
+}
+
+async function handleDecodeParquetGeometryCapped(
+  request: Extract<PointsWorkerRequest, { type: 'decodeParquetGeometryCapped' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  const table = await decodeParquetPayloadToTable(
+    parquetModule.readParquet,
+    parquetModule.readParquetRowGroup,
+    request,
+    request.columns,
+    request.maxRows
+  );
+  const geometry = extractGeometryColumnar(table, request.axisNames);
+  const featureCodeByName = request.featureCodeEntries
+    ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
+    : undefined;
+  const featureCodes =
+    request.featureKey !== undefined
+      ? extractRowFeatureCodesFromTable(
+          table,
+          request.featureKey,
+          request.featureCodeColumnName,
+          featureCodeByName
+        )
+      : undefined;
+  return {
+    ok: true,
+    result: {
+      kind: 'columnar',
+      ...geometry,
+      ...(featureCodes ? { featureCodes } : {}),
+    },
+  };
+}
+
 function handleCountFeatureCodes(
   request: Extract<PointsWorkerRequest, { type: 'countFeatureCodes' }>
 ): PointsWorkerResponse {
@@ -166,19 +204,43 @@ function handleCountFeatureCodes(
   };
 }
 
-async function handleScanParquetFeatureCounts(
+async function scanTablesForFeatureCounts(
+  parquetModule: ParquetModule,
   request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }>
-): Promise<PointsWorkerResponse> {
-  const { readParquet } = await getParquetModule();
+): Promise<Map<number, number>> {
   const columns = [
     request.featureKey,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
   ];
   const counts = new Map<number, number>();
-  for (const part of request.parts) {
-    const table = tableFromIPC(readParquet(part, { columns }).intoIPCStream());
+
+  if (request.rowGroups?.length && parquetModule.readParquetRowGroup) {
+    for (const chunk of request.rowGroups) {
+      const table = tableFromIPC(
+        parquetModule.readParquetRowGroup(
+          chunk.schemaBytes,
+          chunk.rowGroupBytes,
+          chunk.rowGroupIndex,
+          { columns }
+        ).intoIPCStream()
+      );
+      scanTableFeatureCounts(table, request.featureKey, request.featureCodeColumnName, counts);
+    }
+    return counts;
+  }
+
+  for (const part of request.parts ?? []) {
+    const table = tableFromIPC(parquetModule.readParquet(part, { columns }).intoIPCStream());
     scanTableFeatureCounts(table, request.featureKey, request.featureCodeColumnName, counts);
   }
+  return counts;
+}
+
+async function handleScanParquetFeatureCounts(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  const counts = await scanTablesForFeatureCounts(parquetModule, request);
   const { codes, countValues } = histogramToSortedArrays(counts);
   return {
     ok: true,
@@ -190,40 +252,91 @@ async function handleScanParquetFeatureCounts(
   };
 }
 
-async function handleScanParquetByFeatureCodes(
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>
-): Promise<PointsWorkerResponse> {
-  const { readParquet } = await getParquetModule();
+async function scanPayloadByFeatureCodes(
+  parquetModule: ParquetModule,
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
+  input: {
+    matchedRows: number;
+    xs: number[];
+    ys: number[];
+    zs: number[];
+    scannedRows: number;
+  }
+): Promise<{ matchedRows: number; scannedRows: number }> {
   const hasZ = request.axisNames.includes('z');
   const columns = [
     ...request.axisNames,
     request.featureKey,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
   ];
-  const xs: number[] = [];
-  const ys: number[] = [];
-  const zs: number[] = [];
-  let matchedRows = 0;
-  let scannedRows = 0;
-  for (const part of request.parts) {
-    if (matchedRows >= request.memoryCap) {
+
+  if (request.rowGroups?.length && parquetModule.readParquetRowGroup) {
+    for (const chunk of request.rowGroups) {
+      if (input.matchedRows >= request.memoryCap) {
+        break;
+      }
+      const table = tableFromIPC(
+        parquetModule.readParquetRowGroup(
+          chunk.schemaBytes,
+          chunk.rowGroupBytes,
+          chunk.rowGroupIndex,
+          { columns }
+        ).intoIPCStream()
+      );
+      input.scannedRows += table.numRows;
+      input.matchedRows = scanTableByFeatureCodes({
+        table,
+        axisNames: request.axisNames,
+        featureKey: request.featureKey,
+        featureCodeColumnName: request.featureCodeColumnName,
+        featureCodes: request.featureCodes,
+        memoryCap: request.memoryCap,
+        matchedRows: input.matchedRows,
+        xs: input.xs,
+        ys: input.ys,
+        zs: input.zs,
+      });
+    }
+    return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
+  }
+
+  for (const part of request.parts ?? []) {
+    if (input.matchedRows >= request.memoryCap) {
       break;
     }
-    const table = tableFromIPC(readParquet(part, { columns }).intoIPCStream());
-    scannedRows += table.numRows;
-    matchedRows = scanTableByFeatureCodes({
+    const table = tableFromIPC(parquetModule.readParquet(part, { columns }).intoIPCStream());
+    input.scannedRows += table.numRows;
+    input.matchedRows = scanTableByFeatureCodes({
       table,
       axisNames: request.axisNames,
       featureKey: request.featureKey,
       featureCodeColumnName: request.featureCodeColumnName,
       featureCodes: request.featureCodes,
       memoryCap: request.memoryCap,
-      matchedRows,
-      xs,
-      ys,
-      zs,
+      matchedRows: input.matchedRows,
+      xs: input.xs,
+      ys: input.ys,
+      zs: input.zs,
     });
   }
+  return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
+}
+
+async function handleScanParquetByFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  const hasZ = request.axisNames.includes('z');
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  const { matchedRows, scannedRows } = await scanPayloadByFeatureCodes(parquetModule, request, {
+    matchedRows: 0,
+    xs,
+    ys,
+    zs,
+    scannedRows: 0,
+  });
   const outX = Float32Array.from(xs);
   const outY = Float32Array.from(ys);
   const outZ = hasZ ? Float32Array.from(zs) : undefined;
@@ -238,6 +351,62 @@ async function handleScanParquetByFeatureCodes(
       ...(outZ ? { zs: outZ } : {}),
       matchedRows,
       scannedRows,
+    },
+  };
+}
+
+async function handleScanMortonRowGroupsInBounds(
+  request: Extract<PointsWorkerRequest, { type: 'scanMortonRowGroupsInBounds' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  if (!parquetModule.readParquetRowGroup) {
+    return { ok: false, error: 'parquet-wasm readParquetRowGroup is unavailable in points worker' };
+  }
+  const hasZ = request.axisNames.includes('z');
+  const columns = [
+    'x',
+    'y',
+    ...(hasZ ? ['z'] : []),
+    request.mortonCodeColumnName,
+    ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
+  ];
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  for (const chunk of request.rowGroups) {
+    const table = tableFromIPC(
+      parquetModule.readParquetRowGroup(
+        chunk.schemaBytes,
+        chunk.rowGroupBytes,
+        chunk.rowGroupIndex,
+        { columns }
+      ).intoIPCStream()
+    );
+    scanMortonTableInBounds({
+      table,
+      rowGroupIndex: chunk.globalRowGroupIndex ?? chunk.rowGroupIndex,
+      bounds: request.bounds,
+      axisNames: request.axisNames,
+      mortonCodeColumnName: request.mortonCodeColumnName,
+      featureCodeColumnName: request.featureCodeColumnName,
+      featureCodes: request.featureCodes,
+      xs,
+      ys,
+      zs,
+    });
+  }
+  const outX = Float32Array.from(xs);
+  const outY = Float32Array.from(ys);
+  const outZ = hasZ ? Float32Array.from(zs) : undefined;
+  const shape = outZ ? [3, outX.length] : [2, outX.length];
+  return {
+    ok: true,
+    result: {
+      kind: 'columnar',
+      shape,
+      xs: outX,
+      ys: outY,
+      ...(outZ ? { zs: outZ } : {}),
     },
   };
 }
@@ -275,12 +444,18 @@ async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorker
       return handleBuildFeatureCatalog(request);
     case 'decodeParquetRowFeatureCodes':
       return handleDecodeParquetRowFeatureCodes(request);
+    case 'scanParquetFeatureCatalog':
+      return handleScanParquetFeatureCatalog(request);
+    case 'decodeParquetGeometryCapped':
+      return handleDecodeParquetGeometryCapped(request);
     case 'countFeatureCodes':
       return handleCountFeatureCodes(request);
     case 'scanParquetFeatureCounts':
       return handleScanParquetFeatureCounts(request);
     case 'scanParquetByFeatureCodes':
       return handleScanParquetByFeatureCodes(request);
+    case 'scanMortonRowGroupsInBounds':
+      return handleScanMortonRowGroupsInBounds(request);
     default: {
       const _exhaustive: never = request;
       return { ok: false, error: `Unknown request type: ${String(_exhaustive)}` };
@@ -298,10 +473,13 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
       const reply: PointsWorkerMessage = { id: message.id, direction: 'response', response };
       const transferables: Transferable[] = [];
       if (response.ok) {
-        if (response.result.kind === 'columnar') {
+        if (response.result.kind === 'columnar' || response.result.kind === 'columnarScan') {
           transferables.push(response.result.xs.buffer, response.result.ys.buffer);
           if (response.result.zs) {
             transferables.push(response.result.zs.buffer);
+          }
+          if (response.result.kind === 'columnar' && response.result.featureCodes) {
+            transferables.push(response.result.featureCodes.buffer);
           }
         } else if (response.result.kind === 'parquetTable') {
           transferables.push(response.result.tableIpc.buffer);

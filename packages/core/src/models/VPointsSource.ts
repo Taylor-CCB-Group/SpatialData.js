@@ -1,29 +1,26 @@
 import { basename } from '../Vutils';
 import {
   buildFeatureCatalogFromColumns,
-  buildFeatureCatalogFromDictionaryOnly,
-  accumulateFeatureCatalogFromTable,
-  featureCatalogFromCodeMap,
-  featureCatalogNeedsParquetFallback,
   featureCodeMapFromCatalog,
   mergeFeatureCountsIntoCatalog,
   resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
 import {
+  decodeParquetGeometryCappedInWorker,
   decodeParquetRowFeatureCodesInWorker,
   ensurePointsWorker,
   isPointsWorkerEnabled,
+  scanMortonRowGroupsInBoundsInWorker,
   scanParquetByFeatureCodesInWorker,
+  scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
 } from '../workers/pointsWorkerClient.js';
 import { exceedsPointsPreloadLimit, resolvePointsMemoryCap } from '../pointsLimits.js';
-import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
 import type {
   PointsLoadOptions,
   PointsLoadProgress,
   PointsLoadResult,
 } from '../pointsLoadOptions.js';
-import { scanTableFeatureCounts } from '../workers/pointsWorkerScan.js';
 
 interface ColumnarPointsChunk {
   shape: number[];
@@ -89,9 +86,7 @@ import {
   extractSentinelBoundingBox,
   featureCodeAllowSet,
   filterPointsToBounds,
-  isMortonSentinelValue,
   mortonIntervalsForBounds,
-  rowMatchesFeatureCode,
 } from '../pointsTiling.js';
 import type { Axis } from '../schemas';
 // import { normalizeAxes } from '@vitessce/spatial-utils';
@@ -278,6 +273,41 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const maxRows = truncatePreload ? memoryCap : rowCount;
     const columnNames = [...axisNames];
 
+    ensurePointsWorker();
+    if (isPointsWorkerEnabled()) {
+      try {
+        const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
+        const workerGeometry = await decodeParquetGeometryCappedInWorker(
+          payload.rowGroups.length > 0
+            ? {
+                rowGroups: payload.rowGroups,
+                axisNames,
+                columns: columnNames,
+                maxRows,
+              }
+            : {
+                parts: payload.parts,
+                axisNames,
+                columns: columnNames,
+                maxRows,
+              }
+        );
+        if (workerGeometry) {
+          return {
+            shape: workerGeometry.shape as [number, number],
+            data: workerGeometry.data,
+            totalRowCount: rowCount,
+            preloadTruncated: truncatePreload,
+          };
+        }
+      } catch (error) {
+        console.warn(
+          `Worker geometry preload failed for ${elementPath}; falling back to main thread.`,
+          error
+        );
+      }
+    }
+
     const {
       table: arrowTable,
       totalRows,
@@ -337,9 +367,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         )
       : arrowSchemaFieldNames(schemaTable);
     const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
-    const featureCodeByName = featureCodeColumnName
-      ? undefined
-      : featureCodeMapFromCatalog(await this.listPointsFeatures(elementPath));
 
     const columnNames = [...axisNames];
     if (featureCodeColumnName && !columnNames.includes(featureCodeColumnName)) {
@@ -360,49 +387,25 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         if (matchedRows >= options.memoryCap) {
           break;
         }
-        const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-          columns: columnNames,
-        });
-        if (!table || table.numRows === 0) {
+        const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+        if (!chunk) {
           continue;
         }
-        scannedRows += table.numRows;
-        const rowFeatureCodes = resolveRowFeatureCodesFromTable(
-          table,
+        const partial = await scanParquetByFeatureCodesInWorker({
+          rowGroups: [chunk],
+          axisNames,
           featureKey,
           featureCodeColumnName,
-          featureCodeByName
-        );
-        const axisColumnArrs = axisNames.map((name: string) => {
-          const column = table.getChild(name);
-          if (!column) {
-            throw new Error(`Column "${name}" not found in the arrow table.`);
-          }
-          return column.toArray();
+          featureCodes: options.featureCodes,
+          memoryCap: options.memoryCap - matchedRows,
         });
-        const filtered = filterColumnarByFeatureCodes(
-          { shape: [axisColumnArrs.length, table.numRows], data: axisColumnArrs },
-          options.featureCodes,
-          rowFeatureCodes ?? new Int32Array(0)
-        );
-        const filteredRows = filtered.shape?.[1] ?? filtered.data[0]?.length ?? 0;
-        if (filteredRows > 0) {
-          const remaining = options.memoryCap - matchedRows;
-          const normalized = toColumnarPointsChunk(filtered, axisColumnArrs.length);
-          const chunk: ColumnarPointsChunk =
-            filteredRows > remaining
-              ? {
-                  shape: normalized.shape,
-                  data: normalized.data.map((column) => {
-                    const values =
-                      column instanceof Float32Array ? column : Float32Array.from(column);
-                    return values.subarray(0, remaining);
-                  }),
-                }
-              : normalized;
-          const chunkRows = chunk.shape[1] ?? chunk.data[0]?.length ?? 0;
-          matchedChunks.push(chunk);
-          matchedRows += chunkRows;
+        if (!partial) {
+          throw new Error('Feature-filtered points loading requires the points worker.');
+        }
+        scannedRows += partial.scannedRows;
+        if (partial.matchedRows > 0) {
+          matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
+          matchedRows += partial.matchedRows;
         }
         options.onProgress?.({
           scannedRows,
@@ -428,13 +431,17 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         if (!bytes || bytes.length === 0) {
           continue;
         }
-        const partial = await scanParquetByFeatureCodesInWorker([bytes], {
+        const partial = await scanParquetByFeatureCodesInWorker({
+          parts: [bytes],
           axisNames,
           featureKey,
           featureCodeColumnName,
           featureCodes: options.featureCodes,
           memoryCap: options.memoryCap - matchedRows,
         });
+        if (!partial) {
+          throw new Error('Feature-filtered points loading requires the points worker.');
+        }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
           matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
@@ -500,6 +507,38 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     const canUseRowGroups = await this.canLoadParquetRowGroups();
     const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
+
+    ensurePointsWorker();
+    if (isPointsWorkerEnabled()) {
+      try {
+        const payload = await this.readParquetWorkerPayload(parquetPath, {
+          maxRows: Number.POSITIVE_INFINITY,
+          fullPartsForFallback: true,
+        });
+        const workerCounts = await scanParquetFeatureCountsInWorker(
+          canUseRowGroups && datasetRowGroups > 0 && payload.rowGroups.length > 0
+            ? {
+                rowGroups: payload.rowGroups,
+                featureKey,
+                featureCodeColumnName,
+              }
+            : {
+                parts: payload.parts,
+                featureKey,
+                featureCodeColumnName,
+              }
+        );
+        if (workerCounts) {
+          return workerCounts;
+        }
+      } catch (error) {
+        console.warn(
+          `Worker feature counts failed for ${elementPath}; falling back to main thread.`,
+          error
+        );
+      }
+    }
+
     if (canUseRowGroups && datasetRowGroups > 0) {
       const counts = new Map<number, number>();
       for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
@@ -507,6 +546,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           columns: columnNames,
         });
         if (table && table.numRows > 0) {
+          const { scanTableFeatureCounts } = await import('../workers/pointsWorkerScan.js');
           scanTableFeatureCounts(table, featureKey, featureCodeColumnName, counts);
         }
       }
@@ -518,8 +558,15 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       Number.POSITIVE_INFINITY
     );
 
-    if (isPointsWorkerEnabled() && parts.length > 0) {
-      return scanParquetFeatureCountsInWorker(parts, featureKey, featureCodeColumnName);
+    if (parts.length > 0) {
+      const workerCounts = await scanParquetFeatureCountsInWorker({
+        parts,
+        featureKey,
+        featureCodeColumnName,
+      });
+      if (workerCounts) {
+        return workerCounts;
+      }
     }
 
     const rowCodes = await this.loadPointsRowFeatureCodes(elementPath);
@@ -590,8 +637,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
       try {
-        const canUseRowGroups = await this.canLoadParquetRowGroups();
-        const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
+        const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
         const workerInput = {
           columns: columnNames,
           maxRows,
@@ -599,26 +645,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           featureCodeColumnName,
           featureCodeEntries,
         };
-
-        let workerCodes: Int32Array | null = null;
-        if (canUseRowGroups && datasetRowGroups > 0) {
-          const rowGroups = await this.readParquetRowGroupsBytesCapped(parquetPath, maxRows);
-          if (rowGroups.length > 0) {
-            workerCodes = await decodeParquetRowFeatureCodesInWorker({
-              ...workerInput,
-              rowGroups,
-            });
-          }
-        } else {
-          const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, maxRows);
-          if (parts.length > 0) {
-            workerCodes = await decodeParquetRowFeatureCodesInWorker({
-              ...workerInput,
-              parts,
-            });
-          }
-        }
-
+        const workerCodes = await decodeParquetRowFeatureCodesInWorker(
+          payload.rowGroups.length > 0
+            ? { ...workerInput, rowGroups: payload.rowGroups }
+            : { ...workerInput, parts: payload.parts }
+        );
         if (workerCodes) {
           return workerCodes;
         }
@@ -721,6 +752,37 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       columnNames.push(MORTON_CODE_2D_COLUMN);
     }
 
+    ensurePointsWorker();
+    if (isPointsWorkerEnabled()) {
+      try {
+        const payload = await this.readParquetWorkerPayload(parquetPath, {
+          maxRows: Number.POSITIVE_INFINITY,
+          fullPartsForFallback: true,
+        });
+        const catalog = await scanParquetFeatureCatalogInWorker({
+          rowGroups:
+            featureCodeColumnName && payload.rowGroups.length > 0
+              ? payload.rowGroups
+              : undefined,
+          parts: payload.parts,
+          columns: columnNames,
+          featureKey,
+          featureCodeColumnName,
+          skipMortonSentinels: hasMortonColumn,
+        });
+        if (catalog) {
+          return catalog;
+        }
+      } catch (error) {
+        console.warn(
+          `Worker feature catalog scan failed for ${parquetPath}; falling back to main thread.`,
+          error
+        );
+      }
+    }
+
+    const { accumulateFeatureCatalogFromTable, featureCatalogFromCodeMap, featureCatalogNeedsParquetFallback } =
+      await import('../pointsFeatures.js');
     const codeToName = new Map<number, string>();
     const nameToCode = new Map<string, number>();
     const canUseRowGroups = await this.canLoadParquetRowGroups();
@@ -901,6 +963,55 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         columnNames.push(featureKey);
       }
     }
+    const featureCodeEntries = featureCodeByName
+      ? [...featureCodeByName.entries()].map(([name, code]) => ({ name, code }))
+      : undefined;
+
+    ensurePointsWorker();
+    if (isPointsWorkerEnabled()) {
+      try {
+        const payload = await this.readParquetWorkerPayload(parquetPath, {
+          maxRows: Number.POSITIVE_INFINITY,
+          fullPartsForFallback: true,
+        });
+        const workerResult = await decodeParquetGeometryCappedInWorker(
+          payload.rowGroups.length > 0
+            ? {
+                rowGroups: payload.rowGroups,
+                axisNames,
+                columns: columnNames,
+                maxRows: Number.POSITIVE_INFINITY,
+                featureKey: needsFeatureFilter ? featureKey : undefined,
+                featureCodeColumnName: resolvedFeatureCodeColumn,
+                featureCodeEntries,
+              }
+            : {
+                parts: payload.parts,
+                axisNames,
+                columns: columnNames,
+                maxRows: Number.POSITIVE_INFINITY,
+                featureKey: needsFeatureFilter ? featureKey : undefined,
+                featureCodeColumnName: resolvedFeatureCodeColumn,
+                featureCodeEntries,
+              }
+        );
+        if (workerResult) {
+          return {
+            data: {
+              shape: workerResult.shape as [number, number],
+              data: workerResult.data,
+            },
+            featureCodes: workerResult.featureCodes,
+          };
+        }
+      } catch (error) {
+        console.warn(
+          `Worker bounds geometry load failed for ${elementPath}; falling back to main thread.`,
+          error
+        );
+      }
+    }
+
     const arrowTable = await this.loadParquetTable(parquetPath, columnNames);
     const axisColumnArrs = axisNames.map((name: string) => {
       const column = arrowTable.getChild(name);
@@ -1003,6 +1114,48 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       filterByFeature && metadata.featureCodeColumnName
         ? metadata.featureCodeColumnName
         : undefined;
+
+    ensurePointsWorker();
+    if (isPointsWorkerEnabled()) {
+      const rowGroupChunks = [];
+      for (const rowGroup of rowGroups) {
+        checkAbort(options.signal);
+        const chunk = await this.readParquetRowGroupBytesByGroupIndex(
+          metadata.parquetPath,
+          rowGroup
+        );
+        if (chunk) {
+          rowGroupChunks.push(chunk);
+        }
+      }
+      if (rowGroupChunks.length > 0) {
+        try {
+          const workerResult = await scanMortonRowGroupsInBoundsInWorker({
+            rowGroups: rowGroupChunks,
+            bounds: options.bounds,
+            axisNames: metadata.axisNames,
+            mortonCodeColumnName: metadata.mortonCodeColumnName,
+            featureCodeColumnName,
+            featureCodes: options.featureCodes,
+          });
+          if (workerResult) {
+            return {
+              data: workerResult.data,
+              shape: workerResult.shape as [number, number],
+              bounds: options.bounds,
+              loadMode: 'row-groups',
+              tiling: metadata,
+            };
+          }
+        } catch (error) {
+          console.warn(
+            `Worker morton tile load failed for ${elementPath}; falling back to main thread.`,
+            error
+          );
+        }
+      }
+    }
+
     const rowGroupColumns = [
       'x',
       'y',
@@ -1015,47 +1168,22 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup, {
         columns: rowGroupColumns,
       });
-      const xColumn = table?.getChild('x');
-      const yColumn = table?.getChild('y');
-      const zColumn = hasZ ? table?.getChild('z') : undefined;
-      const mortonColumn = table?.getChild(metadata.mortonCodeColumnName);
-      const featureCodeColumn = featureCodeColumnName
-        ? table?.getChild(featureCodeColumnName)
-        : undefined;
-      if (!table || !xColumn || !yColumn) {
+      if (!table) {
         continue;
       }
-      for (let i = 0; i < table.numRows; i++) {
-        if (rowGroup === 0 && i < 4 && isMortonSentinelValue(mortonColumn?.get(i))) {
-          continue;
-        }
-        if (
-          filterByFeature &&
-          featureCodeColumn &&
-          !rowMatchesFeatureCode(featureCodeColumn.get(i), allowedFeatureCodes)
-        ) {
-          continue;
-        }
-        const x = xColumn.get(i);
-        const y = yColumn.get(i);
-        if (typeof x !== 'number' || typeof y !== 'number') {
-          continue;
-        }
-        if (
-          x < options.bounds.minX ||
-          x > options.bounds.maxX ||
-          y < options.bounds.minY ||
-          y > options.bounds.maxY
-        ) {
-          continue;
-        }
-        xs.push(x);
-        ys.push(y);
-        if (hasZ) {
-          const z = zColumn?.get(i);
-          zs.push(typeof z === 'number' ? z : 0);
-        }
-      }
+      const { scanMortonTableInBounds } = await import('../workers/pointsWorkerScan.js');
+      scanMortonTableInBounds({
+        table,
+        rowGroupIndex: rowGroup,
+        bounds: options.bounds,
+        axisNames: metadata.axisNames,
+        mortonCodeColumnName: metadata.mortonCodeColumnName,
+        featureCodeColumnName,
+        featureCodes: options.featureCodes,
+        xs,
+        ys,
+        zs,
+      });
     }
 
     return {

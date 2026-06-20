@@ -3,6 +3,7 @@ import {
   decodeParquetRowFeatureCodesInWorker,
   disablePointsWorker,
   filterColumnarByFeatureCodesInWorker,
+  scanParquetFeatureCatalogInWorker,
   setPointsWorkerDefaultEnabled,
 } from '../src/workers/pointsWorkerClient.js';
 import { filterColumnarByFeatureCodes as filterSync } from '../src/pointsTiling.js';
@@ -29,6 +30,17 @@ describe('points worker client', () => {
     disablePointsWorker();
     setPointsWorkerDefaultEnabled(false);
     const result = await decodeParquetRowFeatureCodesInWorker({
+      parts: [new Uint8Array([1, 2, 3])],
+      columns: ['feature_name'],
+      featureKey: 'feature_name',
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns null for feature catalog scan when the worker is disabled', async () => {
+    disablePointsWorker();
+    setPointsWorkerDefaultEnabled(false);
+    const result = await scanParquetFeatureCatalogInWorker({
       parts: [new Uint8Array([1, 2, 3])],
       columns: ['feature_name'],
       featureKey: 'feature_name',
