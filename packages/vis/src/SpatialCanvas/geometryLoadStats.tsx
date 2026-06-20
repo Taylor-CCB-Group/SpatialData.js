@@ -39,6 +39,9 @@ export function GeometryLoadStats({ loadState, detailsSuffix }: GeometryLoadStat
       {loadState.geometry === 'ready' && loadState.geometryNotice ? (
         <div style={noticeStyle}>{loadState.geometryNotice}</div>
       ) : null}
+      {loadState.geometry === 'loading' && loadState.geometryNotice ? (
+        <div style={noticeStyle}>{loadState.geometryNotice}</div>
+      ) : null}
       {loadState.geometry === 'error' && loadState.geometryError ? (
         <div style={errorStyle}>{loadState.geometryError}</div>
       ) : null}

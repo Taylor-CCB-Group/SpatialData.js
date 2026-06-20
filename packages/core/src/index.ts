@@ -10,13 +10,21 @@ export * from './store/index.js';
 export * from './models/index.js';
 export * from './spatialViewFit.js';
 export * from './pointsTiling.js';
+export { mergeFeatureCountsIntoCatalog } from './pointsFeatures.js';
 export {
   POINTS_PRELOAD_MAX_ROWS,
+  DEFAULT_POINTS_MEMORY_CAP,
+  DEFAULT_POINTS_RENDER_CAP,
   PointsPreloadTooLargeError,
+  applyRenderCapToColumnar,
   exceedsPointsPreloadLimit,
   pointsPreloadTruncatedMessage,
+  pointsFilteredMemoryCapMessage,
   preloadedColumnarPointCount,
+  resolvePointsMemoryCap,
+  resolvePointsRenderCap,
 } from './pointsLimits.js';
+export type { PointsLoadOptions, PointsLoadProgress, PointsLoadResult } from './pointsLoadOptions.js';
 export {
   enablePointsWorker,
   disablePointsWorker,

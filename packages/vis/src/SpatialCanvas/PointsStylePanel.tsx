@@ -1,5 +1,10 @@
 import type { CSSProperties } from 'react';
 import {
+  DEFAULT_POINTS_MEMORY_CAP,
+  DEFAULT_POINTS_RENDER_CAP,
+  POINTS_PRELOAD_MAX_ROWS,
+} from '@spatialdata/core';
+import {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
   DEFAULT_POINT_RADIUS_MIN_PIXELS,
   DEFAULT_POINT_SIZE,
@@ -16,6 +21,21 @@ const rangeLabelStyle: CSSProperties = {
   gap: 4,
 };
 
+const numberInputStyle: CSSProperties = {
+  color: '#ccc',
+  fontSize: '12px',
+  padding: '4px 6px',
+  borderRadius: 4,
+  border: '1px solid #444',
+  background: '#1a1a1a',
+  width: '100%',
+};
+
+const helperStyle: CSSProperties = {
+  color: '#888',
+  fontSize: '11px',
+};
+
 const tileProgressStyle: CSSProperties = {
   color: '#aaa',
   fontSize: '11px',
@@ -29,9 +49,19 @@ export function preloadedPointCount(data: { shape: number[]; data: ArrayLike<num
 }
 
 export function preloadedPointCountSuffix(
-  data: { shape: number[]; data: ArrayLike<number>[]; totalRowCount?: number; preloadTruncated?: boolean }
+  data: {
+    shape: number[];
+    data: ArrayLike<number>[];
+    totalRowCount?: number;
+    preloadTruncated?: boolean;
+    filterActive?: boolean;
+    scannedRowCount?: number;
+  }
 ): string | undefined {
   const loaded = preloadedPointCount(data);
+  if (data.filterActive && data.scannedRowCount !== undefined) {
+    return ` · ${loaded.toLocaleString()} matching (scanned ${data.scannedRowCount.toLocaleString()} rows)`;
+  }
   if (data.preloadTruncated && data.totalRowCount !== undefined) {
     return ` · ${loaded.toLocaleString()} of ${data.totalRowCount.toLocaleString()} points loaded`;
   }
@@ -65,9 +95,57 @@ export function PointsStylePanel({
   supportsTileDebugOverlay = false,
   updateLayer,
 }: PointsStylePanelProps) {
+  const memoryCap = config.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
+  const renderCap = config.pointsRenderCap ?? DEFAULT_POINTS_RENDER_CAP;
+
   return (
     <>
       <GeometryLoadStats loadState={loadState} detailsSuffix={pointCountSuffix} />
+      <label style={rangeLabelStyle}>
+        Memory cap (rows)
+        <input
+          type="number"
+          min={1}
+          max={POINTS_PRELOAD_MAX_ROWS}
+          step={100_000}
+          value={memoryCap}
+          style={numberInputStyle}
+          onChange={(event) => {
+            const parsed = Number(event.target.value);
+            if (!Number.isFinite(parsed) || parsed <= 0) {
+              return;
+            }
+            updateLayer(layerId, { pointsMemoryCap: Math.floor(parsed) });
+          }}
+        />
+        <span style={helperStyle}>
+          Max rows retained in memory when loading (default{' '}
+          {DEFAULT_POINTS_MEMORY_CAP.toLocaleString()}).
+        </span>
+      </label>
+      <label style={rangeLabelStyle}>
+        Render cap (rows)
+        <input
+          type="number"
+          min={0}
+          max={POINTS_PRELOAD_MAX_ROWS}
+          step={100_000}
+          value={renderCap}
+          style={numberInputStyle}
+          onChange={(event) => {
+            const parsed = Number(event.target.value);
+            if (!Number.isFinite(parsed)) {
+              return;
+            }
+            updateLayer(layerId, {
+              pointsRenderCap: parsed <= 0 ? 0 : Math.floor(parsed),
+            });
+          }}
+        />
+        <span style={helperStyle}>
+          Max rows drawn after filtering (0 = no cap). Can be lower than memory cap.
+        </span>
+      </label>
       <label style={rangeLabelStyle}>
         Point size
         <input

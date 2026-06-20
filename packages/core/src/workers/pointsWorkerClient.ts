@@ -1,7 +1,12 @@
 import { tableFromIPC } from 'apache-arrow';
 import type { PointsColumnarData } from '../spatialViewFit.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
-import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
+import {
+  columnarDataFromWorkerResult,
+  type PointsWorkerMessage,
+  type PointsWorkerRequest,
+  type PointsWorkerResponse,
+} from './pointsWorkerProtocol.js';
 
 let worker: Worker | undefined;
 let nextRequestId = 0;
@@ -131,11 +136,119 @@ export async function filterColumnarByFeatureCodesInWorker(
   return columnarDataFromWorkerResult(result);
 }
 
-function columnarDataFromWorkerResult(
-  result: Extract<PointsWorkerResponse, { ok: true }>['result'] & { kind: 'columnar' }
-): PointsColumnarData {
-  const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
-  return { shape: result.shape, data };
+export async function decodeParquetRowFeatureCodesInWorker(
+  parts: Uint8Array[],
+  columns: string[],
+  options: {
+    maxRows?: number;
+    featureKey: string;
+    featureCodeColumnName?: string;
+  }
+): Promise<Int32Array> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    throw new Error('Points worker is required for decodeParquetRowFeatureCodesInWorker');
+  }
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+    type: 'decodeParquetRowFeatureCodes',
+    parts,
+    columns,
+    maxRows: options.maxRows,
+    featureKey: options.featureKey,
+    featureCodeColumnName: options.featureCodeColumnName,
+  });
+  if (result.kind !== 'rowFeatureCodes') {
+    throw new Error('Unexpected points worker response for decodeParquetRowFeatureCodes');
+  }
+  return result.codes;
+}
+
+export async function countFeatureCodesInWorker(
+  sourceFeatureCodes: ArrayLike<number>
+): Promise<Map<number, number>> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    const { countFeatureCodesHistogram } = await import('../pointsFeatures.js');
+    return countFeatureCodesHistogram(sourceFeatureCodes);
+  }
+  const codesArray =
+    sourceFeatureCodes instanceof Int32Array
+      ? sourceFeatureCodes
+      : Int32Array.from(sourceFeatureCodes);
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+    type: 'countFeatureCodes',
+    sourceFeatureCodes: codesArray,
+  });
+  if (result.kind !== 'featureCounts') {
+    throw new Error('Unexpected points worker response for countFeatureCodes');
+  }
+  const counts = new Map<number, number>();
+  for (let index = 0; index < result.codes.length; index += 1) {
+    counts.set(result.codes[index], result.counts[index]);
+  }
+  return counts;
+}
+
+export async function scanParquetFeatureCountsInWorker(
+  parts: Uint8Array[],
+  featureKey: string,
+  featureCodeColumnName?: string
+): Promise<Map<number, number>> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    throw new Error('Points worker is required for scanParquetFeatureCountsInWorker');
+  }
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+    type: 'scanParquetFeatureCounts',
+    parts,
+    featureKey,
+    featureCodeColumnName,
+  });
+  if (result.kind !== 'featureCounts') {
+    throw new Error('Unexpected points worker response for scanParquetFeatureCounts');
+  }
+  const counts = new Map<number, number>();
+  for (let index = 0; index < result.codes.length; index += 1) {
+    counts.set(result.codes[index], result.counts[index]);
+  }
+  return counts;
+}
+
+export async function scanParquetByFeatureCodesInWorker(
+  parts: Uint8Array[],
+  options: {
+    axisNames: string[];
+    featureKey: string;
+    featureCodeColumnName?: string;
+    featureCodes: readonly number[];
+    memoryCap: number;
+  }
+): Promise<{
+  data: PointsColumnarData;
+  matchedRows: number;
+  scannedRows: number;
+}> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    throw new Error('Points worker is required for scanParquetByFeatureCodesInWorker');
+  }
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+    type: 'scanParquetByFeatureCodes',
+    parts,
+    axisNames: options.axisNames,
+    featureKey: options.featureKey,
+    featureCodeColumnName: options.featureCodeColumnName,
+    featureCodes: options.featureCodes,
+    memoryCap: options.memoryCap,
+  });
+  if (result.kind !== 'columnarScan') {
+    throw new Error('Unexpected points worker response for scanParquetByFeatureCodes');
+  }
+  return {
+    data: columnarDataFromWorkerResult(result),
+    matchedRows: result.matchedRows,
+    scannedRows: result.scannedRows,
+  };
 }
 
 export async function decodeParquetPartsInWorker(

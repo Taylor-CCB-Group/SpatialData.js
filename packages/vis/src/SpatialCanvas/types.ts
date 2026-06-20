@@ -104,6 +104,10 @@ export interface PointsLayerConfig extends BaseLayerConfig {
   color?: [number, number, number, number];
   /** Filter to these feature code(s). Future: string[] resolved via codebook. */
   featureCodes?: number[];
+  /** Max rows to retain in memory for preloaded scatter (default 4M). */
+  pointsMemoryCap?: number;
+  /** Max rows to render after filtering (default 4M; set 0 to disable). */
+  pointsRenderCap?: number;
   experimentalOptimizations?: 'auto' | 'off';
   /** Show viewport tile polygons and loading stats for tiled points layers. */
   showTileDebugOverlay?: boolean;

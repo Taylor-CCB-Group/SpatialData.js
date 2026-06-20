@@ -1,4 +1,4 @@
-import { tableFromIPC, tableToIPC, type Table } from 'apache-arrow';
+import { tableFromIPC, tableToIPC } from 'apache-arrow';
 import {
   buildFeatureCatalogFromColumns,
 } from '../pointsFeatures.js';
@@ -6,6 +6,14 @@ import {
   filterColumnarByFeatureCodes,
 } from '../pointsTiling.js';
 import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
+import {
+  countFeatureCodesFromArray,
+  decodeParquetPartsToTable,
+  extractRowFeatureCodesFromTable,
+  scanTableByFeatureCodes,
+  scanTableFeatureCounts,
+  histogramToSortedArrays,
+} from './pointsWorkerScan.js';
 
 type ParquetWasmTableLike = { intoIPCStream(): Uint8Array };
 type ParquetModule = {
@@ -69,43 +77,136 @@ function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'fil
   };
 }
 
-async function concatParquetTables(tables: Table[]): Promise<Table> {
-  if (tables.length === 0) {
-    throw new Error('No parquet tables to concatenate');
-  }
-  return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
-}
-
 async function handleDecodeParquet(
   request: Extract<PointsWorkerRequest, { type: 'decodeParquetParts' }>
 ): Promise<PointsWorkerResponse> {
   const { readParquet } = await getParquetModule();
-  const tables: Table[] = [];
-  let accumulated = 0;
-  for (const part of request.parts) {
-    const table = tableFromIPC(readParquet(part, { columns: request.columns }).intoIPCStream());
-    if (request.maxRows === undefined) {
-      tables.push(table);
-      continue;
-    }
-    const remaining = request.maxRows - accumulated;
-    if (table.numRows <= remaining) {
-      tables.push(table);
-      accumulated += table.numRows;
-    } else {
-      tables.push(table.slice(0, remaining));
-      break;
-    }
-    if (accumulated >= request.maxRows) {
-      break;
-    }
-  }
-  const merged = await concatParquetTables(tables);
+  const merged = await decodeParquetPartsToTable(
+    readParquet,
+    request.parts,
+    request.columns,
+    request.maxRows
+  );
   return {
     ok: true,
     result: {
       kind: 'parquetTable',
       tableIpc: tableToIPC(merged),
+    },
+  };
+}
+
+async function handleDecodeParquetRowFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
+): Promise<PointsWorkerResponse> {
+  const { readParquet } = await getParquetModule();
+  const table = await decodeParquetPartsToTable(
+    readParquet,
+    request.parts,
+    request.columns,
+    request.maxRows
+  );
+  const codes = extractRowFeatureCodesFromTable(
+    table,
+    request.featureKey,
+    request.featureCodeColumnName
+  );
+  return {
+    ok: true,
+    result: {
+      kind: 'rowFeatureCodes',
+      codes,
+      numRows: table.numRows,
+    },
+  };
+}
+
+function handleCountFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'countFeatureCodes' }>
+): PointsWorkerResponse {
+  const { codes, countValues } = countFeatureCodesFromArray(request.sourceFeatureCodes);
+  return {
+    ok: true,
+    result: {
+      kind: 'featureCounts',
+      codes,
+      counts: countValues,
+    },
+  };
+}
+
+async function handleScanParquetFeatureCounts(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }>
+): Promise<PointsWorkerResponse> {
+  const { readParquet } = await getParquetModule();
+  const columns = [
+    request.featureKey,
+    ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
+  ];
+  const counts = new Map<number, number>();
+  for (const part of request.parts) {
+    const table = tableFromIPC(readParquet(part, { columns }).intoIPCStream());
+    scanTableFeatureCounts(table, request.featureKey, request.featureCodeColumnName, counts);
+  }
+  const { codes, countValues } = histogramToSortedArrays(counts);
+  return {
+    ok: true,
+    result: {
+      kind: 'featureCounts',
+      codes,
+      counts: countValues,
+    },
+  };
+}
+
+async function handleScanParquetByFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>
+): Promise<PointsWorkerResponse> {
+  const { readParquet } = await getParquetModule();
+  const hasZ = request.axisNames.includes('z');
+  const columns = [
+    ...request.axisNames,
+    request.featureKey,
+    ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
+  ];
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  let matchedRows = 0;
+  let scannedRows = 0;
+  for (const part of request.parts) {
+    if (matchedRows >= request.memoryCap) {
+      break;
+    }
+    const table = tableFromIPC(readParquet(part, { columns }).intoIPCStream());
+    scannedRows += table.numRows;
+    matchedRows = scanTableByFeatureCodes({
+      table,
+      axisNames: request.axisNames,
+      featureKey: request.featureKey,
+      featureCodeColumnName: request.featureCodeColumnName,
+      featureCodes: request.featureCodes,
+      memoryCap: request.memoryCap,
+      matchedRows,
+      xs,
+      ys,
+      zs,
+    });
+  }
+  const outX = Float32Array.from(xs);
+  const outY = Float32Array.from(ys);
+  const outZ = hasZ ? Float32Array.from(zs) : undefined;
+  const shape = outZ ? [3, outX.length] : [2, outX.length];
+  return {
+    ok: true,
+    result: {
+      kind: 'columnarScan',
+      shape,
+      xs: outX,
+      ys: outY,
+      ...(outZ ? { zs: outZ } : {}),
+      matchedRows,
+      scannedRows,
     },
   };
 }
@@ -141,6 +242,14 @@ async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorker
       return handleDecodeParquet(request);
     case 'buildFeatureCatalog':
       return handleBuildFeatureCatalog(request);
+    case 'decodeParquetRowFeatureCodes':
+      return handleDecodeParquetRowFeatureCodes(request);
+    case 'countFeatureCodes':
+      return handleCountFeatureCodes(request);
+    case 'scanParquetFeatureCounts':
+      return handleScanParquetFeatureCounts(request);
+    case 'scanParquetByFeatureCodes':
+      return handleScanParquetByFeatureCodes(request);
     default: {
       const _exhaustive: never = request;
       return { ok: false, error: `Unknown request type: ${String(_exhaustive)}` };
@@ -165,6 +274,10 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
           }
         } else if (response.result.kind === 'parquetTable') {
           transferables.push(response.result.tableIpc.buffer);
+        } else if (response.result.kind === 'rowFeatureCodes') {
+          transferables.push(response.result.codes.buffer);
+        } else if (response.result.kind === 'featureCounts') {
+          transferables.push(response.result.codes.buffer, response.result.counts.buffer);
         }
       }
       self.postMessage(reply, transferables);

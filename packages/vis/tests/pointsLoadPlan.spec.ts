@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   planPointsLoads,
+  pointsPreloadCacheKey,
+  shouldLoadPointsRowFeatureCodes,
   shouldPreloadAfterMetadataProbe,
 } from '../src/SpatialCanvas/pointsLoadPlan.js';
 
@@ -55,6 +57,20 @@ describe('planPointsLoads', () => {
   });
 });
 
+describe('pointsPreloadCacheKey', () => {
+  it('includes memory cap only (feature filter is runtime)', () => {
+    expect(
+      pointsPreloadCacheKey('points:transcripts', {
+        pointsMemoryCap: 1_000_000,
+      })
+    ).toBe('points:transcripts|m1000000');
+  });
+
+  it('uses default memory cap when unset', () => {
+    expect(pointsPreloadCacheKey('points:transcripts', {})).toMatch(/m\d+$/);
+  });
+});
+
 describe('shouldPreloadAfterMetadataProbe', () => {
   it('requires preload after non-tileable probe result', () => {
     expect(
@@ -105,5 +121,64 @@ describe('shouldPreloadAfterMetadataProbe', () => {
         totalRows: 4_000_001,
       })
     ).toBe(true);
+  });
+});
+
+describe('shouldLoadPointsRowFeatureCodes', () => {
+  it('does not load row codes before preloaded points exist', () => {
+    expect(
+      shouldLoadPointsRowFeatureCodes({
+        hasPreloaded: false,
+        hasCached: false,
+        inFlight: false,
+        featureCodes: [1],
+      })
+    ).toBe(false);
+  });
+
+  it('does not load row codes for unfiltered or empty-filter states', () => {
+    expect(
+      shouldLoadPointsRowFeatureCodes({
+        hasPreloaded: true,
+        hasCached: false,
+        inFlight: false,
+        featureCodes: undefined,
+      })
+    ).toBe(false);
+    expect(
+      shouldLoadPointsRowFeatureCodes({
+        hasPreloaded: true,
+        hasCached: false,
+        inFlight: false,
+        featureCodes: [],
+      })
+    ).toBe(false);
+  });
+
+  it('loads row codes only for an active uncached filter', () => {
+    expect(
+      shouldLoadPointsRowFeatureCodes({
+        hasPreloaded: true,
+        hasCached: false,
+        inFlight: false,
+        featureCodes: [1, 2],
+      })
+    ).toBe(true);
+    expect(
+      shouldLoadPointsRowFeatureCodes({
+        hasPreloaded: true,
+        hasCached: true,
+        inFlight: false,
+        featureCodes: [1, 2],
+      })
+    ).toBe(false);
+    expect(
+      shouldLoadPointsRowFeatureCodes({
+        hasPreloaded: true,
+        hasCached: false,
+        inFlight: true,
+        featureCodes: [1, 2],
+      })
+    ).toBe(false);
   });
 });

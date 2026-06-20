@@ -910,12 +910,87 @@ export default class SpatialDataTableSource extends AnnDataSource {
     maxRows: number
   ): Promise<{ table: ArrowTable; totalRows: number; truncated: boolean }> {
     const totalRows = await this.resolveParquetRowCount(parquetPath);
-    if (totalRows <= maxRows) {
+    const truncated = totalRows > maxRows;
+    const targetRows = truncated ? maxRows : totalRows;
+
+    if (await this.canLoadParquetRowGroups()) {
+      try {
+        const table = await this._loadParquetTableRowGroupsCapped(
+          parquetPath,
+          columns,
+          targetRows
+        );
+        return { table, totalRows, truncated };
+      } catch (error) {
+        console.warn(
+          `Row-group parquet read failed for ${parquetPath}; falling back to full-file decode.`,
+          error
+        );
+      }
+    }
+
+    if (!truncated) {
       const table = await this.loadParquetTable(parquetPath, columns);
       return { table, totalRows, truncated: false };
     }
     const table = await this._loadParquetTableUncachedCapped(parquetPath, columns, maxRows);
     return { table, totalRows, truncated: true };
+  }
+
+  /**
+   * Load up to {@link maxRows} via per-row-group range reads and optional column
+   * projection. Avoids fetching entire parquet part files when the store supports
+   * byte-range reads.
+   */
+  private async _loadParquetTableRowGroupsCapped(
+    parquetPath: string,
+    columns: string[] | undefined,
+    maxRows: number
+  ): Promise<ArrowTable> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.totalNumRowGroups <= 0) {
+      throw new Error(`No row groups available for ${parquetPath}.`);
+    }
+
+    const { readSchema } = await SpatialDataTableSource.parquetModulePromise;
+    const resolvedColumns = columns?.length
+      ? await this.resolveParquetTableColumns(
+          parquetPath,
+          columns,
+          readSchema,
+          dataset.parts[0]?.schemaBytes
+        )
+      : undefined;
+    const readOptions: ParquetRowGroupReadOptions | undefined = resolvedColumns?.length
+      ? { columns: resolvedColumns }
+      : undefined;
+
+    const tables: ArrowTable[] = [];
+    let accumulated = 0;
+    for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
+      if (accumulated >= maxRows) {
+        break;
+      }
+      let table = await this.loadParquetRowGroupByGroupIndex(
+        parquetPath,
+        rowGroupIndex,
+        readOptions
+      );
+      if (!table || table.numRows === 0) {
+        continue;
+      }
+      const remaining = maxRows - accumulated;
+      if (table.numRows > remaining) {
+        table = table.slice(0, remaining);
+      }
+      tables.push(table);
+      accumulated += table.numRows;
+    }
+
+    if (tables.length === 0) {
+      throw new Error(`Failed to load row-group capped parquet data from ${parquetPath}.`);
+    }
+    return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
   }
 
   private async _loadParquetTableUncachedCapped(

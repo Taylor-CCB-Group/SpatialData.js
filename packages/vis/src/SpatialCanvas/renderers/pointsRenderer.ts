@@ -5,7 +5,6 @@
 import type { Matrix4 } from '@math.gl/core';
 import { PointsLayer, type PointsRenderResource, type TileDebugStore } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
-import type { PointsTileLoadCallbacks } from '../pointsTileProgress';
 
 export {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
@@ -40,10 +39,9 @@ export interface PointsLayerRenderConfig {
   color?: [number, number, number, number];
   /** Integer codes matching `{feature_key}_codes` in the Morton Parquet artifact. */
   featureCodes?: readonly number[];
-  /** Integer codes from the preloaded table, aligned row-wise with point data. */
   preloadedFeatureCodes?: ArrayLike<number>;
+  renderCap?: number;
   showTileDebugOverlay?: boolean;
-  tileLoadCallbacks?: PointsTileLoadCallbacks;
   tileDebugStore?: TileDebugStore;
   tileDebugSignature?: string;
   use3d?: boolean;
@@ -64,8 +62,8 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     color,
     featureCodes,
     preloadedFeatureCodes,
+    renderCap,
     showTileDebugOverlay,
-    tileLoadCallbacks,
     tileDebugStore,
     tileDebugSignature,
     use3d,
@@ -100,7 +98,6 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     featureCodes,
     preloadedFeatureCodes,
     showTileDebugOverlay: showTileDebugOverlay ?? true,
-    tileLoadCallbacks,
     tileDebugStore,
     tileDebugSignature,
     use3d,

@@ -1,4 +1,48 @@
-import type { PointsTilingMetadata } from '@spatialdata/core';
+import { resolvePointsMemoryCap, type PointsTilingMetadata } from '@spatialdata/core';
+
+export interface PointsPreloadCacheKeyInput {
+  pointsMemoryCap?: number;
+}
+
+/** Cache key for preloaded scatter data (per element + memory cap). */
+export function pointsPreloadCacheKey(
+  elementKey: string,
+  config: PointsPreloadCacheKeyInput
+): string {
+  const memoryCap = resolvePointsMemoryCap(config.pointsMemoryCap);
+  return `${elementKey}|m${memoryCap}`;
+}
+
+export function deletePointsPreloadCacheForElement(
+  cache: Map<string, unknown>,
+  elementKey: string
+): void {
+  for (const key of [...cache.keys()]) {
+    if (key === elementKey || key.startsWith(`${elementKey}|`)) {
+      cache.delete(key);
+    }
+  }
+}
+
+export function hasPointsPreloadForElement(
+  cache: Map<string, unknown>,
+  elementKey: string
+): boolean {
+  for (const key of cache.keys()) {
+    if (key === elementKey || key.startsWith(`${elementKey}|`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function resolvePointsPreloadData<T>(
+  cache: Map<string, T>,
+  elementKey: string,
+  preloadCacheKey: string
+): T | undefined {
+  return cache.get(preloadCacheKey) ?? cache.get(elementKey);
+}
 
 export interface PointsLoadPlanInput {
   wantsOptimized: boolean;
@@ -54,6 +98,25 @@ export function shouldPreloadAfterMetadataProbe(
     return false;
   }
   return true;
+}
+
+export interface ShouldLoadPointsRowFeatureCodesInput {
+  hasPreloaded: boolean;
+  hasCached: boolean;
+  inFlight: boolean;
+  featureCodes?: readonly number[];
+}
+
+export function shouldLoadPointsRowFeatureCodes(
+  input: ShouldLoadPointsRowFeatureCodesInput
+): boolean {
+  return (
+    input.hasPreloaded &&
+    !input.hasCached &&
+    !input.inFlight &&
+    input.featureCodes !== undefined &&
+    input.featureCodes.length > 0
+  );
 }
 
 export function pointsPreloadBlockedMessage(totalRows: number): string {

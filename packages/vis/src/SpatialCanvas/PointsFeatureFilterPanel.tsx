@@ -31,6 +31,13 @@ const helperStyle: CSSProperties = {
   fontSize: '11px',
 };
 
+const countStyle: CSSProperties = {
+  color: '#888',
+  fontSize: '11px',
+  marginLeft: 'auto',
+  flexShrink: 0,
+};
+
 const searchStyle: CSSProperties = {
   color: '#ccc',
   fontSize: '12px',
@@ -40,13 +47,32 @@ const searchStyle: CSSProperties = {
   background: '#1a1a1a',
 };
 
+const buttonStyle: CSSProperties = {
+  alignSelf: 'flex-start',
+  color: '#ddd',
+  fontSize: '12px',
+  padding: '4px 8px',
+  borderRadius: 4,
+  border: '1px solid #555',
+  background: '#2a2a2a',
+  cursor: 'pointer',
+};
+
 const FEATURE_LIST_SEARCH_THRESHOLD = 100;
+
+function formatFeatureCount(count: number | undefined): string {
+  if (count === undefined) {
+    return '—';
+  }
+  return count.toLocaleString();
+}
 
 export interface PointsFeatureFilterPanelProps {
   layerId: string;
   config: PointsLayerConfig;
   catalog?: PointsFeatureCatalog | null;
   catalogLoading?: boolean;
+  onRequestCatalog: (layerId: string) => void;
   updateLayer: (id: string, updates: Partial<PointsLayerConfig>) => void;
 }
 
@@ -55,23 +81,41 @@ export function PointsFeatureFilterPanel({
   config,
   catalog,
   catalogLoading = false,
+  onRequestCatalog,
   updateLayer,
 }: PointsFeatureFilterPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const entries = catalog?.entries ?? [];
+  const hasCounts = entries.some((entry) => entry.count !== undefined);
   const allSelected = config.featureCodes === undefined;
   const noneSelected = config.featureCodes !== undefined && config.featureCodes.length === 0;
   const selectedCodes = allSelected
     ? new Set(entries.map((entry) => entry.code))
     : new Set(config.featureCodes ?? []);
 
+  const sortedEntries = useMemo(() => {
+    const list = [...entries];
+    if (hasCounts) {
+      list.sort((left, right) => {
+        const countDiff = (right.count ?? -1) - (left.count ?? -1);
+        if (countDiff !== 0) {
+          return countDiff;
+        }
+        return left.name.localeCompare(right.name);
+      });
+    } else {
+      list.sort((left, right) => left.name.localeCompare(right.name));
+    }
+    return list;
+  }, [entries, hasCounts]);
+
   const visibleEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) {
-      return entries;
+      return sortedEntries;
     }
-    return entries.filter((entry) => entry.name.toLowerCase().includes(query));
-  }, [entries, searchQuery]);
+    return sortedEntries.filter((entry) => entry.name.toLowerCase().includes(query));
+  }, [sortedEntries, searchQuery]);
 
   const setFeatureCodes = (nextCodes: number[] | undefined) => {
     updateLayer(layerId, { featureCodes: nextCodes });
@@ -105,10 +149,25 @@ export function PointsFeatureFilterPanel({
     );
   }
 
+  if (catalog === undefined) {
+    return (
+      <div style={panelStyle}>
+        <div style={helperStyle}>Feature list not loaded.</div>
+        <button type="button" style={buttonStyle} onClick={() => onRequestCatalog(layerId)}>
+          Load feature list
+        </button>
+      </div>
+    );
+  }
+
   if (!catalog || entries.length === 0) {
     return (
       <div style={panelStyle}>
-        <div style={helperStyle}>No feature catalog available for this points layer.</div>
+        <div style={helperStyle}>
+          {catalog === null
+            ? 'No feature catalog available for this points layer (missing feature_key or unsupported encoding for this dataset size).'
+            : 'No features found in the feature catalog.'}
+        </div>
       </div>
     );
   }
@@ -123,6 +182,7 @@ export function PointsFeatureFilterPanel({
         <span style={helperStyle}>
           {' '}
           · {selectedCount}/{entries.length} selected
+          {hasCounts ? ' · sorted by count' : ''}
         </span>
       </div>
       <label style={checkboxLabelStyle}>
@@ -162,13 +222,18 @@ export function PointsFeatureFilterPanel({
         {visibleEntries.map((entry) => {
           const checked = !noneSelected && (allSelected || selectedCodes.has(entry.code));
           return (
-            <label key={entry.code} style={checkboxLabelStyle} title={`code ${entry.code}`}>
+            <label
+              key={entry.code}
+              style={checkboxLabelStyle}
+              title={`code ${entry.code}${entry.count !== undefined ? ` · ${entry.count.toLocaleString()} points` : ''}`}
+            >
               <input
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
               />
-              {entry.name}
+              <span>{entry.name}</span>
+              {hasCounts ? <span style={countStyle}>{formatFeatureCount(entry.count)}</span> : null}
             </label>
           );
         })}

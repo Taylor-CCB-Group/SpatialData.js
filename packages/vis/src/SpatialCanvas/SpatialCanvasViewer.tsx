@@ -399,7 +399,7 @@ function SpatialCanvasViewerInner({
     autoFit,
     experimentalOptimizations,
   });
-  const pointsTileLoadingMessage = renderer.getPointsTileLoadingMessage();
+  const overlayStatusMessage = renderer.getOverlayStatusMessage();
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
     [renderer.enabledLayerIds]
@@ -570,15 +570,9 @@ function SpatialCanvasViewerInner({
             {showLoadingOverlay && renderer.isBlocking && (
               <div style={overlayStyle}>Loading layer data...</div>
             )}
-            {showLoadingOverlay && !renderer.isBlocking && pointsTileLoadingMessage && (
-              <div style={overlayStyle}>{pointsTileLoadingMessage}</div>
-            )}
-            {showLoadingOverlay &&
-              renderer.isLoading &&
-              !renderer.isBlocking &&
-              !pointsTileLoadingMessage && (
+            {showLoadingOverlay && !renderer.isBlocking && overlayStatusMessage && (
               <div style={{ ...overlayStyle, backgroundColor: 'rgba(20,20,20,0.78)' }}>
-                Refreshing layer metadata...
+                {overlayStatusMessage}
               </div>
             )}
             {!renderer.hasLayersDrawn && !renderer.isBlocking && (

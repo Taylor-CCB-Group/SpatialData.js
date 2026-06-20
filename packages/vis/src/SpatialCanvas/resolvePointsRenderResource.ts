@@ -46,14 +46,19 @@ export function resolvePointsRenderResource(
 export function pointsRenderResourceSignature(
   element: PointsElement,
   cache: ResolvePointsRenderResourceCache,
-  options: ResolvePointsRenderResourceOptions
+  options: ResolvePointsRenderResourceOptions & { preloadCacheKey?: string }
 ): string {
+  const rowCount =
+    cache.preloaded && cache.preloaded.shape.length >= 2
+      ? cache.preloaded.shape[1]
+      : cache.preloaded?.data[0]?.length ?? 0;
   return [
     element.key,
+    options.preloadCacheKey ?? '',
     options.experimentalOptimizations,
     cache.metadataKnown ? 'meta' : 'nometa',
     cache.tilingMetadata?.parquetPath ?? '',
     cache.tilingMetadata?.supportsRowGroupRangeReads ? 'rg' : '',
-    cache.preloaded ? `pre:${cache.preloaded.shape[0] ?? 0}` : 'nopre',
+    cache.preloaded ? `pre:${rowCount}` : 'nopre',
   ].join('|');
 }

@@ -17,6 +17,9 @@ Parquet/GeoParquet rather than inventing a deck.gl-specific storage format.
   Vitessce's row-group APIs (`readMetadata` and `readParquetRowGroup`) and the
   store supports range reads, the loader may fetch selected row groups. Otherwise
   it degrades to the existing full-table read followed by bounds filtering.
+- Render-time code uses ADR 0003's **Points Render Resource** (`{ element,
+  loader }`) and calls the `PointsLoader` facet. `PointsElement` remains source
+  identity and public source API, not the deck strategy contract.
 - `@spatialdata/vis` may render compatible points through a deck.gl `TileLayer`.
   The tile layer owns async viewport loads and abort signals; ordinary
   `ScatterplotLayer` rendering remains the fallback for preloaded point data.
@@ -86,6 +89,9 @@ v1 applies feature filtering as a **read-time row predicate** after spatial
 bounds filtering (and after row-group fetch on the Morton path). It does not
 skip row groups by gene. String-based `features?: string[]` and a codebook
 artifact are deferred.
+
+**Implementation status** (preload vs runtime filter, catalog, workers):
+[`docs/plans/points-preload-feature-filter-status.md`](../plans/points-preload-feature-filter-status.md).
 
 Feature filtering is separate from **feature-primary sort** experiments
 (`[feature_codes, morton_code_2d]`), which may require a new tiling `kind` if

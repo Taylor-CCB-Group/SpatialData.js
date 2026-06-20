@@ -54,7 +54,6 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       resource,
       featureCodes,
       showTileDebugOverlay,
-      tileLoadCallbacks,
       opacity = 1,
       visible = true,
       pointSize = DEFAULT_POINT_SIZE,
@@ -69,7 +68,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       return null;
     }
 
-    const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore, tileLoadCallbacks);
+    const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
     const scatterStyleProps = {
       color,
       pointSize,
@@ -105,10 +104,20 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               use3d,
             ],
           },
-          onViewportLoad(tiles: Array<{ index?: { x: number; y: number; z: number }; id?: string; bbox?: unknown }> | null) {
+          onViewportLoad(
+            tiles: Array<{
+              index?: { x: number; y: number; z: number };
+              id?: string;
+              bbox?: unknown;
+            }> | null
+          ) {
             const handles = (tiles ?? [])
-              .map((tile: { index?: { x: number; y: number; z: number }; id?: string; bbox?: unknown }) =>
-                tileHandleFromDeckTile(tile)
+              .map(
+                (tile: {
+                  index?: { x: number; y: number; z: number };
+                  id?: string;
+                  bbox?: unknown;
+                }) => tileHandleFromDeckTile(tile)
               )
               .filter(
                 (handle): handle is NonNullable<ReturnType<typeof tileHandleFromDeckTile>> =>
@@ -116,7 +125,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               );
             debugHooks.onViewportTilesRequested(handles);
           },
-          async getTileData(tileProps: { index?: { x: number; y: number; z: number }; id?: string; bbox?: unknown; signal?: AbortSignal }) {
+          async getTileData(tileProps: {
+            index?: { x: number; y: number; z: number };
+            id?: string;
+            bbox?: unknown;
+            signal?: AbortSignal;
+          }) {
             const tile = tileHandleFromDeckTile(tileProps);
             if (!tile || !isPointTileBbox(tileProps.bbox)) {
               return null;
@@ -213,10 +227,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             autoHighlight: true,
             highlightColor: [255, 255, 255, 120],
             getPolygon: (d: { polygon: [number, number][] }) => d.polygon,
-            getFillColor: (d: { entry: { status: import('./pointsTileDebug.js').PointsTileStatus } }) =>
-              tileDebugStatusFillColor(d.entry.status),
-            getLineColor: (d: { entry: { status: import('./pointsTileDebug.js').PointsTileStatus } }) =>
-              tileDebugStatusLineColor(d.entry.status),
+            getFillColor: (d: {
+              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+            }) => tileDebugStatusFillColor(d.entry.status),
+            getLineColor: (d: {
+              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+            }) => tileDebugStatusLineColor(d.entry.status),
             getLineWidth: 2,
             lineWidthUnits: 'pixels',
             filled: true,

@@ -44,6 +44,10 @@ _Avoid_: MobX renderer contract
 The **Resource Resolver** output for a points **Spatial Entry**: a bundle `{ element, loader }` pairing the canonical `PointsElement` with a frozen **`PointsLoader`** facet.
 _Avoid_: treating `PointsLoader` alone as the full render resource, or storing the loader on/mutating the element
 
+**PointsElement**:
+The source identity and public source API for SpatialData points. It owns element metadata and source-level methods such as full or bounded point loading; deck render strategies receive the resolved **Points Render Resource** instead of mutating or calling the element directly.
+_Avoid_: render-time strategy object, mutable loader holder
+
 **PointsLoader**:
 The loader facet of a **Points Render Resource**: encoding capabilities plus a fetch API (`loadInBounds`, optional `loadAll`). Built by `@spatialdata/core` store-I/O factories; consumed by `@spatialdata/layers` render strategies — not by calling `PointsElement` methods directly from deck code.
 _Avoid_: conflating with Viv/image `loader` when discussing SpatialData element identity
@@ -71,3 +75,12 @@ _Avoid_: `experimentalOptimizations` as a synonym for encoding kind
 - "Layer" was used for SpatialData elements, deck.gl layer instances, UI rows, and saved config entries. Resolved: use **Stack Entry** for saved/render order, **Spatial Entry** for SpatialData-backed entries, and deck.gl layer only for runtime renderer output.
 - "Snapshot" was used for both persisted config and temporary UI/render state. Resolved: persisted config is a **Render Stack**; live MDV direct-edit areas are **MobX Control Islands** and should not periodically snapshot the whole stack during interaction.
 - "Props" was used for both serialized renderer inputs and runtime callback objects. Resolved: `entry.props` must remain serializable renderer input; listeners, factories, portals, and raw deck integration points are **Runtime Attachments**.
+
+## In-progress work
+
+- **Points preload & feature filter** — runtime filter on preloaded scatter, row-group
+  geometry reads, catalog fallbacks for large dictionary-only transcripts.
+  Status and cleanup plan:
+  [`docs/plans/points-preload-feature-filter-status.md`](docs/plans/points-preload-feature-filter-status.md).
+  Related ADRs: [0002](docs/adr/0002-spatially-aware-vector-loading.md),
+  [0003](docs/adr/0003-points-render-resource.md).

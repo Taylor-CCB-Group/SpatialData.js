@@ -59,7 +59,8 @@ appear in `TileLayer.updateTriggers.getTileData`.
 
 ## Relationship to ADR 0002
 
-- ADR 0002: persisted artifacts and `PointsElement.loadPointsInBounds()` API.
+- ADR 0002: persisted artifacts and source-level
+  `PointsElement.loadPointsInBounds()` API.
 - ADR 0003: render-time bundle, strategy registry, and deck composite ownership.
 
 ## Consequences

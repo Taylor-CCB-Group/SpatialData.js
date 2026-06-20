@@ -15,10 +15,20 @@ describe('pointsRenderResourceSignature', () => {
       {
         metadataKnown: true,
         tilingMetadata: null,
-        preloaded: { shape: [2], data: [[0, 1], [0, 1]] },
+        preloaded: { shape: [2, 100], data: [new Float32Array(100), new Float32Array(100)] },
       },
-      { experimentalOptimizations: 'auto' }
+      { experimentalOptimizations: 'auto', preloadCacheKey: 'points:transcripts|m4000000|fall' }
+    );
+    const withMoreRows = pointsRenderResourceSignature(
+      element as never,
+      {
+        metadataKnown: true,
+        tilingMetadata: null,
+        preloaded: { shape: [2, 200], data: [new Float32Array(200), new Float32Array(200)] },
+      },
+      { experimentalOptimizations: 'auto', preloadCacheKey: 'points:transcripts|m4000000|fall' }
     );
     expect(base).not.toEqual(withPreload);
+    expect(withPreload).not.toEqual(withMoreRows);
   });
 });

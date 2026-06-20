@@ -61,6 +61,10 @@ export interface PointData {
   /** Full dataset row count when preload was truncated. */
   totalRowCount?: number;
   preloadTruncated?: boolean;
+  /** Rows scanned when loading with an active feature filter. */
+  scannedRowCount?: number;
+  /** Data was loaded with a source-side feature filter. */
+  filterActive?: boolean;
 }
 
 export function columnarBatchFromPointData(

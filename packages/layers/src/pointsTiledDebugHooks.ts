@@ -1,4 +1,4 @@
-import type { PointsTileHandle, PointsTileLoadCallbacks } from './pointsTileLoadCallbacks.js';
+import type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
 import {
   completedSnapshotFromLoadResult,
   reduceTileDebugEntries,
@@ -49,9 +49,13 @@ function emptyDebugState(): TiledPointsDebugState {
 }
 
 function debugStateSignature(state: TiledPointsDebugState): string {
-  const completedKeys = Object.keys(state.completedTilesById ?? {}).sort().join(',');
+  const completedKeys = Object.keys(state.completedTilesById ?? {})
+    .sort()
+    .join(',');
   const loadingKeys = [...(state.loadingTileIds ?? [])].sort().join(',');
-  const handleKeys = Object.keys(state.tileHandlesById ?? {}).sort().join(',');
+  const handleKeys = Object.keys(state.tileHandlesById ?? {})
+    .sort()
+    .join(',');
   return `${tileDebugEntriesSignature(state.tileDebugEntries)}|${loadingKeys}|${completedKeys}|${handleKeys}`;
 }
 
@@ -72,27 +76,16 @@ export function createTileDebugStore(onChange?: () => void): TileDebugStore {
   };
 }
 
-export function createTiledPointsDebugHooks(
-  store: TileDebugStore | undefined,
-  tileLoadCallbacks?: PointsTileLoadCallbacks
-) {
+export function createTiledPointsDebugHooks(store: TileDebugStore | undefined) {
   if (!store) {
     return {
-      onViewportTilesRequested(
-        tiles: Parameters<NonNullable<PointsTileLoadCallbacks['onViewportTilesRequested']>>[0]
-      ) {
-        tileLoadCallbacks?.onViewportTilesRequested?.(tiles);
-      },
-      onTileLoadStart(tile: Parameters<NonNullable<PointsTileLoadCallbacks['onTileLoadStart']>>[0]) {
-        tileLoadCallbacks?.onTileLoadStart?.(tile);
-      },
+      onViewportTilesRequested(_tiles: readonly PointsTileHandle[]) {},
+      onTileLoadStart(_tile: PointsTileHandle) {},
       onTileLoadEnd(
-        tile: Parameters<NonNullable<PointsTileLoadCallbacks['onTileLoadEnd']>>[0],
-        result: Parameters<NonNullable<PointsTileLoadCallbacks['onTileLoadEnd']>>[1],
+        _tile: PointsTileHandle,
+        _result: PointsTileLoadResult,
         _clipBounds: { minX: number; minY: number; maxX: number; maxY: number }
-      ) {
-        tileLoadCallbacks?.onTileLoadEnd?.(tile, result);
-      },
+      ) {},
       getTileDebugEntries(): PointsTileDebugEntry[] {
         return [];
       },
@@ -103,8 +96,7 @@ export function createTiledPointsDebugHooks(
   }
 
   return {
-    onViewportTilesRequested(tiles: Parameters<NonNullable<PointsTileLoadCallbacks['onViewportTilesRequested']>>[0]) {
-      tileLoadCallbacks?.onViewportTilesRequested?.(tiles);
+    onViewportTilesRequested(tiles: readonly PointsTileHandle[]) {
       store.update((state) => {
         const at = Date.now();
         const tileHandlesById = { ...(state.tileHandlesById ?? {}) };
@@ -122,8 +114,7 @@ export function createTiledPointsDebugHooks(
         };
       });
     },
-    onTileLoadStart(tile: Parameters<NonNullable<PointsTileLoadCallbacks['onTileLoadStart']>>[0]) {
-      tileLoadCallbacks?.onTileLoadStart?.(tile);
+    onTileLoadStart(tile: PointsTileHandle) {
       store.update((state) => {
         const at = Date.now();
         const nextState: TiledPointsDebugState = {
@@ -131,7 +122,9 @@ export function createTiledPointsDebugHooks(
           tileHandlesById: rememberTileHandle(state, tile),
           loadingTileIds: [...new Set([...(state.loadingTileIds ?? []), tile.tileId])],
           completedTilesById: Object.fromEntries(
-            Object.entries(state.completedTilesById ?? {}).filter(([tileId]) => tileId !== tile.tileId)
+            Object.entries(state.completedTilesById ?? {}).filter(
+              ([tileId]) => tileId !== tile.tileId
+            )
           ),
         };
         const afterStart = reduceTileDebugEntries(state.tileDebugEntries, {
@@ -146,14 +139,15 @@ export function createTiledPointsDebugHooks(
       });
     },
     onTileLoadEnd(
-      tile: Parameters<NonNullable<PointsTileLoadCallbacks['onTileLoadEnd']>>[0],
-      result: Parameters<NonNullable<PointsTileLoadCallbacks['onTileLoadEnd']>>[1],
+      tile: PointsTileHandle,
+      result: PointsTileLoadResult,
       clipBounds: { minX: number; minY: number; maxX: number; maxY: number }
     ) {
-      tileLoadCallbacks?.onTileLoadEnd?.(tile, result);
       const at = Date.now();
       store.update((state) => {
-        const loadingTileIds = (state.loadingTileIds ?? []).filter((tileId) => tileId !== tile.tileId);
+        const loadingTileIds = (state.loadingTileIds ?? []).filter(
+          (tileId) => tileId !== tile.tileId
+        );
         const completedTilesById = { ...(state.completedTilesById ?? {}) };
         const startedAt =
           state.tileDebugEntries.find((entry) => entry.tileId === tile.tileId)?.startedAt ?? at;

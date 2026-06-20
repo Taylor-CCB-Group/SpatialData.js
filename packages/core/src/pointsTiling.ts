@@ -11,6 +11,8 @@ export type SpatialBounds = AxisAlignedBounds;
 export interface PointsFeatureEntry {
   code: number;
   name: string;
+  /** Row count in the dataset or loaded sample, when known. */
+  count?: number;
 }
 
 export interface PointsFeatureCatalog {
@@ -238,10 +240,7 @@ export function featureCodeAllowSet(
   return new Set(featureCodes);
 }
 
-export function rowMatchesFeatureCode(
-  code: unknown,
-  allowed: Set<number> | null
-): boolean {
+export function rowMatchesFeatureCode(code: unknown, allowed: Set<number> | null): boolean {
   if (!allowed) {
     return true;
   }
@@ -268,12 +267,9 @@ export function filterColumnarByFeatureCodes(
     return data;
   }
   if (allowedFeatureCodes.size === 0) {
-    const axisCount = data.shape[0] ?? data.data.length;
+    const axisCount = data.shape?.[0] ?? data.data.length;
     const empty = new Float32Array(0);
-    const emptyData =
-      axisCount >= 3 && data.data[2]
-        ? [empty, empty, empty]
-        : [empty, empty];
+    const emptyData = axisCount >= 3 && data.data[2] ? [empty, empty, empty] : [empty, empty];
     return { shape: [axisCount, 0], data: emptyData };
   }
 

@@ -92,4 +92,17 @@ describe('SpatialDataTableSource multipart parquet reads', () => {
     const codes = table.getChild('feature_name_codes')?.toArray();
     expect(codes?.length).toBe(150);
   });
+
+  it('loads capped column subset via row-group range reads', async () => {
+    const { table, truncated, totalRows } = await source.loadParquetTableCapped(
+      parquetPath,
+      ['x', 'y'],
+      120
+    );
+    expect(totalRows).toBe(150);
+    expect(truncated).toBe(true);
+    expect(table.numRows).toBe(120);
+    expect(table.getChild('x')?.length).toBe(120);
+    expect(table.getChild('y')?.length).toBe(120);
+  });
 });

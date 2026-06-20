@@ -12,6 +12,7 @@ import {
   shapesAttrsSchema,
   tableAttrsSchema,
 } from '../schemas';
+import type { PointsLoadOptions } from '../pointsLoadOptions.js';
 import type { ShapesRenderData } from '../shapes';
 import { isSpatialData, loadFeatureRowIndexByFeatureIndex } from '../tableAssociations';
 import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
@@ -532,15 +533,20 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.attrs.coordinateTransformations;
   }
 
-  async loadPoints() {
-    //Error: Unexpected response status 500 INTERNAL SERVER ERROR
-    //IsADirectoryError: [Errno 21] Is a directory: '/MySpatialData.zarr/points/key/points.parquet'
-    //we have points.parquet/part.0.parquet etc.
-    return this.vPoints.loadPoints(`points/${this.key}`);
+  async loadPoints(options?: PointsLoadOptions) {
+    return this.vPoints.loadPoints(`points/${this.key}`, options);
   }
 
-  async loadRowFeatureCodes() {
-    return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`);
+  async loadRowFeatureCodes(options?: { memoryCap?: number }) {
+    return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`, options);
+  }
+
+  async loadFeatureCounts() {
+    return this.vPoints.loadFeatureCounts(`points/${this.key}`);
+  }
+
+  async listFeaturesWithCounts() {
+    return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`);
   }
 
   async getPointsTilingMetadata() {

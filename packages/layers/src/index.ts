@@ -96,7 +96,7 @@ export {
   POINT_SIZE_ZOOM_REFERENCE,
   zoomScaledPointSize,
 } from './pointsScatterLayer.js';
-export type { PointsTileHandle, PointsTileLoadResult, PointsTileLoadCallbacks } from './pointsTileLoadCallbacks.js';
+export type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
 export {
   createTileDebugStore,
   createTiledPointsDebugHooks,

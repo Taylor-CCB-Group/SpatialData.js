@@ -54,7 +54,10 @@ function createFilesystemStore(root: string) {
         return null;
       }
     },
-    async getRange(path: string, range: { offset?: number; length?: number; suffixLength?: number }) {
+    async getRange(
+      path: string,
+      range: { offset?: number; length?: number; suffixLength?: number }
+    ) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
       const bytes = await readFile(join(root, relativePath));
       if (range.suffixLength != null) {
@@ -104,12 +107,125 @@ describe('SpatialDataPointsSource feature catalog', () => {
     });
   });
 
+  it('lists features for oversized datasets via feature-column scan', async () => {
+    vi.spyOn(source, 'resolveParquetRowCount' as keyof SpatialDataPointsSource).mockResolvedValue(
+      5_000_000
+    );
+    const catalog = await source.listPointsFeatures('points/transcripts');
+    expect(catalog).toEqual({
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'gene_a' },
+        { code: 1, name: 'gene_b' },
+        { code: 2, name: 'gene_c' },
+      ],
+    });
+  });
+
+  it('lists features for oversized dictionary-encoded datasets via row-group dictionary read', async () => {
+    const elementDir = join(fixtureRoot, 'points', 'dict_large');
+    await mkdir(elementDir, { recursive: true });
+    execSync(
+      `uv run python - <<'PY'
+import pyarrow as pa
+import pyarrow.parquet as pq
+from pathlib import Path
+
+root = Path(${JSON.stringify(elementDir)})
+(root / "points.parquet").mkdir(parents=True, exist_ok=True)
+genes = pa.array(["gene_a", "gene_b", "gene_c"], type=pa.dictionary(pa.int32(), pa.string()))
+names = (["gene_a", "gene_b", "gene_c"] * 34)[:100]
+table = pa.table(
+    {
+        "x": [float(i) for i in range(100)],
+        "y": [float(i) for i in range(100)],
+        "feature_name": pa.array(names, type=pa.dictionary(pa.int32(), pa.string())),
+    }
+)
+pq.write_table(table, root / "points.parquet" / "part.0.parquet")
+PY`,
+      { cwd: writerRoot, stdio: 'pipe' }
+    );
+
+    const dictSource = new SpatialDataPointsSource({
+      store: createFilesystemStore(fixtureRoot),
+      fileType: '.zarr',
+    });
+    vi.spyOn(dictSource, 'loadSpatialDataElementAttrs').mockResolvedValue({
+      'encoding-type': 'ngff:points',
+      axes: ['x', 'y'],
+      spatialdata_attrs: {
+        feature_key: 'feature_name',
+        version: '0.2',
+      },
+    });
+    vi.spyOn(
+      dictSource,
+      'resolveParquetRowCount' as keyof SpatialDataPointsSource
+    ).mockResolvedValue(5_000_000);
+
+    const catalog = await dictSource.listPointsFeatures('points/dict_large');
+    expect(catalog?.entries).toEqual([
+      { code: 0, name: 'gene_a' },
+      { code: 1, name: 'gene_b' },
+      { code: 2, name: 'gene_c' },
+    ]);
+  });
+
   it('loads feature code column with full points preload via loadPointsRowFeatureCodes', async () => {
     const points = await source.loadPoints('points/transcripts');
     expect(points.shape[1]).toBe(5);
     expect(points.featureCodes).toBeUndefined();
     const featureCodes = await source.loadPointsRowFeatureCodes('points/transcripts');
     expect(featureCodes?.length).toBe(5);
+  });
+
+  it('omits counts for dictionary-only feature columns without explicit code mapping', async () => {
+    const elementDir = join(fixtureRoot, 'points', 'dict_counts_untrusted');
+    await mkdir(elementDir, { recursive: true });
+    execSync(
+      `uv run python - <<'PY'
+import pyarrow as pa
+import pyarrow.parquet as pq
+from pathlib import Path
+
+root = Path(${JSON.stringify(elementDir)})
+(root / "points.parquet").mkdir(parents=True, exist_ok=True)
+names = ["ABCC11", "TP53", "TP53", "EGFR"]
+table = pa.table(
+    {
+        "x": [0.0, 1.0, 2.0, 3.0],
+        "y": [0.0, 1.0, 2.0, 3.0],
+        "feature_name": pa.array(names, type=pa.dictionary(pa.int32(), pa.string())),
+    }
+)
+pq.write_table(table, root / "points.parquet" / "part.0.parquet")
+PY`,
+      { cwd: writerRoot, stdio: 'pipe' }
+    );
+
+    const dictSource = new SpatialDataPointsSource({
+      store: createFilesystemStore(fixtureRoot),
+      fileType: '.zarr',
+    });
+    vi.spyOn(dictSource, 'loadSpatialDataElementAttrs').mockResolvedValue({
+      'encoding-type': 'ngff:points',
+      axes: ['x', 'y'],
+      spatialdata_attrs: {
+        feature_key: 'feature_name',
+        version: '0.2',
+      },
+    });
+
+    const counts = await dictSource.loadFeatureCounts('points/dict_counts_untrusted');
+    expect(counts.size).toBe(0);
+
+    const catalog = await dictSource.listPointsFeaturesWithCounts('points/dict_counts_untrusted');
+    expect(catalog?.entries).toEqual([
+      { code: 0, name: 'ABCC11' },
+      { code: 1, name: 'TP53' },
+      { code: 2, name: 'EGFR' },
+    ]);
   });
 
   it('derives row feature codes from dictionary-encoded feature names', async () => {

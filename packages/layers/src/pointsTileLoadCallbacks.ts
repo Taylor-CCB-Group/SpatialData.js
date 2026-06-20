@@ -15,9 +15,3 @@ export interface PointsTileLoadResult {
   loadMode?: string;
   errorMessage?: string;
 }
-
-export interface PointsTileLoadCallbacks {
-  onViewportTilesRequested?: (tiles: readonly PointsTileHandle[]) => void;
-  onTileLoadStart?: (tile: PointsTileHandle) => void;
-  onTileLoadEnd?: (tile: PointsTileHandle, result: PointsTileLoadResult) => void;
-}

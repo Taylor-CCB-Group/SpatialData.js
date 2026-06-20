@@ -2,17 +2,81 @@ import { basename } from '../Vutils';
 import {
   buildFeatureCatalogFromColumns,
   buildFeatureCatalogFromDictionaryOnly,
-  isDictionaryFeatureColumn,
+  accumulateFeatureCatalogFromTable,
+  featureCatalogFromCodeMap,
+  featureCatalogNeedsParquetFallback,
+  mergeFeatureCountsIntoCatalog,
   resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
 import {
-  decodeParquetPartsInWorker,
   isPointsWorkerEnabled,
+  scanParquetByFeatureCodesInWorker,
+  scanParquetFeatureCountsInWorker,
 } from '../workers/pointsWorkerClient.js';
-import {
-  exceedsPointsPreloadLimit,
-  POINTS_PRELOAD_MAX_ROWS,
-} from '../pointsLimits.js';
+import { exceedsPointsPreloadLimit, resolvePointsMemoryCap } from '../pointsLimits.js';
+import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
+import type {
+  PointsLoadOptions,
+  PointsLoadProgress,
+  PointsLoadResult,
+} from '../pointsLoadOptions.js';
+import { scanTableFeatureCounts } from '../workers/pointsWorkerScan.js';
+
+interface ColumnarPointsChunk {
+  shape: number[];
+  data: ArrayLike<number>[];
+}
+
+function emptyFilteredPointsResult(axisNames: string[], totalRowCount: number): PointsLoadResult {
+  const hasZ = axisNames.includes('z');
+  const empty = new Float32Array(0);
+  const data = hasZ ? [empty, empty, empty] : [empty, empty];
+  return {
+    shape: [data.length, 0],
+    data,
+    totalRowCount,
+    scannedRowCount: 0,
+    filterActive: true,
+  };
+}
+
+function toColumnarPointsChunk(
+  data: { shape?: number[]; data: ArrayLike<number>[] },
+  axisCount: number
+): ColumnarPointsChunk {
+  const rowCount = data.shape?.[1] ?? data.data[0]?.length ?? 0;
+  return {
+    shape: data.shape ?? [axisCount, rowCount],
+    data: data.data,
+  };
+}
+
+function concatColumnarPointChunks(chunks: ColumnarPointsChunk[]): ColumnarPointsChunk {
+  if (chunks.length === 0) {
+    const empty = new Float32Array(0);
+    return { shape: [2, 0], data: [empty, empty] };
+  }
+  const axisCount = chunks[0].shape[0] ?? chunks[0].data.length;
+  const totalRows = chunks.reduce(
+    (sum, chunk) => sum + (chunk.shape[1] ?? chunk.data[0]?.length ?? 0),
+    0
+  );
+  const data = Array.from({ length: axisCount }, (_, axisIndex) => {
+    const merged = new Float32Array(totalRows);
+    let offset = 0;
+    for (const chunk of chunks) {
+      const column = chunk.data[axisIndex];
+      if (!column) {
+        continue;
+      }
+      const values = column instanceof Float32Array ? column : Float32Array.from(column);
+      merged.set(values, offset);
+      offset += values.length;
+    }
+    return merged;
+  });
+  return { shape: [axisCount, totalRows], data };
+}
 import {
   MORTON_CODE_2D_COLUMN,
   type PointsInBoundsOptions,
@@ -188,52 +252,34 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    *  shape: [number, number],
    * }>} A promise for a zarr array containing the data.
    */
-  async loadPoints(elementPath: string) {
-    const parquetPath = getParquetPath(elementPath);
+  async loadPoints(
+    elementPath: string,
+    options: PointsLoadOptions = {}
+  ): Promise<PointsLoadResult> {
+    const memoryCap = resolvePointsMemoryCap(options.memoryCap);
+    if (options.featureCodes !== undefined && options.fullDatasetFeatureScan === true) {
+      return this.loadPointsMatchingFeatureCodes(elementPath, {
+        memoryCap,
+        featureCodes: options.featureCodes,
+        onProgress: options.onProgress,
+      });
+    }
 
+    const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { axes } = zattrs;
     const normAxes = normalizeAxes(axes);
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
-
     const rowCount = await this.resolveParquetRowCount(parquetPath);
-    const truncatePreload = rowCount > POINTS_PRELOAD_MAX_ROWS;
-    const maxRows = truncatePreload ? POINTS_PRELOAD_MAX_ROWS : rowCount;
-
+    const truncatePreload = rowCount > memoryCap;
+    const maxRows = truncatePreload ? memoryCap : rowCount;
     const columnNames = [...axisNames];
 
-    if (isPointsWorkerEnabled()) {
-      const { parts, totalRows, truncated } = await this.readParquetDatasetBytesCapped(
-        parquetPath,
-        maxRows
-      );
-      if (parts.length > 0) {
-        const arrowTable = await decodeParquetPartsInWorker(
-          parts,
-          columnNames,
-          truncated ? maxRows : undefined
-        );
-        const axisColumnArrs = axisNames.map((name: string) => {
-          const column = arrowTable.getChild(name);
-          if (!column) {
-            throw new Error(`Column "${name}" not found in the arrow table.`);
-          }
-          return column.toArray();
-        });
-        return {
-          shape: [axisColumnArrs.length, arrowTable.numRows],
-          data: axisColumnArrs,
-          totalRowCount: totalRows,
-          preloadTruncated: truncated,
-        };
-      }
-    }
-
-    const { table: arrowTable, totalRows, truncated } = await this.loadParquetTableCapped(
-      parquetPath,
-      columnNames,
-      maxRows
-    );
+    const {
+      table: arrowTable,
+      totalRows,
+      truncated,
+    } = await this.loadParquetTableCapped(parquetPath, columnNames, maxRows);
 
     const axisColumnArrs = axisNames.map((name: string) => {
       const column = arrowTable.getChild(name);
@@ -251,11 +297,254 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     };
   }
 
+  private async loadPointsMatchingFeatureCodes(
+    elementPath: string,
+    options: {
+      memoryCap: number;
+      featureCodes: readonly number[];
+      onProgress?: (progress: PointsLoadProgress) => void;
+    }
+  ): Promise<PointsLoadResult> {
+    const parquetPath = getParquetPath(elementPath);
+    const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
+    const normAxes = normalizeAxes(axes);
+    const axisNames = normAxes.map((axis: { name: string }) => axis.name);
+    const featureKey = spatialDataAttrs?.feature_key;
+    if (typeof featureKey !== 'string' || featureKey.length === 0) {
+      throw new Error(`Points element "${elementPath}" is missing feature_key metadata.`);
+    }
+
+    const totalRowCount = await this.resolveParquetRowCount(parquetPath);
+    if (options.featureCodes.length === 0) {
+      return emptyFilteredPointsResult(axisNames, totalRowCount);
+    }
+
+    if (!isPointsWorkerEnabled()) {
+      throw new Error(
+        'Feature-filtered points loading requires the points worker and parquet part bytes.'
+      );
+    }
+
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+    const fields = datasetMetadata?.schema?.fields
+      ? datasetMetadata.schema.fields.flatMap((field) =>
+          typeof field.name === 'string' ? [field.name] : []
+        )
+      : arrowSchemaFieldNames(schemaTable);
+    const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+
+    const columnNames = [...axisNames];
+    if (featureCodeColumnName && !columnNames.includes(featureCodeColumnName)) {
+      columnNames.push(featureCodeColumnName);
+    } else if (!columnNames.includes(featureKey)) {
+      columnNames.push(featureKey);
+    }
+
+    const matchedChunks: ColumnarPointsChunk[] = [];
+    let matchedRows = 0;
+    let scannedRows = 0;
+
+    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
+
+    if (canUseRowGroups && datasetRowGroups > 0) {
+      for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
+        if (matchedRows >= options.memoryCap) {
+          break;
+        }
+        const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
+          columns: columnNames,
+        });
+        if (!table || table.numRows === 0) {
+          continue;
+        }
+        scannedRows += table.numRows;
+        const rowFeatureCodes = resolveRowFeatureCodesFromTable(
+          table,
+          featureKey,
+          featureCodeColumnName
+        );
+        const axisColumnArrs = axisNames.map((name: string) => {
+          const column = table.getChild(name);
+          if (!column) {
+            throw new Error(`Column "${name}" not found in the arrow table.`);
+          }
+          return column.toArray();
+        });
+        const filtered = filterColumnarByFeatureCodes(
+          { shape: [axisColumnArrs.length, table.numRows], data: axisColumnArrs },
+          options.featureCodes,
+          rowFeatureCodes ?? new Int32Array(0)
+        );
+        const filteredRows = filtered.shape?.[1] ?? filtered.data[0]?.length ?? 0;
+        if (filteredRows > 0) {
+          const remaining = options.memoryCap - matchedRows;
+          const normalized = toColumnarPointsChunk(filtered, axisColumnArrs.length);
+          const chunk: ColumnarPointsChunk =
+            filteredRows > remaining
+              ? {
+                  shape: normalized.shape,
+                  data: normalized.data.map((column) => {
+                    const values =
+                      column instanceof Float32Array ? column : Float32Array.from(column);
+                    return values.subarray(0, remaining);
+                  }),
+                }
+              : normalized;
+          const chunkRows = chunk.shape[1] ?? chunk.data[0]?.length ?? 0;
+          matchedChunks.push(chunk);
+          matchedRows += chunkRows;
+        }
+        options.onProgress?.({
+          scannedRows,
+          matchedRows,
+          partIndex: rowGroupIndex,
+          partCount: datasetRowGroups,
+        });
+      }
+    } else {
+      let partPaths: string[];
+      if (datasetMetadata?.parts.length && datasetMetadata.parts.length > 0) {
+        partPaths = datasetMetadata.parts.map((part) => part.path);
+      } else {
+        partPaths = [parquetPath];
+      }
+
+      for (let partIndex = 0; partIndex < partPaths.length; partIndex += 1) {
+        const partPath = partPaths[partIndex];
+        if (matchedRows >= options.memoryCap) {
+          break;
+        }
+        const bytes = await this.loadParquetFileBytesAtPath(partPath);
+        if (!bytes || bytes.length === 0) {
+          continue;
+        }
+        const partial = await scanParquetByFeatureCodesInWorker([bytes], {
+          axisNames,
+          featureKey,
+          featureCodeColumnName,
+          featureCodes: options.featureCodes,
+          memoryCap: options.memoryCap - matchedRows,
+        });
+        scannedRows += partial.scannedRows;
+        if (partial.matchedRows > 0) {
+          matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
+          matchedRows += partial.matchedRows;
+        }
+        options.onProgress?.({
+          scannedRows,
+          matchedRows,
+          partIndex,
+          partCount: partPaths.length,
+        });
+      }
+    }
+
+    const data = concatColumnarPointChunks(matchedChunks);
+    return {
+      shape: data.shape,
+      data: data.data,
+      totalRowCount,
+      scannedRowCount: scannedRows,
+      filterActive: true,
+      preloadTruncated: matchedRows >= options.memoryCap,
+    };
+  }
+
+  private async resolveExplicitFeatureCodeColumn(elementPath: string): Promise<{
+    featureKey: string;
+    featureCodeColumnName: string;
+  } | null> {
+    const parquetPath = getParquetPath(elementPath);
+    const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    const featureKey = zattrs.spatialdata_attrs?.feature_key;
+    if (typeof featureKey !== 'string' || featureKey.length === 0) {
+      return null;
+    }
+
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+    const fields = datasetMetadata?.schema?.fields
+      ? datasetMetadata.schema.fields.flatMap((field) =>
+          typeof field.name === 'string' ? [field.name] : []
+        )
+      : arrowSchemaFieldNames(schemaTable);
+    const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+    if (!featureCodeColumnName) {
+      return null;
+    }
+    return { featureKey, featureCodeColumnName };
+  }
+
+  async loadFeatureCounts(elementPath: string): Promise<Map<number, number>> {
+    const parquetPath = getParquetPath(elementPath);
+    const resolvedFeatureColumn = await this.resolveExplicitFeatureCodeColumn(elementPath);
+    if (!resolvedFeatureColumn) {
+      return new Map();
+    }
+    const { featureKey, featureCodeColumnName } = resolvedFeatureColumn;
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const columnNames = [featureKey];
+    if (!columnNames.includes(featureCodeColumnName)) {
+      columnNames.push(featureCodeColumnName);
+    }
+
+    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
+    if (canUseRowGroups && datasetRowGroups > 0) {
+      const counts = new Map<number, number>();
+      for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
+        const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
+          columns: columnNames,
+        });
+        if (table && table.numRows > 0) {
+          scanTableFeatureCounts(table, featureKey, featureCodeColumnName, counts);
+        }
+      }
+      return counts;
+    }
+
+    const { parts } = await this.readParquetDatasetBytesCapped(
+      parquetPath,
+      Number.POSITIVE_INFINITY
+    );
+
+    if (isPointsWorkerEnabled() && parts.length > 0) {
+      return scanParquetFeatureCountsInWorker(parts, featureKey, featureCodeColumnName);
+    }
+
+    const rowCodes = await this.loadPointsRowFeatureCodes(elementPath);
+    if (!rowCodes) {
+      return new Map();
+    }
+    const { countFeatureCodesHistogram } = await import('../pointsFeatures.js');
+    return countFeatureCodesHistogram(rowCodes);
+  }
+
+  async listPointsFeaturesWithCounts(elementPath: string): Promise<PointsFeatureCatalog | null> {
+    const catalog = await this.listPointsFeatures(elementPath);
+    if (!catalog) {
+      return null;
+    }
+    try {
+      const counts = await this.loadFeatureCounts(elementPath);
+      return mergeFeatureCountsIntoCatalog(catalog, counts);
+    } catch (error) {
+      console.warn(`Failed to load feature counts for ${elementPath}:`, error);
+      return catalog;
+    }
+  }
+
   /**
    * Load per-row feature codes aligned with {@link loadPoints} rows. Deferred from
    * geometry preload so large datasets do not block the first render.
    */
-  async loadPointsRowFeatureCodes(elementPath: string): Promise<ArrayLike<number> | undefined> {
+  async loadPointsRowFeatureCodes(
+    elementPath: string,
+    options: { memoryCap?: number } = {}
+  ): Promise<ArrayLike<number> | undefined> {
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { spatialdata_attrs: spatialDataAttrs } = zattrs;
@@ -274,31 +563,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
 
     const rowCount = await this.resolveParquetRowCount(parquetPath);
-    const maxRows =
-      rowCount > POINTS_PRELOAD_MAX_ROWS ? POINTS_PRELOAD_MAX_ROWS : rowCount;
+    const memoryCap = resolvePointsMemoryCap(options.memoryCap);
+    const maxRows = rowCount > memoryCap ? memoryCap : rowCount;
 
     const columnNames = [featureKey];
     if (featureCodeColumnName && !columnNames.includes(featureCodeColumnName)) {
       columnNames.push(featureCodeColumnName);
-    }
-
-    if (isPointsWorkerEnabled()) {
-      const { parts, truncated } = await this.readParquetDatasetBytesCapped(
-        parquetPath,
-        maxRows
-      );
-      if (parts.length > 0) {
-        const arrowTable = await decodeParquetPartsInWorker(
-          parts,
-          columnNames,
-          truncated ? maxRows : undefined
-        );
-        return resolveRowFeatureCodesFromTable(
-          arrowTable,
-          featureKey,
-          featureCodeColumnName
-        );
-      }
     }
 
     const { table: arrowTable } = await this.loadParquetTableCapped(
@@ -343,30 +613,17 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     if (rowCount > 0 && exceedsPointsPreloadLimit(rowCount)) {
-      const probeTable = (
-        await this.loadParquetTableCapped(parquetPath, columns, 1)
-      ).table;
-      const nameColumn = probeTable.getChild(featureKey);
-      if (!nameColumn) {
-        return null;
-      }
-      if (isDictionaryFeatureColumn(nameColumn)) {
-        const codeColumn = featureCodeColumnName
-          ? probeTable.getChild(featureCodeColumnName)
-          : null;
-        return buildFeatureCatalogFromDictionaryOnly(featureKey, nameColumn, codeColumn);
-      }
-      console.warn(
-        `[SpatialDataPointsSource] Skipping feature catalog for ${elementPath}: ${rowCount.toLocaleString()} rows exceeds preload limit and feature column is not dictionary-encoded.`
+      return this.listPointsFeaturesByFeatureColumnScan(
+        parquetPath,
+        featureKey,
+        featureCodeColumnName,
+        hasMortonColumn
       );
-      return null;
     }
 
     const arrowTable = await this.loadParquetTable(parquetPath, columns);
     const nameColumn = arrowTable.getChild(featureKey);
-    const codeColumn = featureCodeColumnName
-      ? arrowTable.getChild(featureCodeColumnName)
-      : null;
+    const codeColumn = featureCodeColumnName ? arrowTable.getChild(featureCodeColumnName) : null;
     const mortonColumn = hasMortonColumn ? arrowTable.getChild(MORTON_CODE_2D_COLUMN) : null;
 
     if (!nameColumn) {
@@ -380,6 +637,77 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       mortonColumn,
       arrowTable.numRows
     );
+  }
+
+  /**
+   * Build a feature catalog for oversized datasets by scanning only feature
+   * columns (row-group range reads when available), not x/y geometry.
+   */
+  private async listPointsFeaturesByFeatureColumnScan(
+    parquetPath: string,
+    featureKey: string,
+    featureCodeColumnName: string | undefined,
+    hasMortonColumn: boolean
+  ): Promise<PointsFeatureCatalog | null> {
+    const columnNames = [featureKey];
+    if (featureCodeColumnName) {
+      columnNames.push(featureCodeColumnName);
+    }
+    if (hasMortonColumn) {
+      columnNames.push(MORTON_CODE_2D_COLUMN);
+    }
+
+    const codeToName = new Map<number, string>();
+    const nameToCode = new Map<string, number>();
+    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+
+    if (
+      canUseRowGroups &&
+      datasetMetadata &&
+      datasetMetadata.totalNumRowGroups > 0 &&
+      featureCodeColumnName
+    ) {
+      for (
+        let rowGroupIndex = 0;
+        rowGroupIndex < datasetMetadata.totalNumRowGroups;
+        rowGroupIndex += 1
+      ) {
+        const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
+          columns: columnNames,
+        });
+        if (!table || table.numRows === 0) {
+          continue;
+        }
+        accumulateFeatureCatalogFromTable(
+          codeToName,
+          nameToCode,
+          table,
+          featureKey,
+          featureCodeColumnName,
+          { skipMortonSentinels: hasMortonColumn }
+        );
+      }
+    }
+
+    if (featureCatalogNeedsParquetFallback(codeToName)) {
+      codeToName.clear();
+      nameToCode.clear();
+      const arrowTable = await this.loadParquetTable(parquetPath, columnNames);
+      accumulateFeatureCatalogFromTable(
+        codeToName,
+        nameToCode,
+        arrowTable,
+        featureKey,
+        featureCodeColumnName,
+        { skipMortonSentinels: hasMortonColumn }
+      );
+    }
+
+    if (codeToName.size === 0) {
+      return null;
+    }
+    return featureCatalogFromCodeMap(featureKey, codeToName);
   }
 
   async getPointsTilingMetadata(elementPath: string): Promise<PointsTilingMetadata | null> {

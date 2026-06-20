@@ -23,7 +23,10 @@ export function preloadedFeatureCodesSignature(
 
 export function filterBatchSignature(
   featureCodes: readonly number[] | undefined,
-  preloadedFeatureCodes: ArrayLike<number> | undefined
+  preloadedFeatureCodes: ArrayLike<number> | undefined,
+  renderCap?: number
 ): string {
-  return `${featureCodesSignature(featureCodes)}|${preloadedFeatureCodesSignature(preloadedFeatureCodes)}`;
+  const renderPart =
+    renderCap === undefined ? 'default' : renderCap <= 0 ? 'none' : String(renderCap);
+  return `${featureCodesSignature(featureCodes)}|${preloadedFeatureCodesSignature(preloadedFeatureCodes)}|r:${renderPart}`;
 }

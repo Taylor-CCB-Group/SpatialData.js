@@ -216,8 +216,7 @@ interface ViewerSectionProps {
   vivLayerProps: ImageLayerConfig[];
   hasEnabledLayers: boolean;
   isBlocking: boolean;
-  isLoading: boolean;
-  pointsTileLoadingMessage: string | null;
+  overlayStatusMessage: string | null;
   hasLayersDrawn: boolean;
   getWorldBoundsForVisibleLayers: () => import('@spatialdata/core').AxisAlignedBounds | null;
   vw: number;
@@ -233,8 +232,7 @@ function ViewerSection({
   vivLayerProps,
   hasEnabledLayers,
   isBlocking,
-  isLoading,
-  pointsTileLoadingMessage,
+  overlayStatusMessage,
   hasLayersDrawn,
   getWorldBoundsForVisibleLayers,
   vw,
@@ -324,23 +322,7 @@ function ViewerSection({
           Loading layer data...
         </div>
       )}
-      {!isBlocking && pointsTileLoadingMessage && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 8,
-            right: 8,
-            padding: '4px 8px',
-            backgroundColor: 'rgba(0,0,0,0.7)',
-            color: '#fff',
-            fontSize: '11px',
-            borderRadius: 4,
-          }}
-        >
-          {pointsTileLoadingMessage}
-        </div>
-      )}
-      {isLoading && !isBlocking && !pointsTileLoadingMessage && (
+      {!isBlocking && overlayStatusMessage && (
         <div
           style={{
             position: 'absolute',
@@ -353,7 +335,7 @@ function ViewerSection({
             borderRadius: 4,
           }}
         >
-          Refreshing layer metadata...
+          {overlayStatusMessage}
         </div>
       )}
       {!hasLayersDrawn && !isBlocking && (
@@ -440,15 +422,16 @@ function SpatialCanvasInner({
     getLayerLoadState,
     getPointsTileLoadProgress,
     getPointsTileLoadingMessage,
+    getOverlayStatusMessage,
     getPointsLayerSupportsTileDebug,
     isPointsFeatureCatalogLoading,
+    requestPointsFeatureCatalog,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
     hasEnabledLayers,
     hasLayersDrawn,
     hasRenderableLayerData,
     isBlocking,
-    isLoading,
     vivLayerProps,
   } = useSpatialCanvasRendererFromLayerInputs({
     spatialData,
@@ -460,7 +443,7 @@ function SpatialCanvasInner({
     height: vh,
     experimentalOptimizations,
   });
-  const pointsTileLoadingMessage = getPointsTileLoadingMessage();
+  const overlayStatusMessage = getOverlayStatusMessage();
 
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
@@ -721,8 +704,7 @@ function SpatialCanvasInner({
               vivLayerProps={vivLayerProps}
               hasEnabledLayers={hasEnabledLayers}
               isBlocking={isBlocking}
-              isLoading={isLoading}
-              pointsTileLoadingMessage={getPointsTileLoadingMessage()}
+              overlayStatusMessage={overlayStatusMessage}
               hasLayersDrawn={hasLayersDrawn}
               getWorldBoundsForVisibleLayers={getWorldBoundsForVisibleLayers}
               vw={vw}
@@ -810,19 +792,19 @@ function SpatialCanvasInner({
                       selectedConfig.type !== 'points' &&
                       selectedConfig.type !== 'shapes' &&
                       selectedLayerLoadState.geometry && (
-                      <div>
-                        Geometry: {selectedLayerLoadState.geometry}
-                        {selectedLayerLoadState.geometryLoadDurationMs !== undefined &&
-                        (selectedLayerLoadState.geometry === 'ready' ||
-                          selectedLayerLoadState.geometry === 'error')
-                          ? ` (${formatLoadDurationMs(selectedLayerLoadState.geometryLoadDurationMs)})`
-                          : ''}
-                        {!hasRenderableLayerData(selectedConfig.id) &&
-                        selectedLayerLoadState.geometry === 'loading'
-                          ? ' (blocking)'
-                          : ''}
-                      </div>
-                    )}
+                        <div>
+                          Geometry: {selectedLayerLoadState.geometry}
+                          {selectedLayerLoadState.geometryLoadDurationMs !== undefined &&
+                          (selectedLayerLoadState.geometry === 'ready' ||
+                            selectedLayerLoadState.geometry === 'error')
+                            ? ` (${formatLoadDurationMs(selectedLayerLoadState.geometryLoadDurationMs)})`
+                            : ''}
+                          {!hasRenderableLayerData(selectedConfig.id) &&
+                          selectedLayerLoadState.geometry === 'loading'
+                            ? ' (blocking)'
+                            : ''}
+                        </div>
+                      )}
                     {(selectedConfig.type === 'image' || selectedConfig.type === 'labels') &&
                       selectedLayerLoadState.image && (
                         <div>
@@ -874,6 +856,7 @@ function SpatialCanvasInner({
                       config={selectedConfig}
                       catalog={getPointsFeatureCatalog(selectedConfig.id)}
                       catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
+                      onRequestCatalog={requestPointsFeatureCatalog}
                       updateLayer={actions.updateLayer}
                     />
                   </>

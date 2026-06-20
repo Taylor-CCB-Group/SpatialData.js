@@ -1,3 +1,4 @@
+import { applyRenderCapToColumnar } from '@spatialdata/core';
 import type { Layer, LayersList } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
 import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
@@ -6,6 +7,20 @@ import {
   renderColumnarScatterLayer,
 } from './pointsScatterLayer.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
+
+function resolveScatterBatch(layer: PointsLayer): ColumnarNdarrayPointsBatch | undefined {
+  const state = layer.state as {
+    preloadedBatch?: ColumnarNdarrayPointsBatch;
+    filteredBatch?: ColumnarNdarrayPointsBatch;
+  };
+  if (state.filteredBatch) {
+    return state.filteredBatch;
+  }
+  if (!state.preloadedBatch) {
+    return undefined;
+  }
+  return applyRenderCapToColumnar(state.preloadedBatch, layer.props.renderCap);
+}
 
 export const preloadedScatterStrategy: PointsRenderStrategy = {
   renderLayers(layer): Layer | null | LayersList {
@@ -26,11 +41,7 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       return null;
     }
 
-    const state = layer.state as {
-      preloadedBatch?: ColumnarNdarrayPointsBatch;
-      filteredBatch?: ColumnarNdarrayPointsBatch;
-    };
-    const batch = state.filteredBatch ?? state.preloadedBatch;
+    const batch = resolveScatterBatch(layer);
     if (!batch) {
       return null;
     }
