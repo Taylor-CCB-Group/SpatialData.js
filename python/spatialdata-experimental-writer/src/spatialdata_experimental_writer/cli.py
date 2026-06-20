@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 import pandas as pd
 
+from .index_permutations import DEFAULT_CONDITIONS, write_index_permutations
 from .points import (
     build_spatialdata_multiscale_metadata,
     write_morton_points_parquet,
     write_multiscale_points_parquet,
 )
 from .zarr import (
-    experimental_points_output_path,
     list_points_keys,
     points_parquet_path,
     read_points_dataframe,
@@ -24,9 +25,13 @@ examples:
   # List Points elements in a SpatialData Zarr store
   spatialdata-experimental-writer list-points ~/data/xenium.zarr
 
-  # Morton-sort transcripts from a Zarr store into points.experimental/
+  # Morton-sort transcripts in-place on the canonical points element
   spatialdata-experimental-writer morton-points-from-zarr \\
     ~/data/xenium.zarr --points-key transcripts
+
+  # Build a derivative store with transcript index permutations
+  spatialdata-experimental-writer write-index-permutations \\
+    ~/data/xenium_rep1_io.zarr ~/data/xenium_rep1_index-permutations.zarr
 
   # Morton-sort a CSV or single Parquet file
   spatialdata-experimental-writer morton-points input.csv output.parquet \\
@@ -139,11 +144,19 @@ def _morton_points_from_zarr(args: argparse.Namespace) -> None:
     attrs = read_points_element_attrs(zarr_path, points_key)
     feature_key = args.feature_key or attrs.get("feature_key")
     source_parquet = points_parquet_path(zarr_path, points_key)
-    output = Path(args.output) if args.output else experimental_points_output_path(
-        zarr_path, points_key
-    )
+    if args.output:
+        output = Path(args.output)
+    elif args.experimental:
+        output = zarr_path / "points.experimental" / points_key / "points.parquet"
+    else:
+        output = source_parquet
 
     df = read_points_dataframe(source_parquet)
+    if output.exists():
+        if output.is_dir():
+            shutil.rmtree(output)
+        else:
+            output.unlink()
     sorted_df = write_morton_points_parquet(
         df,
         output,
@@ -159,6 +172,7 @@ def _morton_points_from_zarr(args: argparse.Namespace) -> None:
                 "points_key": points_key,
                 "source": str(source_parquet),
                 "output": str(output),
+                "in_place": not args.experimental and args.output is None,
                 "feature_key": feature_key,
                 "rows": int(len(sorted_df)),
                 "row_group_size": args.row_group_size,
@@ -167,6 +181,29 @@ def _morton_points_from_zarr(args: argparse.Namespace) -> None:
             sort_keys=True,
         )
     )
+
+
+def _write_index_permutations(args: argparse.Namespace) -> None:
+    condition_ids = args.conditions.split(",") if args.conditions else None
+    selected = None
+    if condition_ids:
+        by_id = {condition.id: condition for condition in DEFAULT_CONDITIONS}
+        missing = [value for value in condition_ids if value not in by_id]
+        if missing:
+            raise SystemExit(f"Unknown conditions: {', '.join(missing)}")
+        selected = tuple(by_id[value] for value in condition_ids)
+
+    manifest = write_index_permutations(
+        args.source_zarr,
+        args.dest_zarr,
+        points_key=args.points_key,
+        max_rows=args.max_rows,
+        conditions=selected,
+        overwrite=args.overwrite,
+        row_group_size=args.row_group_size,
+        compression=args.compression,
+    )
+    print(json.dumps(manifest, indent=2, sort_keys=True))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -198,13 +235,18 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Read points/<key>/points.parquet from a SpatialData Zarr store, "
             "add morton_code_2d sentinel rows, and write Vitessce-compatible Parquet. "
-            "Defaults to points.experimental/<key>/points.parquet inside the store."
+            "Defaults to in-place replacement of points/<key>/points.parquet."
         ),
     )
     morton_from_zarr.add_argument(
         "zarr",
         metavar="ZARR",
         help="Path to a SpatialData Zarr store",
+    )
+    morton_from_zarr.add_argument(
+        "--experimental",
+        action="store_true",
+        help="Write to points.experimental/<key>/points.parquet instead of canonical path",
     )
     morton_from_zarr.add_argument(
         "--points-key",
@@ -218,7 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         metavar="PATH",
         help=(
-            "Output Parquet path (default: <zarr>/points.experimental/<key>/points.parquet)"
+            "Output Parquet path (default: in-place on points/<key>/points.parquet, "
+            "or points.experimental/<key>/points.parquet with --experimental)"
         ),
     )
     morton_from_zarr.add_argument(
@@ -316,6 +359,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Parquet compression codec (default: zstd)",
     )
     multiscale.set_defaults(func=_multiscale_points)
+
+    index_permutations = subparsers.add_parser(
+        "write-index-permutations",
+        help="write derivative Zarr with transcript index sort permutations",
+        description=(
+            "Copy a SpatialData Zarr store and add sibling points elements with "
+            "different transcript sort/index layouts plus index-manifest.json."
+        ),
+    )
+    index_permutations.add_argument("source_zarr", metavar="SOURCE_ZARR")
+    index_permutations.add_argument("dest_zarr", metavar="DEST_ZARR")
+    index_permutations.add_argument("--points-key", metavar="KEY")
+    index_permutations.add_argument("--max-rows", type=_positive_int, metavar="N")
+    index_permutations.add_argument(
+        "--conditions",
+        metavar="IDS",
+        help="Comma-separated condition ids (default: all)",
+    )
+    index_permutations.add_argument("--overwrite", action="store_true")
+    index_permutations.add_argument(
+        "--row-group-size",
+        type=_positive_int,
+        default=50_000,
+        metavar="N",
+    )
+    index_permutations.add_argument("--compression", default="zstd")
+    index_permutations.set_defaults(func=_write_index_permutations)
 
     return parser
 

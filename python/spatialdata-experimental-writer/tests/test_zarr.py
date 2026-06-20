@@ -13,6 +13,7 @@ from spatialdata_experimental_writer.zarr import (
     points_parquet_path,
     read_points_dataframe,
     read_points_element_attrs,
+    register_points_elements_in_consolidated_metadata,
 )
 
 
@@ -52,6 +53,44 @@ def _write_points_element(
             }
         )
     )
+
+
+def test_register_points_elements_in_consolidated_metadata(tmp_path: Path) -> None:
+    _write_points_element(tmp_path, "transcripts")
+    root_json = tmp_path / "zarr.json"
+    root_json.write_text(
+        json.dumps(
+            {
+                "zarr_format": 3,
+                "node_type": "group",
+                "consolidated_metadata": {
+                    "kind": "inline",
+                    "metadata": {
+                        "points/transcripts": {
+                            "attributes": {
+                                "encoding-type": "ngff:points",
+                                "axes": ["x", "y"],
+                                "spatialdata_attrs": {
+                                    "feature_key": "feature_name",
+                                    "version": "0.2",
+                                },
+                            },
+                            "node_type": "group",
+                            "zarr_format": 3,
+                        }
+                    },
+                },
+            }
+        )
+    )
+    register_points_elements_in_consolidated_metadata(
+        tmp_path,
+        ["transcripts", "transcripts_morton"],
+        template_key="transcripts",
+    )
+    metadata = json.loads(root_json.read_text())["consolidated_metadata"]["metadata"]
+    assert "points/transcripts_morton" in metadata
+    assert metadata["points/transcripts_morton"]["attributes"]["encoding-type"] == "ngff:points"
 
 
 def test_list_points_keys_and_read_element(tmp_path: Path) -> None:
