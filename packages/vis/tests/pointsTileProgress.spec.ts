@@ -8,6 +8,12 @@ import {
   pointsTileLoadingMessage,
 } from '../src/SpatialCanvas/pointsTileProgress.js';
 
+const sampleTile = {
+  tileId: '0-0--1',
+  index: { x: 0, y: 0, z: -1 },
+  bbox: { left: 0, top: 512, right: 512, bottom: 0 },
+};
+
 describe('pointsTileProgress', () => {
   it('aggregates progress across layers', () => {
     const aggregate = aggregatePointsTileLoadProgress(
@@ -41,17 +47,17 @@ describe('pointsTileProgress', () => {
       }
     );
 
-    callbacks.onViewportTilesRequested?.(2);
+    callbacks.onViewportTilesRequested?.([sampleTile, sampleTile]);
     expect(progress).toEqual({ inFlight: 0, loaded: 0, viewportTotal: 2 });
 
-    callbacks.onTileLoadStart?.();
-    callbacks.onTileLoadStart?.();
+    callbacks.onTileLoadStart?.(sampleTile);
+    callbacks.onTileLoadStart?.(sampleTile);
     expect(progress.inFlight).toBe(2);
 
-    callbacks.onTileLoadEnd?.(true);
+    callbacks.onTileLoadEnd?.(sampleTile, { success: true, pointCount: 10 });
     expect(progress).toEqual({ inFlight: 1, loaded: 1, viewportTotal: 2 });
 
-    callbacks.onTileLoadEnd?.(true);
+    callbacks.onTileLoadEnd?.(sampleTile, { success: true, pointCount: 0 });
     expect(progress).toEqual({ inFlight: 0, loaded: 2, viewportTotal: 2 });
     expect(pointsTileLoadingMessage(progress)).toBeNull();
   });

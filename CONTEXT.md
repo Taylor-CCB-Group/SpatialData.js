@@ -40,6 +40,18 @@ _Avoid_: serializable prop, stack entry prop
 A small MDV/control-layer UI area that edits observable state directly while passing plain values through renderer and third-party boundaries.
 _Avoid_: MobX renderer contract
 
+**Points Render Resource**:
+The **Resource Resolver** output for a points **Spatial Entry**: a bundle `{ element, loader }` pairing the canonical `PointsElement` with a frozen **`PointsLoader`** facet.
+_Avoid_: treating `PointsLoader` alone as the full render resource, or storing the loader on/mutating the element
+
+**PointsLoader**:
+The loader facet of a **Points Render Resource**: encoding capabilities plus a fetch API (`loadInBounds`, optional `loadAll`). Built by `@spatialdata/core` store-I/O factories; consumed by `@spatialdata/layers` render strategies — not by calling `PointsElement` methods directly from deck code.
+_Avoid_: conflating with Viv/image `loader` when discussing SpatialData element identity
+
+**Points Encoding**:
+The render-time points layout selected after resolver probing, e.g. `preloaded-columnar`, `morton-tiled`, or future `geoarrow-*` kinds. Distinct from persisted Parquet layout described in ADR 0002.
+_Avoid_: `experimentalOptimizations` as a synonym for encoding kind
+
 ## Relationships
 
 - A **Render Stack** contains zero or more ordered **Stack Entries**.

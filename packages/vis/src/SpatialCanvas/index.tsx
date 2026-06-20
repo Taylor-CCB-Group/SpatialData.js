@@ -435,6 +435,7 @@ function SpatialCanvasInner({
     getLayerLoadState,
     getPointsTileLoadProgress,
     getPointsTileLoadingMessage,
+    getPointsLayerSupportsTileDebug,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
     hasEnabledLayers,
@@ -839,6 +840,7 @@ function SpatialCanvasInner({
                     tileLoadingMessage={formatPointsTileLoadingMessage(
                       getPointsTileLoadProgress(selectedConfig.id)
                     )}
+                    supportsTileDebugOverlay={getPointsLayerSupportsTileDebug(selectedConfig.id)}
                     updateLayer={actions.updateLayer}
                   />
                 )}

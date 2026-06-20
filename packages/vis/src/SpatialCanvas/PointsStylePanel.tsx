@@ -19,10 +19,19 @@ const tileProgressStyle: CSSProperties = {
   fontSize: '11px',
 };
 
+const checkboxLabelStyle: CSSProperties = {
+  color: '#ccc',
+  fontSize: '12px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+};
+
 export interface PointsStylePanelProps {
   layerId: string;
   config: PointsLayerConfig;
   tileLoadingMessage?: string | null;
+  supportsTileDebugOverlay?: boolean;
   updateLayer: (id: string, updates: Partial<PointsLayerConfig>) => void;
 }
 
@@ -30,6 +39,7 @@ export function PointsStylePanel({
   layerId,
   config,
   tileLoadingMessage,
+  supportsTileDebugOverlay = false,
   updateLayer,
 }: PointsStylePanelProps) {
   return (
@@ -79,6 +89,20 @@ export function PointsStylePanel({
           }
         />
       </label>
+      {supportsTileDebugOverlay ? (
+        <label style={checkboxLabelStyle}>
+          <input
+            type="checkbox"
+            checked={Boolean(config.showTileDebugOverlay)}
+            onChange={(e) =>
+              updateLayer(layerId, {
+                showTileDebugOverlay: e.target.checked,
+              })
+            }
+          />
+          Show tile debug overlay
+        </label>
+      ) : null}
       {tileLoadingMessage ? (
         <div style={tileProgressStyle}>{tileLoadingMessage}</div>
       ) : null}

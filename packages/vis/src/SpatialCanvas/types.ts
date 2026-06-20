@@ -105,6 +105,8 @@ export interface PointsLayerConfig extends BaseLayerConfig {
   /** Filter to these feature code(s). Future: string[] resolved via codebook. */
   featureCodes?: number[];
   experimentalOptimizations?: 'auto' | 'off';
+  /** Show viewport tile polygons and loading stats for tiled points layers. */
+  showTileDebugOverlay?: boolean;
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

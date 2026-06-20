@@ -1,3 +1,5 @@
+import type { PointsTileHandle, PointsTileLoadResult } from '@spatialdata/layers';
+
 export interface PointsTileLoadProgress {
   /** Tiles currently fetching data. */
   inFlight: number;
@@ -7,10 +9,12 @@ export interface PointsTileLoadProgress {
   viewportTotal: number;
 }
 
+export type { PointsTileHandle, PointsTileLoadResult };
+
 export interface PointsTileLoadCallbacks {
-  onViewportTilesRequested?: (count: number) => void;
-  onTileLoadStart?: () => void;
-  onTileLoadEnd?: (success: boolean) => void;
+  onViewportTilesRequested?: (tiles: readonly PointsTileHandle[]) => void;
+  onTileLoadStart?: (tile: PointsTileHandle) => void;
+  onTileLoadEnd?: (tile: PointsTileHandle, result: PointsTileLoadResult) => void;
 }
 
 export function emptyPointsTileLoadProgress(): PointsTileLoadProgress {
@@ -53,15 +57,17 @@ export function createPointsTileLoadCallbacks(
   setProgress: (progress: PointsTileLoadProgress) => void
 ): PointsTileLoadCallbacks {
   return {
-    onViewportTilesRequested: (count) => {
-      setProgress({ inFlight: 0, loaded: 0, viewportTotal: count });
+    onViewportTilesRequested: (tiles) => {
+      setProgress({ inFlight: 0, loaded: 0, viewportTotal: tiles.length });
     },
     onTileLoadStart: () => {
       const current = getProgress();
       setProgress({ ...current, inFlight: current.inFlight + 1 });
     },
-    onTileLoadEnd: (success) => {
+    onTileLoadEnd: (tile, result) => {
+      void tile;
       const current = getProgress();
+      const success = result.success && !result.aborted;
       setProgress({
         ...current,
         inFlight: Math.max(0, current.inFlight - 1),

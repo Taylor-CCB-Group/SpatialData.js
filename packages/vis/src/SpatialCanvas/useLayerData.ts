@@ -51,6 +51,8 @@ import {
   buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  formatPointsTileDebugTooltip,
+  isPointsTileDebugPickObject,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
@@ -74,6 +76,10 @@ import {
   type PointsTileLoadCallbacks,
   type PointsTileLoadProgress,
 } from './pointsTileProgress';
+import {
+  pointsRenderResourceSignature,
+  resolvePointsRenderResource,
+} from './resolvePointsRenderResource';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
 
@@ -237,6 +243,8 @@ interface UseLayerDataResult {
   getPointsTileLoadProgress: (layerId?: string) => PointsTileLoadProgress;
   /** User-facing message while tiled points are loading, if any. */
   getPointsTileLoadingMessage: () => string | null;
+  /** Whether a points layer uses viewport tile loading (tile debug overlay eligible). */
+  getPointsLayerSupportsTileDebug: (layerId: string) => boolean;
   /** Trigger a reload of data for a specific element */
   reloadElement: (type: string, key: string) => void;
   /** World-space axis-aligned bounds for one visible layer with loaded data, or null. */
@@ -521,6 +529,9 @@ export function useLayerData(
   const [, setLoadedDataRevision] = useState(0);
   const pointsTileProgressRef = useRef(new Map<string, PointsTileLoadProgress>());
   const pointsTileCallbacksRef = useRef(new Map<string, PointsTileLoadCallbacks>());
+  const pointsRenderResourceCacheRef = useRef(
+    new Map<string, { signature: string; resource: ReturnType<typeof resolvePointsRenderResource> }>()
+  );
   const [pointsTileProgressRevision, setPointsTileProgressRevision] = useState(0);
 
   const notifyLoadedDataChanged = useCallback(() => {
@@ -1212,6 +1223,7 @@ export function useLayerData(
       loaded.points.delete(key);
       loaded.pointTilingMetadata.delete(key);
       loaded.worldBounds.delete(`points:${key}`);
+      pointsRenderResourceCacheRef.current.delete(key);
     } else if (type === 'image') {
       loaded.images.delete(key);
       loaded.worldBounds.delete(`image:${key}`);
@@ -1394,10 +1406,42 @@ export function useLayerData(
         }
       } else if (config.type === 'points') {
         const pointData = loaded.points.get(elem.key);
-        const pointTilingMetadata = loaded.pointTilingMetadata.get(elem.key) ?? undefined;
-        if (pointData || pointTilingMetadata) {
+        const pointTilingMetadata = loaded.pointTilingMetadata.get(elem.key);
+        const metadataKnown = loaded.pointTilingMetadata.has(elem.key);
+        const wantsOptimized =
+          experimentalOptimizations !== 'off' && config.experimentalOptimizations !== 'off';
+        const signature = pointsRenderResourceSignature(
+          elem.element as PointsElement,
+          {
+            preloaded: pointData ?? null,
+            tilingMetadata: pointTilingMetadata,
+            metadataKnown,
+          },
+          { experimentalOptimizations: wantsOptimized ? 'auto' : 'off' }
+        );
+        let cachedResource = pointsRenderResourceCacheRef.current.get(elem.key);
+        if (!cachedResource || cachedResource.signature !== signature) {
+          const resource = resolvePointsRenderResource(
+            elem.element as PointsElement,
+            {
+              preloaded: pointData ?? null,
+              tilingMetadata: pointTilingMetadata,
+              metadataKnown,
+            },
+            { experimentalOptimizations: wantsOptimized ? 'auto' : 'off' }
+          );
+          if (resource) {
+            cachedResource = { signature, resource };
+            pointsRenderResourceCacheRef.current.set(elem.key, cachedResource);
+          } else {
+            pointsRenderResourceCacheRef.current.delete(elem.key);
+          }
+        }
+        if (cachedResource?.resource) {
+          const supportsViewportTiles =
+            cachedResource.resource.loader.capabilities.supportsViewportTiles;
           const layer = renderPointsLayer({
-            element: elem.element as PointsElement,
+            resource: cachedResource.resource,
             id: layerId,
             modelMatrix: elem.transform,
             opacity: config.opacity,
@@ -1409,9 +1453,10 @@ export function useLayerData(
             viewZoom,
             color: config.color,
             featureCodes: config.featureCodes,
-            pointData,
-            pointTilingMetadata,
-            tileLoadCallbacks: pointTilingMetadata ? getPointsTileCallbacks(layerId) : undefined,
+            showTileDebugOverlay: config.showTileDebugOverlay,
+            tileLoadCallbacks: supportsViewportTiles
+              ? getPointsTileCallbacks(layerId)
+              : undefined,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -1463,7 +1508,7 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections, viewZoom, getPointsTileCallbacks]);
+  }, [layers, layerOrder, getStableSelections, viewZoom, getPointsTileCallbacks, experimentalOptimizations]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
@@ -1538,6 +1583,16 @@ export function useLayerData(
           },
           elementContext
         );
+      }
+
+      if (elem.type === 'points') {
+        if (isPointsTileDebugPickObject(pickInfo.object)) {
+          const progress =
+            pointsTileProgressRef.current.get(layerId) ?? emptyPointsTileLoadProgress();
+          const tooltip = formatPointsTileDebugTooltip(pickInfo.object.entry, progress);
+          return attachTooltipElementContext(tooltip, elementContext);
+        }
+        return undefined;
       }
 
       if (!isShapesAvailableElement(elem)) {
@@ -1762,6 +1817,15 @@ export function useLayerData(
     [layerLoadStates, layerOrder, layers, hasRenderableLayerData]
   );
 
+  const getPointsLayerSupportsTileDebug = useCallback((layerId: string): boolean => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (!elem || elem.type !== 'points') {
+      return false;
+    }
+    const cached = pointsRenderResourceCacheRef.current.get(elem.key);
+    return cached?.resource?.loader.capabilities.supportsViewportTiles ?? false;
+  }, []);
+
   return {
     getLayers,
     getVivLayerProps,
@@ -1776,6 +1840,7 @@ export function useLayerData(
     isBlocking,
     getPointsTileLoadProgress,
     getPointsTileLoadingMessage,
+    getPointsLayerSupportsTileDebug,
     reloadElement,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,

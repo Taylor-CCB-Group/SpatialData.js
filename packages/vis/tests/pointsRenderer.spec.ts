@@ -4,7 +4,7 @@ import {
   MIN_POINT_SIZE_SCALE,
   POINT_SIZE_ZOOM_REFERENCE,
   zoomScaledPointSize,
-} from '../src/SpatialCanvas/renderers/pointsRenderer.js';
+} from '@spatialdata/layers';
 
 describe('zoomScaledPointSize', () => {
   it('returns base size at the reference zoom', () => {

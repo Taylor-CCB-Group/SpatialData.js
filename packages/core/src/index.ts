@@ -10,6 +10,20 @@ export * from './store/index.js';
 export * from './models/index.js';
 export * from './spatialViewFit.js';
 export * from './pointsTiling.js';
+export {
+  createMortonTiledPointsLoader,
+  createPointsLoaderForElement,
+  createPreloadedColumnarPointsLoader,
+  resolvePointsEncoding,
+  type CorePointsLoader,
+  type ColumnarNdarrayPointsBatch,
+  type PreloadedColumnarInput,
+  type PointsBatch,
+  type PointsBatchFormat,
+  type PointsEncodingKind,
+  type PointsLoadInBoundsOptions,
+  type PointsLoaderCapabilities,
+} from './pointsLoader.js';
 export * from './shapes.js';
 export {
   inferShapesGeometryKindFromParquet,
