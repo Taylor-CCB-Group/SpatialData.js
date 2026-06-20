@@ -80,6 +80,10 @@ import {
   type PointsTileLoadProgress,
 } from './pointsTileProgress';
 import {
+  planPointsLoads,
+  shouldPreloadAfterMetadataProbe,
+} from './pointsLoadPlan';
+import {
   pointsRenderResourceSignature,
   resolvePointsRenderResource,
 } from './resolvePointsRenderResource';
@@ -529,7 +533,7 @@ export function useLayerData(
   layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
-  const [, setLoadedDataRevision] = useState(0);
+  const [loadedDataRevision, setLoadedDataRevision] = useState(0);
   const pointsTileProgressRef = useRef(new Map<string, PointsTileLoadProgress>());
   const pointsTileCallbacksRef = useRef(new Map<string, PointsTileLoadCallbacks>());
   const pointsTileDebugStoreRef = useRef(new Map<string, TileDebugStore>());
@@ -750,10 +754,13 @@ export function useLayerData(
             experimentalOptimizations !== 'off' && config.experimentalOptimizations !== 'off';
           const metadataKnown = loaded.pointTilingMetadata.has(elem.key);
           const tiledMetadata = loaded.pointTilingMetadata.get(elem.key);
-          const loadPointTilingMetadata = wantsOptimized && !metadataKnown;
-          const loadPoints =
-            !loaded.points.has(elem.key) &&
-            (!wantsOptimized || (metadataKnown && tiledMetadata === null));
+          const { probeMetadata: loadPointTilingMetadata, preloadFullTable: loadPoints } =
+            planPointsLoads({
+              wantsOptimized,
+              metadataKnown,
+              tiledMetadata,
+              hasPreloaded: loaded.points.has(elem.key),
+            });
           if (loadPointTilingMetadata || loadPoints) {
             toLoad.push({
               layerId,
@@ -934,11 +941,25 @@ export function useLayerData(
               }
             } else if (element.type === 'points') {
               const e = element.element as PointsElement;
+              const loadPreloadedPoints = async () => {
+                try {
+                  setLayerResourceStatus(layerId, 'geometry', 'loading');
+                  const data = await e.loadPoints();
+                  loadedDataRef.current.points.set(element.key, data);
+                  setLayerResourceStatus(layerId, 'geometry', 'ready');
+                  notifyLoadedDataChanged();
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'geometry', 'error');
+                  console.error(`Failed to load points for ${layerId}:`, error);
+                  notifyLoadedDataChanged();
+                }
+              };
               if (loadPointTilingMetadata) {
+                let renderableMetadata: PointsTilingMetadata | null = null;
                 try {
                   setLayerResourceStatus(layerId, 'geometry', 'loading');
                   const metadata = await e.getPointsTilingMetadata();
-                  const renderableMetadata =
+                  renderableMetadata =
                     metadata?.supportsRowGroupRangeReads && metadata.bounds ? metadata : null;
                   loadedDataRef.current.pointTilingMetadata.set(element.key, renderableMetadata);
                   if (renderableMetadata) {
@@ -956,17 +977,17 @@ export function useLayerData(
                   console.error(`Failed to inspect point tiling metadata for ${layerId}:`, error);
                   notifyLoadedDataChanged();
                 }
-              }
-              if (loadPoints) {
-                try {
-                  setLayerResourceStatus(layerId, 'geometry', 'loading');
-                  const data = await e.loadPoints();
-                  loadedDataRef.current.points.set(element.key, data);
-                  setLayerResourceStatus(layerId, 'geometry', 'ready');
-                } catch (error) {
-                  setLayerResourceStatus(layerId, 'geometry', 'error');
-                  console.error(`Failed to load points for ${layerId}:`, error);
+                if (
+                  shouldPreloadAfterMetadataProbe(
+                    true,
+                    Boolean(renderableMetadata),
+                    loadedDataRef.current.points.has(element.key)
+                  )
+                ) {
+                  await loadPreloadedPoints();
                 }
+              } else if (loadPoints) {
+                await loadPreloadedPoints();
               }
             } else if (element.type === 'image' && loadImage) {
               try {
@@ -1399,6 +1420,7 @@ export function useLayerData(
   }, [layerOrder, layers, getWorldBoundsForLayer]);
 
   const getLayers = useCallback((): Layer[] => {
+    void loadedDataRevision;
     const deckLayers: Layer[] = [];
     const loaded = loadedDataRef.current;
 
@@ -1545,7 +1567,17 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections, viewZoom, getPointsTileCallbacks, getTileDebugStore, experimentalOptimizations, pointsTileLayersRevision]);
+  }, [
+    layers,
+    layerOrder,
+    getStableSelections,
+    viewZoom,
+    getPointsTileCallbacks,
+    getTileDebugStore,
+    experimentalOptimizations,
+    loadedDataRevision,
+    pointsTileLayersRevision,
+  ]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
