@@ -63,13 +63,17 @@ export function columnarBatchFromPointData(
   data: PointData,
   options?: { loadMode?: string; bounds?: SpatialBounds }
 ): ColumnarNdarrayPointsBatch {
+  const pointCount =
+    data.shape.length >= 2 && Number.isFinite(data.shape[1])
+      ? data.shape[1]
+      : (data.data[0]?.length ?? data.shape[0] ?? 0);
   return {
     format: 'columnar-ndarray',
     data: data.data,
     shape: data.shape,
     bounds: options?.bounds,
     loadMode: options?.loadMode,
-    pointCount: data.shape[0] ?? 0,
+    pointCount,
   };
 }
 

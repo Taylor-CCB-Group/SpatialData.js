@@ -4,8 +4,8 @@ import { CompositeLayer } from 'deck.gl';
 import type { Layer, LayersList } from 'deck.gl';
 import type { PointsRenderResource } from './pointsLoader.js';
 import type { PointsTileLoadCallbacks } from './pointsTileLoadCallbacks.js';
+import type { TileDebugStore } from './pointsTiledDebugHooks.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
-import type { PointsTileDebugEntry } from './pointsTileDebug.js';
 import { resolvePointsRenderStrategy } from './pointsRenderStrategies.js';
 import {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
@@ -28,12 +28,14 @@ export interface PointsLayerProps {
   featureCodes?: readonly number[];
   showTileDebugOverlay?: boolean;
   tileLoadCallbacks?: PointsTileLoadCallbacks;
+  tileDebugStore?: TileDebugStore;
+  /** Bumps when {@link tileDebugStore} contents change; forces debug overlay refresh. */
+  tileDebugSignature?: string;
   use3d?: boolean;
 }
 
 interface PointsLayerState {
   preloadedBatch?: ColumnarNdarrayPointsBatch;
-  tileDebugEntries?: PointsTileDebugEntry[];
 }
 
 export class PointsLayer extends CompositeLayer<PointsLayerProps> {
@@ -45,7 +47,7 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     pointSize: DEFAULT_POINT_SIZE,
     pointRadiusMinPixels: DEFAULT_POINT_RADIUS_MIN_PIXELS,
     pointRadiusMaxPixels: DEFAULT_POINT_RADIUS_MAX_PIXELS,
-    showTileDebugOverlay: false,
+    showTileDebugOverlay: true,
   } satisfies Partial<PointsLayerProps>;
 
   initializeState(): void {
@@ -59,7 +61,7 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       props.resource.loader !== oldProps.resource.loader ||
       props.resource.element !== oldProps.resource.element
     ) {
-      this.setState({ preloadedBatch: undefined, tileDebugEntries: [] });
+      this.setState({ preloadedBatch: undefined });
       void this.ensurePreloadedBatch();
     }
   }

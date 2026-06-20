@@ -53,9 +53,12 @@ import {
   buildShapesPrebuiltData,
   formatPointsTileDebugTooltip,
   isPointsTileDebugPickObject,
+  tileDebugEntriesSignature,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
+  createTileDebugStore,
+  type TileDebugStore,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -529,14 +532,42 @@ export function useLayerData(
   const [, setLoadedDataRevision] = useState(0);
   const pointsTileProgressRef = useRef(new Map<string, PointsTileLoadProgress>());
   const pointsTileCallbacksRef = useRef(new Map<string, PointsTileLoadCallbacks>());
+  const pointsTileDebugStoreRef = useRef(new Map<string, TileDebugStore>());
   const pointsRenderResourceCacheRef = useRef(
     new Map<string, { signature: string; resource: ReturnType<typeof resolvePointsRenderResource> }>()
   );
-  const [pointsTileProgressRevision, setPointsTileProgressRevision] = useState(0);
+  const [pointsTileLayersRevision, setPointsTileLayersRevision] = useState(0);
+  const pointsTileLayersFrameRef = useRef<number | null>(null);
+
+  const notifyPointsTileLayersChanged = useCallback(() => {
+    if (pointsTileLayersFrameRef.current != null) {
+      return;
+    }
+    const schedule =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (callback: FrameRequestCallback) => setTimeout(callback, 0);
+    pointsTileLayersFrameRef.current = schedule(() => {
+      pointsTileLayersFrameRef.current = null;
+      setPointsTileLayersRevision((revision) => revision + 1);
+    });
+  }, []);
 
   const notifyLoadedDataChanged = useCallback(() => {
     setLoadedDataRevision((revision) => revision + 1);
   }, []);
+
+  const getTileDebugStore = useCallback(
+    (layerId: string): TileDebugStore => {
+      let store = pointsTileDebugStoreRef.current.get(layerId);
+      if (!store) {
+        store = createTileDebugStore(notifyPointsTileLayersChanged);
+        pointsTileDebugStoreRef.current.set(layerId, store);
+      }
+      return store;
+    },
+    [notifyPointsTileLayersChanged]
+  );
 
   const getPointsTileCallbacks = useCallback((layerId: string): PointsTileLoadCallbacks => {
     let callbacks = pointsTileCallbacksRef.current.get(layerId);
@@ -545,17 +576,17 @@ export function useLayerData(
         () => pointsTileProgressRef.current.get(layerId) ?? emptyPointsTileLoadProgress(),
         (progress) => {
           pointsTileProgressRef.current.set(layerId, progress);
-          setPointsTileProgressRevision((revision) => revision + 1);
+          notifyPointsTileLayersChanged();
         }
       );
       pointsTileCallbacksRef.current.set(layerId, callbacks);
     }
     return callbacks;
-  }, []);
+  }, [notifyPointsTileLayersChanged]);
 
   const getPointsTileLoadProgress = useCallback(
     (layerId?: string): PointsTileLoadProgress => {
-      void pointsTileProgressRevision;
+      void pointsTileLayersRevision;
       if (layerId) {
         return pointsTileProgressRef.current.get(layerId) ?? emptyPointsTileLoadProgress();
       }
@@ -570,7 +601,7 @@ export function useLayerData(
       }
       return aggregatePointsTileLoadProgress(visibleProgress);
     },
-    [layerOrder, layers, pointsTileProgressRevision]
+    [layerOrder, layers, pointsTileLayersRevision]
   );
 
   const getPointsTileLoadingMessage = useCallback((): string | null => {
@@ -1421,6 +1452,7 @@ export function useLayerData(
         );
         let cachedResource = pointsRenderResourceCacheRef.current.get(elem.key);
         if (!cachedResource || cachedResource.signature !== signature) {
+          pointsTileDebugStoreRef.current.delete(layerId);
           const resource = resolvePointsRenderResource(
             elem.element as PointsElement,
             {
@@ -1440,6 +1472,7 @@ export function useLayerData(
         if (cachedResource?.resource) {
           const supportsViewportTiles =
             cachedResource.resource.loader.capabilities.supportsViewportTiles;
+          const tileDebugStore = supportsViewportTiles ? getTileDebugStore(layerId) : undefined;
           const layer = renderPointsLayer({
             resource: cachedResource.resource,
             id: layerId,
@@ -1453,9 +1486,13 @@ export function useLayerData(
             viewZoom,
             color: config.color,
             featureCodes: config.featureCodes,
-            showTileDebugOverlay: config.showTileDebugOverlay,
+            showTileDebugOverlay: config.showTileDebugOverlay ?? true,
             tileLoadCallbacks: supportsViewportTiles
               ? getPointsTileCallbacks(layerId)
+              : undefined,
+            tileDebugStore,
+            tileDebugSignature: tileDebugStore
+              ? tileDebugEntriesSignature(tileDebugStore.getState().tileDebugEntries)
               : undefined,
           });
           if (layer) deckLayers.push(layer);
@@ -1508,7 +1545,7 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections, viewZoom, getPointsTileCallbacks, experimentalOptimizations]);
+  }, [layers, layerOrder, getStableSelections, viewZoom, getPointsTileCallbacks, getTileDebugStore, experimentalOptimizations, pointsTileLayersRevision]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
@@ -1784,7 +1821,7 @@ export function useLayerData(
     if (resourceLoading) {
       return true;
     }
-    void pointsTileProgressRevision;
+    void pointsTileLayersRevision;
     for (const layerId of layerOrder) {
       const config = layers[layerId];
       if (!config?.visible || config.type !== 'points') continue;
@@ -1794,7 +1831,7 @@ export function useLayerData(
       }
     }
     return false;
-  }, [layerLoadStates, layerOrder, layers, pointsTileProgressRevision]);
+  }, [layerLoadStates, layerOrder, layers, pointsTileLayersRevision]);
 
   const isBlocking = useMemo(
     () =>

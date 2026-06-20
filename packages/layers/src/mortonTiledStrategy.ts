@@ -37,8 +37,18 @@ function isColumnarBatch(value: unknown): value is ColumnarNdarrayPointsBatch {
   );
 }
 
+function renderedPointCount(batch: ColumnarNdarrayPointsBatch): number {
+  if (batch.pointCount !== undefined) {
+    return batch.pointCount;
+  }
+  if (batch.shape.length >= 2 && Number.isFinite(batch.shape[1])) {
+    return batch.shape[1];
+  }
+  return batch.data[0]?.length ?? 0;
+}
+
 export const mortonTiledStrategy: PointsRenderStrategy = {
-  renderLayers(layer): Layer | null | LayersList {
+  renderLayers(layer: PointsLayer): Layer | null | LayersList {
     const {
       resource,
       featureCodes,
@@ -58,7 +68,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       return null;
     }
 
-    const debugHooks = createTiledPointsDebugHooks(layer, tileLoadCallbacks);
+    const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore, tileLoadCallbacks);
     const scatterStyleProps = {
       color,
       pointSize,
@@ -140,7 +150,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                 {
                   success: true,
                   clippedBounds: bounds,
-                  pointCount: batch.pointCount ?? batch.shape[0] ?? 0,
+                  pointCount: renderedPointCount(batch),
                   loadMode: batch.loadMode,
                 },
                 rawBounds
@@ -185,6 +195,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
 
     if (showTileDebugOverlay) {
       const entries = debugHooks.getTileDebugEntries();
+      const debugSignature = layer.props.tileDebugSignature ?? debugHooks.getTileDebugSignature();
       const polygonData = pointsTileDebugPolygonData(entries).map(({ polygon, entry }) => ({
         polygon,
         entry,
@@ -212,9 +223,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             opacity: Math.min(1, opacity + 0.15),
             visible,
             updateTriggers: {
-              getFillColor: [debugHooks.getTileDebugSignature()],
-              getLineColor: [debugHooks.getTileDebugSignature()],
-              getPolygon: [debugHooks.getTileDebugSignature()],
+              data: [debugSignature],
+              getFillColor: [debugSignature],
+              getLineColor: [debugSignature],
+              getPolygon: [debugSignature],
             },
           })
         )

@@ -3,7 +3,7 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import { PointsLayer, type PointsRenderResource } from '@spatialdata/layers';
+import { PointsLayer, type PointsRenderResource, type TileDebugStore } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import type { PointsTileLoadCallbacks } from '../pointsTileProgress';
 
@@ -42,6 +42,8 @@ export interface PointsLayerRenderConfig {
   featureCodes?: readonly number[];
   showTileDebugOverlay?: boolean;
   tileLoadCallbacks?: PointsTileLoadCallbacks;
+  tileDebugStore?: TileDebugStore;
+  tileDebugSignature?: string;
   use3d?: boolean;
 }
 
@@ -61,6 +63,8 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     featureCodes,
     showTileDebugOverlay,
     tileLoadCallbacks,
+    tileDebugStore,
+    tileDebugSignature,
     use3d,
   } = config;
 
@@ -91,8 +95,10 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     viewZoom,
     color,
     featureCodes,
-    showTileDebugOverlay,
+    showTileDebugOverlay: showTileDebugOverlay ?? true,
     tileLoadCallbacks,
+    tileDebugStore,
+    tileDebugSignature,
     use3d,
   }) as Layer;
 }

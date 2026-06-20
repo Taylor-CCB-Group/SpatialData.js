@@ -8,7 +8,7 @@ import { pointDataFromColumnarBatch } from './pointsLoader.js';
 export const POINT_SIZE_ZOOM_REFERENCE = 0;
 /** Minimum radius multiplier when zoomed out (reduces fragment overdraw). */
 export const MIN_POINT_SIZE_SCALE = 0.15;
-export const DEFAULT_POINT_SIZE = 1;
+export const DEFAULT_POINT_SIZE = 0.1;
 export const DEFAULT_POINT_RADIUS_MIN_PIXELS = 0.1;
 export const DEFAULT_POINT_RADIUS_MAX_PIXELS = 3;
 

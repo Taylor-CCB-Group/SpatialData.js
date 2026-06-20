@@ -5,6 +5,8 @@ export interface PointsTileLoadProgress {
   inFlight: number;
   /** Tiles finished in the current viewport batch. */
   loaded: number;
+  /** Points loaded across finished tiles in the current viewport batch. */
+  loadedPoints: number;
   /** Tiles deck.gl requested for the current viewport. */
   viewportTotal: number;
 }
@@ -17,8 +19,36 @@ export interface PointsTileLoadCallbacks {
   onTileLoadEnd?: (tile: PointsTileHandle, result: PointsTileLoadResult) => void;
 }
 
+interface TileLoadTracker {
+  viewportTileIds: Set<string>;
+  loadingTileIds: Set<string>;
+  loadedTileIds: Set<string>;
+  pointCountByTileId: Map<string, number>;
+}
+
+function derivePointsTileLoadProgress(tracker: TileLoadTracker): PointsTileLoadProgress {
+  let loaded = 0;
+  let inFlight = 0;
+  let loadedPoints = 0;
+  for (const tileId of tracker.viewportTileIds) {
+    if (tracker.loadingTileIds.has(tileId)) {
+      inFlight += 1;
+    }
+    if (tracker.loadedTileIds.has(tileId)) {
+      loaded += 1;
+      loadedPoints += tracker.pointCountByTileId.get(tileId) ?? 0;
+    }
+  }
+  return {
+    viewportTotal: tracker.viewportTileIds.size,
+    loaded,
+    inFlight,
+    loadedPoints,
+  };
+}
+
 export function emptyPointsTileLoadProgress(): PointsTileLoadProgress {
-  return { inFlight: 0, loaded: 0, viewportTotal: 0 };
+  return { inFlight: 0, loaded: 0, loadedPoints: 0, viewportTotal: 0 };
 }
 
 export function aggregatePointsTileLoadProgress(
@@ -26,26 +56,37 @@ export function aggregatePointsTileLoadProgress(
 ): PointsTileLoadProgress {
   let inFlight = 0;
   let loaded = 0;
+  let loadedPoints = 0;
   let viewportTotal = 0;
   for (const progress of progressByLayer.values()) {
     inFlight += progress.inFlight;
     loaded += progress.loaded;
+    loadedPoints += progress.loadedPoints;
     viewportTotal += progress.viewportTotal;
   }
-  return { inFlight, loaded, viewportTotal };
+  return { inFlight, loaded, loadedPoints, viewportTotal };
+}
+
+function formatLoadedPointCount(pointCount: number): string {
+  return pointCount.toLocaleString();
 }
 
 export function pointsTileLoadingMessage(progress: PointsTileLoadProgress): string | null {
-  const { inFlight, loaded, viewportTotal } = progress;
+  const { inFlight, loaded, loadedPoints, viewportTotal } = progress;
   const awaitingViewport =
     viewportTotal > 0 && loaded < viewportTotal && inFlight === 0;
   if (inFlight <= 0 && !awaitingViewport) {
     return null;
   }
-  if (viewportTotal > 0) {
-    return `Loading points… (${loaded}/${viewportTotal} tiles)`;
-  }
-  return inFlight > 0 ? 'Loading points…' : null;
+  const pointsSuffix =
+    loadedPoints > 0 ? `, ${formatLoadedPointCount(loadedPoints)} points` : '';
+  const message =
+    viewportTotal > 0
+      ? `Loading points… (${loaded}/${viewportTotal} tiles${pointsSuffix})`
+      : inFlight > 0
+        ? 'Loading points…'
+        : null;
+  return message;
 }
 
 export function isPointsTileLoading(progress: PointsTileLoadProgress): boolean {
@@ -53,26 +94,42 @@ export function isPointsTileLoading(progress: PointsTileLoadProgress): boolean {
 }
 
 export function createPointsTileLoadCallbacks(
-  getProgress: () => PointsTileLoadProgress,
+  _getProgress: () => PointsTileLoadProgress,
   setProgress: (progress: PointsTileLoadProgress) => void
 ): PointsTileLoadCallbacks {
+  const tracker: TileLoadTracker = {
+    viewportTileIds: new Set(),
+    loadingTileIds: new Set(),
+    loadedTileIds: new Set(),
+    pointCountByTileId: new Map(),
+  };
+
+  const publish = () => {
+    setProgress(derivePointsTileLoadProgress(tracker));
+  };
+
   return {
     onViewportTilesRequested: (tiles) => {
-      setProgress({ inFlight: 0, loaded: 0, viewportTotal: tiles.length });
+      tracker.viewportTileIds = new Set(tiles.map((tile) => tile.tileId));
+      publish();
     },
-    onTileLoadStart: () => {
-      const current = getProgress();
-      setProgress({ ...current, inFlight: current.inFlight + 1 });
+    onTileLoadStart: (tile) => {
+      tracker.loadingTileIds.add(tile.tileId);
+      tracker.loadedTileIds.delete(tile.tileId);
+      tracker.pointCountByTileId.delete(tile.tileId);
+      publish();
     },
     onTileLoadEnd: (tile, result) => {
-      void tile;
-      const current = getProgress();
+      tracker.loadingTileIds.delete(tile.tileId);
       const success = result.success && !result.aborted;
-      setProgress({
-        ...current,
-        inFlight: Math.max(0, current.inFlight - 1),
-        loaded: success ? current.loaded + 1 : current.loaded,
-      });
+      if (success) {
+        tracker.loadedTileIds.add(tile.tileId);
+        tracker.pointCountByTileId.set(tile.tileId, result.pointCount ?? 0);
+      } else {
+        tracker.loadedTileIds.delete(tile.tileId);
+        tracker.pointCountByTileId.delete(tile.tileId);
+      }
+      publish();
     },
   };
 }

@@ -63,15 +63,27 @@ export function resolvePointsEncoding(
   return 'preloaded-columnar';
 }
 
+function columnarPointCount(shape: number[], data: ArrayLike<number>[]): number {
+  if (shape.length >= 2 && Number.isFinite(shape[1])) {
+    return shape[1];
+  }
+  const fromData = data[0]?.length;
+  if (typeof fromData === 'number') {
+    return fromData;
+  }
+  return shape[0] ?? 0;
+}
+
 function toColumnarBatch(
   result: PointsInBoundsResult | PreloadedColumnarInput,
   overrides?: Partial<ColumnarNdarrayPointsBatch>
 ): ColumnarNdarrayPointsBatch {
   const shape = result.shape ?? [];
-  const pointCount = shape[0] ?? 0;
+  const data = result.data;
+  const pointCount = columnarPointCount(shape, data);
   return {
     format: 'columnar-ndarray',
-    data: result.data,
+    data,
     shape,
     bounds: 'bounds' in result ? result.bounds : overrides?.bounds,
     loadMode: 'loadMode' in result ? result.loadMode : overrides?.loadMode,

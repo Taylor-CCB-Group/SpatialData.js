@@ -525,6 +525,7 @@ function SpatialCanvasInner({
           elementKey: element.key,
           visible: true,
           opacity: 1,
+          ...(element.type === 'points' ? { showTileDebugOverlay: true } : {}),
         });
         actions.addLayer(config);
       }

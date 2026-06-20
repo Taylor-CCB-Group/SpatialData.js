@@ -93,7 +93,7 @@ export function PointsStylePanel({
         <label style={checkboxLabelStyle}>
           <input
             type="checkbox"
-            checked={Boolean(config.showTileDebugOverlay)}
+            checked={config.showTileDebugOverlay ?? true}
             onChange={(e) =>
               updateLayer(layerId, {
                 showTileDebugOverlay: e.target.checked,

@@ -12,6 +12,7 @@ export type PointsTileStatus =
 export interface PointsTileLoadProgress {
   inFlight: number;
   loaded: number;
+  loadedPoints: number;
   viewportTotal: number;
 }
 
@@ -46,8 +47,29 @@ export function isPointsTileDebugPickObject(
   return candidate.kind === POINTS_TILE_DEBUG_PICK_KIND && candidate.entry != null;
 }
 
+export interface PointsTileCompletedSnapshot {
+  status: PointsTileStatus;
+  pointCount?: number;
+  loadMode?: string;
+  clippedBounds: SpatialBounds | null;
+  errorMessage?: string;
+  startedAt?: number;
+  completedAt: number;
+}
+
+export interface PointsTileDebugViewportContext {
+  loadingTileIds: ReadonlySet<string>;
+  completedTilesById: ReadonlyMap<string, PointsTileCompletedSnapshot>;
+  tileHandlesById: ReadonlyMap<string, PointsTileHandle>;
+}
+
 export type PointsTileDebugEvent =
-  | { type: 'viewport'; tiles: readonly PointsTileHandle[]; at: number }
+  | {
+      type: 'viewport';
+      tiles: readonly PointsTileHandle[];
+      at: number;
+      context: PointsTileDebugViewportContext;
+    }
   | { type: 'start'; tile: PointsTileHandle; at: number }
   | {
       type: 'end';
@@ -57,6 +79,64 @@ export type PointsTileDebugEvent =
       clipBounds: SpatialBounds;
     };
 
+export function completedSnapshotFromLoadResult(
+  result: PointsTileLoadResult,
+  clipBounds: SpatialBounds,
+  completedAt: number,
+  startedAt?: number
+): PointsTileCompletedSnapshot {
+  let status: PointsTileStatus = 'error';
+  if (result.aborted) {
+    status = 'aborted';
+  } else if (result.success) {
+    status = (result.pointCount ?? 0) > 0 ? 'loaded' : 'empty';
+  }
+
+  return {
+    status,
+    pointCount: result.pointCount,
+    loadMode: result.loadMode,
+    clippedBounds: result.clippedBounds ?? clipBounds,
+    errorMessage: result.errorMessage,
+    startedAt,
+    completedAt,
+  };
+}
+
+function resolveViewportTileStatus(
+  tileId: string,
+  existing: PointsTileDebugEntry | undefined,
+  context: PointsTileDebugViewportContext
+): PointsTileStatus {
+  if (context.loadingTileIds.has(tileId)) {
+    return 'loading';
+  }
+  const completed = context.completedTilesById.get(tileId);
+  if (completed) {
+    return completed.status;
+  }
+  if (existing?.status === 'loaded' || existing?.status === 'empty') {
+    return existing.status;
+  }
+  return 'pending';
+}
+
+function applyCompletedSnapshot(
+  entry: PointsTileDebugEntry,
+  completed: PointsTileCompletedSnapshot
+): PointsTileDebugEntry {
+  return {
+    ...entry,
+    status: completed.status,
+    clippedBounds: completed.clippedBounds,
+    pointCount: completed.pointCount,
+    loadMode: completed.loadMode,
+    errorMessage: completed.errorMessage,
+    startedAt: completed.startedAt ?? entry.startedAt,
+    completedAt: completed.completedAt,
+  };
+}
+
 export function reduceTileDebugEntries(
   previous: readonly PointsTileDebugEntry[],
   event: PointsTileDebugEvent
@@ -64,26 +144,42 @@ export function reduceTileDebugEntries(
   const byId = new Map(previous.map((entry) => [entry.tileId, entry]));
 
   if (event.type === 'viewport') {
-    const next = new Map<string, PointsTileDebugEntry>();
+    const tileHandlesById = new Map(event.context.tileHandlesById);
     for (const tile of event.tiles) {
+      tileHandlesById.set(tile.tileId, tile);
+    }
+    const activeTileIds = new Set<string>([
+      ...event.tiles.map((tile) => tile.tileId),
+      ...event.context.loadingTileIds,
+      ...event.context.completedTilesById.keys(),
+    ]);
+    const next = new Map<string, PointsTileDebugEntry>();
+    for (const tileId of activeTileIds) {
+      const tile = tileHandlesById.get(tileId);
+      if (!tile) {
+        continue;
+      }
       const rawBounds = boundsFromHandle(tile);
       const existing = byId.get(tile.tileId);
-      next.set(tile.tileId, {
+      const completed = event.context.completedTilesById.get(tile.tileId);
+      const status = resolveViewportTileStatus(tile.tileId, existing, event.context);
+      let entry: PointsTileDebugEntry = {
         tileId: tile.tileId,
         index: tile.index,
         bbox: rawBounds,
-        clippedBounds: existing?.clippedBounds ?? null,
-        status:
-          existing?.status === 'loaded' || existing?.status === 'empty'
-            ? existing.status
-            : 'pending',
-        requestedAt: event.at,
-        startedAt: existing?.startedAt,
-        completedAt: existing?.completedAt,
-        pointCount: existing?.pointCount,
-        loadMode: existing?.loadMode,
-        errorMessage: existing?.errorMessage,
-      });
+        clippedBounds: existing?.clippedBounds ?? completed?.clippedBounds ?? null,
+        status,
+        requestedAt: existing?.requestedAt ?? event.at,
+        startedAt: existing?.startedAt ?? completed?.startedAt,
+        completedAt: existing?.completedAt ?? completed?.completedAt,
+        pointCount: existing?.pointCount ?? completed?.pointCount,
+        loadMode: existing?.loadMode ?? completed?.loadMode,
+        errorMessage: existing?.errorMessage ?? completed?.errorMessage,
+      };
+      if (completed && (status === 'loaded' || status === 'empty' || status === 'error' || status === 'aborted')) {
+        entry = applyCompletedSnapshot(entry, completed);
+      }
+      next.set(tile.tileId, entry);
     }
     return [...next.values()];
   }
@@ -109,25 +205,25 @@ export function reduceTileDebugEntries(
 
   const rawBounds = boundsFromHandle(event.tile);
   const { result } = event;
-  let status: PointsTileStatus = 'error';
-  if (result.aborted) {
-    status = 'aborted';
-  } else if (result.success) {
-    status = (result.pointCount ?? 0) > 0 ? 'loaded' : 'empty';
-  }
+  const snapshot = completedSnapshotFromLoadResult(
+    result,
+    event.clipBounds,
+    event.at,
+    byId.get(event.tile.tileId)?.startedAt ?? event.at
+  );
 
   byId.set(event.tile.tileId, {
     tileId: event.tile.tileId,
     index: event.tile.index,
     bbox: rawBounds,
-    clippedBounds: result.clippedBounds ?? event.clipBounds,
-    status,
+    clippedBounds: snapshot.clippedBounds,
+    status: snapshot.status,
     requestedAt: byId.get(event.tile.tileId)?.requestedAt ?? event.at,
-    startedAt: byId.get(event.tile.tileId)?.startedAt ?? event.at,
-    completedAt: event.at,
-    pointCount: result.pointCount,
-    loadMode: result.loadMode,
-    errorMessage: result.errorMessage,
+    startedAt: snapshot.startedAt,
+    completedAt: snapshot.completedAt,
+    pointCount: snapshot.pointCount,
+    loadMode: snapshot.loadMode,
+    errorMessage: snapshot.errorMessage,
   });
   return [...byId.values()];
 }
@@ -186,7 +282,10 @@ export function formatPointsTileDebugTooltip(
     { label: 'status', value: entry.status },
     {
       label: 'batch',
-      value: `${batchProgress.loaded}/${batchProgress.viewportTotal} (${batchProgress.inFlight} in flight)`,
+      value:
+        batchProgress.loadedPoints > 0
+          ? `${batchProgress.loaded}/${batchProgress.viewportTotal} (${batchProgress.inFlight} in flight, ${batchProgress.loadedPoints.toLocaleString()} points)`
+          : `${batchProgress.loaded}/${batchProgress.viewportTotal} (${batchProgress.inFlight} in flight)`,
     },
     { label: 'index', value: `x=${entry.index.x} y=${entry.index.y} z=${entry.index.z}` },
     { label: 'bbox', value: formatBounds(entry.bbox) },

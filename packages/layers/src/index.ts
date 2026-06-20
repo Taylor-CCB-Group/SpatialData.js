@@ -98,6 +98,12 @@ export {
 } from './pointsScatterLayer.js';
 export type { PointsTileHandle, PointsTileLoadResult, PointsTileLoadCallbacks } from './pointsTileLoadCallbacks.js';
 export {
+  createTileDebugStore,
+  createTiledPointsDebugHooks,
+  type TileDebugStore,
+  type TiledPointsDebugState,
+} from './pointsTiledDebugHooks.js';
+export {
   POINTS_TILE_DEBUG_PICK_KIND,
   formatPointsTileDebugTooltip,
   isPointsTileDebugPickObject,
