@@ -493,15 +493,15 @@ function SpatialCanvasInner({
   ]);
 
   useEffect(() => {
-    if (coordinateSystems.length > 0 && !coordinateSystem) {
-      actions.setCoordinateSystem(coordinateSystems[0]);
-    }
-  }, [coordinateSystems, coordinateSystem, actions]);
-
-  useEffect(() => {
     actions.reset();
-    if (coordinateSystem && coordinateSystems.includes(coordinateSystem)) {
-      actions.setCoordinateSystem(coordinateSystem);
+    const nextCoordinateSystem =
+      coordinateSystem && coordinateSystems.includes(coordinateSystem)
+        ? coordinateSystem
+        : coordinateSystems.length === 1
+          ? coordinateSystems[0]
+          : null;
+    if (nextCoordinateSystem) {
+      actions.setCoordinateSystem(nextCoordinateSystem);
     }
   }, [coordinateSystem, coordinateSystems, actions]);
 
