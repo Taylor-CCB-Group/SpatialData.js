@@ -5,7 +5,8 @@ import {
   DEFAULT_POINT_SIZE,
 } from './renderers/pointsRenderer';
 import type { PointsLayerConfig } from './types';
-import { formatLoadDurationMs, type LayerLoadState } from './useLayerData';
+import { GeometryLoadStats } from './geometryLoadStats';
+import type { LayerLoadState } from './useLayerData';
 
 const rangeLabelStyle: CSSProperties = {
   color: '#ccc',
@@ -17,11 +18,6 @@ const rangeLabelStyle: CSSProperties = {
 
 const tileProgressStyle: CSSProperties = {
   color: '#aaa',
-  fontSize: '11px',
-};
-
-const loadStatsStyle: CSSProperties = {
-  color: '#888',
   fontSize: '11px',
 };
 
@@ -59,23 +55,14 @@ export function PointsStylePanel({
   supportsTileDebugOverlay = false,
   updateLayer,
 }: PointsStylePanelProps) {
-  const geometryDuration =
-    loadState?.geometryLoadDurationMs !== undefined &&
-    (loadState.geometry === 'ready' || loadState.geometry === 'error')
-      ? formatLoadDurationMs(loadState.geometryLoadDurationMs)
-      : null;
+  const pointCountSuffix =
+    preloadedPointCount !== undefined
+      ? ` · ${preloadedPointCount.toLocaleString()} points loaded`
+      : undefined;
 
   return (
     <>
-      {loadState?.geometry ? (
-        <div style={loadStatsStyle}>
-          Geometry: {loadState.geometry}
-          {geometryDuration ? ` (${geometryDuration})` : ''}
-          {preloadedPointCount !== undefined
-            ? ` · ${preloadedPointCount.toLocaleString()} points loaded`
-            : ''}
-        </div>
-      ) : null}
+      <GeometryLoadStats loadState={loadState} detailsSuffix={pointCountSuffix} />
       <label style={rangeLabelStyle}>
         Point size
         <input

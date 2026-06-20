@@ -26,6 +26,7 @@ import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { PointsStylePanel, preloadedPointCount } from './PointsStylePanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
+import { ShapesStylePanel } from './ShapesStylePanel';
 import {
   shouldAutoFitSpatialView,
   useSpatialCanvasRendererFromLayerInputs,
@@ -433,6 +434,7 @@ function SpatialCanvasInner({
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
     getPointsLayerLoadedData,
+    getShapesLayerLoadedData,
     getLayerLoadState,
     getPointsTileLoadProgress,
     getPointsTileLoadingMessage,
@@ -548,6 +550,8 @@ function SpatialCanvasInner({
     selectedPointsLoadedData === undefined
       ? undefined
       : preloadedPointCount(selectedPointsLoadedData);
+  const selectedShapesLoadedSummary =
+    selectedConfig?.type === 'shapes' ? getShapesLayerLoadedData(selectedConfig.id) : undefined;
 
   const selectedLayerCanCenter =
     !!selectedConfig?.id &&
@@ -801,6 +805,7 @@ function SpatialCanvasInner({
                   >
                     {selectedConfig.type !== 'image' &&
                       selectedConfig.type !== 'points' &&
+                      selectedConfig.type !== 'shapes' &&
                       selectedLayerLoadState.geometry && (
                       <div>
                         Geometry: {selectedLayerLoadState.geometry}
@@ -862,15 +867,21 @@ function SpatialCanvasInner({
                   />
                 )}
                 {selectedConfig.type === 'shapes' && (
-                  <ShapeFillColorPanel
-                    tableName={associatedTable?.key}
-                    availableFields={availableTooltipFields}
-                    selected={selectedConfig.fillColorByColumn}
-                    onChange={(fillColorByColumn) => {
-                      actions.updateLayer(selectedConfig.id, { fillColorByColumn });
-                    }}
-                    noAssociatedTableMessage="No associated table found for this shapes layer"
-                  />
+                  <>
+                    <ShapesStylePanel
+                      loadState={selectedLayerLoadState}
+                      loadedSummary={selectedShapesLoadedSummary}
+                    />
+                    <ShapeFillColorPanel
+                      tableName={associatedTable?.key}
+                      availableFields={availableTooltipFields}
+                      selected={selectedConfig.fillColorByColumn}
+                      onChange={(fillColorByColumn) => {
+                        actions.updateLayer(selectedConfig.id, { fillColorByColumn });
+                      }}
+                      noAssociatedTableMessage="No associated table found for this shapes layer"
+                    />
+                  </>
                 )}
                 {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (
                   <TooltipFieldsPanel

@@ -25,6 +25,7 @@ import {
   type PointsElement,
   type PointsTilingMetadata,
   type ShapesElement,
+  type ShapesGeometryKind,
   type ShapesRenderData,
   type ShapesTooltipMetadata,
   type SpatialData,
@@ -166,6 +167,11 @@ export function formatLoadDurationMs(ms: number): string {
   return seconds >= 10 ? `${Math.round(seconds)} s` : `${seconds.toFixed(1)} s`;
 }
 
+export interface ShapesLayerLoadedSummary {
+  geometryKind: ShapesGeometryKind;
+  featureCount: number;
+}
+
 export interface ImageLayerConfig {
   id: string;
   loader: unknown; // Viv PixelSource
@@ -226,6 +232,8 @@ interface UseLayerDataResult {
   getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
   /** Raw loaded preloaded points data for the properties UI */
   getPointsLayerLoadedData: (layerId: string) => PointData | undefined;
+  /** Loaded shapes geometry summary for the properties UI */
+  getShapesLayerLoadedData: (layerId: string) => ShapesLayerLoadedSummary | undefined;
   /** Current load state for a given layer. */
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
@@ -546,6 +554,7 @@ export function useLayerData(
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
   const geometryLoadStartRef = useRef<Map<string, number>>(new Map());
+  const geometryLoadDurationRef = useRef<Map<string, number>>(new Map());
   const [loadedDataRevision, setLoadedDataRevision] = useState(0);
   const pointsTileProgressRef = useRef(new Map<string, PointsTileLoadProgress>());
   const pointsTileCallbacksRef = useRef(new Map<string, PointsTileLoadCallbacks>());
@@ -660,7 +669,14 @@ export function useLayerData(
     (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
       setLayerLoadStates((prev) => {
         const existing = prev[layerId] ?? {};
-        if (existing[resource] === status) {
+        const statusUnchanged = existing[resource] === status;
+        const canPatchGeometryDuration =
+          resource === 'geometry' &&
+          (status === 'ready' || status === 'error') &&
+          existing.geometryLoadDurationMs === undefined &&
+          geometryLoadStartRef.current.has(layerId);
+
+        if (statusUnchanged && !canPatchGeometryDuration) {
           return prev;
         }
         const next: LayerLoadState = { ...existing, [resource]: status };
@@ -668,15 +684,22 @@ export function useLayerData(
           if (status === 'loading') {
             if (!geometryLoadStartRef.current.has(layerId)) {
               geometryLoadStartRef.current.set(layerId, performance.now());
+              geometryLoadDurationRef.current.delete(layerId);
             }
             delete next.geometryLoadDurationMs;
           } else if (status === 'ready' || status === 'error') {
             const start = geometryLoadStartRef.current.get(layerId);
             if (start !== undefined) {
-              next.geometryLoadDurationMs = Math.round(performance.now() - start);
+              const duration = Math.round(performance.now() - start);
+              next.geometryLoadDurationMs = duration;
+              geometryLoadDurationRef.current.set(layerId, duration);
               geometryLoadStartRef.current.delete(layerId);
-            } else if (existing.geometryLoadDurationMs !== undefined) {
-              next.geometryLoadDurationMs = existing.geometryLoadDurationMs;
+            } else {
+              const cached =
+                existing.geometryLoadDurationMs ?? geometryLoadDurationRef.current.get(layerId);
+              if (cached !== undefined) {
+                next.geometryLoadDurationMs = cached;
+              }
             }
           }
         }
@@ -1633,10 +1656,30 @@ export function useLayerData(
     return loadedDataRef.current.points.get(elem.key);
   }, []);
 
+  const getShapesLayerLoadedData = useCallback(
+    (layerId: string): ShapesLayerLoadedSummary | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'shapes') return undefined;
+      const loaded = loadedDataRef.current.shapes.get(elem.key);
+      if (!loaded?.renderData) return undefined;
+      return {
+        geometryKind: loaded.renderData.geometryKind,
+        featureCount: loaded.renderData.featureIds.length,
+      };
+    },
+    []
+  );
+
   const getLayerLoadState = useCallback(
     (layerId?: string): LayerLoadState | undefined => {
       if (layerId === undefined) return undefined;
-      return layerLoadStates[layerId];
+      const state = layerLoadStates[layerId];
+      if (!state) return undefined;
+      const cachedDuration = geometryLoadDurationRef.current.get(layerId);
+      if (cachedDuration !== undefined && state.geometryLoadDurationMs === undefined) {
+        return { ...state, geometryLoadDurationMs: cachedDuration };
+      }
+      return state;
     },
     [layerLoadStates]
   );
@@ -1943,6 +1986,7 @@ export function useLayerData(
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
     getPointsLayerLoadedData,
+    getShapesLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
