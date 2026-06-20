@@ -130,7 +130,7 @@ The points worker is **enabled in the vis demo** via
 |-----------|---------|-------|
 | Feature filter on preloaded batch | **Yes** | `filterColumnarByFeatureCodesInWorker` in `PointsLayer` |
 | Geometry preload (`loadPoints`) | **No** | Main thread; `loadParquetTableCapped` |
-| Row feature codes (`loadRowFeatureCodes`) | **No** | Main thread; feature columns via capped table load |
+| Row feature codes (`loadRowFeatureCodes`) | **Yes** | Worker decode via row-group bytes or part bytes; main-thread fallback |
 | Feature catalog (large, dict-only) | **No** | Main thread; **full `loadParquetTable`** fallback |
 | Feature counts | **Sometimes** | Only exposed when an explicit feature-code column validates code/name mapping |
 | Opt-in full-dataset filter scan | **Yes** | `fullDatasetFeatureScan: true` + `loadPointsMatchingFeatureCodes` |
@@ -315,6 +315,12 @@ features in its structural load key.
 | `undefined` | All features |
 | `[]` | No features |
 | `[1, 2, 3]` | Subset |
+
+Feature codes must be in the same global code/name space as the feature
+catalog. Explicit `{feature_key}_codes` columns are authoritative. For
+dictionary-only feature columns, raw dictionary indices are local to a
+chunk/row group/part and must not be treated as global feature codes; derive
+filter row codes from decoded names using the catalog mapping instead.
 
 ### Large-dataset catalog strategy (`listPointsFeatures`)
 

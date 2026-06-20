@@ -669,14 +669,19 @@ export default class SpatialDataTableSource extends AnnDataSource {
     );
   }
 
-  async loadParquetRowGroupByGroupIndex(
+  /**
+   * Fetch compressed row-group bytes via range read (no parquet decode on the caller thread).
+   */
+  protected async readParquetRowGroupBytesByGroupIndex(
     parquetPath: string,
-    rowGroupIndex: number,
-    readOptions?: ParquetRowGroupReadOptions
-  ): Promise<ArrowTable | null> {
-    const { readParquetRowGroup } = await SpatialDataTableSource.parquetModulePromise;
+    rowGroupIndex: number
+  ): Promise<{
+    schemaBytes: Uint8Array;
+    rowGroupBytes: Uint8Array;
+    rowGroupIndex: number;
+  } | null> {
     const { store } = this.storeRoot;
-    if (!readParquetRowGroup || !store.getRange) {
+    if (!store.getRange) {
       return null;
     }
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
@@ -700,16 +705,79 @@ export default class SpatialDataTableSource extends AnnDataSource {
       if (!rowGroupBytes) {
         return null;
       }
-      return tableFromIPC(
-        readParquetRowGroup(
-          part.schemaBytes,
-          rowGroupBytes,
-          relativeRowGroupIndex,
-          readOptions
-        ).intoIPCStream()
-      );
+      return {
+        schemaBytes: part.schemaBytes,
+        rowGroupBytes,
+        rowGroupIndex: relativeRowGroupIndex,
+      };
     }
     return null;
+  }
+
+  /**
+   * Row-group byte payloads for up to {@link maxRows}, suitable for worker-side decode.
+   */
+  protected async readParquetRowGroupsBytesCapped(
+    parquetPath: string,
+    maxRows: number
+  ): Promise<
+    Array<{
+      schemaBytes: Uint8Array;
+      rowGroupBytes: Uint8Array;
+      rowGroupIndex: number;
+    }>
+  > {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.totalNumRowGroups <= 0) {
+      return [];
+    }
+
+    const chunks: Array<{
+      schemaBytes: Uint8Array;
+      rowGroupBytes: Uint8Array;
+      rowGroupIndex: number;
+    }> = [];
+    let accumulated = 0;
+    for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
+      if (accumulated >= maxRows) {
+        break;
+      }
+      const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+      if (!chunk) {
+        continue;
+      }
+      chunks.push(chunk);
+      const rowCount = dataset.rowGroupRows[rowGroupIndex];
+      if (typeof rowCount === 'number' && Number.isFinite(rowCount)) {
+        accumulated += rowCount;
+      } else {
+        accumulated = maxRows;
+      }
+    }
+    return chunks;
+  }
+
+  async loadParquetRowGroupByGroupIndex(
+    parquetPath: string,
+    rowGroupIndex: number,
+    readOptions?: ParquetRowGroupReadOptions
+  ): Promise<ArrowTable | null> {
+    const { readParquetRowGroup } = await SpatialDataTableSource.parquetModulePromise;
+    if (!readParquetRowGroup) {
+      return null;
+    }
+    const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+    if (!chunk) {
+      return null;
+    }
+    return tableFromIPC(
+      readParquetRowGroup(
+        chunk.schemaBytes,
+        chunk.rowGroupBytes,
+        chunk.rowGroupIndex,
+        readOptions
+      ).intoIPCStream()
+    );
   }
 
   async loadParquetRowGroupColumnExtent(

@@ -20,10 +20,7 @@ function dictionaryStrings(column: Vector): string[] | null {
   return null;
 }
 
-function resolveFeatureName(
-  nameValue: unknown,
-  dictionary: string[] | null
-): string {
+function resolveFeatureName(nameValue: unknown, dictionary: string[] | null): string {
   if (nameValue == null) {
     return '';
   }
@@ -96,6 +93,15 @@ export function featureCatalogNeedsParquetFallback(codeToName: Map<number, strin
   return [...codeToName.values()].every((name) => name.length === 0);
 }
 
+export function featureCodeMapFromCatalog(
+  catalog: PointsFeatureCatalog | null | undefined
+): Map<string, number> | undefined {
+  if (!catalog) {
+    return undefined;
+  }
+  return new Map(catalog.entries.map((entry) => [entry.name, entry.code]));
+}
+
 function accumulateFeatureCatalogFromVectors(
   codeToName: Map<number, string>,
   nameToCode: Map<string, number>,
@@ -105,14 +111,6 @@ function accumulateFeatureCatalogFromVectors(
   numRows: number
 ): void {
   const dictionary = dictionaryStrings(nameColumn);
-
-  if (!codeColumn && isDictionaryFeatureColumn(nameColumn)) {
-    const sizeBefore = codeToName.size;
-    mergeDictionaryFeatureCatalogEntries(codeToName, nameColumn);
-    if (codeToName.size > sizeBefore) {
-      return;
-    }
-  }
 
   for (let rowIndex = 0; rowIndex < numRows; rowIndex += 1) {
     if (mortonColumn && rowIndex < 4 && isMortonSentinelValue(mortonColumn.get(rowIndex))) {
@@ -244,39 +242,26 @@ function dictionaryIndexArray(column: Vector, numRows: number): Int32Array | nul
 export function resolveRowFeatureCodesFromTable(
   table: Table,
   featureKey: string,
-  featureCodeColumnName: string | undefined
+  featureCodeColumnName: string | undefined,
+  featureCodeByName?: ReadonlyMap<string, number>
 ): ArrayLike<number> | undefined {
   const nameColumn = table.getChild(featureKey);
-  if (nameColumn && isDictionaryFeatureColumn(nameColumn)) {
-    const indices = dictionaryIndexArray(nameColumn, table.numRows);
-    if (indices) {
-      return indices;
-    }
-  }
   if (featureCodeColumnName) {
     return table.getChild(featureCodeColumnName)?.toArray();
   }
-  if (!nameColumn || !isDictionaryFeatureColumn(nameColumn)) {
+  if (!nameColumn) {
     return undefined;
-  }
-  const indices = dictionaryIndexArray(nameColumn, table.numRows);
-  if (indices) {
-    return indices;
   }
   const dictionary = dictionaryStrings(nameColumn);
-  if (!dictionary) {
+
+  if (!featureCodeByName) {
     return undefined;
   }
+
   const out = new Int32Array(table.numRows);
   for (let rowIndex = 0; rowIndex < table.numRows; rowIndex += 1) {
-    const value = nameColumn.get(rowIndex);
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      out[rowIndex] = value;
-      continue;
-    }
-    const name = resolveFeatureName(value, dictionary);
-    const code = dictionary.indexOf(name);
-    out[rowIndex] = code >= 0 ? code : 0;
+    const name = resolveFeatureName(nameColumn.get(rowIndex), dictionary);
+    out[rowIndex] = featureCodeByName.get(name) ?? -1;
   }
   return out;
 }

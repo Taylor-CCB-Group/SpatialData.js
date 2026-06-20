@@ -13,4 +13,4 @@ export {
   setPointsWorkerDefaultEnabled,
 } from './pointsWorkerClient.js';
 
-export type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
+export type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse, ParquetRowGroupBytesChunk } from './pointsWorkerProtocol.js';

@@ -3,6 +3,7 @@ import type { PointsColumnarData } from '../spatialViewFit.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
 import {
   columnarDataFromWorkerResult,
+  type ParquetRowGroupBytesChunk,
   type PointsWorkerMessage,
   type PointsWorkerRequest,
   type PointsWorkerResponse,
@@ -46,7 +47,7 @@ function ensureWorkerListener() {
   };
 }
 
-function postRequest<T>(request: PointsWorkerRequest): Promise<T> {
+function postRequest<T>(request: PointsWorkerRequest, transferables: Transferable[] = []): Promise<T> {
   const activeWorker = worker;
   if (!activeWorker) {
     return Promise.reject(new Error('Points worker is not enabled'));
@@ -55,8 +56,29 @@ function postRequest<T>(request: PointsWorkerRequest): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
     const message: PointsWorkerMessage = { id, direction: 'request', request };
-    activeWorker.postMessage(message);
+    if (transferables.length > 0) {
+      activeWorker.postMessage(message, transferables);
+    } else {
+      activeWorker.postMessage(message);
+    }
   });
+}
+
+function transferablesForDecodeRowFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
+): Transferable[] {
+  const transferables: Transferable[] = [];
+  if (request.parts) {
+    for (const part of request.parts) {
+      transferables.push(part.buffer);
+    }
+  }
+  if (request.rowGroups) {
+    for (const chunk of request.rowGroups) {
+      transferables.push(chunk.schemaBytes.buffer, chunk.rowGroupBytes.buffer);
+    }
+  }
+  return transferables;
 }
 
 export function isPointsWorkerEnabled(): boolean {
@@ -136,27 +158,37 @@ export async function filterColumnarByFeatureCodesInWorker(
   return columnarDataFromWorkerResult(result);
 }
 
+export type DecodeParquetRowFeatureCodesInput = {
+  parts?: Uint8Array[];
+  rowGroups?: ParquetRowGroupBytesChunk[];
+  columns: string[];
+  maxRows?: number;
+  featureKey: string;
+  featureCodeColumnName?: string;
+  featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
+};
+
 export async function decodeParquetRowFeatureCodesInWorker(
-  parts: Uint8Array[],
-  columns: string[],
-  options: {
-    maxRows?: number;
-    featureKey: string;
-    featureCodeColumnName?: string;
-  }
-): Promise<Int32Array> {
+  input: DecodeParquetRowFeatureCodesInput
+): Promise<Int32Array | null> {
   ensurePointsWorker();
   if (!isPointsWorkerEnabled()) {
-    throw new Error('Points worker is required for decodeParquetRowFeatureCodesInWorker');
+    return null;
   }
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  if (!input.parts?.length && !input.rowGroups?.length) {
+    return null;
+  }
+  if (input.parts?.length && input.rowGroups?.length) {
+    throw new Error('decodeParquetRowFeatureCodesInWorker requires parts or rowGroups, not both');
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }> = {
     type: 'decodeParquetRowFeatureCodes',
-    parts,
-    columns,
-    maxRows: options.maxRows,
-    featureKey: options.featureKey,
-    featureCodeColumnName: options.featureCodeColumnName,
-  });
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForDecodeRowFeatureCodes(request)
+  );
   if (result.kind !== 'rowFeatureCodes') {
     throw new Error('Unexpected points worker response for decodeParquetRowFeatureCodes');
   }

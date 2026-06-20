@@ -13,6 +13,19 @@ type ParquetModule = {
   readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => ParquetWasmTableLike;
 };
 
+export type ParquetRowGroupBytesChunk = {
+  schemaBytes: Uint8Array;
+  rowGroupBytes: Uint8Array;
+  rowGroupIndex: number;
+};
+
+type ReadParquetRowGroup = (
+  schemaBytes: Uint8Array,
+  rowGroupBytes: Uint8Array,
+  rowGroupIndex: number,
+  options?: { columns?: string[] }
+) => ParquetWasmTableLike;
+
 export async function decodeParquetPartsToTable(
   readParquet: ParquetModule['readParquet'],
   parts: Uint8Array[],
@@ -45,12 +58,58 @@ export async function decodeParquetPartsToTable(
   return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
 }
 
+export async function decodeParquetRowGroupsToTable(
+  readParquetRowGroup: ReadParquetRowGroup,
+  chunks: ParquetRowGroupBytesChunk[],
+  columns: string[] | undefined,
+  maxRows?: number
+): Promise<Table> {
+  const readOptions = columns?.length ? { columns } : undefined;
+  const tables: Table[] = [];
+  let accumulated = 0;
+  for (const chunk of chunks) {
+    const table = tableFromIPC(
+      readParquetRowGroup(
+        chunk.schemaBytes,
+        chunk.rowGroupBytes,
+        chunk.rowGroupIndex,
+        readOptions
+      ).intoIPCStream()
+    );
+    if (maxRows === undefined) {
+      tables.push(table);
+      continue;
+    }
+    const remaining = maxRows - accumulated;
+    if (table.numRows <= remaining) {
+      tables.push(table);
+      accumulated += table.numRows;
+    } else {
+      tables.push(table.slice(0, remaining));
+      break;
+    }
+    if (accumulated >= maxRows) {
+      break;
+    }
+  }
+  if (tables.length === 0) {
+    throw new Error('No parquet row groups to decode');
+  }
+  return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
+}
+
 export function extractRowFeatureCodesFromTable(
   table: Table,
   featureKey: string,
-  featureCodeColumnName?: string
+  featureCodeColumnName?: string,
+  featureCodeByName?: ReadonlyMap<string, number>
 ): Int32Array {
-  const resolved = resolveRowFeatureCodesFromTable(table, featureKey, featureCodeColumnName);
+  const resolved = resolveRowFeatureCodesFromTable(
+    table,
+    featureKey,
+    featureCodeColumnName,
+    featureCodeByName
+  );
   if (!resolved) {
     return new Int32Array(0);
   }

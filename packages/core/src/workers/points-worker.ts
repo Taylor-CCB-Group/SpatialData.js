@@ -9,6 +9,7 @@ import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } f
 import {
   countFeatureCodesFromArray,
   decodeParquetPartsToTable,
+  decodeParquetRowGroupsToTable,
   extractRowFeatureCodesFromTable,
   scanTableByFeatureCodes,
   scanTableFeatureCounts,
@@ -18,6 +19,12 @@ import {
 type ParquetWasmTableLike = { intoIPCStream(): Uint8Array };
 type ParquetModule = {
   readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => ParquetWasmTableLike;
+  readParquetRowGroup?: (
+    schemaBytes: Uint8Array,
+    rowGroupBytes: Uint8Array,
+    rowGroupIndex: number,
+    options?: { columns?: string[] }
+  ) => ParquetWasmTableLike;
 };
 
 let parquetModulePromise: Promise<ParquetModule> | undefined;
@@ -34,7 +41,12 @@ async function getParquetModule(): Promise<ParquetModule> {
       if (typeof readParquet !== 'function') {
         throw new Error('parquet-wasm readParquet is unavailable in points worker');
       }
-      return { readParquet };
+      const readParquetRowGroup = (module as ParquetModule).readParquetRowGroup;
+      return {
+        readParquet,
+        readParquetRowGroup:
+          typeof readParquetRowGroup === 'function' ? readParquetRowGroup : undefined,
+      };
     })();
   }
   return parquetModulePromise;
@@ -99,17 +111,36 @@ async function handleDecodeParquet(
 async function handleDecodeParquetRowFeatureCodes(
   request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
 ): Promise<PointsWorkerResponse> {
-  const { readParquet } = await getParquetModule();
-  const table = await decodeParquetPartsToTable(
-    readParquet,
-    request.parts,
-    request.columns,
-    request.maxRows
-  );
+  const parquetModule = await getParquetModule();
+  let table;
+  if (request.rowGroups?.length) {
+    if (!parquetModule.readParquetRowGroup) {
+      return { ok: false, error: 'parquet-wasm readParquetRowGroup is unavailable in points worker' };
+    }
+    table = await decodeParquetRowGroupsToTable(
+      parquetModule.readParquetRowGroup,
+      request.rowGroups,
+      request.columns,
+      request.maxRows
+    );
+  } else if (request.parts?.length) {
+    table = await decodeParquetPartsToTable(
+      parquetModule.readParquet,
+      request.parts,
+      request.columns,
+      request.maxRows
+    );
+  } else {
+    return { ok: false, error: 'decodeParquetRowFeatureCodes requires parts or rowGroups' };
+  }
+  const featureCodeByName = request.featureCodeEntries
+    ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
+    : undefined;
   const codes = extractRowFeatureCodesFromTable(
     table,
     request.featureKey,
-    request.featureCodeColumnName
+    request.featureCodeColumnName,
+    featureCodeByName
   );
   return {
     ok: true,

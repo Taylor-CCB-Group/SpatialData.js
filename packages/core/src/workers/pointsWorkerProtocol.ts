@@ -1,6 +1,12 @@
 import type { PointsColumnarData } from '../spatialViewFit.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
 
+export type ParquetRowGroupBytesChunk = {
+  schemaBytes: Uint8Array;
+  rowGroupBytes: Uint8Array;
+  rowGroupIndex: number;
+};
+
 export type PointsWorkerRequest =
   | {
       type: 'filterColumnarByFeatureCodes';
@@ -25,11 +31,14 @@ export type PointsWorkerRequest =
     }
   | {
       type: 'decodeParquetRowFeatureCodes';
-      parts: Uint8Array[];
+      parts?: Uint8Array[];
+      rowGroups?: ParquetRowGroupBytesChunk[];
       columns: string[];
       maxRows?: number;
       featureKey: string;
       featureCodeColumnName?: string;
+      /** Serialized catalog for dict-only elements (no *_codes column). */
+      featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
     }
   | {
       type: 'countFeatureCodes';
