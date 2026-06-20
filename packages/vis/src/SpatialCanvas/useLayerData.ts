@@ -743,6 +743,11 @@ export function useLayerData(
         if (!config?.visible || config.type !== 'points') continue;
         const elem = resolveLayerElement(layerId, config, elementMap.current);
         if (!elem || elem.type !== 'points') continue;
+        if (elem.element.kind !== 'points') {
+          // we could probably move these type guards into a generic resolveLayerElement
+          // it gets a bit fiddly partly because of 'image' vs 'images'
+          throw new Error(`should be unreachable, '${elem.type}' with '${elem.element.kind}' element`);
+        }
 
         const preloadCacheKey = pointsPreloadCacheKey(elem.key, config);
         const hasPreloaded = loadedDataRef.current.points.has(preloadCacheKey);
@@ -762,7 +767,7 @@ export function useLayerData(
         pointsRowFeatureCodesInFlightRef.current.add(preloadCacheKey);
         pending.push({
           elementKey: preloadCacheKey,
-          element: elem.element as PointsElement,
+          element: elem.element,
           memoryCap: config.pointsMemoryCap,
         });
       }
