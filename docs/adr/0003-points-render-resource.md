@@ -70,3 +70,27 @@ appear in `TileLayer.updateTriggers.getTileData`.
   resolver cache holds stable bundle references per element key.
 - Image precedent: `ImageElement` + Viv loader built in vis; points precedent:
   `PointsElement` + `PointsLoader` built in vis, rendered by `PointsLayer`.
+
+## Future performance investigations
+
+These are documented follow-ups — not part of the v1 render bundle.
+
+### CPU / compute hot paths
+
+The scan+compact loops in `filterColumnarByFeatureCodes` /
+`filterPointsToBounds` (`packages/core/src/pointsTiling.ts`) are hot paths for
+large preloaded datasets. Candidates include WASM SIMD and WebGPU compute (e.g.
+[typegpu](https://github.com/software-mansion/typegpu)) for parallel index
+selection and column compaction. **Worker offload** (`@spatialdata/core/workers`)
+is the near-term mitigation; GPU/WASM is a follow-up benchmark task.
+
+### FBO-based render caching
+
+For viewport-stable layers (tiled points, filtered preloaded batches, static
+image tiles), cache rasterized sublayer output in **framebuffer objects (FBOs)**
+so pan/zoom and cosmetic prop changes do not re-draw the full payload every
+frame. This should integrate with the broader **Render Stack compositing**
+story (`Group Entry`, Viv/deck stacking) via shared FBO cache utilities —
+invalidation keyed on structural `updateTriggers`, composition order with host
+overlays — rather than as a points-only hack. Detail deferred until compositing
+utils exist.

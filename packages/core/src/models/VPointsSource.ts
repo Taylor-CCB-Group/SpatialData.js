@@ -1,8 +1,22 @@
 import { basename } from '../Vutils';
 import {
+  buildFeatureCatalogFromColumns,
+  buildFeatureCatalogFromDictionaryOnly,
+  isDictionaryFeatureColumn,
+} from '../pointsFeatures.js';
+import {
+  decodeParquetPartsInWorker,
+  isPointsWorkerEnabled,
+} from '../workers/pointsWorkerClient.js';
+import {
+  exceedsPointsPreloadLimit,
+  POINTS_PRELOAD_MAX_ROWS,
+} from '../pointsLimits.js';
+import {
   MORTON_CODE_2D_COLUMN,
   type PointsInBoundsOptions,
   type PointsInBoundsResult,
+  type PointsFeatureCatalog,
   type PointsTilingMetadata,
   extractSentinelBoundingBox,
   featureCodeAllowSet,
@@ -179,16 +193,64 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
     const normAxes = normalizeAxes(axes);
-    // todo - use type from schema?
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
 
     const { feature_key: featureKey } = spatialDataAttrs;
 
-    const columnNames = [...axisNames, featureKey].filter(Boolean);
-    const arrowTable = await this.loadParquetTable(parquetPath, columnNames);
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+    const fields = datasetMetadata?.schema?.fields
+      ? datasetMetadata.schema.fields.flatMap((field) =>
+          typeof field.name === 'string' ? [field.name] : []
+        )
+      : arrowSchemaFieldNames(schemaTable);
+    const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
 
-    // TODO: this table will also contain the index column, and potentially the featureKey column.
-    // Do something with these here, otherwise they will need to be loaded redundantly.
+    const rowCount = await this.resolveParquetRowCount(parquetPath);
+    const truncatePreload = rowCount > POINTS_PRELOAD_MAX_ROWS;
+    const maxRows = truncatePreload ? POINTS_PRELOAD_MAX_ROWS : rowCount;
+
+    const columnNames = [...axisNames, featureKey].filter(Boolean);
+    if (featureCodeColumnName && !columnNames.includes(featureCodeColumnName)) {
+      columnNames.push(featureCodeColumnName);
+    }
+
+    if (isPointsWorkerEnabled()) {
+      const { parts, totalRows, truncated } = await this.readParquetDatasetBytesCapped(
+        parquetPath,
+        maxRows
+      );
+      if (parts.length > 0) {
+        const arrowTable = await decodeParquetPartsInWorker(
+          parts,
+          columnNames,
+          truncated ? maxRows : undefined
+        );
+        const axisColumnArrs = axisNames.map((name: string) => {
+          const column = arrowTable.getChild(name);
+          if (!column) {
+            throw new Error(`Column "${name}" not found in the arrow table.`);
+          }
+          return column.toArray();
+        });
+        const featureCodesColumn = featureCodeColumnName
+          ? arrowTable.getChild(featureCodeColumnName)
+          : null;
+        return {
+          shape: [axisColumnArrs.length, arrowTable.numRows],
+          data: axisColumnArrs,
+          featureCodes: featureCodesColumn?.toArray(),
+          totalRowCount: totalRows,
+          preloadTruncated: truncated,
+        };
+      }
+    }
+
+    const { table: arrowTable, totalRows, truncated } = await this.loadParquetTableCapped(
+      parquetPath,
+      columnNames,
+      maxRows
+    );
 
     const axisColumnArrs = axisNames.map((name: string) => {
       const column = arrowTable.getChild(name);
@@ -198,10 +260,81 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return column.toArray();
     });
 
+    const featureCodesColumn = featureCodeColumnName
+      ? arrowTable.getChild(featureCodeColumnName)
+      : null;
+
     return {
       shape: [axisColumnArrs.length, arrowTable.numRows],
       data: axisColumnArrs,
+      featureCodes: featureCodesColumn?.toArray(),
+      totalRowCount: totalRows,
+      preloadTruncated: truncated,
     };
+  }
+
+  async getPointsParquetRowCount(elementPath: string): Promise<number> {
+    const parquetPath = getParquetPath(elementPath);
+    return this.resolveParquetRowCount(parquetPath);
+  }
+
+  async listPointsFeatures(elementPath: string): Promise<PointsFeatureCatalog | null> {
+    const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    const featureKey = zattrs.spatialdata_attrs?.feature_key;
+    if (typeof featureKey !== 'string' || featureKey.length === 0) {
+      return null;
+    }
+
+    const parquetPath = getParquetPath(elementPath);
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+    const fields = datasetMetadata?.schema?.fields
+      ? datasetMetadata.schema.fields.flatMap((field) =>
+          typeof field.name === 'string' ? [field.name] : []
+        )
+      : arrowSchemaFieldNames(schemaTable);
+    const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+    const hasMortonColumn = fields.includes(MORTON_CODE_2D_COLUMN);
+
+    const rowCount = await this.resolveParquetRowCount(parquetPath);
+
+    const columns = [featureKey];
+    if (featureCodeColumnName) {
+      columns.push(featureCodeColumnName);
+    }
+    if (hasMortonColumn) {
+      columns.push(MORTON_CODE_2D_COLUMN);
+    }
+
+    const arrowTable = await this.loadParquetTable(parquetPath, columns);
+    const nameColumn = arrowTable.getChild(featureKey);
+    const codeColumn = featureCodeColumnName
+      ? arrowTable.getChild(featureCodeColumnName)
+      : null;
+    const mortonColumn = hasMortonColumn ? arrowTable.getChild(MORTON_CODE_2D_COLUMN) : null;
+
+    if (!nameColumn) {
+      return null;
+    }
+
+    if (rowCount > 0 && exceedsPointsPreloadLimit(rowCount) && isDictionaryFeatureColumn(nameColumn)) {
+      return buildFeatureCatalogFromDictionaryOnly(featureKey, nameColumn, codeColumn);
+    }
+
+    if (rowCount > 0 && exceedsPointsPreloadLimit(rowCount)) {
+      console.warn(
+        `[SpatialDataPointsSource] Skipping feature catalog for ${elementPath}: ${rowCount.toLocaleString()} rows exceeds preload limit and feature column is not dictionary-encoded.`
+      );
+      return null;
+    }
+
+    return buildFeatureCatalogFromColumns(
+      featureKey,
+      nameColumn,
+      codeColumn,
+      mortonColumn,
+      arrowTable.numRows
+    );
   }
 
   async getPointsTilingMetadata(elementPath: string): Promise<PointsTilingMetadata | null> {

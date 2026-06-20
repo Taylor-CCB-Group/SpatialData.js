@@ -57,18 +57,53 @@ describe('planPointsLoads', () => {
 
 describe('shouldPreloadAfterMetadataProbe', () => {
   it('requires preload after non-tileable probe result', () => {
-    expect(shouldPreloadAfterMetadataProbe(true, false, false)).toBe(true);
+    expect(
+      shouldPreloadAfterMetadataProbe({
+        probeRan: true,
+        renderableMetadata: false,
+        hasPreloaded: false,
+      })
+    ).toBe(true);
   });
 
   it('skips preload when probe found renderable Morton metadata', () => {
-    expect(shouldPreloadAfterMetadataProbe(true, true, false)).toBe(false);
+    expect(
+      shouldPreloadAfterMetadataProbe({
+        probeRan: true,
+        renderableMetadata: true,
+        hasPreloaded: false,
+      })
+    ).toBe(false);
   });
 
   it('skips preload when data already cached', () => {
-    expect(shouldPreloadAfterMetadataProbe(true, false, true)).toBe(false);
+    expect(
+      shouldPreloadAfterMetadataProbe({
+        probeRan: true,
+        renderableMetadata: false,
+        hasPreloaded: true,
+      })
+    ).toBe(false);
   });
 
   it('skips preload when no probe ran', () => {
-    expect(shouldPreloadAfterMetadataProbe(false, false, false)).toBe(false);
+    expect(
+      shouldPreloadAfterMetadataProbe({
+        probeRan: false,
+        renderableMetadata: false,
+        hasPreloaded: false,
+      })
+    ).toBe(false);
+  });
+
+  it('still requires preload after probe when row count exceeds the cap', () => {
+    expect(
+      shouldPreloadAfterMetadataProbe({
+        probeRan: true,
+        renderableMetadata: false,
+        hasPreloaded: false,
+        totalRows: 4_000_001,
+      })
+    ).toBe(true);
   });
 });

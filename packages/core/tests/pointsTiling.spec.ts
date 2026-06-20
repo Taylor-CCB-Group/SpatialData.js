@@ -2,6 +2,7 @@ import type { Table as ArrowTable } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import {
   extractSentinelBoundingBox,
+  filterColumnarByFeatureCodes,
   filterPointsToBounds,
   mergeAdjacentIntervals,
   mortonIntervalsForBounds,
@@ -120,5 +121,31 @@ describe('points tiling helpers', () => {
     );
     expect(Array.from(filtered.data[0])).toEqual([5]);
     expect(filtered.shape).toEqual([2, 1]);
+  });
+
+  it('filters columnar points by feature codes without bounds', () => {
+    const xs = new Float32Array([0, 1, 2]);
+    const ys = new Float32Array([0, 1, 2]);
+    const sourceFeatureCodes = new Int32Array([0, 1, 0]);
+    const filtered = filterColumnarByFeatureCodes(
+      { data: [xs, ys], shape: [2, 3] },
+      [0],
+      sourceFeatureCodes
+    );
+    expect(Array.from(filtered.data[0])).toEqual([0, 2]);
+    expect(filtered.shape).toEqual([2, 2]);
+  });
+
+  it('returns no rows when feature filter is an empty selection', () => {
+    const xs = new Float32Array([0, 1, 2]);
+    const ys = new Float32Array([0, 1, 2]);
+    const sourceFeatureCodes = new Int32Array([0, 1, 0]);
+    const filtered = filterColumnarByFeatureCodes(
+      { data: [xs, ys], shape: [2, 3] },
+      [],
+      sourceFeatureCodes
+    );
+    expect(filtered.data[0].length).toBe(0);
+    expect(filtered.shape).toEqual([2, 0]);
   });
 });

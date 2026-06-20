@@ -11,6 +11,21 @@ export * from './models/index.js';
 export * from './spatialViewFit.js';
 export * from './pointsTiling.js';
 export {
+  POINTS_PRELOAD_MAX_ROWS,
+  PointsPreloadTooLargeError,
+  exceedsPointsPreloadLimit,
+  pointsPreloadTruncatedMessage,
+  preloadedColumnarPointCount,
+} from './pointsLimits.js';
+export {
+  enablePointsWorker,
+  disablePointsWorker,
+  ensurePointsWorker,
+  filterColumnarByFeatureCodesInWorker,
+  isPointsWorkerEnabled,
+  setPointsWorkerDefaultEnabled,
+} from './workers/index.js';
+export {
   createMortonTiledPointsLoader,
   createPointsLoaderForElement,
   createPreloadedColumnarPointsLoader,

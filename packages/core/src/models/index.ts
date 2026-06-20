@@ -546,6 +546,14 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
   async loadPointsInBounds(options: Parameters<SpatialDataPointsSource['loadPointsInBounds']>[1]) {
     return this.vPoints.loadPointsInBounds(`points/${this.key}`, options);
   }
+
+  async listFeatures() {
+    return this.vPoints.listPointsFeatures(`points/${this.key}`);
+  }
+
+  async getParquetRowCount() {
+    return this.vPoints.getPointsParquetRowCount(`points/${this.key}`);
+  }
 }
 
 // ============================================

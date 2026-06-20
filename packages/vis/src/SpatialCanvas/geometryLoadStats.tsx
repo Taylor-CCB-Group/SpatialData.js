@@ -6,6 +6,16 @@ const loadStatsStyle: CSSProperties = {
   fontSize: '11px',
 };
 
+const errorStyle: CSSProperties = {
+  color: '#c96',
+  fontSize: '11px',
+};
+
+const noticeStyle: CSSProperties = {
+  color: '#ca8',
+  fontSize: '11px',
+};
+
 export interface GeometryLoadStatsProps {
   loadState?: LayerLoadState;
   detailsSuffix?: string;
@@ -26,6 +36,12 @@ export function GeometryLoadStats({ loadState, detailsSuffix }: GeometryLoadStat
       Geometry: {loadState.geometry}
       {geometryDuration ? ` (${geometryDuration})` : ''}
       {detailsSuffix ?? ''}
+      {loadState.geometry === 'ready' && loadState.geometryNotice ? (
+        <div style={noticeStyle}>{loadState.geometryNotice}</div>
+      ) : null}
+      {loadState.geometry === 'error' && loadState.geometryError ? (
+        <div style={errorStyle}>{loadState.geometryError}</div>
+      ) : null}
     </div>
   );
 }

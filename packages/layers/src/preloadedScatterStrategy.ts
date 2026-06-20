@@ -26,13 +26,16 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       return null;
     }
 
-    const cached = (layer.state as { preloadedBatch?: ColumnarNdarrayPointsBatch })
-      .preloadedBatch;
-    if (!cached) {
+    const state = layer.state as {
+      preloadedBatch?: ColumnarNdarrayPointsBatch;
+      filteredBatch?: ColumnarNdarrayPointsBatch;
+    };
+    const batch = state.filteredBatch ?? state.preloadedBatch;
+    if (!batch) {
       return null;
     }
 
-    return renderColumnarScatterLayer(layer.props.id, cached, {
+    return renderColumnarScatterLayer(layer.props.id, batch, {
       color,
       pointSize,
       pointRadiusMinPixels,

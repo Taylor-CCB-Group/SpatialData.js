@@ -8,6 +8,16 @@ export const MORTON_CODE_VALUE_MAX = 2 ** MORTON_CODE_BITS_PER_AXIS - 1;
 
 export type SpatialBounds = AxisAlignedBounds;
 
+export interface PointsFeatureEntry {
+  code: number;
+  name: string;
+}
+
+export interface PointsFeatureCatalog {
+  featureKey: string;
+  entries: PointsFeatureEntry[];
+}
+
 export interface PointsInBoundsOptions {
   bounds: SpatialBounds;
   /** Integer codes matching `{feature_key}_codes` in the Morton Parquet artifact. */
@@ -222,7 +232,7 @@ export function extractSentinelBoundingBox(
 export function featureCodeAllowSet(
   featureCodes: readonly number[] | undefined
 ): Set<number> | null {
-  if (!featureCodes?.length) {
+  if (featureCodes === undefined) {
     return null;
   }
   return new Set(featureCodes);
@@ -236,6 +246,69 @@ export function rowMatchesFeatureCode(
     return true;
   }
   return typeof code === 'number' && Number.isFinite(code) && allowed.has(code);
+}
+
+/**
+ * Future investigation: scan+compact loops below are hot paths for large
+ * preloaded datasets. Candidates include WASM SIMD and WebGPU compute (e.g.
+ * typegpu) for parallel index selection and column compaction. Worker offload
+ * is the near-term fix; GPU/WASM is a follow-up benchmark task.
+ *
+ * FBO-based render caching for viewport-stable layers should plug into the
+ * broader Render Stack compositing story (Group Entry, Viv/deck stacking) via
+ * shared cache utilities — not a points-only optimization.
+ */
+export function filterColumnarByFeatureCodes(
+  data: PointsColumnarData,
+  featureCodes: readonly number[] | undefined,
+  sourceFeatureCodes?: ArrayLike<number>
+): PointsColumnarData {
+  const allowedFeatureCodes = featureCodeAllowSet(featureCodes);
+  if (allowedFeatureCodes === null || !sourceFeatureCodes) {
+    return data;
+  }
+  if (allowedFeatureCodes.size === 0) {
+    const axisCount = data.shape[0] ?? data.data.length;
+    const empty = new Float32Array(0);
+    const emptyData =
+      axisCount >= 3 && data.data[2]
+        ? [empty, empty, empty]
+        : [empty, empty];
+    return { shape: [axisCount, 0], data: emptyData };
+  }
+
+  const xs = data.data[0];
+  const ys = data.data[1];
+  const zs = data.data[2];
+  const keep: number[] = [];
+  const n = Math.min(xs?.length ?? 0, ys?.length ?? 0);
+  for (let index = 0; index < n; index += 1) {
+    if (!rowMatchesFeatureCode(sourceFeatureCodes[index], allowedFeatureCodes)) {
+      continue;
+    }
+    keep.push(index);
+  }
+
+  if (keep.length === n) {
+    return data;
+  }
+
+  const outX = new Float32Array(keep.length);
+  const outY = new Float32Array(keep.length);
+  const outZ = zs ? new Float32Array(keep.length) : undefined;
+  for (let index = 0; index < keep.length; index += 1) {
+    const sourceIndex = keep[index];
+    outX[index] = xs[sourceIndex];
+    outY[index] = ys[sourceIndex];
+    if (outZ) {
+      outZ[index] = zs[sourceIndex] ?? 0;
+    }
+  }
+
+  return {
+    shape: [outZ ? 3 : 2, keep.length],
+    data: outZ ? [outX, outY, outZ] : [outX, outY],
+  };
 }
 
 export function filterPointsToBounds(

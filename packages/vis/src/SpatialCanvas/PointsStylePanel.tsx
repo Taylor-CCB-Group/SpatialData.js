@@ -28,6 +28,16 @@ export function preloadedPointCount(data: { shape: number[]; data: ArrayLike<num
   return data.data[0]?.length ?? data.shape[0] ?? 0;
 }
 
+export function preloadedPointCountSuffix(
+  data: { shape: number[]; data: ArrayLike<number>[]; totalRowCount?: number; preloadTruncated?: boolean }
+): string | undefined {
+  const loaded = preloadedPointCount(data);
+  if (data.preloadTruncated && data.totalRowCount !== undefined) {
+    return ` · ${loaded.toLocaleString()} of ${data.totalRowCount.toLocaleString()} points loaded`;
+  }
+  return ` · ${loaded.toLocaleString()} points loaded`;
+}
+
 const checkboxLabelStyle: CSSProperties = {
   color: '#ccc',
   fontSize: '12px',
@@ -40,7 +50,7 @@ export interface PointsStylePanelProps {
   layerId: string;
   config: PointsLayerConfig;
   loadState?: LayerLoadState;
-  preloadedPointCount?: number;
+  pointCountSuffix?: string;
   tileLoadingMessage?: string | null;
   supportsTileDebugOverlay?: boolean;
   updateLayer: (id: string, updates: Partial<PointsLayerConfig>) => void;
@@ -50,16 +60,11 @@ export function PointsStylePanel({
   layerId,
   config,
   loadState,
-  preloadedPointCount,
+  pointCountSuffix,
   tileLoadingMessage,
   supportsTileDebugOverlay = false,
   updateLayer,
 }: PointsStylePanelProps) {
-  const pointCountSuffix =
-    preloadedPointCount !== undefined
-      ? ` · ${preloadedPointCount.toLocaleString()} points loaded`
-      : undefined;
-
   return (
     <>
       <GeometryLoadStats loadState={loadState} detailsSuffix={pointCountSuffix} />

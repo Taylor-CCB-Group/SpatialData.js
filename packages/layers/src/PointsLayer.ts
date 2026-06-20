@@ -1,5 +1,6 @@
 import type { Matrix4 } from '@math.gl/core';
 import type { UpdateParameters } from '@deck.gl/core';
+import { filterColumnarByFeatureCodesInWorker } from '@spatialdata/core';
 import { CompositeLayer } from 'deck.gl';
 import type { Layer, LayersList } from 'deck.gl';
 import type { PointsRenderResource } from './pointsLoader.js';
@@ -26,6 +27,8 @@ export interface PointsLayerProps {
   viewZoom?: number | null;
   color?: [number, number, number, number];
   featureCodes?: readonly number[];
+  /** Source-side integer codes aligned with the preloaded table rows. */
+  preloadedFeatureCodes?: ArrayLike<number>;
   showTileDebugOverlay?: boolean;
   tileLoadCallbacks?: PointsTileLoadCallbacks;
   tileDebugStore?: TileDebugStore;
@@ -36,6 +39,56 @@ export interface PointsLayerProps {
 
 interface PointsLayerState {
   preloadedBatch?: ColumnarNdarrayPointsBatch;
+  filteredBatch?: ColumnarNdarrayPointsBatch;
+  filteredBatchSignature?: string;
+  filterGeneration?: number;
+}
+
+function featureCodesSignature(featureCodes: readonly number[] | undefined): string {
+  if (featureCodes === undefined) {
+    return 'all';
+  }
+  if (featureCodes.length === 0) {
+    return 'none';
+  }
+  return featureCodes.slice().sort((left, right) => left - right).join(',');
+}
+
+function emptyFilteredBatch(batch: ColumnarNdarrayPointsBatch): ColumnarNdarrayPointsBatch {
+  const axisCount = batch.shape[0] ?? batch.data.length;
+  const empty = new Float32Array(0);
+  const emptyData =
+    axisCount >= 3 && batch.data[2] ? [empty, empty, empty] : [empty, empty];
+  return {
+    ...batch,
+    data: emptyData,
+    shape: [axisCount, 0],
+    pointCount: 0,
+  };
+}
+
+async function filterPreloadedBatch(
+  batch: ColumnarNdarrayPointsBatch,
+  featureCodes: readonly number[] | undefined,
+  preloadedFeatureCodes: ArrayLike<number> | undefined
+): Promise<ColumnarNdarrayPointsBatch> {
+  if (featureCodes === undefined || !preloadedFeatureCodes) {
+    return batch;
+  }
+  if (featureCodes.length === 0) {
+    return emptyFilteredBatch(batch);
+  }
+  const filtered = await filterColumnarByFeatureCodesInWorker(
+    { shape: batch.shape, data: batch.data },
+    featureCodes,
+    preloadedFeatureCodes
+  );
+  return {
+    ...batch,
+    data: filtered.data,
+    shape: filtered.shape,
+    pointCount: filtered.shape[1] ?? filtered.data[0]?.length ?? 0,
+  };
 }
 
 export class PointsLayer extends CompositeLayer<PointsLayerProps> {
@@ -51,7 +104,7 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
   } satisfies Partial<PointsLayerProps>;
 
   initializeState(): void {
-    this.state = {};
+    this.state = { filterGeneration: 0 };
     void this.ensurePreloadedBatch();
   }
 
@@ -61,8 +114,24 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       props.resource.loader !== oldProps.resource.loader ||
       props.resource.element !== oldProps.resource.element
     ) {
-      this.setState({ preloadedBatch: undefined });
+      this.setState({
+        preloadedBatch: undefined,
+        filteredBatch: undefined,
+        filteredBatchSignature: undefined,
+        filterGeneration: 0,
+      });
       void this.ensurePreloadedBatch();
+      return;
+    }
+
+    const signature = featureCodesSignature(props.featureCodes);
+    const state = this.state as PointsLayerState;
+    const preloadedBatch = state.preloadedBatch;
+    if (
+      preloadedBatch &&
+      (signature !== state.filteredBatchSignature || !state.filteredBatch)
+    ) {
+      void this.ensureFilteredBatch(preloadedBatch, signature);
     }
   }
 
@@ -78,7 +147,26 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     const batch = await resource.loader.loadAll?.();
     if (batch?.format === 'columnar-ndarray') {
       this.setState({ preloadedBatch: batch });
+      void this.ensureFilteredBatch(batch, featureCodesSignature(this.props.featureCodes));
     }
+  }
+
+  private async ensureFilteredBatch(
+    batch: ColumnarNdarrayPointsBatch,
+    signature: string
+  ): Promise<void> {
+    const generation = ((this.state as PointsLayerState).filterGeneration ?? 0) + 1;
+    this.setState({ filterGeneration: generation });
+    const { featureCodes, preloadedFeatureCodes } = this.props;
+    const filtered = await filterPreloadedBatch(batch, featureCodes, preloadedFeatureCodes);
+    const state = this.state as PointsLayerState;
+    if (state.filterGeneration !== generation) {
+      return;
+    }
+    this.setState({
+      filteredBatch: filtered,
+      filteredBatchSignature: signature,
+    });
   }
 
   /** Public wrapper for strategy modules outside this class. */
@@ -94,3 +182,5 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     return resolvePointsRenderStrategy(resource.loader).renderLayers(this);
   }
 }
+
+export { filterPreloadedBatch, featureCodesSignature };

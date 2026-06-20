@@ -57,6 +57,10 @@ export interface PointsRenderResource {
 export interface PointData {
   shape: number[];
   data: ArrayLike<number>[];
+  featureCodes?: ArrayLike<number>;
+  /** Full dataset row count when preload was truncated. */
+  totalRowCount?: number;
+  preloadTruncated?: boolean;
 }
 
 export function columnarBatchFromPointData(

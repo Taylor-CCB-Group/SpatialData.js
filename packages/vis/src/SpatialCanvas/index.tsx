@@ -24,7 +24,8 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
-import { PointsStylePanel, preloadedPointCount } from './PointsStylePanel';
+import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
+import { PointsStylePanel, preloadedPointCountSuffix } from './PointsStylePanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import { ShapesStylePanel } from './ShapesStylePanel';
 import {
@@ -434,11 +435,13 @@ function SpatialCanvasInner({
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
     getPointsLayerLoadedData,
+    getPointsFeatureCatalog,
     getShapesLayerLoadedData,
     getLayerLoadState,
     getPointsTileLoadProgress,
     getPointsTileLoadingMessage,
     getPointsLayerSupportsTileDebug,
+    isPointsFeatureCatalogLoading,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
     hasEnabledLayers,
@@ -546,10 +549,10 @@ function SpatialCanvasInner({
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
   const selectedPointsLoadedData =
     selectedConfig?.type === 'points' ? getPointsLayerLoadedData(selectedConfig.id) : undefined;
-  const selectedPreloadedPointCount =
+  const selectedPointsPointCountSuffix =
     selectedPointsLoadedData === undefined
       ? undefined
-      : preloadedPointCount(selectedPointsLoadedData);
+      : preloadedPointCountSuffix(selectedPointsLoadedData);
   const selectedShapesLoadedSummary =
     selectedConfig?.type === 'shapes' ? getShapesLayerLoadedData(selectedConfig.id) : undefined;
 
@@ -854,17 +857,26 @@ function SpatialCanvasInner({
                   />
                 )}
                 {selectedConfig.type === 'points' && (
-                  <PointsStylePanel
-                    layerId={selectedConfig.id}
-                    config={selectedConfig}
-                    loadState={selectedLayerLoadState}
-                    preloadedPointCount={selectedPreloadedPointCount}
-                    tileLoadingMessage={formatPointsTileLoadingMessage(
-                      getPointsTileLoadProgress(selectedConfig.id)
-                    )}
-                    supportsTileDebugOverlay={getPointsLayerSupportsTileDebug(selectedConfig.id)}
-                    updateLayer={actions.updateLayer}
-                  />
+                  <>
+                    <PointsStylePanel
+                      layerId={selectedConfig.id}
+                      config={selectedConfig}
+                      loadState={selectedLayerLoadState}
+                      pointCountSuffix={selectedPointsPointCountSuffix}
+                      tileLoadingMessage={formatPointsTileLoadingMessage(
+                        getPointsTileLoadProgress(selectedConfig.id)
+                      )}
+                      supportsTileDebugOverlay={getPointsLayerSupportsTileDebug(selectedConfig.id)}
+                      updateLayer={actions.updateLayer}
+                    />
+                    <PointsFeatureFilterPanel
+                      layerId={selectedConfig.id}
+                      config={selectedConfig}
+                      catalog={getPointsFeatureCatalog(selectedConfig.id)}
+                      catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
+                      updateLayer={actions.updateLayer}
+                    />
+                  </>
                 )}
                 {selectedConfig.type === 'shapes' && (
                   <>
