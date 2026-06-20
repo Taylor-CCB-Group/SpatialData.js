@@ -24,7 +24,7 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
-import { PointsStylePanel } from './PointsStylePanel';
+import { PointsStylePanel, preloadedPointCount } from './PointsStylePanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
   shouldAutoFitSpatialView,
@@ -44,7 +44,7 @@ import { layerConfig } from './layerConfig';
 import { pointsTileLoadingMessage as formatPointsTileLoadingMessage } from './pointsTileProgress';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
-import type { ImageLayerConfig } from './useLayerData';
+import { formatLoadDurationMs, type ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
 // ============================================
@@ -432,6 +432,7 @@ function SpatialCanvasInner({
     getFeatureTooltip,
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
+    getPointsLayerLoadedData,
     getLayerLoadState,
     getPointsTileLoadProgress,
     getPointsTileLoadingMessage,
@@ -541,6 +542,12 @@ function SpatialCanvasInner({
         ? spatialData?.getAssociatedTable('labels', selectedConfig.elementKey)?.[1]
         : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
+  const selectedPointsLoadedData =
+    selectedConfig?.type === 'points' ? getPointsLayerLoadedData(selectedConfig.id) : undefined;
+  const selectedPreloadedPointCount =
+    selectedPointsLoadedData === undefined
+      ? undefined
+      : preloadedPointCount(selectedPointsLoadedData);
 
   const selectedLayerCanCenter =
     !!selectedConfig?.id &&
@@ -792,9 +799,16 @@ function SpatialCanvasInner({
                       fontSize: '11px',
                     }}
                   >
-                    {selectedConfig.type !== 'image' && selectedLayerLoadState.geometry && (
+                    {selectedConfig.type !== 'image' &&
+                      selectedConfig.type !== 'points' &&
+                      selectedLayerLoadState.geometry && (
                       <div>
                         Geometry: {selectedLayerLoadState.geometry}
+                        {selectedLayerLoadState.geometryLoadDurationMs !== undefined &&
+                        (selectedLayerLoadState.geometry === 'ready' ||
+                          selectedLayerLoadState.geometry === 'error')
+                          ? ` (${formatLoadDurationMs(selectedLayerLoadState.geometryLoadDurationMs)})`
+                          : ''}
                         {!hasRenderableLayerData(selectedConfig.id) &&
                         selectedLayerLoadState.geometry === 'loading'
                           ? ' (blocking)'
@@ -838,6 +852,8 @@ function SpatialCanvasInner({
                   <PointsStylePanel
                     layerId={selectedConfig.id}
                     config={selectedConfig}
+                    loadState={selectedLayerLoadState}
+                    preloadedPointCount={selectedPreloadedPointCount}
                     tileLoadingMessage={formatPointsTileLoadingMessage(
                       getPointsTileLoadProgress(selectedConfig.id)
                     )}
