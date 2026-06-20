@@ -156,6 +156,8 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   layerInputs: RenderStackLayerInputs;
   renderOrder?: string[];
   viewState?: ViewState | null;
+  /** Orthographic zoom for points layer radius scaling (without subscribing to pan target). */
+  viewZoom?: number | null;
   onViewStateChange?: (viewState: ViewState) => void;
   width: number;
   height: number;
@@ -172,6 +174,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   layerInputs,
   renderOrder,
   viewState,
+  viewZoom: viewZoomProp,
   onViewStateChange,
   width,
   height,
@@ -196,7 +199,8 @@ export function useSpatialCanvasRendererFromLayerInputs({
     availableElements,
     coordinateSystem,
     spatialData ?? undefined,
-    experimentalOptimizations
+    experimentalOptimizations,
+    viewZoomProp ?? viewState?.zoom ?? null
   );
 
   const generatedDeckLayers = layerData.getLayers();
@@ -395,6 +399,7 @@ function SpatialCanvasViewerInner({
     autoFit,
     experimentalOptimizations,
   });
+  const pointsTileLoadingMessage = renderer.getPointsTileLoadingMessage();
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
     [renderer.enabledLayerIds]
@@ -565,7 +570,13 @@ function SpatialCanvasViewerInner({
             {showLoadingOverlay && renderer.isBlocking && (
               <div style={overlayStyle}>Loading layer data...</div>
             )}
-            {showLoadingOverlay && renderer.isLoading && !renderer.isBlocking && (
+            {showLoadingOverlay && !renderer.isBlocking && pointsTileLoadingMessage && (
+              <div style={overlayStyle}>{pointsTileLoadingMessage}</div>
+            )}
+            {showLoadingOverlay &&
+              renderer.isLoading &&
+              !renderer.isBlocking &&
+              !pointsTileLoadingMessage && (
               <div style={{ ...overlayStyle, backgroundColor: 'rgba(20,20,20,0.78)' }}>
                 Refreshing layer metadata...
               </div>

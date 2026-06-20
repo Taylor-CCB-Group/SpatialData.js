@@ -24,6 +24,7 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { PointsStylePanel } from './PointsStylePanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
   shouldAutoFitSpatialView,
@@ -40,6 +41,7 @@ import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import { layerConfig } from './layerConfig';
+import { pointsTileLoadingMessage as formatPointsTileLoadingMessage } from './pointsTileProgress';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
@@ -213,6 +215,7 @@ interface ViewerSectionProps {
   hasEnabledLayers: boolean;
   isBlocking: boolean;
   isLoading: boolean;
+  pointsTileLoadingMessage: string | null;
   hasLayersDrawn: boolean;
   getWorldBoundsForVisibleLayers: () => import('@spatialdata/core').AxisAlignedBounds | null;
   vw: number;
@@ -229,6 +232,7 @@ function ViewerSection({
   hasEnabledLayers,
   isBlocking,
   isLoading,
+  pointsTileLoadingMessage,
   hasLayersDrawn,
   getWorldBoundsForVisibleLayers,
   vw,
@@ -318,7 +322,23 @@ function ViewerSection({
           Loading layer data...
         </div>
       )}
-      {isLoading && !isBlocking && (
+      {!isBlocking && pointsTileLoadingMessage && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            padding: '4px 8px',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            color: '#fff',
+            fontSize: '11px',
+            borderRadius: 4,
+          }}
+        >
+          {pointsTileLoadingMessage}
+        </div>
+      )}
+      {isLoading && !isBlocking && !pointsTileLoadingMessage && (
         <div
           style={{
             position: 'absolute',
@@ -394,6 +414,7 @@ function SpatialCanvasInner({
   // viewState is intentionally NOT subscribed here.  It is consumed only by
   // ViewerSection, which is the sole component that re-renders on every pan.
   const selectedLayerId = useSpatialCanvasStore((s) => s.selectedLayerId);
+  const viewZoom = useSpatialCanvasStore((s) => s.viewState?.zoom ?? null);
 
   const actions = useSpatialCanvasActions();
 
@@ -412,6 +433,8 @@ function SpatialCanvasInner({
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
     getLayerLoadState,
+    getPointsTileLoadProgress,
+    getPointsTileLoadingMessage,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
     hasEnabledLayers,
@@ -424,12 +447,14 @@ function SpatialCanvasInner({
     spatialData,
     coordinateSystem,
     layerInputs: { layers, layerOrder },
-    // viewState and onViewStateChange are omitted: auto-fit and pan handling
-    // are managed entirely by ViewerSection so this hook never re-runs on pan.
+    // viewState target is not subscribed here; zoom alone drives point-size scaling.
+    viewZoom,
     width: vw,
     height: vh,
     experimentalOptimizations,
   });
+  const pointsTileLoadingMessage = getPointsTileLoadingMessage();
+
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
@@ -681,6 +706,7 @@ function SpatialCanvasInner({
               hasEnabledLayers={hasEnabledLayers}
               isBlocking={isBlocking}
               isLoading={isLoading}
+              pointsTileLoadingMessage={getPointsTileLoadingMessage()}
               hasLayersDrawn={hasLayersDrawn}
               getWorldBoundsForVisibleLayers={getWorldBoundsForVisibleLayers}
               vw={vw}
@@ -803,6 +829,16 @@ function SpatialCanvasInner({
                     layerId={selectedConfig.id}
                     config={selectedConfig}
                     defaults={getLabelsLayerLoadedData(selectedConfig.id)}
+                    updateLayer={actions.updateLayer}
+                  />
+                )}
+                {selectedConfig.type === 'points' && (
+                  <PointsStylePanel
+                    layerId={selectedConfig.id}
+                    config={selectedConfig}
+                    tileLoadingMessage={formatPointsTileLoadingMessage(
+                      getPointsTileLoadProgress(selectedConfig.id)
+                    )}
                     updateLayer={actions.updateLayer}
                   />
                 )}

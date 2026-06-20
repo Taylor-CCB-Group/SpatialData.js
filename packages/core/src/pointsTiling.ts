@@ -10,6 +10,8 @@ export type SpatialBounds = AxisAlignedBounds;
 
 export interface PointsInBoundsOptions {
   bounds: SpatialBounds;
+  /** Integer codes matching `{feature_key}_codes` in the Morton Parquet artifact. */
+  featureCodes?: readonly number[];
   zoom?: number;
   signal?: AbortSignal;
   columns?: string[];
@@ -165,10 +167,17 @@ export function mortonIntervalsForBounds(
 }
 
 function getNumericValue(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
   }
-  return value;
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+  return null;
+}
+
+export function isMortonSentinelValue(value: unknown): boolean {
+  return getNumericValue(value) === MORTON_CODE_EXTREME_VALUE_INDICATOR;
 }
 
 export function extractSentinelBoundingBox(
@@ -188,7 +197,7 @@ export function extractSentinelBoundingBox(
   const xs: number[] = [];
   const ys: number[] = [];
   for (let i = 0; i < maxRows; i++) {
-    if (mortonColumn.get(i) !== MORTON_CODE_EXTREME_VALUE_INDICATOR) {
+    if (!isMortonSentinelValue(mortonColumn.get(i))) {
       break;
     }
     const x = getNumericValue(xColumn.get(i));
@@ -210,11 +219,33 @@ export function extractSentinelBoundingBox(
   };
 }
 
+export function featureCodeAllowSet(
+  featureCodes: readonly number[] | undefined
+): Set<number> | null {
+  if (!featureCodes?.length) {
+    return null;
+  }
+  return new Set(featureCodes);
+}
+
+export function rowMatchesFeatureCode(
+  code: unknown,
+  allowed: Set<number> | null
+): boolean {
+  if (!allowed) {
+    return true;
+  }
+  return typeof code === 'number' && Number.isFinite(code) && allowed.has(code);
+}
+
 export function filterPointsToBounds(
   data: PointsColumnarData,
   bounds: SpatialBounds,
-  featureIndices?: ArrayLike<number>
+  featureIndices?: ArrayLike<number>,
+  featureCodes?: readonly number[],
+  sourceFeatureCodes?: ArrayLike<number>
 ): PointsInBoundsResult {
+  const allowedFeatureCodes = featureCodeAllowSet(featureCodes);
   const xs = data.data[0];
   const ys = data.data[1];
   const zs = data.data[2];
@@ -224,15 +255,22 @@ export function filterPointsToBounds(
     const x = xs[i];
     const y = ys[i];
     if (
-      Number.isFinite(x) &&
-      Number.isFinite(y) &&
-      x >= bounds.minX &&
-      x <= bounds.maxX &&
-      y >= bounds.minY &&
-      y <= bounds.maxY
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      x < bounds.minX ||
+      x > bounds.maxX ||
+      y < bounds.minY ||
+      y > bounds.maxY
     ) {
-      keep.push(i);
+      continue;
     }
+    if (
+      allowedFeatureCodes &&
+      !rowMatchesFeatureCode(sourceFeatureCodes?.[i], allowedFeatureCodes)
+    ) {
+      continue;
+    }
+    keep.push(i);
   }
 
   const outX = new Float32Array(keep.length);

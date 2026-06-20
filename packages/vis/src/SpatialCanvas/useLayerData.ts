@@ -65,6 +65,15 @@ import {
 import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
+import {
+  aggregatePointsTileLoadProgress,
+  createPointsTileLoadCallbacks,
+  emptyPointsTileLoadProgress,
+  isPointsTileLoading,
+  pointsTileLoadingMessage,
+  type PointsTileLoadCallbacks,
+  type PointsTileLoadProgress,
+} from './pointsTileProgress';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
 
@@ -224,6 +233,10 @@ interface UseLayerDataResult {
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
   isBlocking: boolean;
+  /** Tile fetch progress for Morton-tiled points layers. */
+  getPointsTileLoadProgress: (layerId?: string) => PointsTileLoadProgress;
+  /** User-facing message while tiled points are loading, if any. */
+  getPointsTileLoadingMessage: () => string | null;
   /** Trigger a reload of data for a specific element */
   reloadElement: (type: string, key: string) => void;
   /** World-space axis-aligned bounds for one visible layer with loaded data, or null. */
@@ -478,7 +491,8 @@ export function useLayerData(
   availableElements: ElementsByType,
   coordinateSystem: string | null,
   spatialData?: SpatialData,
-  experimentalOptimizations: 'auto' | 'off' = 'auto'
+  experimentalOptimizations: 'auto' | 'off' = 'auto',
+  viewZoom: number | null = null
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -505,10 +519,70 @@ export function useLayerData(
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
   const [, setLoadedDataRevision] = useState(0);
+  const pointsTileProgressRef = useRef(new Map<string, PointsTileLoadProgress>());
+  const pointsTileCallbacksRef = useRef(new Map<string, PointsTileLoadCallbacks>());
+  const [pointsTileProgressRevision, setPointsTileProgressRevision] = useState(0);
 
   const notifyLoadedDataChanged = useCallback(() => {
     setLoadedDataRevision((revision) => revision + 1);
   }, []);
+
+  const getPointsTileCallbacks = useCallback((layerId: string): PointsTileLoadCallbacks => {
+    let callbacks = pointsTileCallbacksRef.current.get(layerId);
+    if (!callbacks) {
+      callbacks = createPointsTileLoadCallbacks(
+        () => pointsTileProgressRef.current.get(layerId) ?? emptyPointsTileLoadProgress(),
+        (progress) => {
+          pointsTileProgressRef.current.set(layerId, progress);
+          setPointsTileProgressRevision((revision) => revision + 1);
+        }
+      );
+      pointsTileCallbacksRef.current.set(layerId, callbacks);
+    }
+    return callbacks;
+  }, []);
+
+  const getPointsTileLoadProgress = useCallback(
+    (layerId?: string): PointsTileLoadProgress => {
+      void pointsTileProgressRevision;
+      if (layerId) {
+        return pointsTileProgressRef.current.get(layerId) ?? emptyPointsTileLoadProgress();
+      }
+      const visibleProgress = new Map<string, PointsTileLoadProgress>();
+      for (const id of layerOrder) {
+        const config = layers[id];
+        if (!config?.visible || config.type !== 'points') continue;
+        const progress = pointsTileProgressRef.current.get(id);
+        if (progress) {
+          visibleProgress.set(id, progress);
+        }
+      }
+      return aggregatePointsTileLoadProgress(visibleProgress);
+    },
+    [layerOrder, layers, pointsTileProgressRevision]
+  );
+
+  const getPointsTileLoadingMessage = useCallback((): string | null => {
+    return pointsTileLoadingMessage(getPointsTileLoadProgress());
+  }, [getPointsTileLoadProgress]);
+
+  const prevExperimentalOptimizationsRef = useRef(experimentalOptimizations);
+  useEffect(() => {
+    const prev = prevExperimentalOptimizationsRef.current;
+    prevExperimentalOptimizationsRef.current = experimentalOptimizations;
+    if (prev === 'off' && experimentalOptimizations !== 'off') {
+      const loaded = loadedDataRef.current;
+      for (const layerId of layerOrder) {
+        const config = layers[layerId];
+        if (config?.type !== 'points' || !config.visible) continue;
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
+        if (elem) {
+          loaded.points.delete(elem.key);
+        }
+      }
+      notifyLoadedDataChanged();
+    }
+  }, [experimentalOptimizations, layerOrder, layers, notifyLoadedDataChanged]);
 
   // Build a map of element key -> AvailableElement for quick lookup
   const elementMap = useRef<Map<string, AvailableElement>>(new Map());
@@ -825,6 +899,9 @@ export function useLayerData(
                   const renderableMetadata =
                     metadata?.supportsRowGroupRangeReads && metadata.bounds ? metadata : null;
                   loadedDataRef.current.pointTilingMetadata.set(element.key, renderableMetadata);
+                  if (renderableMetadata) {
+                    loadedDataRef.current.points.delete(element.key);
+                  }
                   setLayerResourceStatus(
                     layerId,
                     'geometry',
@@ -1326,9 +1403,15 @@ export function useLayerData(
             opacity: config.opacity,
             visible: config.visible,
             pointSize: config.pointSize,
+            pointRadiusMinPixels: config.pointRadiusMinPixels,
+            pointRadiusMaxPixels: config.pointRadiusMaxPixels,
+            pointMinSizeScale: config.pointMinSizeScale,
+            viewZoom,
             color: config.color,
+            featureCodes: config.featureCodes,
             pointData,
             pointTilingMetadata,
+            tileLoadCallbacks: pointTilingMetadata ? getPointsTileCallbacks(layerId) : undefined,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -1380,7 +1463,7 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections]);
+  }, [layers, layerOrder, getStableSelections, viewZoom, getPointsTileCallbacks]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
@@ -1639,13 +1722,24 @@ export function useLayerData(
     return vivProps;
   }, [layers, layerOrder, getStableSelections]);
 
-  const isLoading = useMemo(
-    () =>
-      Object.values(layerLoadStates).some((state) =>
-        Object.values(state).some((status) => status === 'loading')
-      ),
-    [layerLoadStates]
-  );
+  const isLoading = useMemo(() => {
+    const resourceLoading = Object.values(layerLoadStates).some((state) =>
+      Object.values(state).some((status) => status === 'loading')
+    );
+    if (resourceLoading) {
+      return true;
+    }
+    void pointsTileProgressRevision;
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible || config.type !== 'points') continue;
+      const progress = pointsTileProgressRef.current.get(layerId);
+      if (progress && isPointsTileLoading(progress)) {
+        return true;
+      }
+    }
+    return false;
+  }, [layerLoadStates, layerOrder, layers, pointsTileProgressRevision]);
 
   const isBlocking = useMemo(
     () =>
@@ -1680,6 +1774,8 @@ export function useLayerData(
     getShapePickEvent,
     isLoading,
     isBlocking,
+    getPointsTileLoadProgress,
+    getPointsTileLoadingMessage,
     reloadElement,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,

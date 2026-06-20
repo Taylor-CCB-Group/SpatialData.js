@@ -25,15 +25,32 @@ interface ParquetWasmMetadata {
   rowGroup(index: number): ParquetWasmRowGroupMetadata;
 }
 
+export interface ParquetRowGroupReadOptions {
+  columns?: string[];
+  limit?: number;
+  offset?: number;
+}
+
 interface ParquetModule {
-  readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => ParquetWasmTableLike;
+  readParquet: (bytes: Uint8Array, options?: ParquetRowGroupReadOptions) => ParquetWasmTableLike;
   readSchema: (bytes: Uint8Array) => ParquetWasmTableLike;
   readMetadata?: (bytes: Uint8Array) => ParquetWasmMetadata;
   readParquetRowGroup?: (
     schemaBytes: Uint8Array,
     rowGroupBytes: Uint8Array,
-    rowGroupIndex: number
+    rowGroupIndex: number,
+    options?: ParquetRowGroupReadOptions
   ) => ParquetWasmTableLike;
+}
+
+function parquetColumnValueToNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+  return null;
 }
 
 export interface ParquetPartMetadata {
@@ -95,6 +112,21 @@ async function initializeParquetModule(module: unknown) {
   }
 }
 
+function parquetModuleSupportsRowGroupReads(module: ParquetModule): boolean {
+  return (
+    typeof module.readMetadata === 'function' && typeof module.readParquetRowGroup === 'function'
+  );
+}
+
+async function loadParquetModuleFromCdn(): Promise<ParquetModule> {
+  const cdnModule = await import(
+    // @ts-expect-error - CDN import not recognized by TypeScript
+    'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js'
+  );
+  await initializeParquetModule(cdnModule);
+  return normalizeParquetModule(cdnModule);
+}
+
 async function getParquetModule() {
   // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
   // that needs to be initialized before use in browser environments.
@@ -104,11 +136,21 @@ async function getParquetModule() {
   // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
   //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
 
+  const useCdnForMissingRowGroupApis = typeof window !== 'undefined';
+
   // Try local import first (works in Node.js, tests, and production builds)
   try {
     const module = await import('parquet-wasm');
     await initializeParquetModule(module);
-    return normalizeParquetModule(module);
+    const normalized = normalizeParquetModule(module);
+    if (!parquetModuleSupportsRowGroupReads(normalized) && useCdnForMissingRowGroupApis) {
+      console.warn(
+        '[VTableSource] Local parquet-wasm lacks row-group APIs; falling back to CDN build.'
+      );
+      const cdnNormalized = await loadParquetModuleFromCdn();
+      return cdnNormalized;
+    }
+    return normalized;
   } catch (error) {
     // Local import failed, try CDN fallback (needed in vite dev server)
     // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
@@ -119,12 +161,8 @@ async function getParquetModule() {
     );
 
     try {
-      const cdnModule = await import(
-        // @ts-expect-error - CDN import not recognized by TypeScript
-        'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js'
-      );
-      await initializeParquetModule(cdnModule);
-      return normalizeParquetModule(cdnModule);
+      const cdnNormalized = await loadParquetModuleFromCdn();
+      return cdnNormalized;
     } catch (cdnError) {
       // Both imports failed, throw an error
       const localErrorMsg = error instanceof Error ? error.message : String(error);
@@ -273,6 +311,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * `loadPolygonShapes` all target the same file).
    */
   parquetTableCache: Record<string, Promise<ArrowTable>>;
+  /** Morton min/max per row group — avoids re-decoding row groups during bisect. */
+  rowGroupColumnExtentCache: Map<string, { min: number | null; max: number | null }>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -293,6 +333,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     // TODO: change to column-specific storage.
     this.parquetTableBytes = {};
     this.parquetTableCache = {};
+    this.rowGroupColumnExtentCache = new Map();
 
     // Table-specific properties
     this.obsIndices = {};
@@ -544,7 +585,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
   async loadParquetRowGroupByGroupIndex(
     parquetPath: string,
-    rowGroupIndex: number
+    rowGroupIndex: number,
+    readOptions?: ParquetRowGroupReadOptions
   ): Promise<ArrowTable | null> {
     const { readParquetRowGroup } = await SpatialDataTableSource.parquetModulePromise;
     const { store } = this.storeRoot;
@@ -573,7 +615,12 @@ export default class SpatialDataTableSource extends AnnDataSource {
         return null;
       }
       return tableFromIPC(
-        readParquetRowGroup(part.schemaBytes, rowGroupBytes, relativeRowGroupIndex).intoIPCStream()
+        readParquetRowGroup(
+          part.schemaBytes,
+          rowGroupBytes,
+          relativeRowGroupIndex,
+          readOptions
+        ).intoIPCStream()
       );
     }
     return null;
@@ -584,17 +631,44 @@ export default class SpatialDataTableSource extends AnnDataSource {
     columnName: string,
     rowGroupIndex: number
   ): Promise<{ min: number | null; max: number | null } | null> {
-    const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex);
-    const column = table?.getChild(columnName);
-    if (!column || column.length === 0) {
+    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}`;
+    const cached = this.rowGroupColumnExtentCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const rowCount = dataset?.rowGroupRows?.[rowGroupIndex];
+    if (!rowCount) {
       return null;
     }
-    const min = column.get(0);
-    const max = column.get(column.length - 1);
-    return {
-      min: typeof min === 'number' ? min : null,
-      max: typeof max === 'number' ? max : null,
+    const columnOptions: ParquetRowGroupReadOptions = { columns: [columnName] };
+    const minTable = await this.loadParquetRowGroupByGroupIndex(
+      parquetPath,
+      rowGroupIndex,
+      { ...columnOptions, limit: 1 }
+    );
+    const minColumn = minTable?.getChild(columnName);
+    if (!minColumn || minColumn.length === 0) {
+      return null;
+    }
+    let maxValue: number | null = parquetColumnValueToNumber(minColumn.get(0));
+    if (rowCount > 1) {
+      const maxTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
+        ...columnOptions,
+        offset: rowCount - 1,
+        limit: 1,
+      });
+      const maxColumn = maxTable?.getChild(columnName);
+      if (maxColumn && maxColumn.length > 0) {
+        maxValue = parquetColumnValueToNumber(maxColumn.get(0));
+      }
+    }
+    const extent = {
+      min: parquetColumnValueToNumber(minColumn.get(0)),
+      max: maxValue,
     };
+    this.rowGroupColumnExtentCache.set(cacheKey, extent);
+    return extent;
   }
 
   /**

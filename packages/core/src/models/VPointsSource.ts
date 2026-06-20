@@ -5,8 +5,11 @@ import {
   type PointsInBoundsResult,
   type PointsTilingMetadata,
   extractSentinelBoundingBox,
+  featureCodeAllowSet,
   filterPointsToBounds,
+  isMortonSentinelValue,
   mortonIntervalsForBounds,
+  rowMatchesFeatureCode,
 } from '../pointsTiling.js';
 import type { Axis } from '../schemas';
 // import { normalizeAxes } from '@vitessce/spatial-utils';
@@ -241,14 +244,17 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const canLoadRowGroups = await this.canLoadParquetRowGroups();
     const firstRowGroup =
       datasetMetadata && canLoadRowGroups
-        ? await this.loadParquetRowGroupByGroupIndex(parquetPath, 0)
+        ? await this.loadParquetRowGroupByGroupIndex(parquetPath, 0, {
+            columns: ['x', 'y', MORTON_CODE_2D_COLUMN],
+            limit: 4,
+          })
         : null;
     const bounds = firstRowGroup
       ? (extractSentinelBoundingBox(firstRowGroup) ?? undefined)
       : undefined;
     const rowGroupSizes = datasetMetadata?.rowGroupRows ?? [];
 
-    return {
+    const metadata: PointsTilingMetadata = {
       kind: 'morton-points',
       parquetPath,
       axisNames,
@@ -262,6 +268,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       supportsRowGroupRangeReads: Boolean(datasetMetadata && canLoadRowGroups && bounds),
       bounds,
     };
+
+    return metadata;
   }
 
   async loadPointsInBounds(
@@ -277,8 +285,66 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
     checkAbort(options.signal);
-    const full = await this.loadPoints(elementPath);
-    return filterPointsToBounds(full, options.bounds);
+    const full = await this.loadPointsWithOptionalFeatureCodes(elementPath, metadata, options);
+    return filterPointsToBounds(
+      full.data,
+      options.bounds,
+      undefined,
+      options.featureCodes,
+      full.featureCodes
+    );
+  }
+
+  private async loadPointsWithOptionalFeatureCodes(
+    elementPath: string,
+    metadata: PointsTilingMetadata | null,
+    options: PointsInBoundsOptions
+  ) {
+    const parquetPath = getParquetPath(elementPath);
+    const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
+    const normAxes = normalizeAxes(axes);
+    const axisNames = normAxes.map((axis: { name: string }) => axis.name);
+    const { feature_key: featureKey } = spatialDataAttrs;
+    let featureCodeColumnName = metadata?.featureCodeColumnName;
+    if (!featureCodeColumnName && options.featureCodes?.length) {
+      const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+      const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+      const fields = datasetMetadata?.schema?.fields
+        ? datasetMetadata.schema.fields.flatMap((field) =>
+            typeof field.name === 'string' ? [field.name] : []
+          )
+        : arrowSchemaFieldNames(schemaTable);
+      featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+    }
+    const resolvedFeatureCodeColumn =
+      typeof featureCodeColumnName === 'string' ? featureCodeColumnName : undefined;
+    const columnNames = [...axisNames];
+    const needsFeatureCodes = Boolean(
+      options.featureCodes?.length && resolvedFeatureCodeColumn
+    );
+    if (needsFeatureCodes && resolvedFeatureCodeColumn) {
+      columnNames.push(resolvedFeatureCodeColumn);
+    }
+    const arrowTable = await this.loadParquetTable(parquetPath, columnNames);
+    const axisColumnArrs = axisNames.map((name: string) => {
+      const column = arrowTable.getChild(name);
+      if (!column) {
+        throw new Error(`Column "${name}" not found in the arrow table.`);
+      }
+      return column.toArray();
+    });
+    let featureCodes: ArrayLike<number> | undefined;
+    if (needsFeatureCodes && resolvedFeatureCodeColumn) {
+      featureCodes = arrowTable.getChild(resolvedFeatureCodeColumn)?.toArray();
+    }
+    return {
+      data: {
+        shape: [axisColumnArrs.length, arrowTable.numRows],
+        data: axisColumnArrs,
+      },
+      featureCodes,
+    };
   }
 
   private async bisectRowGroupsRight(
@@ -314,6 +380,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
     checkAbort(options.signal);
+    const allowedFeatureCodes = featureCodeAllowSet(options.featureCodes);
     const intervals = mortonIntervalsForBounds(metadata.bounds, options.bounds);
     const rowGroupSet = new Set<number>();
     for (const [start, end] of intervals) {
@@ -352,18 +419,40 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const ys: number[] = [];
     const zs: number[] = [];
     const hasZ = metadata.axisNames.includes('z');
+    const featureCodeColumnName =
+      allowedFeatureCodes && metadata.featureCodeColumnName
+        ? metadata.featureCodeColumnName
+        : undefined;
+    const rowGroupColumns = [
+      'x',
+      'y',
+      ...(hasZ ? ['z'] : []),
+      metadata.mortonCodeColumnName,
+      ...(featureCodeColumnName ? [featureCodeColumnName] : []),
+    ];
     for (const rowGroup of rowGroups) {
       checkAbort(options.signal);
-      const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup);
+      const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup, {
+        columns: rowGroupColumns,
+      });
       const xColumn = table?.getChild('x');
       const yColumn = table?.getChild('y');
       const zColumn = hasZ ? table?.getChild('z') : undefined;
       const mortonColumn = table?.getChild(metadata.mortonCodeColumnName);
+      const featureCodeColumn = featureCodeColumnName
+        ? table?.getChild(featureCodeColumnName)
+        : undefined;
       if (!table || !xColumn || !yColumn) {
         continue;
       }
       for (let i = 0; i < table.numRows; i++) {
-        if (rowGroup === 0 && i < 4 && mortonColumn?.get(i) === 0) {
+        if (rowGroup === 0 && i < 4 && isMortonSentinelValue(mortonColumn?.get(i))) {
+          continue;
+        }
+        if (
+          featureCodeColumn &&
+          !rowMatchesFeatureCode(featureCodeColumn.get(i), allowedFeatureCodes)
+        ) {
           continue;
         }
         const x = xColumn.get(i);

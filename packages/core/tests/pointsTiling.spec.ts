@@ -42,6 +42,21 @@ describe('points tiling helpers', () => {
     });
   });
 
+  it('accepts bigint morton sentinel values', () => {
+    const arrowTable = table({
+      x: [10, 20, 15, 17],
+      y: [5, 8, 40, 12],
+      morton_code_2d: [0n, 0n, 0n, 0n],
+    });
+
+    expect(extractSentinelBoundingBox(arrowTable)).toEqual({
+      minX: 10,
+      minY: 5,
+      maxX: 20,
+      maxY: 40,
+    });
+  });
+
   it('rejects missing or incomplete sentinel bounds', () => {
     expect(
       extractSentinelBoundingBox(
@@ -89,6 +104,21 @@ describe('points tiling helpers', () => {
     );
     expect(Array.from(filtered.data[0])).toEqual([5]);
     expect(Array.from(filtered.data[1])).toEqual([5]);
+    expect(filtered.shape).toEqual([2, 1]);
+  });
+
+  it('filters columnar points by feature codes after spatial bounds', () => {
+    const xs = new Float32Array([5, 5, 5]);
+    const ys = new Float32Array([5, 5, 5]);
+    const featureCodes = new Int32Array([0, 1, 2]);
+    const filtered = filterPointsToBounds(
+      { data: [xs, ys], shape: [2, 3] },
+      { minX: 0, minY: 0, maxX: 10, maxY: 10 },
+      undefined,
+      [1],
+      featureCodes
+    );
+    expect(Array.from(filtered.data[0])).toEqual([5]);
     expect(filtered.shape).toEqual([2, 1]);
   });
 });
