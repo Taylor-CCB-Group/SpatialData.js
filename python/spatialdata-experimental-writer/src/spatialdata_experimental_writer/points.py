@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -85,7 +85,12 @@ def _move_string_like_columns_right(df: pd.DataFrame) -> pd.DataFrame:
     return df[[*other, *string_like]]
 
 
-def morton_sort_points(df: pd.DataFrame, *, feature_key: str | None = None) -> pd.DataFrame:
+def morton_sort_points(
+    df: pd.DataFrame,
+    *,
+    feature_key: str | None = None,
+    sort_order: Sequence[str] | None = None,
+) -> pd.DataFrame:
     missing = [column for column in ("x", "y") if column not in df.columns]
     if missing:
         raise ValueError("Points dataframe is missing required columns: " + ", ".join(missing))
@@ -95,18 +100,21 @@ def morton_sort_points(df: pd.DataFrame, *, feature_key: str | None = None) -> p
     x_max = float(out["x"].max())
     y_min = float(out["y"].min())
     y_max = float(out["y"].max())
-    out["x_uint"] = _norm_series_to_uint(out["x"], x_min, x_max)
-    out["y_uint"] = _norm_series_to_uint(out["y"], y_min, y_max)
-    out[MORTON_CODE_2D_COLUMN] = morton_code_2d(out["x_uint"], out["y_uint"])
+    x_uint = _norm_series_to_uint(out["x"], x_min, x_max)
+    y_uint = _norm_series_to_uint(out["y"], y_min, y_max)
+    out[MORTON_CODE_2D_COLUMN] = morton_code_2d(x_uint, y_uint)
 
     sentinel_indices = _extreme_indices(out)
     sentinel = out.loc[sentinel_indices].copy().reset_index(drop=True)
     sentinel[MORTON_CODE_2D_COLUMN] = MORTON_CODE_EXTREME_VALUE_INDICATOR
 
     rest = out.drop(index=sentinel_indices)
-    sort_columns = [MORTON_CODE_2D_COLUMN]
-    if "z" in rest.columns and rest["z"].nunique(dropna=False) < 100:
-        sort_columns = ["z", MORTON_CODE_2D_COLUMN]
+    if sort_order is None:
+        sort_columns: list[str] = [MORTON_CODE_2D_COLUMN]
+        if "z" in rest.columns and rest["z"].nunique(dropna=False) < 100:
+            sort_columns = ["z", MORTON_CODE_2D_COLUMN]
+    else:
+        sort_columns = list(sort_order)
     rest = rest.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
 
     combined = pd.concat([sentinel, rest], ignore_index=True)
@@ -153,11 +161,14 @@ def write_morton_points_parquet(
     output_path: str | Path,
     *,
     feature_key: str | None = None,
+    sort_order: Sequence[str] | None = None,
     row_group_size: int = 50_000,
     compression: str = "zstd",
 ) -> pd.DataFrame:
-    sorted_df = morton_sort_points(df, feature_key=feature_key)
-    table = pa.Table.from_pandas(sorted_df, preserve_index=False)
+    sorted_df = morton_sort_points(df, feature_key=feature_key, sort_order=sort_order)
+    indexed = sorted_df.copy()
+    indexed.index.name = "__index_level_0__"
+    table = pa.Table.from_pandas(indexed, preserve_index=True)
     _write_arrow_table_in_row_groups(
         table,
         Path(output_path),
