@@ -104,9 +104,49 @@ describe('SpatialDataPointsSource feature catalog', () => {
     });
   });
 
-  it('loads feature code column with full points preload', async () => {
+  it('loads feature code column with full points preload via loadPointsRowFeatureCodes', async () => {
     const points = await source.loadPoints('points/transcripts');
     expect(points.shape[1]).toBe(5);
-    expect(points.featureCodes?.length).toBe(5);
+    expect(points.featureCodes).toBeUndefined();
+    const featureCodes = await source.loadPointsRowFeatureCodes('points/transcripts');
+    expect(featureCodes?.length).toBe(5);
+  });
+
+  it('derives row feature codes from dictionary-encoded feature names', async () => {
+    const elementDir = join(fixtureRoot, 'points', 'dict_only');
+    await mkdir(elementDir, { recursive: true });
+    execSync(
+      `uv run python - <<'PY'
+import pyarrow as pa
+import pyarrow.parquet as pq
+from pathlib import Path
+
+root = Path(${JSON.stringify(elementDir)})
+(root / "points.parquet").mkdir(parents=True, exist_ok=True)
+genes = pa.array(["gene_a", "gene_b", "gene_a"], type=pa.dictionary(pa.int32(), pa.string()))
+table = pa.table({"x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0], "feature_name": genes})
+pq.write_table(table, root / "points.parquet" / "part.0.parquet")
+PY`,
+      { cwd: writerRoot, stdio: 'pipe' }
+    );
+
+    const dictSource = new SpatialDataPointsSource({
+      store: createFilesystemStore(fixtureRoot),
+      fileType: '.zarr',
+    });
+    vi.spyOn(dictSource, 'loadSpatialDataElementAttrs').mockResolvedValue({
+      'encoding-type': 'ngff:points',
+      axes: ['x', 'y'],
+      spatialdata_attrs: {
+        feature_key: 'feature_name',
+        version: '0.2',
+      },
+    });
+
+    const points = await dictSource.loadPoints('points/dict_only');
+    expect(points.featureCodes).toBeUndefined();
+    const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_only');
+    expect(featureCodes?.length).toBe(3);
+    expect([...featureCodes!]).toEqual([0, 1, 0]);
   });
 });

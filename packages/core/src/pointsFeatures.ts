@@ -1,5 +1,5 @@
 import { Type } from 'apache-arrow';
-import type { Vector } from 'apache-arrow';
+import type { Table, Vector } from 'apache-arrow';
 import {
   isMortonSentinelValue,
   type PointsFeatureCatalog,
@@ -76,29 +76,11 @@ export function buildFeatureCatalogFromColumns(
 export function buildFeatureCatalogFromDictionaryOnly(
   featureKey: string,
   nameColumn: Vector,
-  codeColumn: Vector | null
+  _codeColumn: Vector | null
 ): PointsFeatureCatalog | null {
   const dictionary = dictionaryStrings(nameColumn);
   if (!dictionary || dictionary.length === 0) {
     return null;
-  }
-
-  if (codeColumn) {
-    const codeToName = new Map<number, string>();
-    for (let rowIndex = 0; rowIndex < codeColumn.length; rowIndex += 1) {
-      const codeValue = codeColumn.get(rowIndex);
-      const code = typeof codeValue === 'number' ? codeValue : Number(codeValue);
-      if (!Number.isFinite(code) || codeToName.has(code)) {
-        continue;
-      }
-      const nameIndex = nameColumn.get(rowIndex);
-      const name = resolveFeatureName(nameIndex, dictionary);
-      codeToName.set(code, name);
-    }
-    const entries: PointsFeatureEntry[] = [...codeToName.entries()]
-      .sort((left, right) => left[0] - right[0])
-      .map(([code, name]) => ({ code, name }));
-    return { featureKey, entries };
   }
 
   const entries: PointsFeatureEntry[] = dictionary.map((name, code) => ({ code, name }));
@@ -107,4 +89,71 @@ export function buildFeatureCatalogFromDictionaryOnly(
 
 export function isDictionaryFeatureColumn(column: Vector): boolean {
   return column.type.typeId === Type.Dictionary;
+}
+
+function dictionaryIndexArray(column: Vector, numRows: number): Int32Array | null {
+  if (!isDictionaryFeatureColumn(column)) {
+    return null;
+  }
+  const out = new Int32Array(numRows);
+  let offset = 0;
+  for (const chunk of column.data) {
+    const values = chunk.values;
+    if (!values) {
+      return null;
+    }
+    out.set(values, offset);
+    offset += values.length;
+  }
+  return offset === numRows ? out : null;
+}
+
+/** Per-row integer codes for feature filtering (explicit codes column or dictionary indices). */
+export function resolveRowFeatureCodesFromTable(
+  table: Table,
+  featureKey: string,
+  featureCodeColumnName: string | undefined
+): ArrayLike<number> | undefined {
+  if (featureCodeColumnName) {
+    return table.getChild(featureCodeColumnName)?.toArray();
+  }
+  const nameColumn = table.getChild(featureKey);
+  if (!nameColumn || !isDictionaryFeatureColumn(nameColumn)) {
+    return undefined;
+  }
+  const indices = dictionaryIndexArray(nameColumn, table.numRows);
+  if (indices) {
+    return indices;
+  }
+  const dictionary = dictionaryStrings(nameColumn);
+  if (!dictionary) {
+    return undefined;
+  }
+  const out = new Int32Array(table.numRows);
+  for (let rowIndex = 0; rowIndex < table.numRows; rowIndex += 1) {
+    const value = nameColumn.get(rowIndex);
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      out[rowIndex] = value;
+      continue;
+    }
+    const name = resolveFeatureName(value, dictionary);
+    const code = dictionary.indexOf(name);
+    out[rowIndex] = code >= 0 ? code : 0;
+  }
+  return out;
+}
+
+export function featureFilterNeedsRowCodes(
+  featureCodes: readonly number[] | undefined,
+  featureCodeColumnName: string | undefined,
+  featureKey: string,
+  fields: string[]
+): boolean {
+  if (featureCodes === undefined) {
+    return false;
+  }
+  if (featureCodeColumnName) {
+    return true;
+  }
+  return fields.includes(featureKey);
 }

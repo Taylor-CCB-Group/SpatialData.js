@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { featureCodesSignature, filterPreloadedBatch } from '../src/PointsLayer.js';
+import { featureCodesSignature } from '../src/pointsFeatureCodes.js';
+import { filterPreloadedBatch } from '../src/PointsLayer.js';
 import type { ColumnarNdarrayPointsBatch } from '../src/pointsLoader.js';
 
 describe('PointsLayer preloaded filtering', () => {

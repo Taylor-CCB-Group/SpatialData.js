@@ -3,6 +3,7 @@ import {
   buildFeatureCatalogFromColumns,
   buildFeatureCatalogFromDictionaryOnly,
   isDictionaryFeatureColumn,
+  resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
 import {
   decodeParquetPartsInWorker,
@@ -191,29 +192,15 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const parquetPath = getParquetPath(elementPath);
 
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
-    const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
+    const { axes } = zattrs;
     const normAxes = normalizeAxes(axes);
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
-
-    const { feature_key: featureKey } = spatialDataAttrs;
-
-    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
-    const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
-    const fields = datasetMetadata?.schema?.fields
-      ? datasetMetadata.schema.fields.flatMap((field) =>
-          typeof field.name === 'string' ? [field.name] : []
-        )
-      : arrowSchemaFieldNames(schemaTable);
-    const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
 
     const rowCount = await this.resolveParquetRowCount(parquetPath);
     const truncatePreload = rowCount > POINTS_PRELOAD_MAX_ROWS;
     const maxRows = truncatePreload ? POINTS_PRELOAD_MAX_ROWS : rowCount;
 
-    const columnNames = [...axisNames, featureKey].filter(Boolean);
-    if (featureCodeColumnName && !columnNames.includes(featureCodeColumnName)) {
-      columnNames.push(featureCodeColumnName);
-    }
+    const columnNames = [...axisNames];
 
     if (isPointsWorkerEnabled()) {
       const { parts, totalRows, truncated } = await this.readParquetDatasetBytesCapped(
@@ -233,13 +220,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           }
           return column.toArray();
         });
-        const featureCodesColumn = featureCodeColumnName
-          ? arrowTable.getChild(featureCodeColumnName)
-          : null;
         return {
           shape: [axisColumnArrs.length, arrowTable.numRows],
           data: axisColumnArrs,
-          featureCodes: featureCodesColumn?.toArray(),
           totalRowCount: totalRows,
           preloadTruncated: truncated,
         };
@@ -260,17 +243,70 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return column.toArray();
     });
 
-    const featureCodesColumn = featureCodeColumnName
-      ? arrowTable.getChild(featureCodeColumnName)
-      : null;
-
     return {
       shape: [axisColumnArrs.length, arrowTable.numRows],
       data: axisColumnArrs,
-      featureCodes: featureCodesColumn?.toArray(),
       totalRowCount: totalRows,
       preloadTruncated: truncated,
     };
+  }
+
+  /**
+   * Load per-row feature codes aligned with {@link loadPoints} rows. Deferred from
+   * geometry preload so large datasets do not block the first render.
+   */
+  async loadPointsRowFeatureCodes(elementPath: string): Promise<ArrayLike<number> | undefined> {
+    const parquetPath = getParquetPath(elementPath);
+    const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    const { spatialdata_attrs: spatialDataAttrs } = zattrs;
+    const featureKey = spatialDataAttrs?.feature_key;
+    if (typeof featureKey !== 'string' || featureKey.length === 0) {
+      return undefined;
+    }
+
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+    const fields = datasetMetadata?.schema?.fields
+      ? datasetMetadata.schema.fields.flatMap((field) =>
+          typeof field.name === 'string' ? [field.name] : []
+        )
+      : arrowSchemaFieldNames(schemaTable);
+    const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+
+    const rowCount = await this.resolveParquetRowCount(parquetPath);
+    const maxRows =
+      rowCount > POINTS_PRELOAD_MAX_ROWS ? POINTS_PRELOAD_MAX_ROWS : rowCount;
+
+    const columnNames = [featureKey];
+    if (featureCodeColumnName && !columnNames.includes(featureCodeColumnName)) {
+      columnNames.push(featureCodeColumnName);
+    }
+
+    if (isPointsWorkerEnabled()) {
+      const { parts, truncated } = await this.readParquetDatasetBytesCapped(
+        parquetPath,
+        maxRows
+      );
+      if (parts.length > 0) {
+        const arrowTable = await decodeParquetPartsInWorker(
+          parts,
+          columnNames,
+          truncated ? maxRows : undefined
+        );
+        return resolveRowFeatureCodesFromTable(
+          arrowTable,
+          featureKey,
+          featureCodeColumnName
+        );
+      }
+    }
+
+    const { table: arrowTable } = await this.loadParquetTableCapped(
+      parquetPath,
+      columnNames,
+      maxRows
+    );
+    return resolveRowFeatureCodesFromTable(arrowTable, featureKey, featureCodeColumnName);
   }
 
   async getPointsParquetRowCount(elementPath: string): Promise<number> {
@@ -306,6 +342,26 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       columns.push(MORTON_CODE_2D_COLUMN);
     }
 
+    if (rowCount > 0 && exceedsPointsPreloadLimit(rowCount)) {
+      const probeTable = (
+        await this.loadParquetTableCapped(parquetPath, columns, 1)
+      ).table;
+      const nameColumn = probeTable.getChild(featureKey);
+      if (!nameColumn) {
+        return null;
+      }
+      if (isDictionaryFeatureColumn(nameColumn)) {
+        const codeColumn = featureCodeColumnName
+          ? probeTable.getChild(featureCodeColumnName)
+          : null;
+        return buildFeatureCatalogFromDictionaryOnly(featureKey, nameColumn, codeColumn);
+      }
+      console.warn(
+        `[SpatialDataPointsSource] Skipping feature catalog for ${elementPath}: ${rowCount.toLocaleString()} rows exceeds preload limit and feature column is not dictionary-encoded.`
+      );
+      return null;
+    }
+
     const arrowTable = await this.loadParquetTable(parquetPath, columns);
     const nameColumn = arrowTable.getChild(featureKey);
     const codeColumn = featureCodeColumnName
@@ -314,17 +370,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const mortonColumn = hasMortonColumn ? arrowTable.getChild(MORTON_CODE_2D_COLUMN) : null;
 
     if (!nameColumn) {
-      return null;
-    }
-
-    if (rowCount > 0 && exceedsPointsPreloadLimit(rowCount) && isDictionaryFeatureColumn(nameColumn)) {
-      return buildFeatureCatalogFromDictionaryOnly(featureKey, nameColumn, codeColumn);
-    }
-
-    if (rowCount > 0 && exceedsPointsPreloadLimit(rowCount)) {
-      console.warn(
-        `[SpatialDataPointsSource] Skipping feature catalog for ${elementPath}: ${rowCount.toLocaleString()} rows exceeds preload limit and feature column is not dictionary-encoded.`
-      );
       return null;
     }
 
@@ -440,7 +485,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
     const { feature_key: featureKey } = spatialDataAttrs;
     let featureCodeColumnName = metadata?.featureCodeColumnName;
-    if (!featureCodeColumnName && options.featureCodes?.length) {
+    const needsFeatureFilter = options.featureCodes !== undefined;
+    if (!featureCodeColumnName && needsFeatureFilter) {
       const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
       const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
       const fields = datasetMetadata?.schema?.fields
@@ -453,11 +499,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const resolvedFeatureCodeColumn =
       typeof featureCodeColumnName === 'string' ? featureCodeColumnName : undefined;
     const columnNames = [...axisNames];
-    const needsFeatureCodes = Boolean(
-      options.featureCodes?.length && resolvedFeatureCodeColumn
-    );
-    if (needsFeatureCodes && resolvedFeatureCodeColumn) {
-      columnNames.push(resolvedFeatureCodeColumn);
+    if (needsFeatureFilter) {
+      if (resolvedFeatureCodeColumn) {
+        columnNames.push(resolvedFeatureCodeColumn);
+      } else if (typeof featureKey === 'string' && !columnNames.includes(featureKey)) {
+        columnNames.push(featureKey);
+      }
     }
     const arrowTable = await this.loadParquetTable(parquetPath, columnNames);
     const axisColumnArrs = axisNames.map((name: string) => {
@@ -467,10 +514,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
       return column.toArray();
     });
-    let featureCodes: ArrayLike<number> | undefined;
-    if (needsFeatureCodes && resolvedFeatureCodeColumn) {
-      featureCodes = arrowTable.getChild(resolvedFeatureCodeColumn)?.toArray();
-    }
+    const featureCodes = needsFeatureFilter
+      ? resolveRowFeatureCodesFromTable(arrowTable, featureKey, resolvedFeatureCodeColumn)
+      : undefined;
     return {
       data: {
         shape: [axisColumnArrs.length, arrowTable.numRows],
@@ -552,8 +598,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const ys: number[] = [];
     const zs: number[] = [];
     const hasZ = metadata.axisNames.includes('z');
+    const filterByFeature = allowedFeatureCodes !== null;
     const featureCodeColumnName =
-      allowedFeatureCodes && metadata.featureCodeColumnName
+      filterByFeature && metadata.featureCodeColumnName
         ? metadata.featureCodeColumnName
         : undefined;
     const rowGroupColumns = [
@@ -583,6 +630,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           continue;
         }
         if (
+          filterByFeature &&
           featureCodeColumn &&
           !rowMatchesFeatureCode(featureCodeColumn.get(i), allowedFeatureCodes)
         ) {

@@ -55,6 +55,8 @@ export function renderColumnarScatterLayer(
         props.pointMinSizeScale ?? MIN_POINT_SIZE_SCALE
       );
 
+  const pointCount = batch.pointCount ?? batch.shape[1] ?? d[0]?.length ?? 0;
+
   return new ScatterplotLayer({
     id,
     coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
@@ -80,6 +82,7 @@ export function renderColumnarScatterLayer(
     autoHighlight: true,
     highlightColor: [255, 255, 0, 200],
     updateTriggers: {
+      getPosition: [pointCount, d[0], d[1], d[2]],
       getRadius: [
         props.pointSize,
         props.viewZoom,

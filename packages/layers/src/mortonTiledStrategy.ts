@@ -17,6 +17,7 @@ import {
   renderColumnarScatterLayer,
 } from './pointsScatterLayer.js';
 import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
+import { featureCodesSignature } from './pointsFeatureCodes.js';
 import { createTiledPointsDebugHooks } from './pointsTiledDebugHooks.js';
 import {
   POINTS_TILE_DEBUG_PICK_KIND,
@@ -93,7 +94,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
           maxZoom: -1,
           refinementStrategy: 'best-available',
           updateTriggers: {
-            getTileData: [resource.element.key, featureCodes],
+            getTileData: [resource.element.key, featureCodesSignature(featureCodes)],
             renderSubLayers: [
               pointSize,
               pointRadiusMinPixels,

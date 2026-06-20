@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { useMemo, useState } from 'react';
 import type { PointsFeatureCatalog } from '@spatialdata/core';
 import type { PointsLayerConfig } from './types';
 
@@ -30,6 +31,17 @@ const helperStyle: CSSProperties = {
   fontSize: '11px',
 };
 
+const searchStyle: CSSProperties = {
+  color: '#ccc',
+  fontSize: '12px',
+  padding: '4px 6px',
+  borderRadius: 4,
+  border: '1px solid #444',
+  background: '#1a1a1a',
+};
+
+const FEATURE_LIST_SEARCH_THRESHOLD = 100;
+
 export interface PointsFeatureFilterPanelProps {
   layerId: string;
   config: PointsLayerConfig;
@@ -45,10 +57,21 @@ export function PointsFeatureFilterPanel({
   catalogLoading = false,
   updateLayer,
 }: PointsFeatureFilterPanelProps) {
+  const [searchQuery, setSearchQuery] = useState('');
   const entries = catalog?.entries ?? [];
   const allSelected = config.featureCodes === undefined;
   const noneSelected = config.featureCodes !== undefined && config.featureCodes.length === 0;
-  const selectedCodes = allSelected ? new Set(entries.map((entry) => entry.code)) : new Set(config.featureCodes ?? []);
+  const selectedCodes = allSelected
+    ? new Set(entries.map((entry) => entry.code))
+    : new Set(config.featureCodes ?? []);
+
+  const visibleEntries = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return entries;
+    }
+    return entries.filter((entry) => entry.name.toLowerCase().includes(query));
+  }, [entries, searchQuery]);
 
   const setFeatureCodes = (nextCodes: number[] | undefined) => {
     updateLayer(layerId, { featureCodes: nextCodes });
@@ -91,6 +114,7 @@ export function PointsFeatureFilterPanel({
   }
 
   const selectedCount = noneSelected ? 0 : allSelected ? entries.length : selectedCodes.size;
+  const showSearch = entries.length > FEATURE_LIST_SEARCH_THRESHOLD;
 
   return (
     <div style={panelStyle}>
@@ -125,8 +149,17 @@ export function PointsFeatureFilterPanel({
         />
         Deselect all
       </label>
+      {showSearch ? (
+        <input
+          type="search"
+          placeholder="Search features…"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          style={searchStyle}
+        />
+      ) : null}
       <div style={listStyle}>
-        {entries.map((entry) => {
+        {visibleEntries.map((entry) => {
           const checked = !noneSelected && (allSelected || selectedCodes.has(entry.code));
           return (
             <label key={entry.code} style={checkboxLabelStyle} title={`code ${entry.code}`}>
@@ -139,6 +172,9 @@ export function PointsFeatureFilterPanel({
             </label>
           );
         })}
+        {showSearch && visibleEntries.length === 0 ? (
+          <div style={helperStyle}>No features match your search.</div>
+        ) : null}
       </div>
     </div>
   );

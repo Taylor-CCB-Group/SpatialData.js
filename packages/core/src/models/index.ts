@@ -539,6 +539,10 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.vPoints.loadPoints(`points/${this.key}`);
   }
 
+  async loadRowFeatureCodes() {
+    return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`);
+  }
+
   async getPointsTilingMetadata() {
     return this.vPoints.getPointsTilingMetadata(`points/${this.key}`);
   }

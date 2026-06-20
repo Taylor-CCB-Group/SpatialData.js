@@ -7,6 +7,7 @@ import type { PointsRenderResource } from './pointsLoader.js';
 import type { PointsTileLoadCallbacks } from './pointsTileLoadCallbacks.js';
 import type { TileDebugStore } from './pointsTiledDebugHooks.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
+import { filterBatchSignature } from './pointsFeatureCodes.js';
 import { resolvePointsRenderStrategy } from './pointsRenderStrategies.js';
 import {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
@@ -42,16 +43,6 @@ interface PointsLayerState {
   filteredBatch?: ColumnarNdarrayPointsBatch;
   filteredBatchSignature?: string;
   filterGeneration?: number;
-}
-
-function featureCodesSignature(featureCodes: readonly number[] | undefined): string {
-  if (featureCodes === undefined) {
-    return 'all';
-  }
-  if (featureCodes.length === 0) {
-    return 'none';
-  }
-  return featureCodes.slice().sort((left, right) => left - right).join(',');
 }
 
 function emptyFilteredBatch(batch: ColumnarNdarrayPointsBatch): ColumnarNdarrayPointsBatch {
@@ -124,7 +115,7 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       return;
     }
 
-    const signature = featureCodesSignature(props.featureCodes);
+    const signature = filterBatchSignature(props.featureCodes, props.preloadedFeatureCodes);
     const state = this.state as PointsLayerState;
     const preloadedBatch = state.preloadedBatch;
     if (
@@ -147,7 +138,10 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     const batch = await resource.loader.loadAll?.();
     if (batch?.format === 'columnar-ndarray') {
       this.setState({ preloadedBatch: batch });
-      void this.ensureFilteredBatch(batch, featureCodesSignature(this.props.featureCodes));
+      void this.ensureFilteredBatch(
+        batch,
+        filterBatchSignature(this.props.featureCodes, this.props.preloadedFeatureCodes)
+      );
     }
   }
 
@@ -167,6 +161,7 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       filteredBatch: filtered,
       filteredBatchSignature: signature,
     });
+    this.setNeedsUpdate();
   }
 
   /** Public wrapper for strategy modules outside this class. */
@@ -183,4 +178,5 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
   }
 }
 
-export { filterPreloadedBatch, featureCodesSignature };
+export { filterPreloadedBatch };
+export { featureCodesSignature, filterBatchSignature } from './pointsFeatureCodes.js';

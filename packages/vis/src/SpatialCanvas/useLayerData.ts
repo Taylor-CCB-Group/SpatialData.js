@@ -578,6 +578,9 @@ export function useLayerData(
   const pointsFeatureCatalogRef = useRef(new Map<string, PointsFeatureCatalog | null>());
   const pointsFeatureCatalogInFlightRef = useRef(new Set<string>());
   const [pointsFeatureCatalogRevision, setPointsFeatureCatalogRevision] = useState(0);
+  const pointsRowFeatureCodesRef = useRef(new Map<string, ArrayLike<number>>());
+  const pointsRowFeatureCodesInFlightRef = useRef(new Set<string>());
+  const [pointsRowFeatureCodesRevision, setPointsRowFeatureCodesRevision] = useState(0);
 
   const notifyPointsTileLayersChanged = useCallback(() => {
     if (pointsTileLayersFrameRef.current != null) {
@@ -734,6 +737,58 @@ export function useLayerData(
       cancelled = true;
     };
   }, [layerOrder, layers]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRowFeatureCodes = async () => {
+      const pending: Array<{ elementKey: string; element: PointsElement }> = [];
+      for (const layerId of layerOrder) {
+        const config = layers[layerId];
+        if (!config?.visible || config.type !== 'points') continue;
+        if (config.featureCodes === undefined) continue;
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
+        if (!elem || elem.type !== 'points') continue;
+        if (
+          pointsRowFeatureCodesRef.current.has(elem.key) ||
+          pointsRowFeatureCodesInFlightRef.current.has(elem.key)
+        ) {
+          continue;
+        }
+        if (!loadedDataRef.current.points.has(elem.key)) {
+          continue;
+        }
+        pointsRowFeatureCodesInFlightRef.current.add(elem.key);
+        pending.push({ elementKey: elem.key, element: elem.element as PointsElement });
+      }
+
+      if (pending.length === 0) {
+        return;
+      }
+
+      await Promise.all(
+        pending.map(async ({ elementKey, element }) => {
+          try {
+            const codes = await element.loadRowFeatureCodes();
+            if (!cancelled && codes) {
+              pointsRowFeatureCodesRef.current.set(elementKey, codes);
+              setPointsRowFeatureCodesRevision((revision) => revision + 1);
+            }
+          } catch (error) {
+            console.error(`Failed to load row feature codes for ${elementKey}:`, error);
+          } finally {
+            pointsRowFeatureCodesInFlightRef.current.delete(elementKey);
+          }
+        })
+      );
+    };
+
+    void loadRowFeatureCodes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [layerOrder, layers, loadedDataRevision]);
 
   const setLayerResourceStatus = useCallback(
     (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
@@ -1462,6 +1517,8 @@ export function useLayerData(
       pointsRenderResourceCacheRef.current.delete(key);
       pointsFeatureCatalogRef.current.delete(key);
       pointsFeatureCatalogInFlightRef.current.delete(key);
+      pointsRowFeatureCodesRef.current.delete(key);
+      pointsRowFeatureCodesInFlightRef.current.delete(key);
     } else if (type === 'image') {
       loaded.images.delete(key);
       loaded.worldBounds.delete(`image:${key}`);
@@ -1694,7 +1751,8 @@ export function useLayerData(
             viewZoom,
             color: config.color,
             featureCodes: config.featureCodes,
-            preloadedFeatureCodes: pointData?.featureCodes,
+            preloadedFeatureCodes:
+              pointsRowFeatureCodesRef.current.get(elem.key) ?? pointData?.featureCodes,
             showTileDebugOverlay: config.showTileDebugOverlay ?? true,
             tileLoadCallbacks: supportsViewportTiles
               ? getPointsTileCallbacks(layerId)
@@ -1764,6 +1822,7 @@ export function useLayerData(
     experimentalOptimizations,
     loadedDataRevision,
     pointsTileLayersRevision,
+    pointsRowFeatureCodesRevision,
   ]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
