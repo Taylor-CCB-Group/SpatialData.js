@@ -7,6 +7,7 @@ from typing import Any
 
 from textual import getters, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.events import ScreenResume
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
@@ -59,8 +60,46 @@ class WriterScreen(Screen[None]):
     app = getters.app(WriterApp)
 
 
+class InputFormScreen(WriterScreen):
+    """Form screen with Enter-to-advance/submit and Escape-to-back."""
+
+    INPUT_ORDER: tuple[str, ...] = ()
+    PRIMARY_BUTTON_ID: str = "run"
+
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def on_mount(self) -> None:
+        if self.INPUT_ORDER:
+            self.query_one(f"#{self.INPUT_ORDER[0]}", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        input_id = event.input.id
+        if input_id is None:
+            self._press_primary()
+            return
+        if not self.INPUT_ORDER or input_id not in self.INPUT_ORDER:
+            self._press_primary()
+            return
+        if input_id == self.INPUT_ORDER[-1]:
+            self._press_primary()
+            return
+        next_index = self.INPUT_ORDER.index(input_id) + 1
+        self.query_one(f"#{self.INPUT_ORDER[next_index]}", Input).focus()
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()
+
+    def _press_primary(self) -> None:
+        self.query_one(f"#{self.PRIMARY_BUTTON_ID}", Button).press()
+
+
 class HomeScreen(WriterScreen):
     BINDINGS = [("q", "quit", "Quit")]
+
+    def on_mount(self) -> None:
+        self.query_one("#command-list", ListView).focus()
 
     def on_screen_resume(self, event: ScreenResume) -> None:
         self.refresh()
@@ -126,7 +165,10 @@ class HomeScreen(WriterScreen):
         )
 
 
-class ZarrPathScreen(WriterScreen):
+class ZarrPathScreen(InputFormScreen):
+    INPUT_ORDER = ("zarr-path",)
+    PRIMARY_BUTTON_ID = "continue"
+
     def __init__(self, command: CommandId) -> None:
         super().__init__()
         self.command = command
@@ -142,8 +184,11 @@ class ZarrPathScreen(WriterScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
-            self.app.pop_screen()
+            self.action_go_back()
             return
+        self._continue()
+
+    def _continue(self) -> None:
         path = self.query_one("#zarr-path", Input).value.strip()
         if not path:
             self.notify("Enter a Zarr store path.", severity="error")
@@ -175,6 +220,10 @@ class ZarrPathScreen(WriterScreen):
 
 
 class PointsKeyScreen(WriterScreen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
     def __init__(self, command: CommandId) -> None:
         super().__init__()
         self.command = command
@@ -202,11 +251,24 @@ class PointsKeyScreen(WriterScreen):
         if len(keys) == 1:
             self.app.context.points_key = keys[0]
             list_view.index = 0
+        list_view.focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        item_id = event.item.id or ""
+        if item_id.startswith("key-"):
+            self.app.context.points_key = item_id.removeprefix("key-")
+        self._continue()
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
-            self.app.pop_screen()
+            self.action_go_back()
             return
+        self._continue()
+
+    def _continue(self) -> None:
         list_view = self.query_one("#points-key-list", ListView)
         if list_view.index is None:
             self.notify("Select a Points element.", severity="error")
@@ -223,7 +285,9 @@ class PointsKeyScreen(WriterScreen):
             self.app.push_screen(IndexPermutationsScreen(from_zarr_context=True))
 
 
-class MortonFromZarrScreen(WriterScreen):
+class MortonFromZarrScreen(InputFormScreen):
+    INPUT_ORDER = ("feature-key", "row-group-size", "compression", "output-path")
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Morton-sort Points from Zarr", classes="screen-title")
@@ -254,11 +318,15 @@ class MortonFromZarrScreen(WriterScreen):
                 self.query_one("#feature-key", Input).value = str(feature_key)
         except OSError:
             pass
+        super().on_mount()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
-            self.app.pop_screen()
+            self.action_go_back()
             return
+        self._submit()
+
+    def _submit(self) -> None:
         zarr = self.app.context.zarr_path
         key = self.app.context.points_key
         if not zarr or not key:
@@ -315,7 +383,15 @@ class MortonFromZarrScreen(WriterScreen):
             self.app.push_screen(RunScreen(task_spec))
 
 
-class MortonFileScreen(WriterScreen):
+class MortonFileScreen(InputFormScreen):
+    INPUT_ORDER = (
+        "input-path",
+        "output-path",
+        "feature-key",
+        "row-group-size",
+        "compression",
+    )
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Morton-sort CSV/Parquet", classes="screen-title")
@@ -337,8 +413,11 @@ class MortonFileScreen(WriterScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
-            self.app.pop_screen()
+            self.action_go_back()
             return
+        self._submit()
+
+    def _submit(self) -> None:
         input_path = self.query_one("#input-path", Input).value.strip()
         output_path = self.query_one("#output-path", Input).value.strip()
         if not input_path or not output_path:
@@ -376,7 +455,15 @@ class MortonFileScreen(WriterScreen):
         )
 
 
-class MultiscaleScreen(WriterScreen):
+class MultiscaleScreen(InputFormScreen):
+    INPUT_ORDER = (
+        "input-path",
+        "output-path",
+        "metadata-json",
+        "row-group-size",
+        "compression",
+    )
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Multiscale Points Parquet", classes="screen-title")
@@ -398,8 +485,11 @@ class MultiscaleScreen(WriterScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
-            self.app.pop_screen()
+            self.action_go_back()
             return
+        self._submit()
+
+    def _submit(self) -> None:
         input_path = self.query_one("#input-path", Input).value.strip()
         output_path = self.query_one("#output-path", Input).value.strip()
         if not input_path or not output_path:
@@ -437,7 +527,16 @@ class MultiscaleScreen(WriterScreen):
         )
 
 
-class IndexPermutationsScreen(WriterScreen):
+class IndexPermutationsScreen(InputFormScreen):
+    INPUT_ORDER = (
+        "source-zarr",
+        "dest-zarr",
+        "points-key",
+        "max-rows",
+        "row-group-size",
+        "compression",
+    )
+
     def __init__(self, *, from_zarr_context: bool = False) -> None:
         super().__init__()
         self.from_zarr_context = from_zarr_context
@@ -473,11 +572,15 @@ class IndexPermutationsScreen(WriterScreen):
             self.query_one("#source-zarr", Input).value = self.app.context.zarr_path
         if self.from_zarr_context and self.app.context.points_key:
             self.query_one("#points-key", Input).value = self.app.context.points_key
+        super().on_mount()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
-            self.app.pop_screen()
+            self.action_go_back()
             return
+        self._submit()
+
+    def _submit(self) -> None:
         source = self.query_one("#source-zarr", Input).value.strip()
         dest = self.query_one("#dest-zarr", Input).value.strip()
         if not source or not dest:
@@ -538,6 +641,11 @@ class IndexPermutationsScreen(WriterScreen):
 
 
 class ConfirmScreen(WriterScreen):
+    BINDINGS = [
+        Binding("enter", "confirm", "Confirm overwrite"),
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
     def __init__(self, task_spec: TaskSpec) -> None:
         super().__init__()
         self.task_spec = task_spec
@@ -550,6 +658,15 @@ class ConfirmScreen(WriterScreen):
             yield Button("Confirm overwrite", variant="error", id="confirm")
             yield Button("Cancel", id="cancel")
         yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm", Button).focus()
+
+    def action_confirm(self) -> None:
+        self.query_one("#confirm", Button).press()
+
+    def action_cancel(self) -> None:
+        self.query_one("#cancel", Button).press()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -624,6 +741,11 @@ class RunScreen(WriterScreen):
 
 
 class VerifyReportScreen(WriterScreen):
+    BINDINGS = [
+        Binding("enter", "go_home", "Home"),
+        Binding("escape", "go_home", "Home"),
+    ]
+
     def __init__(
         self,
         *,
@@ -672,6 +794,12 @@ class VerifyReportScreen(WriterScreen):
             yield Button("Home", variant="primary", id="home")
             yield Button("Quit", id="quit")
         yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#home", Button).focus()
+
+    def action_go_home(self) -> None:
+        self.app.go_home()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "home":
