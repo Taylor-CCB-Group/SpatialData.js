@@ -97,6 +97,7 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     color,
     featureCodes,
     preloadedFeatureCodes,
+    renderCap,
     showTileDebugOverlay: showTileDebugOverlay ?? true,
     tileDebugStore,
     tileDebugSignature,
