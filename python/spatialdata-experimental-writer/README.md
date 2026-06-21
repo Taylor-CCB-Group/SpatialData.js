@@ -31,6 +31,40 @@ cd python/spatialdata-experimental-writer
 uv sync
 ```
 
+For the interactive TUI:
+
+```bash
+uv sync --group tui
+```
+
+## Interactive TUI
+
+```bash
+uv run spatialdata-experimental-writer tui
+uv run spatialdata-experimental-writer tui ~/data/xenium_rep1_io.zarr
+```
+
+The TUI wraps all writer commands:
+
+1. Pick a command from the home menu.
+2. Enter paths and options on guided forms (Zarr store path is pre-filled when
+   passed on the command line).
+3. Confirm before any in-place overwrite of canonical `points/<key>/points.parquet`.
+4. Watch run output, then review post-write verification checks.
+
+Morton verification checks after Morton writes:
+
+| Check | Meaning |
+|-------|---------|
+| `column_present` | `morton_code_2d` column exists |
+| `sentinel_prefix` | First 2–4 rows have `morton_code_2d == 0` |
+| `sentinel_bbox` | Sentinel rows encode full dataset x/y bounds |
+| `morton_monotonic` | Morton codes non-decreasing after sentinels |
+| `row_group_sentinels` | Row group 0 contains only sentinel rows |
+| `no_uint_intermediates` | No persisted `*_uint` staging columns |
+
+Multiscale and index-permutation runs show schema/manifest checks instead.
+
 ## Commands
 
 ```bash

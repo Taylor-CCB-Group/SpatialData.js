@@ -32,3 +32,6 @@ testpaths = ["tests"]
 dev = [
     "pytest>=8.0",
 ]
+tui = [
+    "textual>=1.0",
+]
