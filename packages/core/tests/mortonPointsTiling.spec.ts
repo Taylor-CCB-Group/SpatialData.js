@@ -60,6 +60,58 @@ PY`,
   );
 }
 
+async function writeBadSentinelMortonPointsZarr(root: string) {
+  const elementDir = join(root, 'points', 'transcripts');
+  await mkdir(elementDir, { recursive: true });
+  await writeFile(
+    join(root, 'zarr.json'),
+    JSON.stringify({ zarr_format: 3, node_type: 'group' })
+  );
+  await writeFile(
+    join(elementDir, 'zarr.json'),
+    JSON.stringify({
+      attributes: {
+        'encoding-type': 'ngff:points',
+        axes: ['x', 'y'],
+        spatialdata_attrs: {
+          feature_key: 'feature_name',
+          version: '0.2',
+        },
+      },
+      zarr_format: 3,
+      node_type: 'group',
+    })
+  );
+
+  execSync(
+    `uv run python - <<'PY'
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+from pathlib import Path
+
+root = Path(${JSON.stringify(elementDir)})
+df = pd.DataFrame(
+    {
+        "x": [0.0, 100.0, 0.1, 0.2, 0.3, 20.0, 40.0],
+        "y": [0.0, 100.0, 0.1, 0.2, 0.3, 20.0, 40.0],
+        "feature_name_codes": [0, 1, 0, 0, 0, 1, 1],
+        "morton_code_2d": [0, 0, 0, 0, 0, 100, 200],
+        "feature_name": ["gene_a", "gene_b", "gene_a", "gene_a", "gene_a", "gene_b", "gene_b"],
+    }
+)
+table = pa.Table.from_pandas(df, preserve_index=False)
+writer = pq.ParquetWriter(root / "points.parquet", table.schema, compression="zstd")
+try:
+    writer.write_table(table.slice(0, 5), row_group_size=5)
+    writer.write_table(table.slice(5), row_group_size=2)
+finally:
+    writer.close()
+PY`,
+    { cwd: writerRoot, stdio: 'pipe' }
+  );
+}
+
 function createStore(files: Record<string, Uint8Array>) {
   let getRangeCalls = 0;
   let getCalls = 0;
@@ -201,5 +253,29 @@ describe('Morton points tiling (canonical parquet)', () => {
     expect(result.loadMode).toBe('row-groups');
     expect(mockStore.getRangeCalls()).toBeGreaterThan(0);
     expect(mockStore.getCalls()).toBe(0);
+  });
+
+  it('does not enable morton tiling when sentinel row group is oversized', async () => {
+    const badFixtureRoot = await mkdtemp(join(tmpdir(), 'bad-morton-points-'));
+    try {
+      await writeBadSentinelMortonPointsZarr(badFixtureRoot);
+      const parquetPath = join(badFixtureRoot, 'points/transcripts/points.parquet');
+      const elementJsonPath = join(badFixtureRoot, 'points/transcripts/zarr.json');
+      const badStore = createStore({
+        'points/transcripts/points.parquet': new Uint8Array(await readFile(parquetPath)),
+        'points/transcripts/zarr.json': new Uint8Array(await readFile(elementJsonPath)),
+      });
+      const badSource = new SpatialDataPointsSource({
+        store: badStore.store,
+        fileType: '.zarr',
+      });
+
+      const metadata = await badSource.getPointsTilingMetadata('points/transcripts');
+
+      expect(metadata?.supportsRowGroupRangeReads).toBe(false);
+      expect(metadata?.bounds).toBeUndefined();
+    } finally {
+      execSync(`rm -rf ${JSON.stringify(badFixtureRoot)}`, { stdio: 'pipe' });
+    }
   });
 });
