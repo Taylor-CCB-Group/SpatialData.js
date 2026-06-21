@@ -5,6 +5,7 @@ import {
 import {
   filterColumnarByFeatureCodes,
 } from '../pointsTiling.js';
+import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
 import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
 import {
   countFeatureCodesFromArray,
@@ -18,42 +19,6 @@ import {
   scanTableByFeatureCodes,
   scanTableFeatureCounts,
 } from './pointsWorkerScan.js';
-
-type ParquetWasmTableLike = { intoIPCStream(): Uint8Array };
-type ParquetModule = {
-  readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => ParquetWasmTableLike;
-  readParquetRowGroup?: (
-    schemaBytes: Uint8Array,
-    rowGroupBytes: Uint8Array,
-    rowGroupIndex: number,
-    options?: { columns?: string[] }
-  ) => ParquetWasmTableLike;
-};
-
-let parquetModulePromise: Promise<ParquetModule> | undefined;
-
-async function getParquetModule(): Promise<ParquetModule> {
-  if (!parquetModulePromise) {
-    parquetModulePromise = (async () => {
-      const module = await import('parquet-wasm');
-      const maybeInit = (module as { default?: unknown }).default;
-      if (typeof maybeInit === 'function') {
-        await maybeInit();
-      }
-      const readParquet = (module as ParquetModule).readParquet;
-      if (typeof readParquet !== 'function') {
-        throw new Error('parquet-wasm readParquet is unavailable in points worker');
-      }
-      const readParquetRowGroup = (module as ParquetModule).readParquetRowGroup;
-      return {
-        readParquet,
-        readParquetRowGroup:
-          typeof readParquetRowGroup === 'function' ? readParquetRowGroup : undefined,
-      };
-    })();
-  }
-  return parquetModulePromise;
-}
 
 function toFloat32Array(values: ArrayLike<number>): Float32Array {
   if (values instanceof Float32Array) {

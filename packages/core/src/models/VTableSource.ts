@@ -2,46 +2,16 @@
 
 import { type Table as ArrowTable, tableFromIPC } from 'apache-arrow';
 import type { DataSourceParams } from '../Vutils';
+import {
+  getParquetModule,
+  type ParquetModule,
+  type ParquetRowGroupReadOptions,
+  type ParquetWasmMetadata,
+} from '../parquetWasmLoader.js';
 import type { TableColumnData } from '../types';
 import AnnDataSource from './VAnnDataSource';
 
-interface ParquetWasmTableLike {
-  intoIPCStream(): Uint8Array;
-}
-
-interface ParquetWasmFileMetadata {
-  numRows(): number;
-}
-
-interface ParquetWasmRowGroupMetadata {
-  numRows(): number;
-  fileOffset(): number | bigint;
-  compressedSize(): number | bigint;
-}
-
-interface ParquetWasmMetadata {
-  fileMetadata(): ParquetWasmFileMetadata;
-  numRowGroups(): number;
-  rowGroup(index: number): ParquetWasmRowGroupMetadata;
-}
-
-export interface ParquetRowGroupReadOptions {
-  columns?: string[];
-  limit?: number;
-  offset?: number;
-}
-
-interface ParquetModule {
-  readParquet: (bytes: Uint8Array, options?: ParquetRowGroupReadOptions) => ParquetWasmTableLike;
-  readSchema: (bytes: Uint8Array) => ParquetWasmTableLike;
-  readMetadata?: (bytes: Uint8Array) => ParquetWasmMetadata;
-  readParquetRowGroup?: (
-    schemaBytes: Uint8Array,
-    rowGroupBytes: Uint8Array,
-    rowGroupIndex: number,
-    options?: ParquetRowGroupReadOptions
-  ) => ParquetWasmTableLike;
-}
+export type { ParquetRowGroupReadOptions };
 
 function parquetColumnValueToNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -76,103 +46,6 @@ export interface ParquetDatasetMetadata {
 // because when a table annotates points and shapes, it can be helpful to
 // have all of the required functionality to load the
 // table data and the parquet data.
-
-function normalizeParquetModule(module: unknown): ParquetModule {
-  if (typeof module !== 'object' || module === null) {
-    throw new Error('parquet-wasm module did not load as an object');
-  }
-  // External WASM builds have drifted API surfaces and incomplete declarations;
-  // keep the boundary narrow and capability-check every optional method.
-  const candidate = module as Record<string, unknown>;
-  const { readParquet, readSchema, readMetadata, readParquetRowGroup } = candidate;
-  if (typeof readParquet !== 'function' || typeof readSchema !== 'function') {
-    throw new Error('parquet-wasm module is missing required readParquet/readSchema APIs');
-  }
-  return {
-    readParquet: readParquet as ParquetModule['readParquet'],
-    readSchema: readSchema as ParquetModule['readSchema'],
-    readMetadata:
-      typeof readMetadata === 'function'
-        ? (readMetadata as ParquetModule['readMetadata'])
-        : undefined,
-    readParquetRowGroup:
-      typeof readParquetRowGroup === 'function'
-        ? (readParquetRowGroup as ParquetModule['readParquetRowGroup'])
-        : undefined,
-  };
-}
-
-async function initializeParquetModule(module: unknown) {
-  if (typeof module !== 'object' || module === null) {
-    return;
-  }
-  const maybeInit = (module as Record<string, unknown>).default;
-  if (typeof maybeInit === 'function') {
-    await maybeInit();
-  }
-}
-
-function parquetModuleSupportsRowGroupReads(module: ParquetModule): boolean {
-  return (
-    typeof module.readMetadata === 'function' && typeof module.readParquetRowGroup === 'function'
-  );
-}
-
-async function loadParquetModuleFromCdn(): Promise<ParquetModule> {
-  const cdnModule = await import(
-    // @ts-expect-error - CDN import not recognized by TypeScript
-    'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js'
-  );
-  await initializeParquetModule(cdnModule);
-  return normalizeParquetModule(cdnModule);
-}
-
-async function getParquetModule() {
-  // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
-  // that needs to be initialized before use in browser environments.
-  // In Node.js, the module loads WASM synchronously so no init is needed.
-  //
-  // TODO: Replace with a more civilised parquet module that's built in a way we can actually consume.
-  // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
-  //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
-
-  const useCdnForMissingRowGroupApis = typeof window !== 'undefined';
-
-  // Try local import first (works in Node.js, tests, and production builds)
-  try {
-    const module = await import('parquet-wasm');
-    await initializeParquetModule(module);
-    const normalized = normalizeParquetModule(module);
-    if (!parquetModuleSupportsRowGroupReads(normalized) && useCdnForMissingRowGroupApis) {
-      console.warn(
-        '[VTableSource] Local parquet-wasm lacks row-group APIs; falling back to CDN build.'
-      );
-      const cdnNormalized = await loadParquetModuleFromCdn();
-      return cdnNormalized;
-    }
-    return normalized;
-  } catch (error) {
-    // Local import failed, try CDN fallback (needed in vite dev server)
-    // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
-    console.warn(
-      '[VTableSource] Local parquet-wasm import failed, falling back to CDN version. ' +
-        'This is a temporary workaround pending a better parquet module solution.',
-      error
-    );
-
-    try {
-      const cdnNormalized = await loadParquetModuleFromCdn();
-      return cdnNormalized;
-    } catch (cdnError) {
-      // Both imports failed, throw an error
-      const localErrorMsg = error instanceof Error ? error.message : String(error);
-      const cdnErrorMsg = cdnError instanceof Error ? cdnError.message : String(cdnError);
-      throw new Error(
-        `Failed to load parquet-wasm from both local package and CDN. Local error: ${localErrorMsg}. CDN error: ${cdnErrorMsg}`
-      );
-    }
-  }
-}
 
 /**
  * Get the name of the index column from an Apache Arrow table.
