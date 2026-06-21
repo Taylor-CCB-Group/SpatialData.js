@@ -36,6 +36,26 @@ def test_verify_morton_parquet_passes_for_writer_output(tmp_path) -> None:
     assert all_passed(checks)
 
 
+def test_verify_morton_parquet_uses_sentinel_row_group_boundary(tmp_path) -> None:
+    df = pd.DataFrame(
+        {
+            "x": [0.0, 10.0, 0.00001, 5.0, 2.0],
+            "y": [0.0, 20.0, 0.00001, 10.0, 7.0],
+            "feature_name": ["min", "max", "near_min", "mid", "other"],
+        }
+    )
+    output = tmp_path / "points.parquet"
+    write_morton_points_parquet(df, output, feature_key="feature_name", row_group_size=2)
+
+    checks = verify_morton_parquet(output)
+
+    assert all_passed(checks)
+    sentinel = next(check for check in checks if check.id == "sentinel_prefix")
+    row_group = next(check for check in checks if check.id == "row_group_sentinels")
+    assert "sentinel prefix rows: 2" in sentinel.detail
+    assert "row group 0 has 2 rows" in row_group.detail
+
+
 def test_verify_morton_parquet_fails_for_unsorted_tail(tmp_path) -> None:
     rows = 40
     rng = pd.Series(range(rows))

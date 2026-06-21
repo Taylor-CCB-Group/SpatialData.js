@@ -14,6 +14,7 @@ MORTON_CODE_2D_COLUMN = "morton_code_2d"
 MORTON_CODE_EXTREME_VALUE_INDICATOR = np.uint32(0)
 MORTON_CODE_BITS_PER_AXIS = 16
 MORTON_CODE_VALUE_MAX = np.uint32((2**MORTON_CODE_BITS_PER_AXIS) - 1)
+MORTON_SENTINEL_COUNT_ATTR = "spatialdata_experimental_morton_sentinel_count"
 
 
 def _norm_series_to_uint(series: pd.Series, v_min: float, v_max: float) -> pd.Series:
@@ -118,7 +119,9 @@ def morton_sort_points(
     rest = rest.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
 
     combined = pd.concat([sentinel, rest], ignore_index=True)
-    return _move_string_like_columns_right(combined)
+    combined = _move_string_like_columns_right(combined)
+    combined.attrs[MORTON_SENTINEL_COUNT_ATTR] = len(sentinel)
+    return combined
 
 
 def _write_arrow_table_in_row_groups(
@@ -126,6 +129,7 @@ def _write_arrow_table_in_row_groups(
     output_path: Path,
     *,
     row_group_size: int,
+    sentinel_count: int | None = None,
     metadata: dict[str, Any] | None = None,
     compression: str = "zstd",
 ) -> None:
@@ -140,8 +144,9 @@ def _write_arrow_table_in_row_groups(
 
     writer = pq.ParquetWriter(output_path, schema, compression=compression, write_statistics=True)
     try:
-        sentinel_count = 0
-        if MORTON_CODE_2D_COLUMN in table.column_names:
+        if sentinel_count is None:
+            sentinel_count = 0
+        if sentinel_count == 0 and MORTON_CODE_2D_COLUMN in table.column_names:
             morton_column = table.column(MORTON_CODE_2D_COLUMN).combine_chunks()
             for i in range(min(4, table.num_rows)):
                 if morton_column[i].as_py() != 0:
@@ -169,10 +174,14 @@ def write_morton_points_parquet(
     indexed = sorted_df.copy()
     indexed.index.name = "__index_level_0__"
     table = pa.Table.from_pandas(indexed, preserve_index=True)
+    sentinel_count = sorted_df.attrs.get(MORTON_SENTINEL_COUNT_ATTR)
+    if not isinstance(sentinel_count, int):
+        sentinel_count = None
     _write_arrow_table_in_row_groups(
         table,
         Path(output_path),
         row_group_size=row_group_size,
+        sentinel_count=sentinel_count,
         compression=compression,
     )
     return sorted_df
