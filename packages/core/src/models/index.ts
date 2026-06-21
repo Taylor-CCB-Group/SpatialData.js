@@ -31,6 +31,7 @@ import { Err, Ok } from '../types';
 import SpatialDataPointsSource from './VPointsSource';
 import SpatialDataShapesSource from './VShapesSource';
 import SpatialDataTableSource from './VTableSource';
+import type { PointsFeatureCatalog } from '../pointsTiling.js';
 
 /**
  * Parameters for creating element instances.
@@ -537,7 +538,10 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.vPoints.loadPoints(`points/${this.key}`, options);
   }
 
-  async loadRowFeatureCodes(options?: { memoryCap?: number }) {
+  async loadRowFeatureCodes(options?: {
+    memoryCap?: number;
+    featureCatalog?: PointsFeatureCatalog | null;
+  }) {
     return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`, options);
   }
 

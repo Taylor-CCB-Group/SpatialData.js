@@ -110,13 +110,7 @@ export interface ShouldLoadPointsRowFeatureCodesInput {
 export function shouldLoadPointsRowFeatureCodes(
   input: ShouldLoadPointsRowFeatureCodesInput
 ): boolean {
-  return (
-    input.hasPreloaded &&
-    !input.hasCached &&
-    !input.inFlight &&
-    input.featureCodes !== undefined &&
-    input.featureCodes.length > 0
-  );
+  return input.hasPreloaded && !input.hasCached && !input.inFlight;
 }
 
 export function pointsPreloadBlockedMessage(totalRows: number): string {

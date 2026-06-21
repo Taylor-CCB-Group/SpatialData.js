@@ -593,7 +593,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    */
   async loadPointsRowFeatureCodes(
     elementPath: string,
-    options: { memoryCap?: number } = {}
+    options: {
+      memoryCap?: number;
+      featureCatalog?: PointsFeatureCatalog | null;
+    } = {}
   ): Promise<ArrayLike<number> | undefined> {
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
@@ -613,7 +616,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
     const featureCodeByName = featureCodeColumnName
       ? undefined
-      : featureCodeMapFromCatalog(await this.listPointsFeatures(elementPath));
+      : featureCodeMapFromCatalog(
+          options.featureCatalog !== undefined
+            ? options.featureCatalog
+            : await this.listPointsFeatures(elementPath)
+        );
 
     const rowCount = await this.resolveParquetRowCount(parquetPath);
     const memoryCap = resolvePointsMemoryCap(options.memoryCap);

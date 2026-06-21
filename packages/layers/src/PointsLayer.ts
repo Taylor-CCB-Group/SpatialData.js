@@ -6,7 +6,7 @@ import type { Layer, LayersList } from 'deck.gl';
 import type { PointsRenderResource } from './pointsLoader.js';
 import type { TileDebugStore } from './pointsTiledDebugHooks.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
-import { filterBatchSignature } from './pointsFeatureCodes.js';
+import { filterBatchSignature, featureFilterAwaitingRowCodes, hasPreloadedRowFeatureCodes } from './pointsFeatureCodes.js';
 import { resolvePointsRenderStrategy } from './pointsRenderStrategies.js';
 import { applyRenderCapToColumnar } from '@spatialdata/core';
 import {
@@ -63,26 +63,27 @@ async function filterPreloadedBatch(
   featureCodes: readonly number[] | undefined,
   preloadedFeatureCodes: ArrayLike<number> | undefined
 ): Promise<ColumnarNdarrayPointsBatch> {
-  if (featureCodes === undefined || !preloadedFeatureCodes) {
-    if (featureCodes !== undefined) {
-      return emptyFilteredBatch(batch);
-    }
+  if (featureCodes === undefined) {
     return batch;
   }
   if (featureCodes.length === 0) {
     return emptyFilteredBatch(batch);
   }
+  if (!hasPreloadedRowFeatureCodes(preloadedFeatureCodes)) {
+    return batch;
+  }
   const filtered = await filterColumnarByFeatureCodesInWorker(
     { shape: batch.shape, data: batch.data },
     featureCodes,
-    preloadedFeatureCodes
+    preloadedFeatureCodes ?? []
   );
   const filteredShape = filtered.shape ?? [filtered.data.length, filtered.data[0]?.length ?? 0];
+  const pointCount = filteredShape[1] ?? filtered.data[0]?.length ?? 0;
   return {
     ...batch,
     data: filtered.data,
     shape: filteredShape,
-    pointCount: filteredShape[1] ?? filtered.data[0]?.length ?? 0,
+    pointCount,
   };
 }
 
@@ -126,7 +127,21 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     );
     const state = this.state as PointsLayerState;
     const preloadedBatch = state.preloadedBatch;
-    if (preloadedBatch && (signature !== state.filteredBatchSignature || !state.filteredBatch)) {
+    const awaitingRowCodes = featureFilterAwaitingRowCodes(
+      props.featureCodes,
+      props.preloadedFeatureCodes
+    );
+    const canFilter = !awaitingRowCodes;
+    const rowCodesBecameReady =
+      hasPreloadedRowFeatureCodes(props.preloadedFeatureCodes) &&
+      !hasPreloadedRowFeatureCodes(oldProps.preloadedFeatureCodes);
+    if (
+      preloadedBatch &&
+      canFilter &&
+      (rowCodesBecameReady ||
+        signature !== state.filteredBatchSignature ||
+        !state.filteredBatch)
+    ) {
       void this.ensureFilteredBatch(preloadedBatch, signature);
     }
   }
@@ -143,14 +158,20 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     const batch = await resource.loader.loadAll?.();
     if (batch?.format === 'columnar-ndarray') {
       this.setState({ preloadedBatch: batch });
-      void this.ensureFilteredBatch(
-        batch,
-        filterBatchSignature(
-          this.props.featureCodes,
-          this.props.preloadedFeatureCodes,
-          this.props.renderCap
-        )
+      const awaitingRowCodes = featureFilterAwaitingRowCodes(
+        this.props.featureCodes,
+        this.props.preloadedFeatureCodes
       );
+      if (!awaitingRowCodes) {
+        void this.ensureFilteredBatch(
+          batch,
+          filterBatchSignature(
+            this.props.featureCodes,
+            this.props.preloadedFeatureCodes,
+            this.props.renderCap
+          )
+        );
+      }
     }
   }
 

@@ -1,3 +1,20 @@
+export function hasPreloadedRowFeatureCodes(
+  preloadedFeatureCodes: ArrayLike<number> | undefined
+): boolean {
+  return preloadedFeatureCodes !== undefined && preloadedFeatureCodes.length > 0;
+}
+
+export function featureFilterAwaitingRowCodes(
+  featureCodes: readonly number[] | undefined,
+  preloadedFeatureCodes: ArrayLike<number> | undefined
+): boolean {
+  return (
+    featureCodes !== undefined &&
+    featureCodes.length > 0 &&
+    !hasPreloadedRowFeatureCodes(preloadedFeatureCodes)
+  );
+}
+
 export function featureCodesSignature(featureCodes: readonly number[] | undefined): string {
   if (featureCodes === undefined) {
     return 'all';

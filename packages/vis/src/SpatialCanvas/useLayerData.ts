@@ -79,7 +79,6 @@ import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import {
   aggregatePointsTileLoadProgress,
-  emptyPointsTileLoadProgress,
   isPointsTileLoading,
   pointsTileLoadProgressFromStore,
   pointsTileLoadingMessage,
@@ -91,7 +90,6 @@ import {
   planPointsLoads,
   pointsPreloadCacheKey,
   resolvePointsPreloadData,
-  shouldLoadPointsRowFeatureCodes,
   shouldPreloadAfterMetadataProbe,
 } from './pointsLoadPlan';
 import {
@@ -728,84 +726,61 @@ export function useLayerData(
     })();
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRowFeatureCodes = async () => {
-      const pending: Array<{
-        elementKey: string;
-        element: PointsElement;
-        memoryCap: number | undefined;
-      }> = [];
-
-      for (const layerId of layerOrder) {
-        const config = layers[layerId];
-        if (!config?.visible || config.type !== 'points') continue;
-        const elem = resolveLayerElement(layerId, config, elementMap.current);
-        if (!elem || elem.type !== 'points') continue;
-        if (elem.element.kind !== 'points') {
-          // we could probably move these type guards into a generic resolveLayerElement
-          // it gets a bit fiddly partly because of 'image' vs 'images'
-          throw new Error(`should be unreachable, '${elem.type}' with '${elem.element.kind}' element`);
-        }
-
-        const preloadCacheKey = pointsPreloadCacheKey(elem.key, config);
-        const hasPreloaded = loadedDataRef.current.points.has(preloadCacheKey);
-        const hasCached = pointsRowFeatureCodesRef.current.has(preloadCacheKey);
-        const inFlight = pointsRowFeatureCodesInFlightRef.current.has(preloadCacheKey);
-        if (
-          !shouldLoadPointsRowFeatureCodes({
-            hasPreloaded,
-            hasCached,
-            inFlight,
-            featureCodes: config.featureCodes,
-          })
-        ) {
-          continue;
-        }
-
-        pointsRowFeatureCodesInFlightRef.current.add(preloadCacheKey);
-        pending.push({
-          elementKey: preloadCacheKey,
-          element: elem.element,
-          memoryCap: config.pointsMemoryCap,
-        });
+  const ensurePointsRowFeatureCodes = useCallback(
+    (preloadCacheKey: string, elementKey: string, element: PointsElement, memoryCap?: number) => {
+      if (!loadedDataRef.current.points.has(preloadCacheKey)) {
+        return;
       }
-
-      if (pending.length === 0) {
+      if (pointsRowFeatureCodesRef.current.has(preloadCacheKey)) {
+        return;
+      }
+      if (pointsRowFeatureCodesInFlightRef.current.has(preloadCacheKey)) {
         return;
       }
 
+      pointsRowFeatureCodesInFlightRef.current.add(preloadCacheKey);
       setPointsRowFeatureCodesRevision((revision) => revision + 1);
 
-      await Promise.all(
-        pending.map(async ({ elementKey, element, memoryCap }) => {
-          try {
-            const rowCodes = await element.loadRowFeatureCodes({ memoryCap });
-            if (cancelled) {
-              return;
-            }
-            if (rowCodes) {
-              pointsRowFeatureCodesRef.current.set(elementKey, rowCodes);
-            }
-            setPointsRowFeatureCodesRevision((revision) => revision + 1);
-          } catch (error) {
-            if (!cancelled) {
-              console.error(`Failed to load row feature codes for ${elementKey}:`, error);
-            }
-          } finally {
-            pointsRowFeatureCodesInFlightRef.current.delete(elementKey);
+      const featureCatalog = pointsFeatureCatalogRef.current.has(elementKey)
+        ? pointsFeatureCatalogRef.current.get(elementKey)
+        : undefined;
+
+      void (async () => {
+        try {
+          const rowCodes = await element.loadRowFeatureCodes({
+            memoryCap,
+            featureCatalog,
+          });
+          if (rowCodes && rowCodes.length > 0) {
+            pointsRowFeatureCodesRef.current.set(preloadCacheKey, rowCodes);
           }
-        })
+          setPointsRowFeatureCodesRevision((revision) => revision + 1);
+        } catch (error) {
+          console.error(`Failed to load row feature codes for ${preloadCacheKey}:`, error);
+        } finally {
+          pointsRowFeatureCodesInFlightRef.current.delete(preloadCacheKey);
+          setPointsRowFeatureCodesRevision((revision) => revision + 1);
+        }
+      })();
+    },
+    []
+  );
+
+  useEffect(() => {
+    for (const layerId of layerOrder) {
+      const config = layersRef.current[layerId];
+      if (!config?.visible || config.type !== 'points') continue;
+      const elem = resolveLayerElement(layerId, config, elementMap.current);
+      if (!elem || elem.type !== 'points' || elem.element.kind !== 'points') continue;
+      const preloadCacheKey = pointsPreloadCacheKey(elem.key, config);
+      ensurePointsRowFeatureCodes(
+        preloadCacheKey,
+        elem.key,
+        elem.element,
+        config.pointsMemoryCap
       );
-    };
-
-    void loadRowFeatureCodes();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [layerOrder, layers, loadedDataRevision]);
+    }
+  }, [layerOrder, loadedDataRevision, ensurePointsRowFeatureCodes]);
 
   const setLayerResourceStatus = useCallback(
     (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
@@ -1197,6 +1172,13 @@ export function useLayerData(
                     );
                   }
                   notifyLoadedDataChanged();
+                  requestPointsFeatureCatalog(layerId);
+                  ensurePointsRowFeatureCodes(
+                    preloadCacheKey,
+                    element.key,
+                    e,
+                    pointsConfig?.pointsMemoryCap
+                  );
                 } catch (error) {
                   setLayerResourceStatus(layerId, 'geometry', 'error');
                   setLayerGeometryNotice(layerId, undefined);
@@ -1522,6 +1504,8 @@ export function useLayerData(
     setLayerResourceStatus,
     notifyLoadedDataChanged,
     experimentalOptimizations,
+    requestPointsFeatureCatalog,
+    ensurePointsRowFeatureCodes,
   ]);
 
   const reloadElement = useCallback((type: string, key: string) => {
@@ -1781,6 +1765,17 @@ export function useLayerData(
           }
         }
         if (cachedResource?.resource) {
+          if (
+            config.featureCodes !== undefined &&
+            !pointsRowFeatureCodesRef.current.has(preloadCacheKey)
+          ) {
+            ensurePointsRowFeatureCodes(
+              preloadCacheKey,
+              elem.key,
+              elem.element as PointsElement,
+              config.pointsMemoryCap
+            );
+          }
           const supportsViewportTiles =
             cachedResource.resource.loader.capabilities.supportsViewportTiles;
           const tileDebugStore = supportsViewportTiles ? getTileDebugStore(layerId) : undefined;
@@ -1865,6 +1860,7 @@ export function useLayerData(
     loadedDataRevision,
     pointsTileLayersRevision,
     pointsRowFeatureCodesRevision,
+    ensurePointsRowFeatureCodes,
   ]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {

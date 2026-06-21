@@ -136,7 +136,7 @@ describe('shouldLoadPointsRowFeatureCodes', () => {
     ).toBe(false);
   });
 
-  it('does not load row codes for unfiltered or empty-filter states', () => {
+  it('loads row codes once preload is ready, regardless of filter state', () => {
     expect(
       shouldLoadPointsRowFeatureCodes({
         hasPreloaded: true,
@@ -144,7 +144,7 @@ describe('shouldLoadPointsRowFeatureCodes', () => {
         inFlight: false,
         featureCodes: undefined,
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldLoadPointsRowFeatureCodes({
         hasPreloaded: true,
@@ -152,10 +152,7 @@ describe('shouldLoadPointsRowFeatureCodes', () => {
         inFlight: false,
         featureCodes: [],
       })
-    ).toBe(false);
-  });
-
-  it('loads row codes only for an active uncached filter', () => {
+    ).toBe(true);
     expect(
       shouldLoadPointsRowFeatureCodes({
         hasPreloaded: true,
@@ -164,6 +161,9 @@ describe('shouldLoadPointsRowFeatureCodes', () => {
         featureCodes: [1, 2],
       })
     ).toBe(true);
+  });
+
+  it('skips row codes when cached or already in flight', () => {
     expect(
       shouldLoadPointsRowFeatureCodes({
         hasPreloaded: true,
