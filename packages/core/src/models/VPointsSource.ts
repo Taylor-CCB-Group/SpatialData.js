@@ -278,19 +278,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
         const workerGeometry = await decodeParquetGeometryCappedInWorker(
-          payload.rowGroups.length > 0
-            ? {
-                rowGroups: payload.rowGroups,
-                axisNames,
-                columns: columnNames,
-                maxRows,
-              }
-            : {
-                parts: payload.parts,
-                axisNames,
-                columns: columnNames,
-                maxRows,
-              }
+          {
+            parts: payload.parts,
+            axisNames,
+            columns: columnNames,
+            maxRows,
+          }
         );
         if (workerGeometry) {
           return {
@@ -874,8 +867,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     const canLoadRowGroups = await this.canLoadParquetRowGroups();
+    const firstRowGroupRowCount = datasetMetadata?.rowGroupRows?.[0] ?? 0;
+    const hasValidSentinelRowGroup = firstRowGroupRowCount >= 2 && firstRowGroupRowCount <= 4;
     const firstRowGroup =
-      datasetMetadata && canLoadRowGroups
+      datasetMetadata && canLoadRowGroups && hasValidSentinelRowGroup
         ? await this.loadParquetRowGroupByGroupIndex(parquetPath, 0, {
             columns: ['x', 'y', MORTON_CODE_2D_COLUMN],
             limit: 4,
