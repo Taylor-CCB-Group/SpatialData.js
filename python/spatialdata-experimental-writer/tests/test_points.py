@@ -48,6 +48,30 @@ def test_write_morton_points_parquet_uses_small_sentinel_row_group(tmp_path) -> 
     assert parquet.metadata.row_group(0).num_rows <= 4
 
 
+def test_write_morton_points_parquet_keeps_quantized_zero_points_out_of_sentinel_row_group(
+    tmp_path,
+) -> None:
+    df = pd.DataFrame(
+        {
+            "x": [0.0, 10.0, 0.00001, 5.0, 2.0],
+            "y": [0.0, 20.0, 0.00001, 10.0, 7.0],
+            "feature_name": ["min", "max", "near_min", "mid", "other"],
+        }
+    )
+    output = tmp_path / "points.parquet"
+
+    sorted_df = write_morton_points_parquet(
+        df,
+        output,
+        feature_key="feature_name",
+        row_group_size=2,
+    )
+
+    assert sorted_df[MORTON_CODE_2D_COLUMN].iloc[:3].eq(0).all()
+    parquet = pq.ParquetFile(output)
+    assert parquet.metadata.row_group(0).num_rows == 2
+
+
 def test_write_multiscale_points_parquet_stores_metadata(tmp_path) -> None:
     df = pd.DataFrame(
         {

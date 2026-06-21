@@ -44,6 +44,21 @@ def _count_sentinel_prefix(morton_values: pd.Series) -> int:
     return count
 
 
+def _sentinel_count_from_row_group(
+    parquet: pq.ParquetFile,
+    morton_values: pd.Series,
+) -> int | None:
+    if parquet.num_row_groups == 0:
+        return None
+    first_group_rows = parquet.metadata.row_group(0).num_rows
+    if not 2 <= first_group_rows <= 4:
+        return None
+    first_values = morton_values.iloc[:first_group_rows]
+    if first_values.astype("int64").eq(0).all():
+        return int(first_group_rows)
+    return None
+
+
 def verify_morton_parquet(path: str | Path) -> list[VerifyCheck]:
     parquet_path = Path(path)
     checks: list[VerifyCheck] = []
@@ -113,7 +128,9 @@ def verify_morton_parquet(path: str | Path) -> list[VerifyCheck]:
     morton_column = _dataframe_column(df, MORTON_CODE_2D_COLUMN)
     x_column = _dataframe_column(df, "x")
     y_column = _dataframe_column(df, "y")
-    sentinel_count = _count_sentinel_prefix(morton_column)
+    sentinel_count = _sentinel_count_from_row_group(parquet, morton_column)
+    if sentinel_count is None:
+        sentinel_count = _count_sentinel_prefix(morton_column)
     checks.append(
         _check(
             "sentinel_prefix",
