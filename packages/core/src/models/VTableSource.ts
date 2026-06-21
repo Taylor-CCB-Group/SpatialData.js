@@ -634,7 +634,12 @@ export default class SpatialDataTableSource extends AnnDataSource {
    */
   protected async readParquetWorkerPayload(
     parquetPath: string,
-    options: { maxRows: number; fullPartsForFallback?: boolean }
+    options: {
+      maxRows: number;
+      fullPartsForFallback?: boolean;
+      /** When false (default), only part bytes are fetched for worker decode. */
+      includeRowGroups?: boolean;
+    }
   ): Promise<{
     rowGroups: Array<{
       schemaBytes: Uint8Array;
@@ -643,7 +648,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }>;
     parts: Uint8Array[];
   }> {
-    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    const includeRowGroups = options.includeRowGroups === true;
+    const canUseRowGroups = includeRowGroups && (await this.canLoadParquetRowGroups());
     const rowGroups = canUseRowGroups
       ? await this.readParquetRowGroupsBytesCapped(parquetPath, options.maxRows)
       : [];
@@ -872,13 +878,14 @@ export default class SpatialDataTableSource extends AnnDataSource {
   async loadParquetTableCapped(
     parquetPath: string,
     columns: string[] | undefined,
-    maxRows: number
+    maxRows: number,
+    options: { useRowGroupReads?: boolean } = {}
   ): Promise<{ table: ArrowTable; totalRows: number; truncated: boolean }> {
     const totalRows = await this.resolveParquetRowCount(parquetPath);
     const truncated = totalRows > maxRows;
     const targetRows = truncated ? maxRows : totalRows;
 
-    if (await this.canLoadParquetRowGroups()) {
+    if (options.useRowGroupReads === true && (await this.canLoadParquetRowGroups())) {
       try {
         const table = await this._loadParquetTableRowGroupsCapped(
           parquetPath,

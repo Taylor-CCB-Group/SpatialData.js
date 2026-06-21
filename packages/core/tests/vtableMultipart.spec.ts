@@ -97,7 +97,8 @@ describe('SpatialDataTableSource multipart parquet reads', () => {
     const { table, truncated, totalRows } = await source.loadParquetTableCapped(
       parquetPath,
       ['x', 'y'],
-      120
+      120,
+      { useRowGroupReads: true }
     );
     expect(totalRows).toBe(150);
     expect(truncated).toBe(true);

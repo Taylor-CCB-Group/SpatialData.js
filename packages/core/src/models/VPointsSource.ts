@@ -507,6 +507,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
           fullPartsForFallback: true,
+          includeRowGroups: true,
         });
         const workerCounts = await scanParquetFeatureCountsInWorker(
           canUseRowGroups && datasetRowGroups > 0 && payload.rowGroups.length > 0
@@ -751,6 +752,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
           fullPartsForFallback: true,
+          includeRowGroups: true,
         });
         const catalog = await scanParquetFeatureCatalogInWorker({
           rowGroups:
@@ -968,6 +970,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
           fullPartsForFallback: true,
+          includeRowGroups: true,
         });
         const workerResult = await decodeParquetGeometryCappedInWorker(
           payload.rowGroups.length > 0
