@@ -64,6 +64,20 @@ def test_verify_morton_parquet_fails_for_unsorted_tail(tmp_path) -> None:
     assert not monotonic.passed
 
 
+def test_verify_morton_parquet_reports_missing_coordinate_columns(tmp_path) -> None:
+    output = tmp_path / "points.parquet"
+    table = pa.table({MORTON_CODE_2D_COLUMN: pa.array([0, 1], type=pa.uint64())})
+    pq.write_table(table, output)
+
+    checks = verify_morton_parquet(output)
+
+    x_check = next(check for check in checks if check.id == "x_column_present")
+    y_check = next(check for check in checks if check.id == "y_column_present")
+    assert not x_check.passed
+    assert not y_check.passed
+    assert not all_passed(checks)
+
+
 def test_verify_multiscale_parquet(tmp_path) -> None:
     df = pd.DataFrame(
         {

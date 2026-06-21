@@ -53,7 +53,14 @@ def verify_morton_parquet(path: str | Path) -> list[VerifyCheck]:
 
     checks.append(_check("file_exists", True, str(parquet_path)))
 
-    parquet = pq.ParquetFile(parquet_path)
+    try:
+        parquet = pq.ParquetFile(parquet_path)
+    except Exception as exc:
+        checks.append(
+            _check("parquet_readable", False, f"failed to read Parquet metadata: {exc}")
+        )
+        return checks
+
     columns = parquet.schema_arrow.names
     checks.append(
         _check(
@@ -61,6 +68,12 @@ def verify_morton_parquet(path: str | Path) -> list[VerifyCheck]:
             MORTON_CODE_2D_COLUMN in columns,
             f"expected column {MORTON_CODE_2D_COLUMN!r} in schema",
         )
+    )
+    checks.append(
+        _check("x_column_present", "x" in columns, "expected column 'x' in schema")
+    )
+    checks.append(
+        _check("y_column_present", "y" in columns, "expected column 'y' in schema")
     )
 
     uint_columns = [
@@ -78,10 +91,25 @@ def verify_morton_parquet(path: str | Path) -> list[VerifyCheck]:
         )
     )
 
-    if MORTON_CODE_2D_COLUMN not in columns:
+    if (
+        MORTON_CODE_2D_COLUMN not in columns
+        or "x" not in columns
+        or "y" not in columns
+    ):
         return checks
 
-    df = pd.read_parquet(parquet_path, columns=[MORTON_CODE_2D_COLUMN, "x", "y"])
+    try:
+        df = pd.read_parquet(parquet_path, columns=[MORTON_CODE_2D_COLUMN, "x", "y"])
+    except Exception as exc:
+        checks.append(
+            _check(
+                "required_columns_readable",
+                False,
+                f"failed to read required columns: {exc}",
+            )
+        )
+        return checks
+
     morton_column = _dataframe_column(df, MORTON_CODE_2D_COLUMN)
     x_column = _dataframe_column(df, "x")
     y_column = _dataframe_column(df, "y")

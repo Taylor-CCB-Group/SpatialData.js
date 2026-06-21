@@ -25,6 +25,7 @@ from textual.widgets import (
     Static,
 )
 
+from ..errors import WriterCommandError
 from ..index_permutations import DEFAULT_CONDITIONS
 from ..runners import (
     resolve_morton_from_zarr_output,
@@ -649,6 +650,7 @@ class ConfirmScreen(WriterScreen):
     def __init__(self, task_spec: TaskSpec) -> None:
         super().__init__()
         self.task_spec = task_spec
+        self._handled = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -663,17 +665,30 @@ class ConfirmScreen(WriterScreen):
         self.query_one("#confirm", Button).focus()
 
     def action_confirm(self) -> None:
-        self.query_one("#confirm", Button).press()
+        self._confirm()
 
     def action_cancel(self) -> None:
-        self.query_one("#cancel", Button).press()
+        self._cancel()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "cancel":
-            self.app.pop_screen()
+            self._cancel()
             return
+        self._confirm()
+
+    def _confirm(self) -> None:
+        if self._handled:
+            return
+        self._handled = True
         self.app.pop_screen()
         self.app.push_screen(RunScreen(self.task_spec))
+
+    def _cancel(self) -> None:
+        if self._handled:
+            return
+        self._handled = True
+        self.app.pop_screen()
 
 
 class RunScreen(WriterScreen):
@@ -705,6 +720,9 @@ class RunScreen(WriterScreen):
                 log.write, json.dumps(result, indent=2, sort_keys=True)
             )
             checks = self._verify()
+        except WriterCommandError as exc:
+            error = str(exc)
+            self.app.call_from_thread(log.write, error)
         except Exception as exc:
             error = "".join(traceback.format_exception_only(exc)).strip()
             self.app.call_from_thread(log.write, error)
@@ -759,6 +777,7 @@ class VerifyReportScreen(WriterScreen):
         self.result = result
         self.checks = checks
         self.error = error
+        self._handled = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -799,10 +818,23 @@ class VerifyReportScreen(WriterScreen):
         self.query_one("#home", Button).focus()
 
     def action_go_home(self) -> None:
-        self.app.go_home()
+        self._go_home()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "home":
-            self.app.go_home()
+            self._go_home()
             return
+        self._exit()
+
+    def _go_home(self) -> None:
+        if self._handled:
+            return
+        self._handled = True
+        self.app.go_home()
+
+    def _exit(self) -> None:
+        if self._handled:
+            return
+        self._handled = True
         self.app.exit()
