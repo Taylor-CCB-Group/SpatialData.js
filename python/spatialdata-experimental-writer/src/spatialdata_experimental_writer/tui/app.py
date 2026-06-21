@@ -104,7 +104,7 @@ class WriterApp(App[None]):
     def go_home(self) -> None:
         if self.home_screen is None:
             return
-        self.home_screen.pop_until_active()
+        self.switch_screen("home")
 
 
 def run_tui(*, initial_zarr: str | None = None) -> None:

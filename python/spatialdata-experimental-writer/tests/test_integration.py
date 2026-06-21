@@ -101,6 +101,28 @@ def test_morton_points_from_zarr_defaults_to_canonical_path(tmp_path: Path) -> N
     assert "feature_name_codes" in columns
 
 
+def test_cli_expected_error_has_no_traceback(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.zarr"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "spatialdata_experimental_writer.cli",
+            "list-points",
+            str(missing),
+        ],
+        check=False,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "No Points elements found" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_write_index_permutations_writes_manifest(tmp_path: Path) -> None:
     source = tmp_path / "source.zarr"
     dest = tmp_path / "dest.zarr"

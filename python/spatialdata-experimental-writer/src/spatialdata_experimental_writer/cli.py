@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
+from typing import Any
 
+from .errors import WriterCommandError
 from .runners import (
     run_list_points,
     run_morton_points,
@@ -44,17 +47,24 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def _print_json(payload: dict) -> None:
+def _print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def _run_command(command: Callable[[], dict[str, Any]]) -> None:
+    try:
+        _print_json(command())
+    except WriterCommandError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def _list_points(args: argparse.Namespace) -> None:
-    _print_json(run_list_points(args.zarr))
+    _run_command(lambda: run_list_points(args.zarr))
 
 
 def _morton_points(args: argparse.Namespace) -> None:
-    _print_json(
-        run_morton_points(
+    _run_command(
+        lambda: run_morton_points(
             args.input,
             args.output,
             feature_key=args.feature_key,
@@ -65,8 +75,8 @@ def _morton_points(args: argparse.Namespace) -> None:
 
 
 def _multiscale_points(args: argparse.Namespace) -> None:
-    _print_json(
-        run_multiscale_points(
+    _run_command(
+        lambda: run_multiscale_points(
             args.input,
             args.output,
             metadata_json=args.metadata_json,
@@ -77,8 +87,8 @@ def _multiscale_points(args: argparse.Namespace) -> None:
 
 
 def _morton_points_from_zarr(args: argparse.Namespace) -> None:
-    _print_json(
-        run_morton_points_from_zarr(
+    _run_command(
+        lambda: run_morton_points_from_zarr(
             args.zarr,
             points_key=args.points_key,
             experimental=args.experimental,
@@ -92,8 +102,8 @@ def _morton_points_from_zarr(args: argparse.Namespace) -> None:
 
 def _write_index_permutations(args: argparse.Namespace) -> None:
     condition_ids = args.conditions.split(",") if args.conditions else None
-    _print_json(
-        run_write_index_permutations(
+    _run_command(
+        lambda: run_write_index_permutations(
             args.source_zarr,
             args.dest_zarr,
             points_key=args.points_key,
