@@ -31,6 +31,34 @@ def test_morton_sort_points_adds_sentinel_rows_and_feature_codes() -> None:
     assert sorted_df.columns[-1] == "feature_name"
 
 
+def test_morton_sort_points_uses_extreme_row_positions_not_duplicate_index_labels() -> None:
+    df = pd.DataFrame(
+        {
+            "x": [0.0, 50.0, 100.0, 25.0, 75.0, 10.0],
+            "y": [50.0, 100.0, 25.0, 0.0, 75.0, 10.0],
+            "feature_name": ["x_min", "y_max", "x_max", "y_min", "other", "near_min"],
+        },
+        index=[7, 7, 8, 8, 9, 9],
+    )
+
+    sorted_df = morton_sort_points(df, feature_key="feature_name")
+
+    sentinel = sorted_df.iloc[:4]
+    assert sentinel[MORTON_CODE_2D_COLUMN].eq(0).all()
+    assert sentinel["x"].min() == 0.0
+    assert sentinel["x"].max() == 100.0
+    assert sentinel["y"].min() == 0.0
+    assert sentinel["y"].max() == 100.0
+    assert sorted_df["feature_name"].value_counts().to_dict() == {
+        "x_min": 1,
+        "y_max": 1,
+        "x_max": 1,
+        "y_min": 1,
+        "other": 1,
+        "near_min": 1,
+    }
+
+
 def test_write_morton_points_parquet_uses_small_sentinel_row_group(tmp_path) -> None:
     df = pd.DataFrame(
         {

@@ -40,21 +40,21 @@ def morton_code_2d(x_uint: pd.Series, y_uint: pd.Series) -> np.ndarray:
     return (np.left_shift(ys.astype(np.uint64), 1) | xs.astype(np.uint64)).astype(np.uint32)
 
 
-def _extreme_indices(df: pd.DataFrame) -> list[Any]:
+def _extreme_positions(df: pd.DataFrame) -> list[int]:
     extreme_values = [
         ("x", df["x"].min()),
         ("x", df["x"].max()),
         ("y", df["y"].min()),
         ("y", df["y"].max()),
     ]
-    result: list[Any] = []
+    result: list[int] = []
     for column, value in extreme_values:
-        matches = df.index[df[column] == value]
+        matches = np.flatnonzero((df[column] == value).to_numpy())
         if len(matches) == 0:
             continue
-        index = matches[0]
-        if index not in result:
-            result.append(index)
+        position = int(matches[0])
+        if position not in result:
+            result.append(position)
     return result
 
 
@@ -105,11 +105,13 @@ def morton_sort_points(
     y_uint = _norm_series_to_uint(out["y"], y_min, y_max)
     out[MORTON_CODE_2D_COLUMN] = morton_code_2d(x_uint, y_uint)
 
-    sentinel_indices = _extreme_indices(out)
-    sentinel = out.loc[sentinel_indices].copy().reset_index(drop=True)
+    sentinel_positions = _extreme_positions(out)
+    sentinel = out.iloc[sentinel_positions].copy().reset_index(drop=True)
     sentinel[MORTON_CODE_2D_COLUMN] = MORTON_CODE_EXTREME_VALUE_INDICATOR
 
-    rest = out.drop(index=sentinel_indices)
+    rest_mask = np.ones(len(out), dtype=bool)
+    rest_mask[sentinel_positions] = False
+    rest = out.iloc[rest_mask]
     if sort_order is None:
         sort_columns: list[str] = [MORTON_CODE_2D_COLUMN]
         if "z" in rest.columns and rest["z"].nunique(dropna=False) < 100:
