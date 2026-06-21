@@ -93,7 +93,9 @@ def _morton_points_from_zarr(args: argparse.Namespace) -> None:
             points_key=args.points_key,
             experimental=args.experimental,
             output=args.output,
+            output_points_key=args.output_points_key,
             feature_key=args.feature_key,
+            overwrite=args.overwrite,
             row_group_size=args.row_group_size,
             compression=args.compression,
         )
@@ -183,6 +185,19 @@ def build_parser() -> argparse.ArgumentParser:
             "Output Parquet path (default: in-place on points/<key>/points.parquet, "
             "or points.experimental/<key>/points.parquet with --experimental)"
         ),
+    )
+    morton_from_zarr.add_argument(
+        "--output-points-key",
+        metavar="KEY",
+        help=(
+            "Output Points element name under points/ (for example transcripts_morton). "
+            "Cannot be combined with --output."
+        ),
+    )
+    morton_from_zarr.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow overwriting an existing explicit output path or output Points element.",
     )
     morton_from_zarr.add_argument(
         "--feature-key",

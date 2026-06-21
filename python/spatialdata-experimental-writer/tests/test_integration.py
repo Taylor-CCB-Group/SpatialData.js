@@ -10,7 +10,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from spatialdata_experimental_writer.index_permutations import write_index_permutations
+from spatialdata_experimental_writer.errors import WriterCommandError
 from spatialdata_experimental_writer.points import MORTON_CODE_2D_COLUMN, write_morton_points_parquet
+from spatialdata_experimental_writer.runners import run_morton_points_from_zarr
 from spatialdata_experimental_writer.zarr import list_points_keys
 
 
@@ -121,6 +123,80 @@ def test_cli_expected_error_has_no_traceback(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "No Points elements found" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_morton_points_from_zarr_output_points_key_writes_element(tmp_path: Path) -> None:
+    zarr_root = tmp_path / "store.zarr"
+    _write_points_element(zarr_root, "transcripts")
+
+    result = run_morton_points_from_zarr(
+        zarr_root,
+        points_key="transcripts",
+        output_points_key="transcripts_morton",
+        row_group_size=50,
+    )
+
+    output = zarr_root / "points" / "transcripts_morton" / "points.parquet"
+    assert result["output_points_key"] == "transcripts_morton"
+    assert result["output"] == str(output)
+    assert output.is_file()
+    assert (zarr_root / "points" / "transcripts_morton" / "zarr.json").is_file()
+    assert list_points_keys(zarr_root) == ["transcripts", "transcripts_morton"]
+    metadata = json.loads(zarr_root.joinpath("zarr.json").read_text())[
+        "consolidated_metadata"
+    ]["metadata"]
+    assert "points/transcripts_morton" in metadata
+
+
+def test_morton_points_from_zarr_output_points_key_can_be_experimental(
+    tmp_path: Path,
+) -> None:
+    zarr_root = tmp_path / "store.zarr"
+    _write_points_element(zarr_root, "transcripts")
+
+    result = run_morton_points_from_zarr(
+        zarr_root,
+        points_key="transcripts",
+        experimental=True,
+        output_points_key="transcripts_morton",
+        row_group_size=50,
+    )
+
+    output = zarr_root / "points.experimental" / "transcripts_morton" / "points.parquet"
+    assert result["output_collection"] == "points.experimental"
+    assert result["output_points_key"] == "transcripts_morton"
+    assert result["output"] == str(output)
+    assert output.is_file()
+    assert not (zarr_root / "points" / "transcripts_morton").exists()
+
+
+def test_morton_points_from_zarr_requires_overwrite_for_existing_output_element(
+    tmp_path: Path,
+) -> None:
+    zarr_root = tmp_path / "store.zarr"
+    _write_points_element(zarr_root, "transcripts")
+    _write_points_element(zarr_root, "transcripts_morton")
+
+    try:
+        run_morton_points_from_zarr(
+            zarr_root,
+            points_key="transcripts",
+            output_points_key="transcripts_morton",
+            row_group_size=50,
+        )
+    except WriterCommandError as exc:
+        assert "already exists" in str(exc)
+    else:
+        raise AssertionError("expected WriterCommandError")
+
+    run_morton_points_from_zarr(
+        zarr_root,
+        points_key="transcripts",
+        output_points_key="transcripts_morton",
+        overwrite=True,
+        row_group_size=50,
+    )
+    assert (zarr_root / "points" / "transcripts_morton" / "points.parquet").is_file()
 
 
 def test_write_index_permutations_writes_manifest(tmp_path: Path) -> None:

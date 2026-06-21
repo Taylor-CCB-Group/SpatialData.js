@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -10,6 +11,17 @@ import pyarrow.dataset as ds
 
 def _points_root(zarr_path: Path) -> Path:
     return zarr_path / "points"
+
+
+def validate_points_key(points_key: str) -> str:
+    key = points_key.strip()
+    if not key:
+        raise ValueError("Points element name cannot be empty.")
+    if Path(key).name != key or key in {".", ".."}:
+        raise ValueError(
+            "Points element name must be a single name under points/, not a path."
+        )
+    return key
 
 
 def list_points_keys(zarr_path: str | Path) -> list[str]:
@@ -44,11 +56,25 @@ def read_points_element_attrs(zarr_path: str | Path, points_key: str) -> dict[st
 
 
 def points_parquet_path(zarr_path: str | Path, points_key: str) -> Path:
-    return _points_root(Path(zarr_path)) / points_key / "points.parquet"
+    return _points_root(Path(zarr_path)) / validate_points_key(points_key) / "points.parquet"
 
 
 def experimental_points_output_path(zarr_path: str | Path, points_key: str) -> Path:
-    return Path(zarr_path) / "points.experimental" / points_key / "points.parquet"
+    return Path(zarr_path) / "points.experimental" / validate_points_key(points_key) / "points.parquet"
+
+
+def copy_points_element_metadata(
+    zarr_path: str | Path,
+    *,
+    source_key: str,
+    dest_key: str,
+) -> None:
+    source = _points_root(Path(zarr_path)) / validate_points_key(source_key) / "zarr.json"
+    dest = _points_root(Path(zarr_path)) / validate_points_key(dest_key) / "zarr.json"
+    if not source.is_file():
+        raise FileNotFoundError(f"Points element metadata not found: {source}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
 
 
 def _points_element_consolidated_entry(
