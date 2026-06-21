@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from spatialdata_experimental_writer.zarr import (
     experimental_points_output_path,
@@ -14,6 +15,7 @@ from spatialdata_experimental_writer.zarr import (
     read_points_dataframe,
     read_points_element_attrs,
     register_points_elements_in_consolidated_metadata,
+    validate_points_key,
 )
 
 
@@ -103,3 +105,9 @@ def test_list_points_keys_and_read_element(tmp_path: Path) -> None:
     assert experimental_points_output_path(tmp_path, "transcripts") == (
         tmp_path / "points.experimental" / "transcripts" / "points.parquet"
     )
+
+
+def test_validate_points_key_rejects_paths() -> None:
+    assert validate_points_key(" transcripts_morton ") == "transcripts_morton"
+    with pytest.raises(ValueError, match="single name"):
+        validate_points_key("nested/transcripts_morton")

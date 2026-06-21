@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence, TypeVar
 
@@ -16,13 +17,26 @@ from .points import (
     write_multiscale_points_parquet,
 )
 from .zarr import (
+    copy_points_element_metadata,
+    experimental_points_output_path,
     list_points_keys,
     points_parquet_path,
     read_points_dataframe,
     read_points_element_attrs,
+    register_points_elements_in_consolidated_metadata,
+    validate_points_key,
 )
 
 _T = TypeVar("_T")
+
+
+@dataclass(frozen=True)
+class MortonZarrOutput:
+    source_parquet: Path
+    output_parquet: Path
+    in_place: bool
+    output_points_key: str | None
+    collection: str
 
 
 def _as_command_error(action: Callable[[], _T]) -> _T:
@@ -117,17 +131,40 @@ def resolve_morton_from_zarr_output(
     points_key: str,
     *,
     output: str | Path | None = None,
+    output_points_key: str | None = None,
     experimental: bool = False,
-) -> tuple[Path, Path, bool]:
+) -> MortonZarrOutput:
+    if output is not None and output_points_key is not None:
+        raise WriterCommandError("Pass either output or output_points_key, not both.")
     source_parquet = points_parquet_path(zarr_path, points_key)
     if output:
         resolved_output = Path(output)
-    elif experimental:
-        resolved_output = zarr_path / "points.experimental" / points_key / "points.parquet"
-    else:
-        resolved_output = source_parquet
-    in_place = not experimental and output is None
-    return source_parquet, resolved_output, in_place
+        return MortonZarrOutput(
+            source_parquet=source_parquet,
+            output_parquet=resolved_output,
+            in_place=resolved_output == source_parquet,
+            output_points_key=None,
+            collection="path",
+        )
+    if experimental:
+        resolved_output_key = validate_points_key(output_points_key or points_key)
+        resolved_output = experimental_points_output_path(zarr_path, resolved_output_key)
+        return MortonZarrOutput(
+            source_parquet=source_parquet,
+            output_parquet=resolved_output,
+            in_place=False,
+            output_points_key=resolved_output_key,
+            collection="points.experimental",
+        )
+    resolved_output_key = validate_points_key(output_points_key or points_key)
+    resolved_output = points_parquet_path(zarr_path, resolved_output_key)
+    return MortonZarrOutput(
+        source_parquet=source_parquet,
+        output_parquet=resolved_output,
+        in_place=resolved_output == source_parquet,
+        output_points_key=resolved_output_key,
+        collection="points",
+    )
 
 
 def run_morton_points_from_zarr(
@@ -136,7 +173,9 @@ def run_morton_points_from_zarr(
     points_key: str | None = None,
     experimental: bool = False,
     output: str | Path | None = None,
+    output_points_key: str | None = None,
     feature_key: str | None = None,
+    overwrite: bool = False,
     row_group_size: int = 50_000,
     compression: str = "zstd",
 ) -> dict[str, Any]:
@@ -161,35 +200,82 @@ def run_morton_points_from_zarr(
 
     attrs = _as_command_error(lambda: read_points_element_attrs(zarr_path, resolved_key))
     resolved_feature_key = feature_key or attrs.get("feature_key")
-    source_parquet, resolved_output, in_place = resolve_morton_from_zarr_output(
+    output_spec = resolve_morton_from_zarr_output(
         zarr_path,
         resolved_key,
         output=output,
+        output_points_key=output_points_key,
         experimental=experimental,
     )
+    if (
+        output_spec.output_parquet.exists()
+        and not output_spec.in_place
+        and not overwrite
+    ):
+        raise WriterCommandError(
+            f"Output already exists: {output_spec.output_parquet}\n"
+            "Choose another element name/path or enable overwrite."
+        )
+    if (
+        output_spec.collection == "points"
+        and output_spec.output_points_key is not None
+        and output_spec.output_points_key != resolved_key
+    ):
+        target_element_dir = zarr_path / "points" / output_spec.output_points_key
+        if target_element_dir.exists() and not overwrite:
+            raise WriterCommandError(
+                f"Points element already exists: points/{output_spec.output_points_key}\n"
+                "Choose another element name or enable overwrite."
+            )
 
-    df = _as_command_error(lambda: read_points_dataframe(source_parquet))
-    if resolved_output.exists():
-        if resolved_output.is_dir():
-            shutil.rmtree(resolved_output)
+    df = _as_command_error(lambda: read_points_dataframe(output_spec.source_parquet))
+    if output_spec.output_parquet.exists():
+        if output_spec.output_parquet.is_dir():
+            shutil.rmtree(output_spec.output_parquet)
         else:
-            resolved_output.unlink()
+            output_spec.output_parquet.unlink()
+    if (
+        output_spec.collection == "points"
+        and output_spec.output_points_key is not None
+        and output_spec.output_points_key != resolved_key
+    ):
+        _as_command_error(
+            lambda: copy_points_element_metadata(
+                zarr_path,
+                source_key=resolved_key,
+                dest_key=output_spec.output_points_key,
+            )
+        )
     sorted_df = _as_command_error(
         lambda: write_morton_points_parquet(
             df,
-            resolved_output,
+            output_spec.output_parquet,
             feature_key=resolved_feature_key,
             row_group_size=row_group_size,
             compression=compression,
         )
     )
+    if (
+        output_spec.collection == "points"
+        and output_spec.output_points_key is not None
+        and output_spec.output_points_key != resolved_key
+    ):
+        _as_command_error(
+            lambda: register_points_elements_in_consolidated_metadata(
+                zarr_path,
+                [resolved_key, output_spec.output_points_key],
+                template_key=resolved_key,
+            )
+        )
     return {
         "format": "morton-points",
         "zarr": str(zarr_path),
         "points_key": resolved_key,
-        "source": str(source_parquet),
-        "output": str(resolved_output),
-        "in_place": in_place,
+        "output_points_key": output_spec.output_points_key,
+        "output_collection": output_spec.collection,
+        "source": str(output_spec.source_parquet),
+        "output": str(output_spec.output_parquet),
+        "in_place": output_spec.in_place,
         "feature_key": resolved_feature_key,
         "rows": int(len(sorted_df)),
         "row_group_size": row_group_size,

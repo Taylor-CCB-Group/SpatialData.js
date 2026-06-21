@@ -287,7 +287,7 @@ class PointsKeyScreen(WriterScreen):
 
 
 class MortonFromZarrScreen(InputFormScreen):
-    INPUT_ORDER = ("feature-key", "row-group-size", "compression", "output-path")
+    INPUT_ORDER = ("feature-key", "row-group-size", "compression", "output-element")
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -299,8 +299,8 @@ class MortonFromZarrScreen(InputFormScreen):
             yield Input(value="50000", id="row-group-size")
             yield Label("Compression")
             yield Input(value="zstd", id="compression")
-            yield Label("Custom output path (optional)")
-            yield Input(placeholder="leave empty for default", id="output-path")
+            yield Label("Output Points element name (optional)")
+            yield Input(placeholder="leave empty to overwrite selected element", id="output-element")
             yield Checkbox("Write to points.experimental/", id="experimental")
         with Horizontal():
             yield Button("Run", variant="primary", id="run")
@@ -335,7 +335,7 @@ class MortonFromZarrScreen(InputFormScreen):
             return
 
         feature_key = self.query_one("#feature-key", Input).value.strip() or None
-        output_text = self.query_one("#output-path", Input).value.strip() or None
+        output_key = self.query_one("#output-element", Input).value.strip() or None
         experimental = self.query_one("#experimental", Checkbox).value
         try:
             row_group_size = _positive_int(
@@ -346,34 +346,67 @@ class MortonFromZarrScreen(InputFormScreen):
             return
         compression = self.query_one("#compression", Input).value.strip() or "zstd"
 
-        _, resolved_output, in_place = resolve_morton_from_zarr_output(
-            Path(zarr),
-            key,
-            output=output_text,
-            experimental=experimental,
-        )
+        try:
+            output_spec = resolve_morton_from_zarr_output(
+                Path(zarr),
+                key,
+                output_points_key=output_key,
+                experimental=experimental,
+            )
+        except WriterCommandError as exc:
+            self.notify(str(exc), severity="error")
+            return
+
+        target_exists = output_spec.output_parquet.exists()
+        if (
+            output_spec.collection == "points"
+            and output_spec.output_points_key is not None
+        ):
+            target_exists = target_exists or (
+                Path(zarr) / "points" / output_spec.output_points_key
+            ).exists()
+        requires_confirm = output_spec.in_place or target_exists
 
         def runner() -> dict[str, Any]:
             return run_morton_points_from_zarr(
                 zarr,
                 points_key=key,
                 experimental=experimental,
-                output=output_text,
+                output_points_key=output_key,
                 feature_key=feature_key,
+                overwrite=requires_confirm,
                 row_group_size=row_group_size,
                 compression=compression,
             )
+
+        if output_spec.in_place:
+            confirm_message = (
+                f"Overwrite selected Points element:\npoints/{key}\n\n"
+                f"Parquet path:\n{output_spec.output_parquet}\n\nProceed?"
+            )
+        elif target_exists and output_spec.collection == "points":
+            confirm_message = (
+                f"Overwrite existing Points element:\n"
+                f"points/{output_spec.output_points_key}\n\n"
+                f"Parquet path:\n{output_spec.output_parquet}\n\nProceed?"
+            )
+        elif target_exists and output_spec.collection == "points.experimental":
+            confirm_message = (
+                f"Overwrite existing experimental Points artifact:\n"
+                f"points.experimental/{output_spec.output_points_key}\n\n"
+                f"Parquet path:\n{output_spec.output_parquet}\n\nProceed?"
+            )
+        else:
+            confirm_message = ""
 
         task = TaskSpec(
             command=CommandId.MORTON_FROM_ZARR,
             title="Morton-sort from Zarr",
             runner=runner,
             verify_kind="morton",
-            verify_paths=[resolved_output],
-            requires_confirm=in_place,
-            confirm_message=(
-                f"In-place overwrite of canonical Parquet:\n{resolved_output}\n\nProceed?"
-            ),
+            verify_paths=[output_spec.output_parquet],
+            requires_confirm=requires_confirm,
+            confirm_message=confirm_message,
         )
         self._launch_task(task)
 
