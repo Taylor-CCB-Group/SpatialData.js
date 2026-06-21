@@ -106,8 +106,8 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
   updateState(params: UpdateParameters<this>): void {
     const { props, oldProps } = params;
     if (
-      props.resource.loader !== oldProps.resource.loader ||
-      props.resource.element !== oldProps.resource.element
+      props.resource.loader !== oldProps.resource?.loader ||
+      props.resource.element !== oldProps.resource?.element
     ) {
       this.setState({
         preloadedBatch: undefined,
