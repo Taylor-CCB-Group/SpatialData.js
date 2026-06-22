@@ -160,10 +160,11 @@ export function zcoverRectangle(
 
     const midx = Math.floor((xmin + xmax) / 2);
     const midy = Math.floor((ymin + ymax) / 2);
-    stack.push([(prefix << 2) | 0, level + 1, xmin, ymin, midx, midy]);
-    stack.push([(prefix << 2) | 1, level + 1, midx + 1, ymin, xmax, midy]);
-    stack.push([(prefix << 2) | 2, level + 1, xmin, midy + 1, midx, ymax]);
-    stack.push([(prefix << 2) | 3, level + 1, midx + 1, midy + 1, xmax, ymax]);
+    const nextPrefix = prefix * 4;
+    stack.push([nextPrefix + 0, level + 1, xmin, ymin, midx, midy]);
+    stack.push([nextPrefix + 1, level + 1, midx + 1, ymin, xmax, midy]);
+    stack.push([nextPrefix + 2, level + 1, xmin, midy + 1, midx, ymax]);
+    stack.push([nextPrefix + 3, level + 1, midx + 1, midy + 1, xmax, ymax]);
   }
 
   return mergeAdjacentIntervals(intervals);
