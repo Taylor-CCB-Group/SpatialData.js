@@ -747,6 +747,7 @@ export function useLayerData(
 
       void (async () => {
         try {
+          //pjt subject to review
           const rowCodes = await element.loadRowFeatureCodes({
             memoryCap,
             featureCatalog,
