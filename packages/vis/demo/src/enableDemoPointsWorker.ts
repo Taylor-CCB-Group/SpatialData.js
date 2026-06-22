@@ -8,8 +8,6 @@ export function ensureDemoPointsWorker() {
     return;
   }
 
-  enablePointsWorker({
-    workerUrl: new URL('../../../core/src/workers/points-worker.ts', import.meta.url),
-  });
+  enablePointsWorker();
   enabled = true;
 }

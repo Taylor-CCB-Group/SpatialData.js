@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Core Package Overview
 
-The `@spatialdata/core` package provides a TypeScript/JavaScript interface for reading and working with [SpatialData](https://spatialdata.scverse.org/en/stable/) Zarr stores. It mostly mirrors the Python library's API design while adapting to TypeScript idioms and the asynchronous nature of browser-based data loading. Hot-paths should make use of WASM with safe and ergonomic TypeScript interfaces where appropriate.
+The `@spatialdata/core` package provides a TypeScript/JavaScript interface for reading and working with [SpatialData](https://spatialdata.scverse.org/en/stable/) Zarr stores. It mostly mirrors the Python library's API design while adapting to TypeScript idioms and the asynchronous nature of browser-based data loading. Hot-paths should make use of WASM with safe and ergonomic TypeScript interfaces where appropriate. For browser apps, enable the [points worker](../vis/browser-workers) at startup to keep parquet decode and scans off the main thread.
 
 The bundle should be tree-shakeable and avoid loading heavy dependencies before they are needed (please raise an issue if this is found not to be the case - it's not something that's been given much attention in the initial implementation).
 

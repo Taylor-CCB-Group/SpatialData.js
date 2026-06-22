@@ -70,6 +70,7 @@ Acceptance signal: demos should import the same public API MDV uses (`SpatialCan
 - [ ] Residual extension audit on both sides after MDV merge (shader-input paths, channel-count assumptions, extension prop passthrough through `deckProps` / `SpatialCanvasViewer`).
 - [ ] Run a clean `pnpm build` and pack the packages, then install them into `~/code/www/MDV`.
 - [ ] Add one minimal MDV smoke chart that imports the package and renders a known fixture before attempting a full chart replacement.
+- [ ] Enable browser workers per [Browser workers](./browser-workers) (points worker + chunk-decode pool where JP2K/HTJ2K or heavy zarr decode is used).
 
 ## Phase 1: headless `SpatialCanvas` API
 

@@ -109,8 +109,16 @@ export function enablePointsWorker(options: { workerUrl?: string | URL } = {}) {
   if (worker) {
     disablePointsWorker();
   }
-  const workerUrl = options.workerUrl ?? new URL('./points-worker.js', import.meta.url);
-  worker = new Worker(workerUrl, { type: 'module' });
+  if (options.workerUrl) {
+    worker = new Worker(options.workerUrl, { type: 'module' });
+  } else {
+    // Inline URL so Vite dev apps can bundle the worker; @vite-ignore keeps lib build
+    // emitting a runtime relative URL to dist/points-worker.js (not /assets/...).
+    worker = new Worker(
+      new URL(/* @vite-ignore */ './points-worker.js', import.meta.url),
+      { type: 'module' }
+    );
+  }
   ensureWorkerListener();
   enabled = true;
 }
