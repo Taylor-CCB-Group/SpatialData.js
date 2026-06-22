@@ -1,5 +1,11 @@
 # zarrextra
 
+## 0.2.2
+
+### Patch Changes
+
+- [#54](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/54) [`c84758c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c84758c780db65737a7978231586ea7d99e1d4fb) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Build the codec worker as a self-contained artifact for Vite consumers.
+
 ## 0.2.1
 
 ### Patch Changes

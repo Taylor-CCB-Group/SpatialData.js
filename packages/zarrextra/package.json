@@ -1,6 +1,6 @@
 {
   "name": "zarrextra",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Extra utilities for working with zarr stores using zarrita",
   "type": "module",
   "module": "./dist/index.js",
@@ -18,7 +18,9 @@
       "import": "./dist/codec-worker.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },
