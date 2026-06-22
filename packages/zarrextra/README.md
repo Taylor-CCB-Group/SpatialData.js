@@ -119,4 +119,5 @@ required for that path.
 
 Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
 `@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
-the worker script).
+the default worker script). Future worker entries may let applications opt into
+lighter worker bundles when JP2K or HTJ2K codecs are not needed.
