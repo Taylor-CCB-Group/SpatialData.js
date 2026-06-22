@@ -11,8 +11,11 @@
       "import": "./dist/index.js"
     },
     "./workers": {
-      "types": "./dist/workers.d.ts",
+      "types": "./dist/workers/index.d.ts",
       "import": "./dist/workers.js"
+    },
+    "./codec-worker": {
+      "import": "./dist/codec-worker.js"
     }
   },
   "files": [
