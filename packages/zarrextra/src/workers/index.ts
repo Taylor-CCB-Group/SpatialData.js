@@ -21,7 +21,8 @@ function defaultWorkerCount() {
 }
 
 function defaultWorkerUrl() {
-  return new URL('./codec-worker.js', import.meta.url);
+  const workerFile = './codec-worker.js';
+  return new URL(workerFile, import.meta.url);
 }
 
 setFizarritaGetWorker(getWorker);
