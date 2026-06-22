@@ -1,5 +1,15 @@
 # @spatialdata/vis
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @spatialdata/avivatorish@0.2.1
+  - @spatialdata/core@0.2.1
+  - @spatialdata/react@0.2.1
+  - @spatialdata/layers@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes
