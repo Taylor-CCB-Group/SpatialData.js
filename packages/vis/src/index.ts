@@ -50,6 +50,11 @@ export {
   sortLayersByRenderStackOrder,
   useSpatialCanvasRenderer,
   layerConfig,
+  ImageChannelPanel,
+  useImageLayerContext,
+  useLayerChannelState,
+  mergeLayerChannelState,
+  mergeVivImagePassthroughProps,
 } from './SpatialCanvas/public';
 export type {
   SpatialCanvasStoreApi,
@@ -60,6 +65,7 @@ export type {
   LayerConfig,
   LayerConfigByType,
   LayerType,
+  ChannelConfig,
   AvailableElement,
   ElementsByType,
   SpatialCanvasProps,
@@ -77,5 +83,14 @@ export type {
   RenderStackHostLayerResolver,
   RenderStackLayerInputs,
   UnknownRenderStackHostLayerHandler,
+  ImageChannelPanelProps,
+  ImageLayerContextValue,
+  ImageLoaderData,
+  VivImageLayerContext,
+  VivImageExtensionResolver,
+  VivImagePropsResolver,
+  VivImagePassthroughOptions,
+  LayerChannelConfig,
+  LayerChannelDefaults,
 } from './SpatialCanvas/public';
 export { SpatialFeatureTooltip } from './SpatialCanvas/public';

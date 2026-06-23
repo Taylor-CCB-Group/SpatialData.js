@@ -101,9 +101,59 @@ Implementation status:
 - [x] `showLoadingOverlay` and `renderTooltip={false}` for external tooltip ownership.
 - [x] `onFeatureHover` / `onFeatureClick` for shape and label picking, with `onShapeHover` / `onShapeClick` kept as compatibility callbacks.
 - [ ] Stable externally supplied Viv/deck view id or layer id suffix (`getVivId` compatibility).
-- [ ] Viv extension prop audit once MDV merge lands (low risk; versions already aligned).
+- [x] Viv extension passthrough: `ImageLayerConfig.vivLayerProps`, `vivImageExtensionResolver`, `vivImagePropsResolver` on `SpatialCanvasViewer` (see [Issue #56 APIs](#issue-56-channel--extension-apis) below).
 
-See [Headless viewer guide](./headless-viewer) for experimentation steps.
+See [Headless viewer guide](./headless-viewer) for experimentation steps. The `/headless` demo (`packages/vis/demo`) includes brightness/contrast sliders exercising `vivImagePropsResolver`.
+
+## Issue #56 channel and extension APIs
+
+Tracked in [GitHub issue #56](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/56). These APIs let MDV replace its local MobX↔Zustand channel bridge.
+
+### Channel config (Phase 1 ADR)
+
+- **Struct-of-arrays** on `renderStack.entries[*].props.channels`: `channelIds`, `colors`, `contrastLimits`, `channelsVisible`, `selections`.
+- **Array-of-structs** deferred to vNext.
+- **`ChannelConfig` does not carry extension-specific fields.** Host apps own extension schema.
+
+### `@spatialdata/avivatorish`
+
+- `useLayerChannelState({ config, defaults, layerId, onChannelsChange })` — echo-safe layer-local channel adapter with stable `channelIds`, add/remove, parallel-array sync.
+- `getChannelSelectionStats` / `getSingleSelectionStats({ includeRaster: true })` — optional 2D raster `{ width, height, data }` for histogram UI.
+
+### `@spatialdata/vis`
+
+- `useImageLayerContext(elementKey)` — per-element loader, defaults, OME `channelNames` (inside `SpatialCanvasViewer`).
+- `ImageChannelPanel` — controlled export: `channels`, `onChannelsChange`, `defaults`.
+- `useLayerChannelState` re-exported from `@spatialdata/vis` for single-package MDV imports.
+
+### Viv extension passthrough (extension-agnostic)
+
+Serializable on image stack entry props:
+
+```ts
+props: {
+  channels: { /* core Viv channel fields only */ },
+  vivLayerProps: { brightness: [0.5], contrast: [0.5] }, // host-owned keys
+}
+```
+
+Runtime on `SpatialCanvasViewer`:
+
+```tsx
+<SpatialCanvasViewer
+  vivImageExtensionResolver={({ layerId, elementKey, channelCount, loader, channels }) => [
+    new ColorPaletteExtension(),
+    new VivContrastExtension(),
+  ]}
+  vivImagePropsResolver={({ channelCount }) => ({
+    brightness: toneBrightness,
+    contrast: toneContrast,
+  })}
+/>
+```
+
+Merge order into `detailView.getLayers({ props })`: saved `vivLayerProps` → `vivImagePropsResolver` → `extensions` from `vivImageExtensionResolver` (or global `vivImageExtensions`). `VivSpatialViewer` must not spread `layer.props` afterward.
+
 
 ## Phase 2: MDV adapter chart
 

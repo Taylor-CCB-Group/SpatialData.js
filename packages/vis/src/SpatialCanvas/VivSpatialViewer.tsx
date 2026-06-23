@@ -431,6 +431,13 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         layerProps.modelMatrix = imageLayerProps.modelMatrix;
       }
 
+      const passthrough = imageLayerProps.vivProps;
+      if (passthrough) {
+        for (const [key, value] of Object.entries(passthrough)) {
+          layerProps[key] = value;
+        }
+      }
+
       const vivLayersResult = this.detailView.getLayers({
         props: layerProps,
       });

@@ -459,10 +459,45 @@ export function getRasterSource(loader: LOADER): RasterSourceLike {
   if (source) return source;
   throw new Error('Expected Viv loader to resolve to a raster source with getRaster().');
 }
+export type SelectionRaster = {
+  width: number;
+  height: number;
+  data: ArrayLike<number>;
+};
+
+export type SelectionStats = {
+  domain: [number, number];
+  contrastLimits: [number, number];
+  raster?: SelectionRaster;
+};
+
+function rasterFromGetRasterResult(raster: {
+  data: ArrayLike<number>;
+  width?: number;
+  height?: number;
+}): SelectionRaster | undefined {
+  const { data, width, height } = raster;
+  if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
+    return { width, height, data };
+  }
+  const len = data.length;
+  if (len <= 0) return undefined;
+  const side = Math.round(Math.sqrt(len));
+  if (side * side === len) {
+    return { width: side, height: side, data };
+  }
+  return { width: len, height: 1, data };
+}
+
 export async function getSingleSelectionStats2D({
   loader,
   selection,
-}: { loader: LOADER; selection: VivSelection }) {
+  includeRaster = false,
+}: {
+  loader: LOADER;
+  selection: VivSelection;
+  includeRaster?: boolean;
+}): Promise<SelectionStats> {
   const data = getRasterSource(loader);
   const raster = await data.getRaster({ selection: clampVivSelectionToSource(selection, data) });
   const selectionStats = getChannelStats(raster.data);
@@ -477,7 +512,14 @@ export async function getSingleSelectionStats2D({
     contrastLimits[0] = domain[0];
     contrastLimits[1] = domain[1];
   }
-  return { domain, contrastLimits };
+  const result: SelectionStats = { domain, contrastLimits };
+  if (includeRaster) {
+    const parsed = rasterFromGetRasterResult(raster);
+    if (parsed) {
+      result.raster = parsed;
+    }
+  }
+  return result;
 }
 
 export async function getSingleSelectionStats3D({
@@ -524,23 +566,49 @@ export const getSingleSelectionStats = async ({
   loader,
   selection,
   use3d,
-}: { loader: LOADER; selection: VivSelection; use3d: boolean }) => {
-  const getStats = use3d ? getSingleSelectionStats3D : getSingleSelectionStats2D;
-  return getStats({ loader, selection });
+  includeRaster = false,
+}: {
+  loader: LOADER;
+  selection: VivSelection;
+  use3d: boolean;
+  includeRaster?: boolean;
+}) => {
+  if (use3d) {
+    return getSingleSelectionStats3D({ loader, selection });
+  }
+  return getSingleSelectionStats2D({ loader, selection, includeRaster });
 };
 
 export const getMultiSelectionStats = async ({
   loader,
   selections,
   use3d,
-}: { loader: LOADER; selections: VivSelection[]; use3d: boolean }) => {
+  includeRaster = false,
+}: {
+  loader: LOADER;
+  selections: VivSelection[];
+  use3d: boolean;
+  includeRaster?: boolean;
+}) => {
   const stats = await Promise.all(
-    selections.map((selection) => getSingleSelectionStats({ loader, selection, use3d }))
+    selections.map((selection) =>
+      getSingleSelectionStats({ loader, selection, use3d, includeRaster })
+    )
   );
   const domains = stats.map((stat) => stat.domain);
   const contrastLimits = stats.map((stat) => stat.contrastLimits);
-  return { domains, contrastLimits };
+  const rasters = includeRaster
+    ? stats.map((stat) => stat.raster).filter((r): r is SelectionRaster => r !== undefined)
+    : undefined;
+  return {
+    domains,
+    contrastLimits,
+    ...(rasters !== undefined && rasters.length > 0 ? { rasters } : {}),
+  };
 };
+
+/** Public alias for multi-channel stats (histogram UI). */
+export const getChannelSelectionStats = getMultiSelectionStats;
 
 /* eslint-disable no-useless-escape */
 // https://stackoverflow.com/a/11381730

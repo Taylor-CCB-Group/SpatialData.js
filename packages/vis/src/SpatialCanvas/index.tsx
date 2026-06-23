@@ -21,7 +21,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ImageChannelPanel } from './ImageChannelPanel';
+import { ImageChannelPanelFromStore } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
@@ -788,7 +788,7 @@ function SpatialCanvasInner({
                   </div>
                 )}
                 {selectedConfig.type === 'image' && (
-                  <ImageChannelPanel
+                  <ImageChannelPanelFromStore
                     layerId={selectedConfig.id}
                     config={selectedConfig}
                     defaults={getImageLayerLoadedData(selectedConfig.id)}

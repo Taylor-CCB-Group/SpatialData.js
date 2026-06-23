@@ -27,6 +27,23 @@ export {
   SpatialCanvasViewer,
   useSpatialCanvasRenderer,
 } from './SpatialCanvasViewer';
+export type {
+  VivImageExtensionResolver,
+  VivImageLayerContext,
+  VivImagePropsResolver,
+} from './SpatialCanvasViewer';
+export { ImageChannelPanel } from './ImageChannelPanel';
+export type { ImageChannelPanelProps } from './ImageChannelPanel';
+export { useImageLayerContext } from './ImageLayerContext';
+export type { ImageLayerContextValue } from './ImageLayerContext';
+export { mergeVivImagePassthroughProps } from './vivImagePassthrough';
+export type { VivImagePassthroughOptions } from './vivImagePassthrough';
+export {
+  useLayerChannelState,
+  mergeLayerChannelState,
+  type LayerChannelConfig,
+  type LayerChannelDefaults,
+} from '@spatialdata/avivatorish';
 export {
   renderStackOrder,
   renderStackToLayerInputs,
@@ -46,4 +63,4 @@ export type {
   SpatialCanvasViewerRenderTooltip,
 } from './SpatialCanvasViewer';
 export type { SpatialCanvasProps } from './index';
-export type { ImageLayerConfig as VivImageLayerConfig } from './useLayerData';
+export type { ImageLayerConfig as VivImageLayerConfig, ImageLoaderData } from './useLayerData';

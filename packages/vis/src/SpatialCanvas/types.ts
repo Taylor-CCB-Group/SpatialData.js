@@ -56,13 +56,18 @@ export interface ChannelConfig {
   channelsVisible?: boolean[];
   /** Selections for z, c, t dimensions (omit keys for axes that do not exist on the image). */
   selections?: Partial<{ z: number; c: number; t: number }>[];
-  //TODO: how do we pass channel-related extension props?
 }
 
 export interface ImageLayerConfig extends BaseLayerConfig {
   type: 'image';
   /** Optional: Advanced channel configuration (for full Viv controls) */
   channels?: ChannelConfig;
+  /**
+   * Serializable Viv/deck props merged into `detailView.getLayers({ props })`.
+   * Host-owned schema for extension state (brightness, contrast, colormap, etc.).
+   * See also runtime `vivImageExtensionResolver` / `vivImagePropsResolver` on `SpatialCanvasViewer`.
+   */
+  vivLayerProps?: Record<string, unknown>;
 }
 
 export interface ShapesLayerConfig extends BaseLayerConfig {
