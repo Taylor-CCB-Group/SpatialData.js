@@ -65,9 +65,28 @@ async function initializeParquetModule(module: unknown) {
   if (typeof module !== 'object' || module === null) {
     return;
   }
-  const maybeInit = (module as Record<string, unknown>).default;
-  if (typeof maybeInit === 'function') {
-    await maybeInit();
+  const record = module as Record<string, unknown>;
+  const initSync = record.initSync;
+  const defaultInit = record.default;
+
+  // Vitest/Node load the vendored browser ESM glue; initialize WASM from disk
+  // because undici cannot fetch file:// URLs.
+  if (import.meta.url.startsWith('file:') && typeof initSync === 'function') {
+    const [{ readFileSync }, { fileURLToPath }, { dirname, join }] = await Promise.all([
+      import('node:fs'),
+      import('node:url'),
+      import('node:path'),
+    ]);
+    const wasmPath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../vendor/parquet-wasm/parquet_wasm_bg.wasm'
+    );
+    initSync({ module: readFileSync(wasmPath) });
+    return;
+  }
+
+  if (typeof defaultInit === 'function') {
+    await defaultInit();
   }
 }
 
@@ -77,64 +96,26 @@ function parquetModuleSupportsRowGroupReads(module: ParquetModule): boolean {
   );
 }
 
-async function loadParquetModuleFromCdn(): Promise<ParquetModule> {
-  const cdnModule = await import(
-    // @ts-expect-error - CDN import not recognized by TypeScript
-    'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js'
+async function loadVendoredParquetModule(): Promise<ParquetModule> {
+  const module: unknown = await import(
+    /* @vite-ignore */
+    '../vendor/parquet-wasm/parquet_wasm.js'
   );
-  await initializeParquetModule(cdnModule);
-  return normalizeParquetModule(cdnModule);
+  await initializeParquetModule(module);
+  const normalized = normalizeParquetModule(module);
+  if (!parquetModuleSupportsRowGroupReads(normalized)) {
+    throw new Error(
+      'Vendored parquet-wasm is missing required row-group APIs (readMetadata, readParquetRowGroup)'
+    );
+  }
+  return normalized;
 }
 
 let parquetModulePromise: Promise<ParquetModule> | undefined;
 
 export function getParquetModule(): Promise<ParquetModule> {
   if (!parquetModulePromise) {
-    parquetModulePromise = loadParquetModule();
+    parquetModulePromise = loadVendoredParquetModule();
   }
   return parquetModulePromise;
-}
-
-async function loadParquetModule(): Promise<ParquetModule> {
-  // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
-  // that needs to be initialized before use in browser environments.
-  // In Node.js, the module loads WASM synchronously so no init is needed.
-  //
-  // TODO: Replace with a more civilised parquet module that's built in a way we can actually consume.
-  // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
-  //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
-
-  const useCdnForMissingRowGroupApis = typeof window !== 'undefined';
-
-  // Try local import first (works in Node.js, tests, and production builds)
-  try {
-    const module = await import('parquet-wasm');
-    await initializeParquetModule(module);
-    const normalized = normalizeParquetModule(module);
-    if (!parquetModuleSupportsRowGroupReads(normalized) && useCdnForMissingRowGroupApis) {
-      console.warn(
-        '[parquetWasmLoader] Local parquet-wasm lacks row-group APIs; falling back to CDN build.'
-      );
-      return loadParquetModuleFromCdn();
-    }
-    return normalized;
-  } catch (error) {
-    // Local import failed, try CDN fallback (needed in vite dev server)
-    // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
-    console.warn(
-      '[parquetWasmLoader] Local parquet-wasm import failed, falling back to CDN version. ' +
-        'This is a temporary workaround pending a better parquet module solution.',
-      error
-    );
-
-    try {
-      return loadParquetModuleFromCdn();
-    } catch (cdnError) {
-      const localErrorMsg = error instanceof Error ? error.message : String(error);
-      const cdnErrorMsg = cdnError instanceof Error ? cdnError.message : String(cdnError);
-      throw new Error(
-        `Failed to load parquet-wasm from both local package and CDN. Local error: ${localErrorMsg}. CDN error: ${cdnErrorMsg}`
-      );
-    }
-  }
 }

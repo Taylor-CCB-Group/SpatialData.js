@@ -16,7 +16,6 @@ catalog:
   anndata.js: ^0.0.2
   apache-arrow: ^17.0.0
   deck.gl: ~9.2.9
-  parquet-wasm: ^0.6.1
   react: ^19.2.1
   react-dom: ^19.2.1
   typescript: ^5.7.3

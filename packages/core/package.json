@@ -19,7 +19,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "vendor"
   ],
   "publishConfig": {
     "access": "public"
@@ -38,7 +39,6 @@
     "anndata.js": "catalog:",
     "apache-arrow": "catalog:",
     "ol": "^10.6.1",
-    "parquet-wasm": "catalog:",
     "zarrita": "catalog:",
     "zod": "catalog:"
   },
