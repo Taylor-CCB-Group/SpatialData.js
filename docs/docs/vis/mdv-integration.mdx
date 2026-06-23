@@ -123,8 +123,8 @@ Tracked in [GitHub issue #56](https://github.com/Taylor-CCB-Group/SpatialData.js
 ### `@spatialdata/vis`
 
 - `useImageLayerContext(elementKey)` — per-element loader, defaults, OME `channelNames` (inside `SpatialCanvasViewer`).
-- `ImageChannelPanel` — controlled export: `channels`, `onChannelsChange`, `defaults`.
 - `useLayerChannelState` re-exported from `@spatialdata/vis` for single-package MDV imports.
+- `ImageChannelPanel` remains internal to `SpatialCanvas` for now (not exported from `@spatialdata/vis`); MDV should use `useLayerChannelState` with its own UI.
 
 ### Viv extension passthrough (extension-agnostic)
 

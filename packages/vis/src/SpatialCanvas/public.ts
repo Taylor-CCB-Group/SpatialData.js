@@ -32,8 +32,6 @@ export type {
   VivImageLayerContext,
   VivImagePropsResolver,
 } from './SpatialCanvasViewer';
-export { ImageChannelPanel } from './ImageChannelPanel';
-export type { ImageChannelPanelProps } from './ImageChannelPanel';
 export { useImageLayerContext } from './ImageLayerContext';
 export type { ImageLayerContextValue } from './ImageLayerContext';
 export { mergeVivImagePassthroughProps } from './vivImagePassthrough';
