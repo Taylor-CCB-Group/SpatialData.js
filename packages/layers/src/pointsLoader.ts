@@ -1,5 +1,4 @@
-import type { SpatialBounds } from '@spatialdata/core';
-import type { PointsElement } from '@spatialdata/core';
+import type { SpatialBounds, PointsElement, PointsLoadMode } from '@spatialdata/core';
 
 export type PointsEncodingKind =
   | 'preloaded-columnar'
@@ -22,7 +21,7 @@ export interface ColumnarNdarrayPointsBatch {
   data: ArrayLike<number>[];
   shape: number[];
   bounds?: SpatialBounds;
-  loadMode?: string;
+  loadMode?: PointsLoadMode;
   pointCount?: number;
 }
 
@@ -69,7 +68,7 @@ export interface PointData {
 
 export function columnarBatchFromPointData(
   data: PointData,
-  options?: { loadMode?: string; bounds?: SpatialBounds }
+  options?: { loadMode?: PointsLoadMode; bounds?: SpatialBounds }
 ): ColumnarNdarrayPointsBatch {
   const pointCount =
     data.shape.length >= 2 && Number.isFinite(data.shape[1])

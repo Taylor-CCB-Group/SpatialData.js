@@ -1,4 +1,5 @@
 import type { PointsElement } from './models/index.js';
+import type { PointsLoadMode } from './types.js';
 import type {
   PointsInBoundsResult,
   PointsTilingMetadata,
@@ -26,7 +27,7 @@ export interface ColumnarNdarrayPointsBatch {
   data: ArrayLike<number>[];
   shape: number[];
   bounds?: SpatialBounds;
-  loadMode?: string;
+  loadMode?: PointsLoadMode;
   pointCount?: number;
 }
 

@@ -1,4 +1,4 @@
-import type { SpatialBounds } from '@spatialdata/core';
+import type { SpatialBounds, PointsLoadMode } from '@spatialdata/core';
 import type { PointTileBbox } from './pointsBbox.js';
 
 export interface PointsTileHandle {
@@ -12,6 +12,6 @@ export interface PointsTileLoadResult {
   aborted?: boolean;
   clippedBounds?: SpatialBounds | null;
   pointCount?: number;
-  loadMode?: string;
+  loadMode?: PointsLoadMode;
   errorMessage?: string;
 }
