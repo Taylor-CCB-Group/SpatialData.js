@@ -30,7 +30,9 @@ pnpm --filter @spatialdata/vis dev
 
 Open [http://127.0.0.1:5173/codec](http://127.0.0.1:5173/codec).
 
-The route calls `enableWorkerChunkDecode()` from `zarrextra/workers`, which uses
+The route calls `enableWorkerChunkDecode()` from `zarrextra/workers` (see
+[Browser workers](./browser-workers) for setup, Vite config, and when to enable
+workers), which uses
 [`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
 with a custom codec worker that registers JP2K and experimental HTJ2K support
 inside the worker before decode. Use the codec selector on the page to switch between `/test-fixtures/codecs/jpeg2k.zarr`,
@@ -182,6 +184,7 @@ isolation, but normal user-facing `uv run` commands do not need it.
 - `registerJpeg2kCodec()` for the registered `imagecodecs_jpeg2k` id (Node/CI).
 - `enableWorkerChunkDecode()` from `zarrextra/workers` for browser apps (fizarrita
   worker pool + custom codec worker with JP2K and experimental HTJ2K registration).
+  See [Browser workers](./browser-workers) for Vite setup and integration guidance.
 - `registerExperimentalHtj2kCodec()` for OpenJPH HTJ2K decode (`experimental.openjph_htj2k`
   and legacy `experimental.imagecodecs_htj2k`) in Node/CI smoke tests.
 - `loadOmeZarrMultiscalesFromStore()` for loading multiscales from a

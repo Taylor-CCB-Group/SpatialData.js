@@ -117,6 +117,13 @@ required for that path.
 | Node / CI | `registerJpeg2kCodec()` / `registerExperimentalHtj2kCodec()` on the main thread |
 | Browser | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K or HTJ2K data |
 
+### Vite apps
+
+See the [Browser workers guide](https://taylor-ccb-group.github.io/SpatialData.js/docs/vis/browser-workers) in the main docs for the full integration contract (call-once semantics, default worker URLs, and bundler config). In short:
+
+- `optimizeDeps: { exclude: ['zarrextra/workers'] }` in `vite.config.ts`
+- After upgrading `zarrextra`, delete `node_modules/.vite`
+
 Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
 `@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
 the default worker script). Future worker entries may let applications opt into

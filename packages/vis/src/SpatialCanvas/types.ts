@@ -93,8 +93,24 @@ export interface PointsLayerConfig extends BaseLayerConfig {
   // Points-specific settings
   // TODO: these should be accessors for getColor etc based on e.g. transcript type
   // should be able to filter etc. Some kind of LOD...
+  /** Base point radius in pixels (scatter path; tile sublayer getRadius). */
   pointSize?: number;
+  /** Minimum radius in pixels for tiled points (deck.gl radiusMinPixels). */
+  pointRadiusMinPixels?: number;
+  /** Maximum radius in pixels for tiled points (deck.gl radiusMaxPixels). */
+  pointRadiusMaxPixels?: number;
+  /** Minimum pointSize multiplier when zoomed out on the non-tiled scatter path. */
+  pointMinSizeScale?: number;
   color?: [number, number, number, number];
+  /** Filter to these feature code(s). Future: string[] resolved via codebook. */
+  featureCodes?: number[];
+  /** Max rows to retain in memory for preloaded scatter (default 4M). */
+  pointsMemoryCap?: number;
+  /** Max rows to render after filtering (default 4M; set 0 to disable). */
+  pointsRenderCap?: number;
+  experimentalOptimizations?: 'auto' | 'off';
+  /** Show viewport tile polygons and loading stats for tiled points layers. */
+  showTileDebugOverlay?: boolean;
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

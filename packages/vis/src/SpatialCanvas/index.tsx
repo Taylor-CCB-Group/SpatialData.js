@@ -24,7 +24,10 @@ import { createPortal } from 'react-dom';
 import { ImageChannelPanel } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
+import { PointsStylePanel, preloadedPointCountSuffix } from './PointsStylePanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
+import { ShapesStylePanel } from './ShapesStylePanel';
 import {
   shouldAutoFitSpatialView,
   useSpatialCanvasRendererFromLayerInputs,
@@ -39,10 +42,11 @@ import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
-import type { SpatialCanvasStoreApi } from './stores';
 import { layerConfig } from './layerConfig';
+import { pointsTileLoadingMessage as formatPointsTileLoadingMessage } from './pointsTileProgress';
+import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
-import type { ImageLayerConfig } from './useLayerData';
+import { formatLoadDurationMs, type ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
 // ============================================
@@ -212,7 +216,7 @@ interface ViewerSectionProps {
   vivLayerProps: ImageLayerConfig[];
   hasEnabledLayers: boolean;
   isBlocking: boolean;
-  isLoading: boolean;
+  overlayStatusMessage: string | null;
   hasLayersDrawn: boolean;
   getWorldBoundsForVisibleLayers: () => import('@spatialdata/core').AxisAlignedBounds | null;
   vw: number;
@@ -228,7 +232,7 @@ function ViewerSection({
   vivLayerProps,
   hasEnabledLayers,
   isBlocking,
-  isLoading,
+  overlayStatusMessage,
   hasLayersDrawn,
   getWorldBoundsForVisibleLayers,
   vw,
@@ -318,7 +322,7 @@ function ViewerSection({
           Loading layer data...
         </div>
       )}
-      {isLoading && !isBlocking && (
+      {!isBlocking && overlayStatusMessage && (
         <div
           style={{
             position: 'absolute',
@@ -331,7 +335,7 @@ function ViewerSection({
             borderRadius: 4,
           }}
         >
-          Refreshing layer metadata...
+          {overlayStatusMessage}
         </div>
       )}
       {!hasLayersDrawn && !isBlocking && (
@@ -365,12 +369,14 @@ interface SpatialCanvasInnerProps {
    * When true (default), hover tooltips include picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
   aggregateHoverTooltips = true,
+  experimentalOptimizations = 'auto',
 }: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [measureRef, { width, height }] = useMeasure();
@@ -392,6 +398,7 @@ function SpatialCanvasInner({
   // viewState is intentionally NOT subscribed here.  It is consumed only by
   // ViewerSection, which is the sole component that re-renders on every pan.
   const selectedLayerId = useSpatialCanvasStore((s) => s.selectedLayerId);
+  const viewZoom = useSpatialCanvasStore((s) => s.viewState?.zoom ?? null);
 
   const actions = useSpatialCanvasActions();
 
@@ -409,24 +416,35 @@ function SpatialCanvasInner({
     getFeatureTooltip,
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
+    getPointsLayerLoadedData,
+    getPointsFeatureCatalog,
+    getShapesLayerLoadedData,
     getLayerLoadState,
+    getPointsTileLoadProgress,
+    getPointsTileLoadingMessage,
+    getOverlayStatusMessage,
+    getPointsLayerSupportsTileDebug,
+    isPointsFeatureCatalogLoading,
+    requestPointsFeatureCatalog,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
     hasEnabledLayers,
     hasLayersDrawn,
     hasRenderableLayerData,
     isBlocking,
-    isLoading,
     vivLayerProps,
   } = useSpatialCanvasRendererFromLayerInputs({
     spatialData,
     coordinateSystem,
     layerInputs: { layers, layerOrder },
-    // viewState and onViewStateChange are omitted: auto-fit and pan handling
-    // are managed entirely by ViewerSection so this hook never re-runs on pan.
+    // viewState target is not subscribed here; zoom alone drives point-size scaling.
+    viewZoom,
     width: vw,
     height: vh,
+    experimentalOptimizations,
   });
+  const overlayStatusMessage = getOverlayStatusMessage();
+
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
@@ -458,15 +476,15 @@ function SpatialCanvasInner({
   ]);
 
   useEffect(() => {
-    if (coordinateSystems.length > 0 && !coordinateSystem) {
-      actions.setCoordinateSystem(coordinateSystems[0]);
-    }
-  }, [coordinateSystems, coordinateSystem, actions]);
-
-  useEffect(() => {
     actions.reset();
-    if (coordinateSystem && coordinateSystems.includes(coordinateSystem)) {
-      actions.setCoordinateSystem(coordinateSystem);
+    const nextCoordinateSystem =
+      coordinateSystem && coordinateSystems.includes(coordinateSystem)
+        ? coordinateSystem
+        : coordinateSystems.length === 1
+          ? coordinateSystems[0]
+          : null;
+    if (nextCoordinateSystem) {
+      actions.setCoordinateSystem(nextCoordinateSystem);
     }
   }, [coordinateSystem, coordinateSystems, actions]);
 
@@ -496,6 +514,7 @@ function SpatialCanvasInner({
           elementKey: element.key,
           visible: true,
           opacity: 1,
+          ...(element.type === 'points' ? { showTileDebugOverlay: true } : {}),
         });
         actions.addLayer(config);
       }
@@ -511,6 +530,14 @@ function SpatialCanvasInner({
         ? spatialData?.getAssociatedTable('labels', selectedConfig.elementKey)?.[1]
         : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
+  const selectedPointsLoadedData =
+    selectedConfig?.type === 'points' ? getPointsLayerLoadedData(selectedConfig.id) : undefined;
+  const selectedPointsPointCountSuffix =
+    selectedPointsLoadedData === undefined
+      ? undefined
+      : preloadedPointCountSuffix(selectedPointsLoadedData);
+  const selectedShapesLoadedSummary =
+    selectedConfig?.type === 'shapes' ? getShapesLayerLoadedData(selectedConfig.id) : undefined;
 
   const selectedLayerCanCenter =
     !!selectedConfig?.id &&
@@ -677,7 +704,7 @@ function SpatialCanvasInner({
               vivLayerProps={vivLayerProps}
               hasEnabledLayers={hasEnabledLayers}
               isBlocking={isBlocking}
-              isLoading={isLoading}
+              overlayStatusMessage={overlayStatusMessage}
               hasLayersDrawn={hasLayersDrawn}
               getWorldBoundsForVisibleLayers={getWorldBoundsForVisibleLayers}
               vw={vw}
@@ -761,15 +788,23 @@ function SpatialCanvasInner({
                       fontSize: '11px',
                     }}
                   >
-                    {selectedConfig.type !== 'image' && selectedLayerLoadState.geometry && (
-                      <div>
-                        Geometry: {selectedLayerLoadState.geometry}
-                        {!hasRenderableLayerData(selectedConfig.id) &&
-                        selectedLayerLoadState.geometry === 'loading'
-                          ? ' (blocking)'
-                          : ''}
-                      </div>
-                    )}
+                    {selectedConfig.type !== 'image' &&
+                      selectedConfig.type !== 'points' &&
+                      selectedConfig.type !== 'shapes' &&
+                      selectedLayerLoadState.geometry && (
+                        <div>
+                          Geometry: {selectedLayerLoadState.geometry}
+                          {selectedLayerLoadState.geometryLoadDurationMs !== undefined &&
+                          (selectedLayerLoadState.geometry === 'ready' ||
+                            selectedLayerLoadState.geometry === 'error')
+                            ? ` (${formatLoadDurationMs(selectedLayerLoadState.geometryLoadDurationMs)})`
+                            : ''}
+                          {!hasRenderableLayerData(selectedConfig.id) &&
+                          selectedLayerLoadState.geometry === 'loading'
+                            ? ' (blocking)'
+                            : ''}
+                        </div>
+                      )}
                     {(selectedConfig.type === 'image' || selectedConfig.type === 'labels') &&
                       selectedLayerLoadState.image && (
                         <div>
@@ -803,16 +838,45 @@ function SpatialCanvasInner({
                     updateLayer={actions.updateLayer}
                   />
                 )}
+                {selectedConfig.type === 'points' && (
+                  <>
+                    <PointsStylePanel
+                      layerId={selectedConfig.id}
+                      config={selectedConfig}
+                      loadState={selectedLayerLoadState}
+                      pointCountSuffix={selectedPointsPointCountSuffix}
+                      tileLoadingMessage={formatPointsTileLoadingMessage(
+                        getPointsTileLoadProgress(selectedConfig.id)
+                      )}
+                      supportsTileDebugOverlay={getPointsLayerSupportsTileDebug(selectedConfig.id)}
+                      updateLayer={actions.updateLayer}
+                    />
+                    <PointsFeatureFilterPanel
+                      layerId={selectedConfig.id}
+                      config={selectedConfig}
+                      catalog={getPointsFeatureCatalog(selectedConfig.id)}
+                      catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
+                      onRequestCatalog={requestPointsFeatureCatalog}
+                      updateLayer={actions.updateLayer}
+                    />
+                  </>
+                )}
                 {selectedConfig.type === 'shapes' && (
-                  <ShapeFillColorPanel
-                    tableName={associatedTable?.key}
-                    availableFields={availableTooltipFields}
-                    selected={selectedConfig.fillColorByColumn}
-                    onChange={(fillColorByColumn) => {
-                      actions.updateLayer(selectedConfig.id, { fillColorByColumn });
-                    }}
-                    noAssociatedTableMessage="No associated table found for this shapes layer"
-                  />
+                  <>
+                    <ShapesStylePanel
+                      loadState={selectedLayerLoadState}
+                      loadedSummary={selectedShapesLoadedSummary}
+                    />
+                    <ShapeFillColorPanel
+                      tableName={associatedTable?.key}
+                      availableFields={availableTooltipFields}
+                      selected={selectedConfig.fillColorByColumn}
+                      onChange={(fillColorByColumn) => {
+                        actions.updateLayer(selectedConfig.id, { fillColorByColumn });
+                      }}
+                      noAssociatedTableMessage="No associated table found for this shapes layer"
+                    />
+                  </>
                 )}
                 {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (
                   <TooltipFieldsPanel
@@ -869,6 +933,7 @@ export interface SpatialCanvasProps {
    * When true (default), hover tooltips aggregate picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 /**
@@ -924,6 +989,7 @@ export default function SpatialCanvas({
   tooltipContainer,
   renderTooltip,
   aggregateHoverTooltips,
+  experimentalOptimizations,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -932,6 +998,7 @@ export default function SpatialCanvas({
           tooltipContainer={tooltipContainer}
           renderTooltip={renderTooltip}
           aggregateHoverTooltips={aggregateHoverTooltips}
+          experimentalOptimizations={experimentalOptimizations}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

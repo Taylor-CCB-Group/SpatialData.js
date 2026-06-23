@@ -1,0 +1,111 @@
+---
+sidebar_position: 7
+---
+
+# Browser workers
+
+SpatialData.js offloads CPU-heavy browser work to Web Workers so the main thread
+stays responsive during parquet decode, zarr chunk decode, and related scans.
+**Workers are generally recommended for browser apps**, even when you are not
+using JP2K, HTJ2K, or other special image codecs.
+
+This page is the integration guide for MDV, Vitessce adapters, and custom Vite
+apps. Package READMEs link here for bundler setup details.
+
+## When workers matter (and the tradeoff)
+
+Workers move expensive work off the UI thread. Without them, parquet decode,
+feature catalog scans, Morton tiling, and routine zarr chunk reads can block
+pan/zoom and other interaction.
+
+| Worker path | Enable API | Typical use |
+|-------------|------------|-------------|
+| **Points worker** | `enablePointsWorker()` from `@spatialdata/core` | Parquet geometry decode, feature filtering, catalog/count scans, Morton viewport tiles |
+| **Chunk-decode pool** | `enableWorkerChunkDecode()` from `zarrextra/workers` | Zarr chunk decode via [fizarrita](https://www.npmjs.com/package/@fideus-labs/fizarrita); **required** for JP2K/HTJ2K in the browser, also helpful for other codecs on large or latency-sensitive datasets |
+
+**Cost:** worker scripts include WASM and codec dependencies, increasing bundle
+and download size. Finer-grained opt-in worker bundles (for example lighter
+workers without JP2K/HTJ2K) are planned for a future release.
+
+**Node / CI:** register codecs on the main thread (`registerJpeg2kCodec()`,
+`registerExperimentalHtj2kCodec()` from `zarrextra`). Worker enable functions
+are browser-oriented.
+
+## Call once at app startup
+
+Enable each worker path **once** from an app entry module (`main.tsx`, MDV
+bootstrap, etc.) — not from render paths, data loaders, or unguarded
+`useEffect` hooks.
+
+Bare `enablePointsWorker()` and `enableWorkerChunkDecode()` are **not**
+idempotent. A second call tears down the existing worker(s), rejects in-flight
+points-worker requests (`"Points worker disabled"`), and terminates the codec
+pool before recreating it.
+
+Safe patterns:
+
+- Module-level `ensure*` wrapper with a flag (see the vis demo `ensureDemoPointsWorker`).
+- `ensurePointsWorker()` from `@spatialdata/core` (no-op when already enabled).
+
+React StrictMode runs effects twice in development. If enable runs inside an
+effect without a guard, workers may be torn down and recreated on mount.
+
+Example (vis demo style):
+
+```typescript
+import { enablePointsWorker } from '@spatialdata/core';
+import { enableWorkerChunkDecode } from 'zarrextra/workers';
+
+let workersReady = false;
+
+export function ensureBrowserWorkers() {
+  if (workersReady || typeof Worker === 'undefined') {
+    return;
+  }
+  enableWorkerChunkDecode();
+  enablePointsWorker();
+  workersReady = true;
+}
+```
+
+Call `ensureBrowserWorkers()` once from your app entry module before loading
+SpatialData.
+
+## Default worker URLs
+
+Call bare `enable*()` with **no `workerUrl` override** in production apps.
+Packages ship compiled worker artifacts resolved by default:
+
+- `@spatialdata/core` → `dist/points-worker.js` (export: `@spatialdata/core/points-worker`)
+- `zarrextra` → `dist/codec-worker.js` (export: `zarrextra/codec-worker`)
+
+Do **not** point `workerUrl` at monorepo source `.ts` paths. That works only in
+local dev against unpublished sources and breaks production builds where `.ts`
+files are not shipped.
+
+## Vite integration
+
+Vite apps should exclude `zarrextra/workers` from dependency pre-bundling:
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ['zarrextra/workers'],
+  },
+});
+```
+
+After upgrading `zarrextra` or `@spatialdata/core` when worker packaging changes,
+delete `node_modules/.vite` to clear stale prebundles.
+
+The points worker default uses Vite's static `new Worker(new URL(..., import.meta.url))`
+pattern when no override is passed. The codec worker pool passes a runtime URL to
+fizarrita; a future `zarrextra/workers/vite` bundler entry may wrap
+`?worker&url` resolution for Vite consumers.
+
+## Related docs
+
+- [Codec fixture guide](./codec-fixtures) — JP2K/HTJ2K fixtures and worker-backed decode in the vis demo
+- [MDV integration](./mdv-integration) — embedding `SpatialCanvasViewer`
+- [Core package overview](../core/overview) — WASM hot paths and element loaders

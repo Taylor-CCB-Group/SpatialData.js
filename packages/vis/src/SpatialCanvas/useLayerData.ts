@@ -23,11 +23,19 @@ import {
   type LabelsElement,
   type LabelsTooltipMetadata,
   type PointsElement,
+  type PointsFeatureCatalog,
+  type PointsTilingMetadata,
   type ShapesElement,
+  type ShapesGeometryKind,
   type ShapesRenderData,
   type ShapesTooltipMetadata,
   type SpatialData,
   type SpatialFeatureTooltipData,
+  pointsPreloadTruncatedMessage,
+  preloadedColumnarPointCount,
+  mergeFeatureCountsIntoCatalog,
+  resolvePointsMemoryCap,
+  resolvePointsRenderCap,
   attachTooltipElementContext,
   boundsFromCircles,
   boundsFromImagePixelExtents,
@@ -50,9 +58,14 @@ import {
   buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  formatPointsTileDebugTooltip,
+  isPointsTileDebugPickObject,
+  tileDebugEntriesSignature,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
+  createTileDebugStore,
+  type TileDebugStore,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -64,6 +77,25 @@ import {
 import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
+import {
+  aggregatePointsTileLoadProgress,
+  isPointsTileLoading,
+  pointsTileLoadProgressFromStore,
+  pointsTileLoadingMessage,
+  type PointsTileLoadProgress,
+} from './pointsTileProgress';
+import {
+  deletePointsPreloadCacheForElement,
+  hasPointsPreloadForElement,
+  planPointsLoads,
+  pointsPreloadCacheKey,
+  resolvePointsPreloadData,
+  shouldPreloadAfterMetadataProbe,
+} from './pointsLoadPlan';
+import {
+  pointsRenderResourceSignature,
+  resolvePointsRenderResource,
+} from './resolvePointsRenderResource';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type { AvailableElement, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
 
@@ -101,6 +133,7 @@ export interface WorldBoundsCacheEntry {
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
   points: Map<string, PointData>;
+  pointTilingMetadata: Map<string, PointsTilingMetadata | null>;
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
   labels: Map<string, LabelsLoaderData>;
   /**
@@ -128,8 +161,27 @@ type RasterSelection = Partial<{ z: number; c: number; t: number }>;
 
 export interface LayerLoadState {
   geometry?: ResourceLoadStatus;
+  /** User-facing geometry load error, when geometry status is `error`. */
+  geometryError?: string;
+  /** Non-fatal geometry notice shown while geometry is ready (e.g. truncated preload). */
+  geometryNotice?: string;
+  /** Wall-clock ms from first geometry load start to ready/error. */
+  geometryLoadDurationMs?: number;
   image?: ResourceLoadStatus;
   tooltip?: ResourceLoadStatus;
+}
+
+export function formatLoadDurationMs(ms: number): string {
+  if (ms < 1000) {
+    return `${ms} ms`;
+  }
+  const seconds = ms / 1000;
+  return seconds >= 10 ? `${Math.round(seconds)} s` : `${seconds.toFixed(1)} s`;
+}
+
+export interface ShapesLayerLoadedSummary {
+  geometryKind: ShapesGeometryKind;
+  featureCount: number;
 }
 
 export interface ImageLayerConfig {
@@ -190,8 +242,18 @@ interface UseLayerDataResult {
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
   /** Raw loaded labels pipeline data (defaults) for the properties UI */
   getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
+  /** Raw loaded preloaded points data for the properties UI */
+  getPointsLayerLoadedData: (layerId: string) => PointData | undefined;
+  /** Loaded shapes geometry summary for the properties UI */
+  getShapesLayerLoadedData: (layerId: string) => ShapesLayerLoadedSummary | undefined;
   /** Current load state for a given layer. */
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
+  /** Feature catalog for a visible points layer, when loaded. */
+  getPointsFeatureCatalog: (layerId: string) => PointsFeatureCatalog | null | undefined;
+  /** Whether the feature catalog is still loading for a points layer. */
+  isPointsFeatureCatalogLoading: (layerId: string) => boolean;
+  /** Request the feature catalog for a points layer. */
+  requestPointsFeatureCatalog: (layerId: string) => void;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
   /** Resolve a feature tooltip lazily from the picked row index. */
@@ -222,6 +284,14 @@ interface UseLayerDataResult {
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
   isBlocking: boolean;
+  /** Tile fetch progress for Morton-tiled points layers. */
+  getPointsTileLoadProgress: (layerId?: string) => PointsTileLoadProgress;
+  /** User-facing message while tiled points are loading, if any. */
+  getPointsTileLoadingMessage: () => string | null;
+  /** Combined non-blocking overlay message (tiles, filter reload, other refresh). */
+  getOverlayStatusMessage: () => string | null;
+  /** Whether a points layer uses viewport tile loading (tile debug overlay eligible). */
+  getPointsLayerSupportsTileDebug: (layerId: string) => boolean;
   /** Trigger a reload of data for a specific element */
   reloadElement: (type: string, key: string) => void;
   /** World-space axis-aligned bounds for one visible layer with loaded data, or null. */
@@ -313,6 +383,33 @@ function isShapesAvailableElement(element: AvailableElement): element is Omit<
 
 function getWorldBoundsCacheKey(elem: AvailableElement): string {
   return `${elem.type}:${elem.key}`;
+}
+
+function transformAxisAlignedBounds(
+  bounds: AxisAlignedBounds,
+  modelMatrix: Matrix4
+): AxisAlignedBounds | null {
+  const corners: [number, number, number][] = [
+    [bounds.minX, bounds.minY, 0],
+    [bounds.maxX, bounds.minY, 0],
+    [bounds.maxX, bounds.maxY, 0],
+    [bounds.minX, bounds.maxY, 0],
+  ];
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const corner of corners) {
+    const transformed = modelMatrix.transformAsPoint(corner);
+    if (!Number.isFinite(transformed[0]) || !Number.isFinite(transformed[1])) {
+      return null;
+    }
+    minX = Math.min(minX, transformed[0]);
+    minY = Math.min(minY, transformed[1]);
+    maxX = Math.max(maxX, transformed[0]);
+    maxY = Math.max(maxY, transformed[1]);
+  }
+  return { minX, minY, maxX, maxY };
 }
 
 export function resolveLayerElement(
@@ -448,7 +545,9 @@ export function useLayerData(
   layerOrder: string[],
   availableElements: ElementsByType,
   coordinateSystem: string | null,
-  spatialData?: SpatialData
+  spatialData?: SpatialData,
+  experimentalOptimizations: 'auto' | 'off' = 'auto',
+  viewZoom: number | null = null
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -456,6 +555,7 @@ export function useLayerData(
   const loadedDataRef = useRef<LoadedData>({
     shapes: new Map(),
     points: new Map(),
+    pointTilingMetadata: new Map(),
     images: new Map(),
     labels: new Map(),
     shapePrebuiltData: new Map(),
@@ -473,11 +573,96 @@ export function useLayerData(
   layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
-  const [, setLoadedDataRevision] = useState(0);
+  const geometryLoadStartRef = useRef<Map<string, number>>(new Map());
+  const geometryLoadDurationRef = useRef<Map<string, number>>(new Map());
+  const [loadedDataRevision, setLoadedDataRevision] = useState(0);
+  const pointsTileDebugStoreRef = useRef(new Map<string, TileDebugStore>());
+  const pointsRenderResourceCacheRef = useRef(
+    new Map<
+      string,
+      { signature: string; resource: ReturnType<typeof resolvePointsRenderResource> }
+    >()
+  );
+  const [pointsTileLayersRevision, setPointsTileLayersRevision] = useState(0);
+  const pointsTileLayersFrameRef = useRef<number | null>(null);
+  const pointsFeatureCatalogRef = useRef(new Map<string, PointsFeatureCatalog | null>());
+  const pointsFeatureCatalogInFlightRef = useRef(new Set<string>());
+  const [pointsFeatureCatalogRevision, setPointsFeatureCatalogRevision] = useState(0);
+  const pointsRowFeatureCodesRef = useRef(new Map<string, ArrayLike<number>>());
+  const pointsRowFeatureCodesInFlightRef = useRef(new Set<string>());
+  const [pointsRowFeatureCodesRevision, setPointsRowFeatureCodesRevision] = useState(0);
+
+  const notifyPointsTileLayersChanged = useCallback(() => {
+    if (pointsTileLayersFrameRef.current != null) {
+      return;
+    }
+    const schedule =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (callback: FrameRequestCallback) => setTimeout(callback, 0);
+    pointsTileLayersFrameRef.current = schedule(() => {
+      pointsTileLayersFrameRef.current = null;
+      setPointsTileLayersRevision((revision) => revision + 1);
+    });
+  }, []);
 
   const notifyLoadedDataChanged = useCallback(() => {
     setLoadedDataRevision((revision) => revision + 1);
   }, []);
+
+  const getTileDebugStore = useCallback(
+    (layerId: string): TileDebugStore => {
+      let store = pointsTileDebugStoreRef.current.get(layerId);
+      if (!store) {
+        store = createTileDebugStore(notifyPointsTileLayersChanged);
+        pointsTileDebugStoreRef.current.set(layerId, store);
+      }
+      return store;
+    },
+    [notifyPointsTileLayersChanged]
+  );
+
+  const getPointsTileLoadProgress = useCallback(
+    (layerId?: string): PointsTileLoadProgress => {
+      void pointsTileLayersRevision;
+      if (layerId) {
+        return pointsTileLoadProgressFromStore(pointsTileDebugStoreRef.current.get(layerId));
+      }
+      const visibleProgress = new Map<string, PointsTileLoadProgress>();
+      for (const id of layerOrder) {
+        const config = layers[id];
+        if (!config?.visible || config.type !== 'points') continue;
+        const store = pointsTileDebugStoreRef.current.get(id);
+        if (store) {
+          visibleProgress.set(id, pointsTileLoadProgressFromStore(store));
+        }
+      }
+      return aggregatePointsTileLoadProgress(visibleProgress);
+    },
+    [layerOrder, layers, pointsTileLayersRevision]
+  );
+
+  const getPointsTileLoadingMessage = useCallback((): string | null => {
+    return pointsTileLoadingMessage(getPointsTileLoadProgress());
+  }, [getPointsTileLoadProgress]);
+
+  const prevExperimentalOptimizationsRef = useRef(experimentalOptimizations);
+  useEffect(() => {
+    const prev = prevExperimentalOptimizationsRef.current;
+    prevExperimentalOptimizationsRef.current = experimentalOptimizations;
+    if (prev === 'off' && experimentalOptimizations !== 'off') {
+      const loaded = loadedDataRef.current;
+      for (const layerId of layerOrder) {
+        const config = layers[layerId];
+        if (config?.type !== 'points' || !config.visible) continue;
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
+        if (elem) {
+          deletePointsPreloadCacheForElement(loaded.points, elem.key);
+        }
+      }
+      notifyLoadedDataChanged();
+    }
+  }, [experimentalOptimizations, layerOrder, layers, notifyLoadedDataChanged]);
 
   // Build a map of element key -> AvailableElement for quick lookup
   const elementMap = useRef<Map<string, AvailableElement>>(new Map());
@@ -492,24 +677,194 @@ export function useLayerData(
     elementMap.current = map;
   }, [availableElements]);
 
+  const requestPointsFeatureCatalog = useCallback((layerId: string) => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (!elem || elem.type !== 'points') {
+      return;
+    }
+    if (
+      (pointsFeatureCatalogRef.current.has(elem.key) &&
+        pointsFeatureCatalogRef.current.get(elem.key) !== null) ||
+      pointsFeatureCatalogInFlightRef.current.has(elem.key)
+    ) {
+      return;
+    }
+
+    const elementKey = elem.key;
+    const element = elem.element as PointsElement;
+    pointsFeatureCatalogInFlightRef.current.add(elementKey);
+    setPointsFeatureCatalogRevision((revision) => revision + 1);
+
+    void (async () => {
+      try {
+        const catalog = await element.listFeatures();
+        pointsFeatureCatalogRef.current.set(elementKey, catalog);
+        setPointsFeatureCatalogRevision((revision) => revision + 1);
+
+        if (catalog) {
+          void (async () => {
+            try {
+              const counts = await element.loadFeatureCounts();
+              pointsFeatureCatalogRef.current.set(
+                elementKey,
+                mergeFeatureCountsIntoCatalog(catalog, counts)
+              );
+              setPointsFeatureCatalogRevision((revision) => revision + 1);
+            } catch (error) {
+              console.warn(`Failed to load feature counts for ${elementKey}:`, error);
+            }
+          })();
+        }
+      } catch (error) {
+        pointsFeatureCatalogRef.current.set(elementKey, null);
+        console.error(`Failed to load points feature catalog for ${elementKey}:`, error);
+        setPointsFeatureCatalogRevision((revision) => revision + 1);
+      } finally {
+        pointsFeatureCatalogInFlightRef.current.delete(elementKey);
+        setPointsFeatureCatalogRevision((revision) => revision + 1);
+      }
+    })();
+  }, []);
+
+  const ensurePointsRowFeatureCodes = useCallback(
+    (preloadCacheKey: string, elementKey: string, element: PointsElement, memoryCap?: number) => {
+      if (!loadedDataRef.current.points.has(preloadCacheKey)) {
+        return;
+      }
+      if (pointsRowFeatureCodesRef.current.has(preloadCacheKey)) {
+        return;
+      }
+      if (pointsRowFeatureCodesInFlightRef.current.has(preloadCacheKey)) {
+        return;
+      }
+
+      pointsRowFeatureCodesInFlightRef.current.add(preloadCacheKey);
+      setPointsRowFeatureCodesRevision((revision) => revision + 1);
+
+      const featureCatalog = pointsFeatureCatalogRef.current.has(elementKey)
+        ? pointsFeatureCatalogRef.current.get(elementKey)
+        : undefined;
+
+      void (async () => {
+        try {
+          //pjt subject to review
+          const rowCodes = await element.loadRowFeatureCodes({
+            memoryCap,
+            featureCatalog,
+          });
+          if (rowCodes && rowCodes.length > 0) {
+            pointsRowFeatureCodesRef.current.set(preloadCacheKey, rowCodes);
+          }
+          setPointsRowFeatureCodesRevision((revision) => revision + 1);
+        } catch (error) {
+          console.error(`Failed to load row feature codes for ${preloadCacheKey}:`, error);
+        } finally {
+          pointsRowFeatureCodesInFlightRef.current.delete(preloadCacheKey);
+          setPointsRowFeatureCodesRevision((revision) => revision + 1);
+        }
+      })();
+    },
+    []
+  );
+
+  useEffect(() => {
+    for (const layerId of layerOrder) {
+      const config = layersRef.current[layerId];
+      if (!config?.visible || config.type !== 'points') continue;
+      const elem = resolveLayerElement(layerId, config, elementMap.current);
+      if (!elem || elem.type !== 'points' || elem.element.kind !== 'points') continue;
+      const preloadCacheKey = pointsPreloadCacheKey(elem.key, config);
+      ensurePointsRowFeatureCodes(
+        preloadCacheKey,
+        elem.key,
+        elem.element,
+        config.pointsMemoryCap
+      );
+    }
+  }, [layerOrder, loadedDataRevision, ensurePointsRowFeatureCodes]);
+
   const setLayerResourceStatus = useCallback(
     (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
       setLayerLoadStates((prev) => {
         const existing = prev[layerId] ?? {};
-        if (existing[resource] === status) {
+        const statusUnchanged = existing[resource] === status;
+        const canPatchGeometryDuration =
+          resource === 'geometry' &&
+          (status === 'ready' || status === 'error') &&
+          existing.geometryLoadDurationMs === undefined &&
+          geometryLoadStartRef.current.has(layerId);
+
+        if (statusUnchanged && !canPatchGeometryDuration) {
           return prev;
+        }
+        const next: LayerLoadState = { ...existing, [resource]: status };
+        if (resource === 'geometry') {
+          if (status === 'loading' || status === 'ready') {
+            delete next.geometryError;
+          }
+          if (status === 'loading') {
+            delete next.geometryNotice;
+            if (!geometryLoadStartRef.current.has(layerId)) {
+              geometryLoadStartRef.current.set(layerId, performance.now());
+              geometryLoadDurationRef.current.delete(layerId);
+            }
+            delete next.geometryLoadDurationMs;
+          } else if (status === 'ready' || status === 'error') {
+            const start = geometryLoadStartRef.current.get(layerId);
+            if (start !== undefined) {
+              const duration = Math.round(performance.now() - start);
+              next.geometryLoadDurationMs = duration;
+              geometryLoadDurationRef.current.set(layerId, duration);
+              geometryLoadStartRef.current.delete(layerId);
+            } else {
+              const cached =
+                existing.geometryLoadDurationMs ?? geometryLoadDurationRef.current.get(layerId);
+              if (cached !== undefined) {
+                next.geometryLoadDurationMs = cached;
+              }
+            }
+          }
         }
         return {
           ...prev,
-          [layerId]: {
-            ...existing,
-            [resource]: status,
-          },
+          [layerId]: next,
         };
       });
     },
     []
   );
+
+  const setLayerGeometryNotice = useCallback((layerId: string, message: string | undefined) => {
+    setLayerLoadStates((prev) => {
+      const existing = prev[layerId] ?? {};
+      if (existing.geometryNotice === message) {
+        return prev;
+      }
+      const next: LayerLoadState = { ...existing };
+      if (message) {
+        next.geometryNotice = message;
+      } else {
+        delete next.geometryNotice;
+      }
+      return { ...prev, [layerId]: next };
+    });
+  }, []);
+
+  const setLayerGeometryError = useCallback((layerId: string, message: string | undefined) => {
+    setLayerLoadStates((prev) => {
+      const existing = prev[layerId] ?? {};
+      if (existing.geometryError === message) {
+        return prev;
+      }
+      const next: LayerLoadState = { ...existing };
+      if (message) {
+        next.geometryError = message;
+      } else {
+        delete next.geometryError;
+      }
+      return { ...prev, [layerId]: next };
+    });
+  }, []);
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -546,6 +901,7 @@ export function useLayerData(
         loadFillColor: boolean;
         loadImage: boolean;
         loadPoints: boolean;
+        loadPointTilingMetadata: boolean;
         loadLabels: boolean;
       }> = [];
 
@@ -575,6 +931,7 @@ export function useLayerData(
               loadFillColor,
               loadImage: false,
               loadPoints: false,
+              loadPointTilingMetadata: false,
               loadLabels: false,
             });
           }
@@ -592,20 +949,36 @@ export function useLayerData(
               loadFillColor: false,
               loadImage: false,
               loadPoints: false,
+              loadPointTilingMetadata: false,
               loadLabels,
             });
           }
-        } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
-          toLoad.push({
-            layerId,
-            element: elem,
-            loadGeometry: false,
-            loadTooltip: false,
-            loadFillColor: false,
-            loadImage: false,
-            loadPoints: true,
-            loadLabels: false,
-          });
+        } else if (config.type === 'points') {
+          const wantsOptimized =
+            experimentalOptimizations !== 'off' && config.experimentalOptimizations !== 'off';
+          const metadataKnown = loaded.pointTilingMetadata.has(elem.key);
+          const tiledMetadata = loaded.pointTilingMetadata.get(elem.key);
+          const preloadCacheKey = pointsPreloadCacheKey(elem.key, config);
+          const { probeMetadata: loadPointTilingMetadata, preloadFullTable: loadPoints } =
+            planPointsLoads({
+              wantsOptimized,
+              metadataKnown,
+              tiledMetadata,
+              hasPreloaded: loaded.points.has(preloadCacheKey),
+            });
+          if (loadPointTilingMetadata || loadPoints) {
+            toLoad.push({
+              layerId,
+              element: elem,
+              loadGeometry: false,
+              loadTooltip: false,
+              loadFillColor: false,
+              loadImage: false,
+              loadPoints,
+              loadPointTilingMetadata,
+              loadLabels: false,
+            });
+          }
         } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
           toLoad.push({
             layerId,
@@ -615,6 +988,7 @@ export function useLayerData(
             loadFillColor: false,
             loadImage: true,
             loadPoints: false,
+            loadPointTilingMetadata: false,
             loadLabels: false,
           });
         }
@@ -633,6 +1007,7 @@ export function useLayerData(
             loadFillColor,
             loadImage,
             loadPoints,
+            loadPointTilingMetadata,
             loadLabels,
           }) => {
             if (element.type === 'shapes') {
@@ -769,17 +1144,98 @@ export function useLayerData(
                   }
                 }
               }
-            } else if (element.type === 'points' && loadPoints) {
-              try {
-                setLayerResourceStatus(layerId, 'geometry', 'loading');
-                // todo better type-guards etc here.
-                const e = element.element as PointsElement;
-                const data = await e.loadPoints();
-                loadedDataRef.current.points.set(element.key, data);
-                setLayerResourceStatus(layerId, 'geometry', 'ready');
-              } catch (error) {
-                setLayerResourceStatus(layerId, 'geometry', 'error');
-                console.error(`Failed to load points for ${layerId}:`, error);
+            } else if (element.type === 'points') {
+              const e = element.element as PointsElement;
+              const pointsConfig =
+                layersRef.current[layerId]?.type === 'points'
+                  ? layersRef.current[layerId]
+                  : undefined;
+              const preloadCacheKey = pointsPreloadCacheKey(element.key, pointsConfig ?? {});
+              const memoryCap = resolvePointsMemoryCap(pointsConfig?.pointsMemoryCap);
+              const loadPreloadedPoints = async (options?: { continueLoading?: boolean }) => {
+                const nonBlocking =
+                  options?.continueLoading ??
+                  hasPointsPreloadForElement(loadedDataRef.current.points, element.key);
+                try {
+                  if (!nonBlocking) {
+                    setLayerResourceStatus(layerId, 'geometry', 'loading');
+                    setLayerGeometryNotice(layerId, undefined);
+                  }
+                  setLayerGeometryError(layerId, undefined);
+                  const data = await e.loadPoints({ memoryCap });
+                  loadedDataRef.current.points.set(preloadCacheKey, data);
+                  setLayerResourceStatus(layerId, 'geometry', 'ready');
+                  const loadedCount = preloadedColumnarPointCount(data.shape, data.data);
+                  if (data.preloadTruncated && data.totalRowCount !== undefined) {
+                    setLayerGeometryNotice(
+                      layerId,
+                      pointsPreloadTruncatedMessage(loadedCount, data.totalRowCount)
+                    );
+                  }
+                  notifyLoadedDataChanged();
+                  requestPointsFeatureCatalog(layerId);
+                  ensurePointsRowFeatureCodes(
+                    preloadCacheKey,
+                    element.key,
+                    e,
+                    pointsConfig?.pointsMemoryCap
+                  );
+                } catch (error) {
+                  setLayerResourceStatus(layerId, 'geometry', 'error');
+                  setLayerGeometryNotice(layerId, undefined);
+                  setLayerGeometryError(layerId, undefined);
+                  console.error(`Failed to load points for ${layerId}:`, error);
+                  notifyLoadedDataChanged();
+                }
+              };
+              if (loadPointTilingMetadata) {
+                let renderableMetadata: PointsTilingMetadata | null = null;
+                let probedTotalRows = 0;
+                try {
+                  setLayerResourceStatus(layerId, 'geometry', 'loading');
+                  setLayerGeometryError(layerId, undefined);
+                  const metadata = await e.getPointsTilingMetadata();
+                  probedTotalRows = metadata?.totalRows ?? (await e.getParquetRowCount());
+                  renderableMetadata =
+                    metadata?.supportsRowGroupRangeReads && metadata.bounds ? metadata : null;
+                  loadedDataRef.current.pointTilingMetadata.set(element.key, renderableMetadata);
+                  if (renderableMetadata) {
+                    deletePointsPreloadCacheForElement(loadedDataRef.current.points, element.key);
+                    setLayerResourceStatus(layerId, 'geometry', 'ready');
+                    notifyLoadedDataChanged();
+                  } else if (
+                    shouldPreloadAfterMetadataProbe({
+                      probeRan: true,
+                      renderableMetadata: false,
+                      hasPreloaded: loadedDataRef.current.points.has(preloadCacheKey),
+                      totalRows: probedTotalRows,
+                    }) ||
+                    probedTotalRows > 0
+                  ) {
+                    await loadPreloadedPoints({ continueLoading: true });
+                  } else {
+                    setLayerResourceStatus(layerId, 'geometry', 'idle');
+                    notifyLoadedDataChanged();
+                  }
+                } catch (error) {
+                  loadedDataRef.current.pointTilingMetadata.set(element.key, null);
+                  setLayerResourceStatus(layerId, 'geometry', 'error');
+                  setLayerGeometryError(layerId, undefined);
+                  console.error(`Failed to inspect point tiling metadata for ${layerId}:`, error);
+                  notifyLoadedDataChanged();
+                  if (
+                    shouldPreloadAfterMetadataProbe({
+                      probeRan: true,
+                      renderableMetadata: false,
+                      hasPreloaded: loadedDataRef.current.points.has(preloadCacheKey),
+                      totalRows: probedTotalRows,
+                    })
+                  ) {
+                    await loadPreloadedPoints({ continueLoading: true });
+                  }
+                }
+              } else if (loadPoints) {
+                await loadPreloadedPoints();
               }
             } else if (element.type === 'image' && loadImage) {
               try {
@@ -1048,6 +1504,9 @@ export function useLayerData(
     spatialData,
     setLayerResourceStatus,
     notifyLoadedDataChanged,
+    experimentalOptimizations,
+    requestPointsFeatureCatalog,
+    ensurePointsRowFeatureCodes,
   ]);
 
   const reloadElement = useCallback((type: string, key: string) => {
@@ -1063,8 +1522,23 @@ export function useLayerData(
         }
       }
     } else if (type === 'points') {
-      loaded.points.delete(key);
+      deletePointsPreloadCacheForElement(loaded.points, key);
+      loaded.pointTilingMetadata.delete(key);
       loaded.worldBounds.delete(`points:${key}`);
+      pointsRenderResourceCacheRef.current.delete(key);
+      pointsFeatureCatalogRef.current.delete(key);
+      pointsFeatureCatalogInFlightRef.current.delete(key);
+      pointsRowFeatureCodesRef.current.delete(key);
+      for (const cacheKey of [...pointsRowFeatureCodesRef.current.keys()]) {
+        if (cacheKey.startsWith(`${key}|`)) {
+          pointsRowFeatureCodesRef.current.delete(cacheKey);
+        }
+      }
+      for (const cacheKey of [...pointsRowFeatureCodesInFlightRef.current]) {
+        if (cacheKey === key || cacheKey.startsWith(`${key}|`)) {
+          pointsRowFeatureCodesInFlightRef.current.delete(cacheKey);
+        }
+      }
     } else if (type === 'image') {
       loaded.images.delete(key);
       loaded.worldBounds.delete(`image:${key}`);
@@ -1093,7 +1567,14 @@ export function useLayerData(
       return loadedDataRef.current.shapes.has(elem.key);
     }
     if (elem.type === 'points') {
-      return loadedDataRef.current.points.has(elem.key);
+      const config = layersRef.current[layerId];
+      const preloadCacheKey =
+        config?.type === 'points' ? pointsPreloadCacheKey(elem.key, config) : elem.key;
+      return (
+        loadedDataRef.current.points.has(preloadCacheKey) ||
+        hasPointsPreloadForElement(loadedDataRef.current.points, elem.key) ||
+        Boolean(loadedDataRef.current.pointTilingMetadata.get(elem.key)?.bounds)
+      );
     }
     if (elem.type === 'image') {
       return loadedDataRef.current.images.has(elem.key);
@@ -1133,14 +1614,23 @@ export function useLayerData(
           );
         }
         if (elem.type === 'points') {
-          const pointData = loaded.points.get(elem.key);
-          if (!pointData) return null;
+          const config = layers[layerId];
+          const preloadCacheKey =
+            config?.type === 'points' ? pointsPreloadCacheKey(elem.key, config) : elem.key;
+          const pointData = resolvePointsPreloadData(loaded.points, elem.key, preloadCacheKey);
+          const tilingMetadata = loaded.pointTilingMetadata.get(elem.key);
+          if (!pointData && !tilingMetadata?.bounds) return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
             getWorldBoundsCacheKey(elem),
-            pointData,
+            pointData ?? tilingMetadata,
             elem.transform,
-            () => boundsFromPoints(pointData, elem.transform, false)
+            () =>
+              pointData
+                ? boundsFromPoints(pointData, elem.transform, false)
+                : tilingMetadata?.bounds
+                  ? transformAxisAlignedBounds(tilingMetadata.bounds, elem.transform)
+                  : null
           );
         }
         if (elem.type === 'image') {
@@ -1200,6 +1690,7 @@ export function useLayerData(
   }, [layerOrder, layers, getWorldBoundsForLayer]);
 
   const getLayers = useCallback((): Layer[] => {
+    void loadedDataRevision;
     const deckLayers: Layer[] = [];
     const loaded = loadedDataRef.current;
 
@@ -1237,17 +1728,78 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       } else if (config.type === 'points') {
-        const pointData = loaded.points.get(elem.key);
-        if (pointData) {
+        const preloadCacheKey = pointsPreloadCacheKey(elem.key, config);
+        const pointData = resolvePointsPreloadData(loaded.points, elem.key, preloadCacheKey);
+        const pointTilingMetadata = loaded.pointTilingMetadata.get(elem.key);
+        const metadataKnown = loaded.pointTilingMetadata.has(elem.key);
+        const wantsOptimized =
+          experimentalOptimizations !== 'off' && config.experimentalOptimizations !== 'off';
+        const signature = pointsRenderResourceSignature(
+          elem.element as PointsElement,
+          {
+            preloaded: pointData ?? null,
+            tilingMetadata: pointTilingMetadata,
+            metadataKnown,
+          },
+          {
+            experimentalOptimizations: wantsOptimized ? 'auto' : 'off',
+            preloadCacheKey,
+          }
+        );
+        let cachedResource = pointsRenderResourceCacheRef.current.get(elem.key);
+        if (!cachedResource || cachedResource.signature !== signature) {
+          pointsTileDebugStoreRef.current.delete(layerId);
+          const resource = resolvePointsRenderResource(
+            elem.element as PointsElement,
+            {
+              preloaded: pointData ?? null,
+              tilingMetadata: pointTilingMetadata,
+              metadataKnown,
+            },
+            { experimentalOptimizations: wantsOptimized ? 'auto' : 'off' }
+          );
+          if (resource) {
+            cachedResource = { signature, resource };
+            pointsRenderResourceCacheRef.current.set(elem.key, cachedResource);
+          } else {
+            pointsRenderResourceCacheRef.current.delete(elem.key);
+          }
+        }
+        if (cachedResource?.resource) {
+          if (
+            config.featureCodes !== undefined &&
+            !pointsRowFeatureCodesRef.current.has(preloadCacheKey)
+          ) {
+            ensurePointsRowFeatureCodes(
+              preloadCacheKey,
+              elem.key,
+              elem.element as PointsElement,
+              config.pointsMemoryCap
+            );
+          }
+          const supportsViewportTiles =
+            cachedResource.resource.loader.capabilities.supportsViewportTiles;
+          const tileDebugStore = supportsViewportTiles ? getTileDebugStore(layerId) : undefined;
           const layer = renderPointsLayer({
-            element: elem.element as PointsElement,
+            resource: cachedResource.resource,
             id: layerId,
             modelMatrix: elem.transform,
             opacity: config.opacity,
             visible: config.visible,
             pointSize: config.pointSize,
+            pointRadiusMinPixels: config.pointRadiusMinPixels,
+            pointRadiusMaxPixels: config.pointRadiusMaxPixels,
+            pointMinSizeScale: config.pointMinSizeScale,
+            viewZoom,
             color: config.color,
-            pointData,
+            featureCodes: config.featureCodes,
+            preloadedFeatureCodes: pointsRowFeatureCodesRef.current.get(preloadCacheKey),
+            renderCap: resolvePointsRenderCap(config.pointsRenderCap),
+            showTileDebugOverlay: config.showTileDebugOverlay ?? true,
+            tileDebugStore,
+            tileDebugSignature: tileDebugStore
+              ? tileDebugEntriesSignature(tileDebugStore.getState().tileDebugEntries)
+              : undefined,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -1299,7 +1851,18 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections]);
+  }, [
+    layers,
+    layerOrder,
+    getStableSelections,
+    viewZoom,
+    getTileDebugStore,
+    experimentalOptimizations,
+    loadedDataRevision,
+    pointsTileLayersRevision,
+    pointsRowFeatureCodesRevision,
+    ensurePointsRowFeatureCodes,
+  ]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
@@ -1313,10 +1876,39 @@ export function useLayerData(
     return loadedDataRef.current.labels.get(elem.key);
   }, []);
 
+  const getPointsLayerLoadedData = useCallback((layerId: string): PointData | undefined => {
+    const config = layersRef.current[layerId];
+    const elem = resolveLayerElement(layerId, config, elementMap.current);
+    if (!elem || elem.type !== 'points') return undefined;
+    const preloadCacheKey =
+      config?.type === 'points' ? pointsPreloadCacheKey(elem.key, config) : elem.key;
+    return resolvePointsPreloadData(loadedDataRef.current.points, elem.key, preloadCacheKey);
+  }, []);
+
+  const getShapesLayerLoadedData = useCallback(
+    (layerId: string): ShapesLayerLoadedSummary | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'shapes') return undefined;
+      const loaded = loadedDataRef.current.shapes.get(elem.key);
+      if (!loaded?.renderData) return undefined;
+      return {
+        geometryKind: loaded.renderData.geometryKind,
+        featureCount: loaded.renderData.featureIds.length,
+      };
+    },
+    []
+  );
+
   const getLayerLoadState = useCallback(
     (layerId?: string): LayerLoadState | undefined => {
       if (layerId === undefined) return undefined;
-      return layerLoadStates[layerId];
+      const state = layerLoadStates[layerId];
+      if (!state) return undefined;
+      const cachedDuration = geometryLoadDurationRef.current.get(layerId);
+      if (cachedDuration !== undefined && state.geometryLoadDurationMs === undefined) {
+        return { ...state, geometryLoadDurationMs: cachedDuration };
+      }
+      return state;
     },
     [layerLoadStates]
   );
@@ -1374,6 +1966,17 @@ export function useLayerData(
           },
           elementContext
         );
+      }
+
+      if (elem.type === 'points') {
+        if (isPointsTileDebugPickObject(pickInfo.object)) {
+          const progress = pointsTileLoadProgressFromStore(
+            pointsTileDebugStoreRef.current.get(layerId)
+          );
+          const tooltip = formatPointsTileDebugTooltip(pickInfo.object.entry, progress);
+          return attachTooltipElementContext(tooltip, elementContext);
+        }
+        return undefined;
       }
 
       if (!isShapesAvailableElement(elem)) {
@@ -1558,13 +2161,26 @@ export function useLayerData(
     return vivProps;
   }, [layers, layerOrder, getStableSelections]);
 
-  const isLoading = useMemo(
-    () =>
-      Object.values(layerLoadStates).some((state) =>
-        Object.values(state).some((status) => status === 'loading')
-      ),
-    [layerLoadStates]
-  );
+  const isLoading = useMemo(() => {
+    const resourceLoading = Object.values(layerLoadStates).some((state) =>
+      Object.values(state).some((status) => status === 'loading')
+    );
+    if (resourceLoading) {
+      return true;
+    }
+    void pointsTileLayersRevision;
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible || config.type !== 'points') continue;
+      const progress = pointsTileLoadProgressFromStore(
+        pointsTileDebugStoreRef.current.get(layerId)
+      );
+      if (isPointsTileLoading(progress)) {
+        return true;
+      }
+    }
+    return false;
+  }, [layerLoadStates, layerOrder, layers, pointsTileLayersRevision]);
 
   const isBlocking = useMemo(
     () =>
@@ -1587,11 +2203,63 @@ export function useLayerData(
     [layerLoadStates, layerOrder, layers, hasRenderableLayerData]
   );
 
+  const getPointsLayerSupportsTileDebug = useCallback((layerId: string): boolean => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (!elem || elem.type !== 'points') {
+      return false;
+    }
+    const cached = pointsRenderResourceCacheRef.current.get(elem.key);
+    return cached?.resource?.loader.capabilities.supportsViewportTiles ?? false;
+  }, []);
+
+  const getPointsFeatureCatalog = useCallback(
+    (layerId: string): PointsFeatureCatalog | null | undefined => {
+      void pointsFeatureCatalogRevision;
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') {
+        return undefined;
+      }
+      if (!pointsFeatureCatalogRef.current.has(elem.key)) {
+        return undefined;
+      }
+      return pointsFeatureCatalogRef.current.get(elem.key) ?? null;
+    },
+    [pointsFeatureCatalogRevision]
+  );
+
+  const isPointsFeatureCatalogLoading = useCallback(
+    (layerId: string): boolean => {
+      void pointsFeatureCatalogRevision;
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') {
+        return false;
+      }
+      return pointsFeatureCatalogInFlightRef.current.has(elem.key);
+    },
+    [pointsFeatureCatalogRevision]
+  );
+
+  const getOverlayStatusMessage = useCallback((): string | null => {
+    const tileMessage = getPointsTileLoadingMessage();
+    if (tileMessage) {
+      return tileMessage;
+    }
+    const resourceLoading = Object.values(layerLoadStates).some((state) =>
+      Object.values(state).some((status) => status === 'loading')
+    );
+    if (resourceLoading) {
+      return 'Refreshing layer metadata…';
+    }
+    return null;
+  }, [getPointsTileLoadingMessage, layerLoadStates]);
+
   return {
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
+    getPointsLayerLoadedData,
+    getShapesLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
     getFeatureTooltip,
@@ -1599,6 +2267,13 @@ export function useLayerData(
     getShapePickEvent,
     isLoading,
     isBlocking,
+    getPointsTileLoadProgress,
+    getPointsTileLoadingMessage,
+    getOverlayStatusMessage,
+    getPointsLayerSupportsTileDebug,
+    getPointsFeatureCatalog,
+    isPointsFeatureCatalogLoading,
+    requestPointsFeatureCatalog,
     reloadElement,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,

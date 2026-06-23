@@ -26,7 +26,14 @@ export default defineConfig({
       formats: ['es'],
     },
     rollupOptions: {
-      external: ['@deck.gl/core', '@hms-dbmi/viv', '@math.gl/core', 'deck.gl', 'zod'],
+      external: [
+        '@deck.gl/core',
+        '@hms-dbmi/viv',
+        '@math.gl/core',
+        '@spatialdata/core',
+        'deck.gl',
+        'zod',
+      ],
     },
   },
   test: {

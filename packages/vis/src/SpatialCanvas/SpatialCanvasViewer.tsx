@@ -21,13 +21,13 @@ import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import {
+  type RenderStackHostLayerResolver,
+  type RenderStackLayerInputs,
+  type UnknownRenderStackHostLayerHandler,
   renderStackOrder,
   renderStackToLayerInputs,
   resolveRenderStackHostLayers,
   sortLayersByRenderStackOrder,
-  type RenderStackHostLayerResolver,
-  type RenderStackLayerInputs,
-  type UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import {
@@ -85,6 +85,7 @@ export interface SpatialCanvasViewerProps {
    * When true (default), hover tooltips aggregate picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 interface AutoFitInput {
@@ -146,6 +147,7 @@ export interface UseSpatialCanvasRendererOptions {
   hostLayerResolver?: RenderStackHostLayerResolver;
   onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
   autoFit?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -154,6 +156,8 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   layerInputs: RenderStackLayerInputs;
   renderOrder?: string[];
   viewState?: ViewState | null;
+  /** Orthographic zoom for points layer radius scaling (without subscribing to pan target). */
+  viewZoom?: number | null;
   onViewStateChange?: (viewState: ViewState) => void;
   width: number;
   height: number;
@@ -161,6 +165,7 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   externalDeckLayers?: Layer[];
   sortDeckLayers?: boolean;
   autoFit?: boolean;
+  experimentalOptimizations?: 'auto' | 'off';
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -169,6 +174,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   layerInputs,
   renderOrder,
   viewState,
+  viewZoom: viewZoomProp,
   onViewStateChange,
   width,
   height,
@@ -176,6 +182,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   externalDeckLayers,
   sortDeckLayers,
   autoFit = true,
+  experimentalOptimizations = 'auto',
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   const availableElements = useMemo(() => {
     if (!spatialData || !coordinateSystem) {
@@ -191,7 +198,9 @@ export function useSpatialCanvasRendererFromLayerInputs({
     layerInputs.layerOrder,
     availableElements,
     coordinateSystem,
-    spatialData ?? undefined
+    spatialData ?? undefined,
+    experimentalOptimizations,
+    viewZoomProp ?? viewState?.zoom ?? null
   );
 
   const generatedDeckLayers = layerData.getLayers();
@@ -269,6 +278,7 @@ export function useSpatialCanvasRenderer({
   hostLayerResolver,
   onUnknownHostLayer,
   autoFit = true,
+  experimentalOptimizations = 'auto',
 }: UseSpatialCanvasRendererOptions) {
   const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
   const hostDeckLayers = useMemo(
@@ -292,6 +302,7 @@ export function useSpatialCanvasRenderer({
     hostDeckLayers,
     sortDeckLayers: true,
     autoFit,
+    experimentalOptimizations,
   });
 }
 
@@ -348,6 +359,7 @@ function SpatialCanvasViewerInner({
   autoFit = true,
   style,
   aggregateHoverTooltips = true,
+  experimentalOptimizations = 'auto',
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -385,7 +397,9 @@ function SpatialCanvasViewerInner({
     externalDeckLayers,
     sortDeckLayers: Boolean(renderStack),
     autoFit,
+    experimentalOptimizations,
   });
+  const overlayStatusMessage = renderer.getOverlayStatusMessage();
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
     [renderer.enabledLayerIds]
@@ -556,9 +570,9 @@ function SpatialCanvasViewerInner({
             {showLoadingOverlay && renderer.isBlocking && (
               <div style={overlayStyle}>Loading layer data...</div>
             )}
-            {showLoadingOverlay && renderer.isLoading && !renderer.isBlocking && (
+            {showLoadingOverlay && !renderer.isBlocking && overlayStatusMessage && (
               <div style={{ ...overlayStyle, backgroundColor: 'rgba(20,20,20,0.78)' }}>
-                Refreshing layer metadata...
+                {overlayStatusMessage}
               </div>
             )}
             {!renderer.hasLayersDrawn && !renderer.isBlocking && (

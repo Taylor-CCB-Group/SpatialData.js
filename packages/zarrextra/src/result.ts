@@ -1,13 +1,10 @@
 /**
- * Result type for explicit error handling without exceptions.
+ * Minimal Result type for explicit error handling without exceptions.
  * Inspired by Rust's Result<T, E>.
  *
- * This type is useful for operations that can fail, especially in zarr operations
- * where errors should be handled explicitly rather than thrown as exceptions.
- *
- * Note: This is a custom implementation for simplicity. We may review using
- * an existing Result library (such as neverthrow) in the future,
- * but for now this provides a lightweight, dependency-free solution.
+ * Adoption in this monorepo is intentionally narrow. If we expand Result use,
+ * we would likely adopt an established library (e.g. neverthrow) rather than
+ * grow this in-house API — treat these helpers as provisional.
  */
 
 /**

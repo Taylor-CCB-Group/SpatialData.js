@@ -13,11 +13,10 @@ packages/zarrextra/src/*.d.ts.map
 coverage/
 test-fixtures/
 validation-results/
+**/.pytest_cache/
 
-# Python virtual environments (version-specific, completely separate)
-python/v0.5.0/.venv/
-python/v0.6.1/.venv/
-python/v0.7.2/.venv/
+# Python virtual environments
+python/*/.venv/
 
 # Vendored from @cornerstonejs/codec-openjph (see scripts/vendor-openjph-for-python.mjs)
 python/spatialdata-codec-writer/src/spatialdata_codec_writer/vendor/openjph/

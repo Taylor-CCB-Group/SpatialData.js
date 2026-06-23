@@ -13,6 +13,9 @@ Scope constraints:
 - ensure MDV can compose its own deck layers and state cleanly alongside this library
 - avoid app-specific abstractions leaking into `@spatialdata/*` packages
 
+Browser worker setup (points parquet offload, zarr chunk-decode pool, Vite
+`optimizeDeps` contract): [Browser workers](./browser-workers).
+
 ## What "ready for MDV" means
 
 A version is MDV-ready when MDV can embed `SpatialCanvasViewer` as a headless renderer while preserving existing chart behavior from:

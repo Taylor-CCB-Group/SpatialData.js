@@ -1,31 +1,25 @@
 /**
- * Points layer renderer using deck.gl ScatterplotLayer
- *
- * Renders point cloud data from SpatialData points elements.
+ * Points layer renderer adapter for SpatialCanvas.
  */
 
-import { ScatterplotLayer } from 'deck.gl';
 import type { Matrix4 } from '@math.gl/core';
-import type { PointsElement } from '@spatialdata/core';
+import { PointsLayer, type PointsRenderResource, type TileDebugStore } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 
-export interface PointDataX {
-  position: [number, number] | [number, number, number];
-  // Additional properties can be added for coloring, sizing, etc.
-  [key: string]: unknown;
-}
+export {
+  DEFAULT_POINT_RADIUS_MAX_PIXELS,
+  DEFAULT_POINT_RADIUS_MIN_PIXELS,
+  DEFAULT_POINT_SIZE,
+  MIN_POINT_SIZE_SCALE,
+  POINT_SIZE_ZOOM_REFERENCE,
+  zoomScaledPointSize,
+} from '@spatialdata/layers';
 
-// this is ndarray and should be defined elsewhere
-// not that we wouldn't also want to be able to have other data & accessors
-export interface PointData {
-  shape: number[];
-  // this should most definitely be TypedArray...
-  data: number[][];
-}
+export type { PointData } from '@spatialdata/layers';
 
 export interface PointsLayerRenderConfig {
-  /** The points element to render */
-  element: PointsElement;
+  /** Resolved points render resource from the Resource Resolver. */
+  resource: PointsRenderResource;
   /** Unique layer ID */
   id: string;
   /** Transformation matrix to target coordinate system */
@@ -36,64 +30,77 @@ export interface PointsLayerRenderConfig {
   visible: boolean;
   /** Point radius in pixels */
   pointSize?: number;
+  pointRadiusMinPixels?: number;
+  pointRadiusMaxPixels?: number;
+  pointMinSizeScale?: number;
+  /** Orthographic view zoom used to scale pointSize when zoomed out */
+  viewZoom?: number | null;
   /** Point color [r, g, b, a] (0-255) */
   color?: [number, number, number, number];
-  /** ndarray - if we want other data for properties like color/radius etc they will be handled differently */
-  pointData?: PointData;
+  /** Integer codes matching `{feature_key}_codes` in the Morton Parquet artifact. */
+  featureCodes?: readonly number[];
+  preloadedFeatureCodes?: ArrayLike<number>;
+  renderCap?: number;
+  showTileDebugOverlay?: boolean;
+  tileDebugStore?: TileDebugStore;
+  tileDebugSignature?: string;
   use3d?: boolean;
 }
 
-/**
- * Create a deck.gl ScatterplotLayer for points data.
- *
- * Note: This requires the point data to be pre-loaded since deck.gl layers
- * are synchronous. The data loading should happen at a higher level.
- */
 export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null {
   const {
-    element,
+    resource,
     id,
     modelMatrix,
     opacity,
     visible,
-    pointSize = 1,
-    color = [255, 100, 100, 200],
-    pointData,
+    pointSize,
+    pointRadiusMinPixels,
+    pointRadiusMaxPixels,
+    pointMinSizeScale,
+    viewZoom,
+    color,
+    featureCodes,
+    preloadedFeatureCodes,
+    renderCap,
+    showTileDebugOverlay,
+    tileDebugStore,
+    tileDebugSignature,
     use3d,
   } = config;
 
-  if (!visible) return null;
+  if (!visible) {
+    return null;
+  }
 
-  if (!pointData) {
-    // Data not loaded yet
+  if (
+    !resource.loader.capabilities.bounds &&
+    resource.loader.capabilities.kind === 'morton-tiled'
+  ) {
     console.debug(
-      `[PointsRenderer] No point data for layer "${id}" from ${element.url ?? element.path}`
+      `[PointsRenderer] No tiling bounds for layer "${id}" from ${resource.element.path}`
     );
     return null;
   }
-  const d = pointData.data;
-  return new ScatterplotLayer({
+
+  return new PointsLayer({
     id,
-    data: d[0], //just for index really
-    // todo: more robust ndarray handling, be more efficient with target
-    // see https://deck.gl/docs/developer-guide/performance#supply-attributes-directly
-    // spatial data-structure (quad/oct-tree) vs pushing raw attributes.
-    // with ways of querying within view.
-    // also allow accessors for other props
-    getPosition: (_d, { index, target }) => [
-      d[0][index],
-      d[1][index],
-      use3d ? d[2]?.[index] || 0 : 0,
-    ],
-    getRadius: pointSize,
-    radiusUnits: 'pixels',
-    getFillColor: color,
-    opacity,
-    // Apply coordinate transformation
+    resource,
     modelMatrix,
-    // Picking
-    pickable: true,
-    autoHighlight: true,
-    highlightColor: [255, 255, 0, 200],
+    opacity,
+    visible,
+    pointSize,
+    pointRadiusMinPixels,
+    pointRadiusMaxPixels,
+    pointMinSizeScale,
+    viewZoom,
+    color,
+    featureCodes,
+    preloadedFeatureCodes,
+    renderCap,
+    showTileDebugOverlay: showTileDebugOverlay ?? true,
+    tileDebugStore,
+    tileDebugSignature,
+    use3d,
   });
 }
