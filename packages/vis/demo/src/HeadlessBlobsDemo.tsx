@@ -8,6 +8,7 @@ import {
 } from '../../src/index';
 import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
+import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
 
 const panelStyle = {
   flexShrink: 0,
@@ -33,8 +34,10 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
   const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 1, entries: [] });
   const [viewState, setViewState] = useState<ViewState | null>(null);
   const [lastFeatureHover, setLastFeatureHover] = useState<SpatialFeaturePickEvent | null>(null);
-  const [tone, setTone] = useState({ brightness: 0.5, contrast: 0.5 });
+  const [tone, setTone] = useState({ brightness: 0.72, contrast: 0.35 });
   const [persistVivLayerProps, setPersistVivLayerProps] = useState(false);
+
+  const vivImageExtensions = useMemo(() => createMdvStyleVivImageExtensions(), []);
 
   const firstImageEntry = useMemo(
     () =>
@@ -68,26 +71,22 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
 
   const vivImagePropsResolver = useCallback(
     ({
-      elementKey,
       channelCount,
     }: {
       elementKey: string;
       channelCount: number;
     }) => {
       if (persistVivLayerProps) return undefined;
-      if (
-        firstImageEntry?.kind === 'spatial' &&
-        elementKey !== firstImageEntry.source.elementKey
-      ) {
-        return undefined;
-      }
+      const n = Math.max(1, channelCount);
       return {
-        brightness: Array.from({ length: Math.max(1, channelCount) }, () => tone.brightness),
-        contrast: Array.from({ length: Math.max(1, channelCount) }, () => tone.contrast),
+        brightness: Array.from({ length: n }, () => tone.brightness),
+        contrast: Array.from({ length: n }, () => tone.contrast),
       };
     },
-    [firstImageEntry, persistVivLayerProps, tone.brightness, tone.contrast]
+    [persistVivLayerProps, tone.brightness, tone.contrast]
   );
+
+  const vivImageExtensionResolver = useCallback(() => vivImageExtensions, [vivImageExtensions]);
 
   useEffect(() => {
     if (!spatialData || coordinateSystems.length === 0) {
@@ -100,7 +99,15 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
     if (!spatialData || !coordinateSystem) {
       return;
     }
-    setRenderStack(buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem));
+    const stack = buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem);
+    setRenderStack({
+      ...stack,
+      entries: stack.entries.map((entry) =>
+        entry.kind === 'spatial' && entry.source.elementType === 'labels'
+          ? { ...entry, visible: false }
+          : entry
+      ),
+    });
     setViewState(null);
   }, [spatialData, coordinateSystem]);
 
@@ -185,7 +192,14 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             }}
           >
             <div style={{ color: '#999' }}>
-              Viv extension passthrough demo ({persistVivLayerProps ? 'saved vivLayerProps' : 'vivImagePropsResolver'})
+              Viv extension passthrough — <code>VivContrastExtension</code> +{' '}
+              <code>ColorPaletteExtension</code> (
+              {persistVivLayerProps ? 'saved vivLayerProps' : 'vivImagePropsResolver'})
+            </div>
+            <div style={{ color: '#666', fontSize: 11 }}>
+              Brightness/contrast sliders feed layer props read by VivContrastExtension (MDV shader
+              path). 0.5 / 0.5 is neutral — the defaults above are pre-biased so the effect is
+              visible on load. Toggle labels off (default) to see the morphology image clearly.
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input
@@ -281,6 +295,8 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             viewState={viewState}
             onViewStateChange={setViewState}
             renderTooltip={false}
+            vivImageExtensions={vivImageExtensions}
+            vivImageExtensionResolver={vivImageExtensionResolver}
             vivImagePropsResolver={vivImagePropsResolver}
             onFeatureHover={setLastFeatureHover}
             onFeatureClick={(event) => {

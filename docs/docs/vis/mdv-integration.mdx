@@ -103,7 +103,7 @@ Implementation status:
 - [ ] Stable externally supplied Viv/deck view id or layer id suffix (`getVivId` compatibility).
 - [x] Viv extension passthrough: `ImageLayerConfig.vivLayerProps`, `vivImageExtensionResolver`, `vivImagePropsResolver` on `SpatialCanvasViewer` (see [Issue #56 APIs](#issue-56-channel--extension-apis) below).
 
-See [Headless viewer guide](./headless-viewer) for experimentation steps. The `/headless` demo (`packages/vis/demo`) includes brightness/contrast sliders exercising `vivImagePropsResolver`.
+See [Headless viewer guide](./headless-viewer) for experimentation steps. The `/headless` demo (`packages/vis/demo`) wires MDV-style `ColorPaletteExtension` + `VivContrastExtension` through `vivImageExtensionResolver`; brightness/contrast sliders feed `vivImagePropsResolver` (or saved `vivLayerProps`).
 
 ## Issue #56 channel and extension APIs
 

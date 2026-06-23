@@ -462,8 +462,6 @@ export function useLayerData(
   vivPassthrough?: VivImagePassthroughOptions
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
-  const vivPassthroughRef = useRef(vivPassthrough);
-  vivPassthroughRef.current = vivPassthrough;
 
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
@@ -1531,7 +1529,7 @@ export function useLayerData(
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
     const vivProps: ImageLayerConfig[] = [];
     const loaded = loadedDataRef.current;
-    const passthrough = vivPassthroughRef.current;
+    const passthrough = vivPassthrough;
 
     for (const layerId of layerOrder) {
       const config = layers[layerId];
@@ -1604,7 +1602,7 @@ export function useLayerData(
     }
 
     return vivProps;
-  }, [layers, layerOrder, getStableSelections]);
+  }, [layers, layerOrder, getStableSelections, vivPassthrough]);
 
   const isLoading = useMemo(
     () =>

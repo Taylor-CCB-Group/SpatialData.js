@@ -226,7 +226,10 @@ export function useSpatialCanvasRendererFromLayerInputs({
     ]);
     return sortDeckLayers ? sortLayersByRenderStackOrder(composed, resolvedLayerOrder) : composed;
   }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, resolvedLayerOrder, sortDeckLayers]);
-  const vivLayerProps = layerData.getVivLayerProps();
+  const vivLayerProps = useMemo(
+    () => layerData.getVivLayerProps(),
+    [layerData.getVivLayerProps, vivPassthrough, layerData.isBlocking, layerData.isLoading]
+  );
 
   const enabledLayerIds = useMemo(() => {
     return new Set(layerInputs.layerOrder.filter((id) => layerInputs.layers[id]?.visible));

@@ -12,6 +12,7 @@ catalog:
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^6.0.1
   '@hms-dbmi/viv': ^0.21.0
+  '@vivjs/constants': 0.21.0
   '@vivjs/views': 0.21.0
   anndata.js: ^0.0.2
   apache-arrow: ^17.0.0
