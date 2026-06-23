@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,18 +38,30 @@ PY`,
 }
 
 function createFilesystemStore(root: string) {
+  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+    const fullPath = join(root, relativePath);
+    try {
+      const info = await stat(fullPath);
+      if (info.isDirectory()) {
+        return null;
+      }
+      return await readFile(fullPath);
+    } catch {
+      return null;
+    }
+  };
+
   return {
     async get(path: string) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
-      try {
-        return await readFile(join(root, relativePath));
-      } catch {
-        return null;
-      }
+      return readStoreBytes(relativePath);
     },
     async getRange(path: string, range: { offset?: number; length?: number; suffixLength?: number }) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
-      const bytes = await readFile(join(root, relativePath));
+      const bytes = await readStoreBytes(relativePath);
+      if (!bytes) {
+        return null;
+      }
       if (range.suffixLength != null) {
         return bytes.subarray(bytes.length - range.suffixLength);
       }

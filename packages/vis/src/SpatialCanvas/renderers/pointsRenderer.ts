@@ -102,5 +102,5 @@ export function renderPointsLayer(config: PointsLayerRenderConfig): Layer | null
     tileDebugStore,
     tileDebugSignature,
     use3d,
-  }) as Layer;
+  });
 }

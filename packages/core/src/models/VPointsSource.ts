@@ -331,6 +331,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       onProgress?: (progress: PointsLoadProgress) => void;
     }
   ): Promise<PointsLoadResult> {
+    ensurePointsWorker();
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
@@ -842,7 +843,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     if (this.pointTilingMetadataCache.has(elementPath)) {
       return this.pointTilingMetadataCache.get(elementPath) ?? null;
     }
-    const promise = this.loadPointsTilingMetadataUncached(elementPath);
+    const promise = this.loadPointsTilingMetadataUncached(elementPath).catch(error => {
+      this.pointTilingMetadataCache.delete(elementPath);
+      throw error;
+    });
     this.pointTilingMetadataCache.set(elementPath, promise);
     return promise;
   }
@@ -922,6 +926,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     checkAbort(options.signal);
     const full = await this.loadPointsWithOptionalFeatureCodes(elementPath, metadata, options);
+    checkAbort(options.signal);
     return filterPointsToBounds(
       full.data,
       options.bounds,
@@ -1101,13 +1106,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       0
     );
     if (totalRowsUpperBound === 0) {
-      return {
-        data: [new Float32Array(0), new Float32Array(0)],
-        shape: [2, 0],
-        bounds: options.bounds,
-        loadMode: 'row-groups',
-        tiling: metadata,
-      };
+      return null;
     }
 
     const xs: number[] = [];
@@ -1189,6 +1188,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         ys,
         zs,
       });
+    }
+
+    if (xs.length === 0) {
+      return null;
     }
 
     return {
