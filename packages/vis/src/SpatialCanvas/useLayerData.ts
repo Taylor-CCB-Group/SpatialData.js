@@ -65,7 +65,7 @@ import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
-import type { AvailableElement, ChannelConfig, ElementsByType, ImageLayerConfig as SavedImageLayerConfig, LayerConfig, ShapesLayerConfig } from './types';
+import type { AvailableElement, ChannelConfig, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
 import {
   mergeVivImagePassthroughProps,
   type VivImagePassthroughOptions,
@@ -1541,8 +1541,7 @@ export function useLayerData(
       const imageData = loaded.images.get(elem.key);
       if (!imageData) continue; // Skip if loader not ready yet
 
-      const savedConfig = config as SavedImageLayerConfig;
-      const ch = savedConfig.channels;
+      const ch = config.channels;
       const colors =
         ch?.colors && ch.colors.length > 0 ? ch.colors : imageData.colors || [[255, 255, 255]];
       const contrastLimits =
@@ -1581,7 +1580,7 @@ export function useLayerData(
       const resolvedProps = passthrough?.vivImagePropsResolver?.(resolverCtx);
       const resolvedExtensions = passthrough?.vivImageExtensionResolver?.(resolverCtx);
       const mergedVivProps = mergeVivImagePassthroughProps(
-        savedConfig.vivLayerProps,
+        config.vivLayerProps,
         resolvedProps,
         resolvedExtensions,
         passthrough?.vivImageExtensions
