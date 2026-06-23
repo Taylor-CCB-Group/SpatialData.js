@@ -1,7 +1,7 @@
 import type { PointsElement } from './models/index.js';
 import type { PointsLoadMode } from './types.js';
 import type {
-  PointsInBoundsResult,
+  PointsInBoundsResponse,
   PointsTilingMetadata,
   SpatialBounds,
 } from './pointsTiling.js';
@@ -76,7 +76,7 @@ function columnarPointCount(shape: number[], data: ArrayLike<number>[]): number 
 }
 
 function toColumnarBatch(
-  result: PointsInBoundsResult | PreloadedColumnarInput,
+  result: PointsInBoundsResponse | PreloadedColumnarInput,
   overrides?: Partial<ColumnarNdarrayPointsBatch>
 ): ColumnarNdarrayPointsBatch {
   const shape = result.shape ?? [];

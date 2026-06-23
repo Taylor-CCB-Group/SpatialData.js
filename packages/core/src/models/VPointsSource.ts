@@ -80,7 +80,7 @@ function concatColumnarPointChunks(chunks: ColumnarPointsChunk[]): ColumnarPoint
 import {
   MORTON_CODE_2D_COLUMN,
   type PointsInBoundsOptions,
-  type PointsInBoundsResult,
+  type PointsInBoundsResponse,
   type PointsFeatureCatalog,
   type PointsTilingMetadata,
   extractSentinelBoundingBox,
@@ -915,7 +915,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
   async loadPointsInBounds(
     elementPath: string,
     options: PointsInBoundsOptions
-  ): Promise<PointsInBoundsResult> {
+  ): Promise<PointsInBoundsResponse> {
     checkAbort(options.signal);
     const metadata = await this.getPointsTilingMetadata(elementPath);
     if (metadata?.supportsRowGroupRangeReads && metadata.bounds) {
@@ -1075,7 +1075,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     elementPath: string,
     metadata: PointsTilingMetadata,
     options: PointsInBoundsOptions
-  ): Promise<PointsInBoundsResult | null> {
+  ): Promise<PointsInBoundsResponse | null> {
     if (!metadata.bounds || metadata.totalRowGroups <= 0) {
       return null;
     }

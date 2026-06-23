@@ -4,21 +4,40 @@ sidebar_position: 4
 
 # Error Handling
 
-The `@spatialdata/core` package uses a `Result` type pattern inspired by Rust for explicit error handling. This approach makes error cases visible in the type system and avoids unexpected exceptions.
+`@spatialdata/core` exports a `Result` type (inspired by Rust) for operations
+where failure is expected and should be handled explicitly. **Adoption is
+currently very limited** — a handful of APIs (notably coordinate-system
+lookups) return `Result`; most of the codebase still throws exceptions, returns
+`null`, or uses other ad hoc patterns.
 
-:::info Error types and safety
+Because error handling is not uniform, you **cannot treat `Result` as a
+system-wide contract**. When integrating with this library, assume exceptions
+unless a specific API's signature returns `Result`. The sections below document
+the type and patterns for the places that use it.
 
-The use of this pattern in some parts of the code should not be taken as an assertion that all possible exceptions are handled in this way.
+We find the `Result` approach appealing in principle, but wider use is an **open
+design decision**. If we lean in more thoroughly, we would likely adopt an
+**established library** (for example [`neverthrow`](https://github.com/supermacro/neverthrow)) rather than extend our small in-house definitions.
 
-This aspect of the design may be subject to review, and community feedback is encouraged.
+:::info Limited adoption — read this first
+
+The `Result` pattern is **not** adhered to consistently across packages. Do not
+infer from this page that most failures are typed, composable, or exception-free.
+Many code paths (including parquet I/O, element loading, and worker boundaries)
+still throw or use nullable returns.
+
+Community feedback on whether and how to expand `Result` use is welcome.
 
 :::
 
-:::note Result implementation
+:::note Current implementation (may change)
 
-The `Result` type is implemented in `zarrextra` and re-exported from `@spatialdata/core` for convenience. This is currently a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow`) in the future, but for now this provides a lightweight, dependency-free solution.
-
-:::
+Today the `Result` type lives in `zarrextra` and is re-exported from
+`@spatialdata/core` — a minimal custom shape (`ok` / `value` / `error`) kept
+dependency-free while adoption remains narrow. **Do not build heavily on these
+definitions** as a long-term API promise; broader adoption would probably replace
+or wrap them with a maintained library and standard combinators (`map`, `andThen`,
+etc.).
 
 ## The Result Type
 
@@ -212,7 +231,10 @@ if (errors.length > 0) {
 }
 ```
 
-## Why Result Instead of Exceptions?
+## Why use Result where we do?
+
+These are motivations for the pattern **where it is used today**, and for
+possible wider adoption if we decide to lean in:
 
 1. **Explicit error handling**: The type system shows you when operations can fail
 2. **No hidden control flow**: Errors don't jump up the call stack unexpectedly
@@ -220,5 +242,16 @@ if (errors.length > 0) {
 4. **Composable**: Easy to chain, map, and aggregate results
 5. **Performance**: Avoids the overhead of exception creation when errors are common
 
-This is especially valuable for coordinate system lookups where it's common and expected that some systems may not be available for all elements.
+This is especially valuable for coordinate system lookups, where it is common
+and expected that some systems may not be available for all elements.
+
+## Parquet I/O (not yet migrated)
+
+Parquet loading in `VTableSource` / `VPointsSource` is a typical example of the
+inconsistency above: exceptions, `null`, and skip-on-miss policies coexist.
+Call sites disagree on whether a missing part should throw or be skipped. We are
+keeping this as-is for now. See
+[`docs/plans/parquet-io-error-handling.md`](../../plans/parquet-io-error-handling.md)
+for current behaviour, rationale, and a suggested migration order if we expand
+`Result` use.
 

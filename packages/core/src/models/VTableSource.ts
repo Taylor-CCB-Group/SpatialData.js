@@ -828,9 +828,11 @@ export default class SpatialDataTableSource extends AnnDataSource {
         const parts: Uint8Array[] = [];
         for (const part of dataset.parts) {
           const bytes = await this.loadParquetFileBytesAtPath(part.path);
-          if (bytes) {
-            parts.push(bytes);
+          if (!bytes) {
+            // Strict fail — see docs/plans/parquet-io-error-handling.md
+            throw new Error(`Missing parquet part bytes at ${part.path}`);
           }
+          parts.push(bytes);
         }
         return { parts, totalRows, truncated: false };
       }
@@ -858,7 +860,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
       const partPath = partPaths[partIndex];
       const bytes = await this.loadParquetFileBytesAtPath(partPath);
       if (!bytes) {
-        continue;
+        // Strict fail (sibling capped table loader uses continue) — docs/plans/parquet-io-error-handling.md
+        throw new Error(`Missing parquet bytes at ${partPath}`);
       }
       parts.push(bytes);
       const partRows = numRowsByPart[partIndex];

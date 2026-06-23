@@ -44,7 +44,7 @@ export interface PointsTilingMetadata {
   bounds?: SpatialBounds;
 }
 
-export type PointsInBoundsResult = PointsColumnarData & {
+export type PointsInBoundsResponse = PointsColumnarData & {
   bounds: SpatialBounds;
   loadMode: 'row-groups' | 'full-filter';
   tiling?: PointsTilingMetadata;
@@ -314,7 +314,7 @@ export function filterPointsToBounds(
   featureIndices?: ArrayLike<number>,
   featureCodes?: readonly number[],
   sourceFeatureCodes?: ArrayLike<number>
-): PointsInBoundsResult {
+): PointsInBoundsResponse {
   const allowedFeatureCodes = featureCodeAllowSet(featureCodes);
   const xs = data.data[0];
   const ys = data.data[1];
