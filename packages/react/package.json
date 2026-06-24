@@ -1,6 +1,6 @@
 {
   "name": "@spatialdata/react",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "React hooks and components for SpatialData",
   "type": "module",
   "module": "./dist/index.js",
