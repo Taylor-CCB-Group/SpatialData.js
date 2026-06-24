@@ -8,6 +8,7 @@ import {
 } from '../../src/index';
 import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
+import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
 
 const panelStyle = {
   flexShrink: 0,
@@ -33,6 +34,59 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
   const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 1, entries: [] });
   const [viewState, setViewState] = useState<ViewState | null>(null);
   const [lastFeatureHover, setLastFeatureHover] = useState<SpatialFeaturePickEvent | null>(null);
+  const [tone, setTone] = useState({ brightness: 0.72, contrast: 0.35 });
+  const [persistVivLayerProps, setPersistVivLayerProps] = useState(false);
+
+  const vivImageExtensions = useMemo(() => createMdvStyleVivImageExtensions(), []);
+
+  const firstImageEntry = useMemo(
+    () =>
+      renderStack.entries.find(
+        (entry) => entry.kind === 'spatial' && entry.source.elementType === 'image'
+      ),
+    [renderStack.entries]
+  );
+
+  useEffect(() => {
+    if (!persistVivLayerProps || !firstImageEntry || firstImageEntry.kind !== 'spatial') {
+      return;
+    }
+    setRenderStack((prev) => ({
+      ...prev,
+      entries: prev.entries.map((entry) => {
+        if (entry.id !== firstImageEntry.id || entry.kind !== 'spatial') return entry;
+        return {
+          ...entry,
+          props: {
+            ...entry.props,
+            vivLayerProps: {
+              brightness: [tone.brightness],
+              contrast: [tone.contrast],
+            },
+          },
+        };
+      }),
+    }));
+  }, [firstImageEntry, persistVivLayerProps, tone.brightness, tone.contrast]);
+
+  const vivImagePropsResolver = useCallback(
+    ({
+      channelCount,
+    }: {
+      elementKey: string;
+      channelCount: number;
+    }) => {
+      if (persistVivLayerProps) return undefined;
+      const n = Math.max(1, channelCount);
+      return {
+        brightness: Array.from({ length: n }, () => tone.brightness),
+        contrast: Array.from({ length: n }, () => tone.contrast),
+      };
+    },
+    [persistVivLayerProps, tone.brightness, tone.contrast]
+  );
+
+  const vivImageExtensionResolver = useCallback(() => vivImageExtensions, [vivImageExtensions]);
 
   useEffect(() => {
     if (!spatialData || coordinateSystems.length === 0) {
@@ -45,7 +99,15 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
     if (!spatialData || !coordinateSystem) {
       return;
     }
-    setRenderStack(buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem));
+    const stack = buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem);
+    setRenderStack({
+      ...stack,
+      entries: stack.entries.map((entry) =>
+        entry.kind === 'spatial' && entry.source.elementType === 'labels'
+          ? { ...entry, visible: false }
+          : entry
+      ),
+    });
     setViewState(null);
   }, [spatialData, coordinateSystem]);
 
@@ -118,6 +180,65 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             })}
           </div>
         ) : null}
+        {firstImageEntry ? (
+          <div
+            style={{
+              marginTop: 10,
+              paddingTop: 10,
+              borderTop: '1px solid #333',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            }}
+          >
+            <div style={{ color: '#999' }}>
+              Viv extension passthrough — <code>VivContrastExtension</code> +{' '}
+              <code>ColorPaletteExtension</code> (
+              {persistVivLayerProps ? 'saved vivLayerProps' : 'vivImagePropsResolver'})
+            </div>
+            <div style={{ color: '#666', fontSize: 11 }}>
+              Brightness/contrast sliders feed layer props read by VivContrastExtension (MDV shader
+              path). 0.5 / 0.5 is neutral — the defaults above are pre-biased so the effect is
+              visible on load. Toggle labels off (default) to see the morphology image clearly.
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={persistVivLayerProps}
+                onChange={(e) => setPersistVivLayerProps(e.target.checked)}
+              />
+              <span>Persist tone on render-stack entry.props.vivLayerProps</span>
+            </label>
+            <label style={{ display: 'grid', gridTemplateColumns: '72px 1fr 40px', gap: 8, alignItems: 'center' }}>
+              <span style={{ color: '#aaa' }}>Brightness</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={tone.brightness}
+                onChange={(e) =>
+                  setTone((prev) => ({ ...prev, brightness: Number(e.target.value) }))
+                }
+              />
+              <span style={{ color: '#666' }}>{tone.brightness.toFixed(2)}</span>
+            </label>
+            <label style={{ display: 'grid', gridTemplateColumns: '72px 1fr 40px', gap: 8, alignItems: 'center' }}>
+              <span style={{ color: '#aaa' }}>Contrast</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={tone.contrast}
+                onChange={(e) =>
+                  setTone((prev) => ({ ...prev, contrast: Number(e.target.value) }))
+                }
+              />
+              <span style={{ color: '#666' }}>{tone.contrast.toFixed(2)}</span>
+            </label>
+          </div>
+        ) : null}
         {lastFeatureHover ? (
           <pre
             style={{
@@ -174,6 +295,9 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             viewState={viewState}
             onViewStateChange={setViewState}
             renderTooltip={false}
+            vivImageExtensions={vivImageExtensions}
+            vivImageExtensionResolver={vivImageExtensionResolver}
+            vivImagePropsResolver={vivImagePropsResolver}
             onFeatureHover={setLastFeatureHover}
             onFeatureClick={(event) => {
               if (event.elementKind !== 'labels') return;

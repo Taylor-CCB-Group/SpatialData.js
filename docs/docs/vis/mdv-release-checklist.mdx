@@ -195,9 +195,11 @@ This repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9` (Viv PR [#924](https:/
 ### Branch checklist for Viv-upgrade readiness
 
 - [x] Align Viv `0.21.0` / deck.gl `9.2.9` in this repo and MDV (MDV merge imminent).
-- [ ] Audit `@spatialdata/vis` Viv paths for extension prop preservation:
+- [x] Audit `@spatialdata/vis` Viv paths for extension prop preservation:
   - `packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`
-  - ensure layer cloning/composition does not drop non-enumerable extension/default props.
+  - `vivProps` passthrough into `getLayers({ props })`; no post-spread of `layer.props`.
+- [x] Issue [#56](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/56) APIs: `useLayerChannelState`, `useImageLayerContext`, `getChannelSelectionStats`, Viv extension resolvers — see [MDV integration roadmap](./mdv-integration#issue-56-channel--extension-apis).
+- [ ] `/headless` demo visual check: brightness/contrast sliders affect image layer via `vivImagePropsResolver`.
 - [ ] Audit channel-count assumptions and constants:
   - `packages/avivatorish/src/constants.ts`
   - `packages/vis/src/SpatialCanvas/ImageChannelPanel.tsx`
@@ -206,7 +208,7 @@ This repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9` (Viv PR [#924](https:/
 - [ ] Audit shader/uniform update paths in custom deck/Viv-adjacent layers:
   - `packages/layers/src/LabelsBitmaskTileLayer.ts`
   - confirm `shaderInputs.setProps(...)` path is primary and any `setUniforms(...)` usage is fallback-only.
-- [ ] Verify app-level extension passthrough remains intact with `deckProps` and `SpatialCanvasViewer`.
+- [x] Verify app-level extension passthrough via `vivLayerProps`, `vivImagePropsResolver`, and `vivImageExtensionResolver` on `SpatialCanvasViewer`.
 - [ ] Run visual smoke tests with extension-heavy image views (2D at minimum) before publishing package versions.
 
 ### Fast acceptance criteria

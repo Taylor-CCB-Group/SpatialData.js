@@ -65,7 +65,11 @@ import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
-import type { AvailableElement, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
+import type { AvailableElement, ChannelConfig, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
+import {
+  mergeVivImagePassthroughProps,
+  type VivImagePassthroughOptions,
+} from './vivImagePassthrough';
 
 export interface ImageLoaderData {
   loader: unknown;
@@ -73,6 +77,8 @@ export interface ImageLoaderData {
   contrastLimits?: [number, number][];
   channelsVisible?: boolean[];
   selections?: Array<Partial<{ z: number; c: number; t: number }>>;
+  /** OME channel labels when available from element metadata. */
+  channelNames?: string[];
   /** Present when loader exposes `labels` / `shape`: dimension lengths for z, c, t (omit axes that do not exist). */
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
@@ -142,6 +148,8 @@ export interface ImageLayerConfig {
   modelMatrix?: Matrix4; // Transformation matrix for coordinate system alignment
   opacity?: number; // Layer opacity (0-1)
   visible?: boolean; // Whether layer is visible
+  /** Merged extension / host Viv props for detailView.getLayers({ props }). */
+  vivProps?: Record<string, unknown>;
 }
 
 export interface LabelsLoaderData extends LabelsTooltipMetadata {
@@ -188,6 +196,8 @@ interface UseLayerDataResult {
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
+  /** Raw loaded image data keyed by SpatialData element key. */
+  getImageLoadedDataByElementKey: (elementKey: string) => ImageLoaderData | undefined;
   /** Raw loaded labels pipeline data (defaults) for the properties UI */
   getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
   /** Current load state for a given layer. */
@@ -448,7 +458,8 @@ export function useLayerData(
   layerOrder: string[],
   availableElements: ElementsByType,
   coordinateSystem: string | null,
-  spatialData?: SpatialData
+  spatialData?: SpatialData,
+  vivPassthrough?: VivImagePassthroughOptions
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
 
@@ -818,6 +829,9 @@ export function useLayerData(
 
                     if (metadata?.channels) {
                       const Channels = metadata.channels;
+                      imageData.channelNames = Channels.map(
+                        (c: { label?: string }, i: number) => c.label ?? `Channel ${i + 1}`
+                      );
                       const isRgb = guessRgb({
                         Pixels: {
                           Channels: Channels.map((c: { label?: string }) => ({ Name: c.label })),
@@ -1307,6 +1321,10 @@ export function useLayerData(
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
+  const getImageLoadedDataByElementKey = useCallback((elementKey: string): ImageLoaderData | undefined => {
+    return loadedDataRef.current.images.get(elementKey);
+  }, []);
+
   const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem || elem.type !== 'labels') return undefined;
@@ -1511,6 +1529,7 @@ export function useLayerData(
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
     const vivProps: ImageLayerConfig[] = [];
     const loaded = loadedDataRef.current;
+    const passthrough = vivPassthrough;
 
     for (const layerId of layerOrder) {
       const config = layers[layerId];
@@ -1542,6 +1561,31 @@ export function useLayerData(
           : rawSelections;
       const stableSelections = getStableSelections(`image:${layerId}`, selections);
 
+      const mergedChannels: ChannelConfig = {
+        channelIds: ch?.channelIds,
+        colors,
+        contrastLimits,
+        channelsVisible,
+        selections: stableSelections,
+      };
+
+      const resolverCtx = {
+        layerId: config.id,
+        elementKey: elem.key,
+        channelCount: colors.length,
+        loader: imageData.loader,
+        channels: mergedChannels,
+      };
+
+      const resolvedProps = passthrough?.vivImagePropsResolver?.(resolverCtx);
+      const resolvedExtensions = passthrough?.vivImageExtensionResolver?.(resolverCtx);
+      const mergedVivProps = mergeVivImagePassthroughProps(
+        config.vivLayerProps,
+        resolvedProps,
+        resolvedExtensions,
+        passthrough?.vivImageExtensions
+      );
+
       vivProps.push({
         id: config.id,
         loader: imageData.loader,
@@ -1552,11 +1596,12 @@ export function useLayerData(
         modelMatrix: elem.transform, // Apply coordinate transformation
         opacity: config.opacity,
         visible: config.visible,
+        vivProps: mergedVivProps,
       });
     }
 
     return vivProps;
-  }, [layers, layerOrder, getStableSelections]);
+  }, [layers, layerOrder, getStableSelections, vivPassthrough]);
 
   const isLoading = useMemo(
     () =>
@@ -1591,6 +1636,7 @@ export function useLayerData(
     getLayers,
     getVivLayerProps,
     getImageLayerLoadedData,
+    getImageLoadedDataByElementKey,
     getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,

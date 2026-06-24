@@ -29,13 +29,25 @@ import {
   type RenderStackLayerInputs,
   type UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
+import { ImageLayerContextProvider } from './ImageLayerContext';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import {
   type LabelFeaturePickEventData,
   type ShapeFeaturePickEventData,
   useLayerData,
 } from './useLayerData';
+import {
+  type VivImageExtensionResolver,
+  type VivImagePassthroughOptions,
+  type VivImagePropsResolver,
+} from './vivImagePassthrough';
 import { getAvailableElements } from './utils';
+
+export type {
+  VivImageExtensionResolver,
+  VivImageLayerContext,
+  VivImagePropsResolver,
+} from './vivImagePassthrough';
 
 export type SpatialCanvasViewerRenderTooltip =
   | false
@@ -85,6 +97,12 @@ export interface SpatialCanvasViewerProps {
    * When true (default), hover tooltips aggregate picks from all layers under the cursor.
    */
   aggregateHoverTooltips?: boolean;
+  /** Global fallback Viv LayerExtension instances for image layers. */
+  vivImageExtensions?: unknown[];
+  /** Per-image LayerExtension factory (runtime attachment). */
+  vivImageExtensionResolver?: VivImageExtensionResolver;
+  /** Per-image Viv prop overrides merged after saved `vivLayerProps` (runtime attachment). */
+  vivImagePropsResolver?: VivImagePropsResolver;
 }
 
 interface AutoFitInput {
@@ -146,6 +164,9 @@ export interface UseSpatialCanvasRendererOptions {
   hostLayerResolver?: RenderStackHostLayerResolver;
   onUnknownHostLayer?: UnknownRenderStackHostLayerHandler;
   autoFit?: boolean;
+  vivImageExtensions?: unknown[];
+  vivImageExtensionResolver?: VivImageExtensionResolver;
+  vivImagePropsResolver?: VivImagePropsResolver;
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -161,6 +182,7 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   externalDeckLayers?: Layer[];
   sortDeckLayers?: boolean;
   autoFit?: boolean;
+  vivPassthrough?: VivImagePassthroughOptions;
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -176,6 +198,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   externalDeckLayers,
   sortDeckLayers,
   autoFit = true,
+  vivPassthrough,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   const availableElements = useMemo(() => {
     if (!spatialData || !coordinateSystem) {
@@ -191,7 +214,8 @@ export function useSpatialCanvasRendererFromLayerInputs({
     layerInputs.layerOrder,
     availableElements,
     coordinateSystem,
-    spatialData ?? undefined
+    spatialData ?? undefined,
+    vivPassthrough
   );
 
   const generatedDeckLayers = layerData.getLayers();
@@ -202,7 +226,10 @@ export function useSpatialCanvasRendererFromLayerInputs({
     ]);
     return sortDeckLayers ? sortLayersByRenderStackOrder(composed, resolvedLayerOrder) : composed;
   }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, resolvedLayerOrder, sortDeckLayers]);
-  const vivLayerProps = layerData.getVivLayerProps();
+  const vivLayerProps = useMemo(
+    () => layerData.getVivLayerProps(),
+    [layerData.getVivLayerProps, vivPassthrough, layerData.isBlocking, layerData.isLoading]
+  );
 
   const enabledLayerIds = useMemo(() => {
     return new Set(layerInputs.layerOrder.filter((id) => layerInputs.layers[id]?.visible));
@@ -269,6 +296,9 @@ export function useSpatialCanvasRenderer({
   hostLayerResolver,
   onUnknownHostLayer,
   autoFit = true,
+  vivImageExtensions,
+  vivImageExtensionResolver,
+  vivImagePropsResolver,
 }: UseSpatialCanvasRendererOptions) {
   const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
   const hostDeckLayers = useMemo(
@@ -278,6 +308,14 @@ export function useSpatialCanvasRenderer({
   const resolvedLayerOrder = useMemo(
     () => renderStackOrder(renderStack, layerInputs.layerOrder),
     [layerInputs.layerOrder, renderStack]
+  );
+  const vivPassthrough = useMemo(
+    (): VivImagePassthroughOptions => ({
+      vivImageExtensions,
+      vivImageExtensionResolver,
+      vivImagePropsResolver,
+    }),
+    [vivImageExtensionResolver, vivImageExtensions, vivImagePropsResolver]
   );
 
   return useSpatialCanvasRendererFromLayerInputs({
@@ -292,6 +330,7 @@ export function useSpatialCanvasRenderer({
     hostDeckLayers,
     sortDeckLayers: true,
     autoFit,
+    vivPassthrough,
   });
 }
 
@@ -348,6 +387,9 @@ function SpatialCanvasViewerInner({
   autoFit = true,
   style,
   aggregateHoverTooltips = true,
+  vivImageExtensions,
+  vivImageExtensionResolver,
+  vivImagePropsResolver,
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -372,6 +414,14 @@ function SpatialCanvasViewerInner({
     () => renderStackOrder(renderStack, layerInputs.layerOrder),
     [layerInputs.layerOrder, renderStack]
   );
+  const vivPassthrough = useMemo(
+    (): VivImagePassthroughOptions => ({
+      vivImageExtensions,
+      vivImageExtensionResolver,
+      vivImagePropsResolver,
+    }),
+    [vivImageExtensionResolver, vivImageExtensions, vivImagePropsResolver]
+  );
   const renderer = useSpatialCanvasRendererFromLayerInputs({
     spatialData,
     coordinateSystem,
@@ -385,6 +435,7 @@ function SpatialCanvasViewerInner({
     externalDeckLayers,
     sortDeckLayers: Boolean(renderStack),
     autoFit,
+    vivPassthrough,
   });
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
@@ -525,8 +576,24 @@ function SpatialCanvasViewerInner({
       portalTarget
     );
 
+  const getLayerLoadStateByElementKey = useCallback(
+    (elementKey: string) => {
+      for (const layerId of layerInputs.layerOrder) {
+        const layer = layerInputs.layers[layerId];
+        if (layer?.type === 'image' && layer.elementKey === elementKey) {
+          return renderer.getLayerLoadState(layerId);
+        }
+      }
+      return undefined;
+    },
+    [layerInputs.layerOrder, layerInputs.layers, renderer]
+  );
+
   return (
-    <>
+    <ImageLayerContextProvider
+      getImageLoadedDataByElementKey={renderer.getImageLoadedDataByElementKey}
+      getLayerLoadStateByElementKey={getLayerLoadStateByElementKey}
+    >
       <div ref={handleViewerRef} style={{ ...viewerRootStyle, ...style }}>
         {!spatialData && !renderer.hasRenderableInputs ? (
           <div style={placeholderStyle}>No spatial data available</div>
@@ -570,7 +637,7 @@ function SpatialCanvasViewerInner({
         )}
       </div>
       {tooltipPortal}
-    </>
+    </ImageLayerContextProvider>
   );
 }
 

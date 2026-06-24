@@ -30,6 +30,9 @@ catalogs:
     '@vitejs/plugin-react':
       specifier: ^6.0.1
       version: 6.0.1
+    '@vivjs/constants':
+      specifier: 0.21.0
+      version: 0.21.0
     '@vivjs/views':
       specifier: 0.21.0
       version: 0.21.0
@@ -416,6 +419,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 'catalog:'
         version: 6.0.1(vite@8.0.8(@types/node@22.18.8)(jiti@1.21.7)(terser@5.44.0))
+      '@vivjs/constants':
+        specifier: 'catalog:'
+        version: 0.21.0
       jsdom:
         specifier: 'catalog:'
         version: 27.4.0

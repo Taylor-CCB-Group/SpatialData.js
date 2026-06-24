@@ -1,6 +1,10 @@
 import type { CSSProperties } from 'react';
-import { clampVivSelectionsToAxes, MAX_CHANNELS } from '@spatialdata/avivatorish';
-import type { ChannelConfig, ImageLayerConfig } from './types';
+import {
+  clampVivSelectionsToAxes,
+  MAX_CHANNELS,
+  mergeLayerChannelState,
+} from '@spatialdata/avivatorish';
+import type { ChannelConfig } from './types';
 import type { ImageLoaderData } from './useLayerData';
 
 const inputStyle: CSSProperties = {
@@ -37,120 +41,24 @@ function emptySelectionRow(axisSizes: AxisSizes | undefined): SelectionRow {
   return o;
 }
 
-function mergeSelectionRow(
-  override: SelectionRow | undefined,
-  fallback: SelectionRow,
-  axisSizes: AxisSizes | undefined
-): SelectionRow {
-  const merged: SelectionRow = { ...fallback, ...override };
-  if (axisSizes === undefined) {
-    return {
-      z: merged.z ?? 0,
-      c: merged.c ?? 0,
-      t: merged.t ?? 0,
-    };
-  }
-  if (Object.keys(axisSizes).length === 0) {
-    return {};
-  }
-  return clampVivSelectionsToAxes([merged], axisSizes)[0] ?? {};
-}
-
-type MergedChannelDisplay = {
-  channelCount: number;
-  channelIds: string[];
-  colors: [number, number, number][];
-  contrastLimits: [number, number][];
-  channelsVisible: boolean[];
-  selections: SelectionRow[];
-};
-
-function mergeForDisplay(
-  config: ImageLayerConfig,
-  defaults: ImageLoaderData | undefined,
-  layerId: string
-): MergedChannelDisplay {
-  const axisSizes = defaults?.selectionAxisSizes;
-  const ch = config.channels;
-
-  const baseColors = defaults?.colors?.length
-    ? defaults.colors
-    : [[255, 255, 255] as [number, number, number]];
-  const baseContrast = defaults?.contrastLimits?.length
-    ? defaults.contrastLimits
-    : [[0, 65535] as [number, number]];
-  const baseVis = defaults?.channelsVisible?.length ? defaults.channelsVisible : [true];
-
-  const baseSelRaw: SelectionRow[] =
-    defaults?.selections?.length && defaults.selections.length > 0
-      ? defaults.selections.map((s) => ({ ...s }))
-      : [emptySelectionRow(axisSizes)];
-
-  const colors = ch?.colors && ch.colors.length > 0 ? [...ch.colors] : [...baseColors];
-  const contrastLimits =
-    ch?.contrastLimits && ch.contrastLimits.length > 0 ? [...ch.contrastLimits] : [...baseContrast];
-  const channelsVisible =
-    ch?.channelsVisible && ch.channelsVisible.length > 0 ? [...ch.channelsVisible] : [...baseVis];
-
-  let selections: SelectionRow[];
-  if (ch?.selections && ch.selections.length > 0) {
-    selections = ch.selections.map((s, i) =>
-      mergeSelectionRow(
-        s,
-        baseSelRaw[i] ?? baseSelRaw[0] ?? emptySelectionRow(axisSizes),
-        axisSizes
-      )
-    );
-  } else {
-    selections = baseSelRaw.map((s) => mergeSelectionRow(undefined, s, axisSizes));
-  }
-
-  const channelCount = Math.min(
-    MAX_CHANNELS,
-    Math.max(colors.length, contrastLimits.length, channelsVisible.length, selections.length, 1)
-  );
-
-  function pad<T>(arr: T[], len: number, fill: T): T[] {
-    const out = arr.slice(0, len);
-    while (out.length < len) out.push(fill);
-    return out;
-  }
-
-  const fillSel = emptySelectionRow(axisSizes);
-
-  const channelIds: string[] = [];
-  for (let i = 0; i < channelCount; i++) {
-    channelIds.push(ch?.channelIds?.[i] ?? `${layerId}:ch:${i}`);
-  }
-
-  return {
-    channelCount,
-    channelIds,
-    colors: pad(colors, channelCount, [255, 255, 255] as [number, number, number]),
-    contrastLimits: pad(contrastLimits, channelCount, [0, 65535] as [number, number]),
-    channelsVisible: pad(channelsVisible, channelCount, true),
-    selections: pad(selections, channelCount, mergeSelectionRow(undefined, fillSel, axisSizes)),
-  };
-}
-
 export interface ImageChannelPanelProps {
   layerId: string;
-  config: ImageLayerConfig;
+  channels: ChannelConfig;
+  onChannelsChange: (next: ChannelConfig) => void;
   defaults?: ImageLoaderData;
-  updateLayer: (id: string, updates: Partial<ImageLayerConfig>) => void;
 }
 
 export function ImageChannelPanel({
   layerId,
-  config,
+  channels,
+  onChannelsChange,
   defaults,
-  updateLayer,
 }: ImageChannelPanelProps) {
-  const m = mergeForDisplay(config, defaults, layerId);
+  const m = mergeLayerChannelState(channels, defaults, layerId);
   const axisSizes = defaults?.selectionAxisSizes;
 
-  const setChannels = (next: ChannelConfig) => {
-    updateLayer(layerId, { channels: { ...config.channels, ...next } });
+  const setChannels = (patch: Partial<ChannelConfig>) => {
+    onChannelsChange({ ...channels, ...patch });
   };
 
   const axisActive = (dim: 'z' | 'c' | 't') =>
@@ -299,5 +207,29 @@ export function ImageChannelPanel({
         );
       })}
     </div>
+  );
+}
+
+/** Demo-shell adapter: updates layer config via SpatialCanvas store actions. */
+export interface ImageChannelPanelStoreProps {
+  layerId: string;
+  config: { channels?: ChannelConfig };
+  defaults?: ImageLoaderData;
+  updateLayer: (id: string, updates: { channels?: ChannelConfig }) => void;
+}
+
+export function ImageChannelPanelFromStore({
+  layerId,
+  config,
+  defaults,
+  updateLayer,
+}: ImageChannelPanelStoreProps) {
+  return (
+    <ImageChannelPanel
+      layerId={layerId}
+      channels={config.channels ?? {}}
+      defaults={defaults}
+      onChannelsChange={(next) => updateLayer(layerId, { channels: next })}
+    />
   );
 }
