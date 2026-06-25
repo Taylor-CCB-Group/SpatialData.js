@@ -21,6 +21,7 @@ const baseConfig = defineViteConfig({
     'geotiff',
     'anndata.js',
     'zarrita',
+    /^zarrextra(?:\/.*)?$/,
   ],
 });
 

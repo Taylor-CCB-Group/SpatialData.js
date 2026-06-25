@@ -400,6 +400,9 @@ importers:
       react-dom:
         specifier: '>=18 <20'
         version: 19.2.1(react@19.2.1)
+      zarrextra:
+        specifier: workspace:*
+        version: link:../zarrextra
       zarrita:
         specifier: 'catalog:'
         version: 0.7.1
