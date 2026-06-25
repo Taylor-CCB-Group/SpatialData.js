@@ -28,6 +28,7 @@ export { default as Transforms } from './Transforms';
 export { default as ImageView } from './ImageView';
 export { default as Shapes } from './Shapes';
 export { default as Table } from './Table';
+export { ensureCodecWorkers } from './codecWorkers';
 
 // SpatialCanvas - composable spatial layers viewer
 export { default as SpatialCanvas } from './SpatialCanvas';

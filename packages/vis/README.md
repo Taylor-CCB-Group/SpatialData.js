@@ -6,6 +6,18 @@ It is hoped that it will be robust and of a high quality, but especially at the 
 
 It is used to provide working examples for displaying in the `docs` site, as well as a sample app primarily for prototyping while developing features.
 
+## Browser codec workers
+
+`SpatialCanvas` enables the bundled `zarrextra` codec worker automatically in
+browser contexts. Apps using normal vis components can load JP2K
+(`imagecodecs_jpeg2k`) and OpenJPH HTJ2K (`experimental.openjph_htj2k`) backed
+Zarr images without passing a `workerUrl` or calling `zarrextra/workers`
+directly.
+
+`ensureCodecWorkers()` is exported for hosts that want to activate this path
+before mounting UI. The helper is idempotent, so repeated calls do not replace
+the worker pool.
+
 ## Local fixture demos
 
 ```bash

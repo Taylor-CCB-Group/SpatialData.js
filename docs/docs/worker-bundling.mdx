@@ -10,13 +10,29 @@ know where the worker script lives.
 
 ## Public API shape
 
-Expose a small function from the package entry that owns the worker:
+Expose a small function from the package entry that owns the worker. For
+low-level `zarrextra` consumers, that is:
 
 ```ts
 import { enableWorkerChunkDecode } from 'zarrextra/workers';
 
 enableWorkerChunkDecode();
 ```
+
+For higher-level packages, prefer an idempotent `ensure*()` wrapper and call it
+from the normal runtime path so application authors do not have to remember an
+extra registration step. `@spatialdata/vis` does this with:
+
+```ts
+import { ensureCodecWorkers } from '@spatialdata/vis';
+
+ensureCodecWorkers();
+```
+
+`SpatialCanvas` and the shared renderer hook call this automatically in browser
+contexts. The export exists for hosts that want to activate the worker before
+mounting UI, but normal vis consumers should not need to call either
+`ensureCodecWorkers()` or `enableWorkerChunkDecode()`.
 
 Keep `workerUrl` as an optional escape hatch for unusual deployments, but do not
 require consumers, demos, or downstream packages to import worker files directly.
@@ -94,6 +110,14 @@ For fizarrita chunk decode, `codec-worker.ts` imports `codec-worker-init.ts`,
 which registers `zarrextra` codecs into the worker-side `zarrita.registry`
 before fizarrita decodes chunks.
 
+Treat side-effect-only worker imports as part of the worker's public behavior.
+`@fideus-labs/fizarrita/codec-worker` installs the message handler by import
+side effect. Because that package declares `"sideEffects": false`, production
+worker builds can tree-shake the handler away unless the worker build preserves
+it. `zarrextra` currently disables Rollup tree-shaking for the codec worker
+bundle and has a regression test that checks the generated worker contains the
+fizarrita handshake strings.
+
 ## Build configuration
 
 When publishing a worker-backed package:
@@ -114,12 +138,14 @@ Add tests at the level where the failure would hurt users:
 
 - Unit test the public helper so it has a no-argument path and still accepts
   `workerUrl` as an override.
+- Unit test any higher-level `ensure*()` wrapper so repeated calls do not create
+  repeated worker pools.
 - Unit test the package entry, not only the source entry, so the default URL is
   a sibling `.js` worker file and not a source `.ts` path.
 - Build the package and inspect the generated entry for
   `new URL("./my-worker.js", import.meta.url)`.
 - Inspect or smoke-test the generated worker bundle for any required
-  registration strings, such as codec ids.
+  registration strings, such as codec ids and worker message-handler handshakes.
 - Build a demo or small consumer app that calls the public helper without
   passing `workerUrl`.
 
