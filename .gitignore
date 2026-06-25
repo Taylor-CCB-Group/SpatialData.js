@@ -51,3 +51,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# local tarballs from scripts/pack-local.sh
+.local-pack/
