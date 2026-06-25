@@ -8,8 +8,6 @@ export function ensureDemoWorkerChunkDecode() {
     return;
   }
 
-  enableWorkerChunkDecode({
-    workerUrl: new URL('../../../zarrextra/src/workers/codec-worker.ts', import.meta.url),
-  });
+  enableWorkerChunkDecode();
   enabled = true;
 }

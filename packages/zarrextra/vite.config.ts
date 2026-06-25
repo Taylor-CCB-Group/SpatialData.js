@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
           ? resolve(__dirname, 'src/workers/codec-worker.ts')
           : {
               index: resolve(__dirname, 'src/index.ts'),
-              workers: resolve(__dirname, 'src/workers/index.ts'),
+              workers: resolve(__dirname, 'src/workers/index.package.ts'),
             },
         formats: ['es'],
         fileName: isCodecWorkerBuild ? () => 'codec-worker.js' : undefined,

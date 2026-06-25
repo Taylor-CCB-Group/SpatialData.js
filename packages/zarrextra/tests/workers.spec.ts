@@ -16,12 +16,11 @@ describe('worker chunk decode setup', () => {
 
   it('enables the fizarrita chunk decode backend', () => {
     enableWorkerChunkDecode({ workers: 2 });
+    const backend = getChunkDecodeBackend();
     expect(getChunkDecodeBackend()).toMatchObject({
       kind: 'fizarrita',
-      options: {
-        workerUrl: expect.any(URL),
-      },
     });
+    expect(backend.kind === 'fizarrita' && backend.options?.workerUrl).toBeTruthy();
   });
 
   it('resets to main-thread decode on disable', () => {
