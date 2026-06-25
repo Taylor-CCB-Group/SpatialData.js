@@ -1,5 +1,15 @@
 # @spatialdata/avivatorish
 
+## 0.2.4
+
+### Patch Changes
+
+- [#60](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/60) [`a582811`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a582811d69944f0958256b05d4de1a2a240d09b3) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Export `channelConfigsEqual` and `serializeChannelConfig` for an order-stable channel-config identity. `serializeChannelConfig` produces a canonical string that is independent of object-key insertion order — the `selections` rows are normalized to a fixed `[z, c, t]` order — giving consumers a single shared basis for channel-config equality and identity keys instead of a fragile `JSON.stringify`.
+
+- [#62](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/62) [`93baa69`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/93baa695cd9ac5ad42384fba46bd888fd58eb698) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Export `selectionStatsKey` and `pickDefaultSelectionForAdd` from `@spatialdata/avivatorish`. These are the pure, app-agnostic channel-stats/selection helpers a consumer's runtime stats bridge needs (stats-cache identity keyed by channelId + z/c/t selection, and first-unused-channel default when adding a row), so consumers no longer redefine them locally.
+
+- [#62](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/62) [`93baa69`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/93baa695cd9ac5ad42384fba46bd888fd58eb698) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Export `useChannelSelectionStats` hook from `@spatialdata/avivatorish`. Stateful async stats hook that fetches, caches, and returns per-channel stats (domain, contrastLimits, raster) keyed by channelId — plus a positional `statsByIndex` convenience array and per-channel loading flags. Ports the async cache/load/cancel loop from MDV's `useImageLayerRuntime` so consumers no longer reimplement it locally.
+
 ## 0.2.3
 
 ### Patch Changes
