@@ -1,0 +1,128 @@
+---
+sidebar_position: 4
+---
+
+# Worker bundling pattern
+
+Use this pattern when adding browser workers to SpatialData.js packages. The
+goal is that application code imports a normal package API and does not need to
+know where the worker script lives.
+
+## Public API shape
+
+Expose a small function from the package entry that owns the worker:
+
+```ts
+import { enableWorkerChunkDecode } from 'zarrextra/workers';
+
+enableWorkerChunkDecode();
+```
+
+Keep `workerUrl` as an optional escape hatch for unusual deployments, but do not
+require consumers, demos, or downstream packages to import worker files directly.
+In particular, avoid examples like:
+
+```ts
+new URL('../../../some-package/src/workers/my-worker.ts', import.meta.url);
+```
+
+That path only works for a particular source layout and can break in deployed
+builds, especially when the worker needs its own codec registration or other
+browser-only setup.
+
+The first version of a worker-backed API should optimize for the easy path:
+users get the codecs and worker behavior provided by the library with one call.
+That should not make the API monolithic forever. Leave room for later options
+such as choosing codec families, using a lighter worker bundle, passing hooks
+around decode, or providing custom codec handlers. Keep those as progressive
+configuration points rather than requirements for the common case.
+
+## Source and package entries
+
+Workers need two URL factories:
+
+- a source-mode factory for monorepo Vite dev/builds;
+- a package-mode factory for the published `dist` files.
+
+The source factory should let Vite create a worker asset from the TypeScript
+worker entry:
+
+```ts
+import workerUrl from './my-worker?worker&url';
+
+export function defaultWorkerUrl(): string {
+  return workerUrl;
+}
+```
+
+The published package factory should point to the already-built worker file
+next to the package entry:
+
+```ts
+export function defaultWorkerUrl(): URL {
+  const workerFile = './my-worker.js';
+  return new URL(workerFile, import.meta.url);
+}
+```
+
+Keep the worker file name in a variable. A literal
+`new URL('./my-worker.js', import.meta.url)` can be interpreted by bundlers
+during library build and inlined into the entry, instead of remaining a runtime
+URL to the sibling worker asset.
+
+Share the rest of the implementation between the source and package entries:
+
+```ts
+const controls = createWorkerControls(defaultWorkerUrl);
+
+export const enableMyWorker = controls.enableMyWorker;
+export const disableMyWorker = controls.disableMyWorker;
+```
+
+For `zarrextra/workers`, `src/workers/index.ts` is the source entry and
+`src/workers/index.package.ts` is the package entry used by the Vite library
+build.
+
+## Worker implementation
+
+The worker file should be self-sufficient. If it needs codecs, WASM modules, or
+global registration, initialize those inside the worker before handling work.
+Do not assume registration that happened on the main thread is visible in the
+worker.
+
+For fizarrita chunk decode, `codec-worker.ts` imports `codec-worker-init.ts`,
+which registers `zarrextra` codecs into the worker-side `zarrita.registry`
+before fizarrita decodes chunks.
+
+## Build configuration
+
+When publishing a worker-backed package:
+
+1. Build the public package entries as normal.
+2. Use the package entry for worker-facing exports.
+3. Build each worker script as its own browser bundle in `dist`.
+4. Include the worker bundle in the package `files`/`exports` as appropriate.
+
+For `zarrextra`, the package build emits:
+
+- `dist/workers.js` for `zarrextra/workers`;
+- `dist/codec-worker.js` as the worker asset used by that entry.
+
+## Testing checklist
+
+Add tests at the level where the failure would hurt users:
+
+- Unit test the public helper so it has a no-argument path and still accepts
+  `workerUrl` as an override.
+- Unit test the package entry, not only the source entry, so the default URL is
+  a sibling `.js` worker file and not a source `.ts` path.
+- Build the package and inspect the generated entry for
+  `new URL("./my-worker.js", import.meta.url)`.
+- Inspect or smoke-test the generated worker bundle for any required
+  registration strings, such as codec ids.
+- Build a demo or small consumer app that calls the public helper without
+  passing `workerUrl`.
+
+The important invariant is: consumers should call the exported API, and the
+package should make the correct worker bundle reachable in both Vite source
+builds and published package builds.

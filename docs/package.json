@@ -26,7 +26,8 @@
     "react-dom": "catalog:",
     "@spatialdata/core": "workspace:*",
     "@spatialdata/react": "workspace:*",
-    "@spatialdata/vis": "workspace:*"
+    "@spatialdata/vis": "workspace:*",
+    "zarrextra": "workspace:*"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.9.1",

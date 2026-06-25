@@ -121,3 +121,7 @@ Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
 `@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
 the default worker script). Future worker entries may let applications opt into
 lighter worker bundles when JP2K or HTJ2K codecs are not needed.
+
+Contributor note: new worker-backed entry points should follow the documented
+[worker bundling pattern](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/docs/worker-bundling.mdx)
+so consumers can use package APIs without passing private worker URLs.

@@ -39,6 +39,7 @@ export default defineConfig(({ mode }) => {
           }
           return pkgExternals.includes(id);
         },
+        treeshake: isCodecWorkerBuild ? false : undefined,
         output: {
           codeSplitting: isCodecWorkerBuild ? false : undefined,
           entryFileNames: '[name].js',
