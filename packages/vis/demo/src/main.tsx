@@ -1,10 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { ensureDemoWorkerChunkDecode } from './enableDemoWorkerChunkDecode';
 import './index.css';
-
-ensureDemoWorkerChunkDecode();
 
 const root = document.getElementById('root');
 if (!root) {

@@ -30,10 +30,13 @@ pnpm --filter @spatialdata/vis dev
 
 Open [http://127.0.0.1:5173/codec](http://127.0.0.1:5173/codec).
 
-The route calls `enableWorkerChunkDecode()` from `zarrextra/workers`, which uses
+The route uses `SpatialCanvas`, which activates the bundled codec worker through
+`@spatialdata/vis` automatically in browser contexts. Under the hood, vis calls
+an idempotent `ensureCodecWorkers()` helper, which uses
+`zarrextra/workers` and
 [`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
-with a custom codec worker that registers JP2K and experimental HTJ2K support
-inside the worker before decode. Use the codec selector on the page to switch between `/test-fixtures/codecs/jpeg2k.zarr`,
+with a custom codec worker. That worker registers JP2K and experimental HTJ2K
+support inside the worker before decode. Use the codec selector on the page to switch between `/test-fixtures/codecs/jpeg2k.zarr`,
 `/test-fixtures/codecs/mandelbulb.zarr`, and `/test-fixtures/codecs/htj2k-demo.zarr`.
 When HTJ2K is selected, the demo loads a single `htj2k-demo.zarr` store containing
 `mandelbrot_lossless`, `mandelbrot_balanced`, and `mandelbrot_small` image layers
@@ -188,4 +191,8 @@ isolation, but normal user-facing `uv run` commands do not need it.
   `zarr.Readable` store without going back through Viv's URL loader.
 
 `@spatialdata/vis` now prefers raster element stores (`images/<key>` and
-`labels/<key>`) and keeps Viv URL loading as a compatibility fallback.
+`labels/<key>`) and keeps Viv URL loading as a compatibility fallback. Browser
+apps using vis do not need to call `enableWorkerChunkDecode()` directly; the
+shared renderer path calls `ensureCodecWorkers()` once. Lower-level browser apps
+that use `zarrextra` without vis should still call `enableWorkerChunkDecode()`
+before loading JP2K or HTJ2K chunks.

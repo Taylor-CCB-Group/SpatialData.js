@@ -92,8 +92,14 @@ const encoded = await encodeHtj2kPlane(plane, { width, height }, {
 
 ## Worker-backed chunk decode (browser)
 
-JP2K and other codec work can block the main thread for a long time. For browser
-apps, use the optional `zarrextra/workers` entry with
+Decoding and marshalling chunk data can block the main thread for a long time.
+If you use `@spatialdata/vis`, its renderer path enables the bundled codec worker
+automatically in browsers. You do not need to call this API for normal vis usage.
+
+If we find that users get unexpected results or need more control we may revise this pattern.
+
+For lower-level browser apps using `zarrextra` directly, use the optional
+`zarrextra/workers` entry with
 [`@fideus-labs/fizarrita`](https://www.npmjs.com/package/@fideus-labs/fizarrita)
 to offload chunk decode to a Web Worker pool:
 
@@ -115,9 +121,14 @@ required for that path.
 | Context | Setup |
 |---------|-------|
 | Node / CI | `registerJpeg2kCodec()` / `registerExperimentalHtj2kCodec()` on the main thread |
-| Browser | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K or HTJ2K data |
+| Browser with `@spatialdata/vis` | no setup for normal `SpatialCanvas` usage; optional `ensureCodecWorkers()` for eager activation |
+| Browser without `@spatialdata/vis` | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K or HTJ2K data |
 
 Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
 `@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
 the default worker script). Future worker entries may let applications opt into
 lighter worker bundles when JP2K or HTJ2K codecs are not needed.
+
+Contributor note: new worker-backed entry points should follow the documented
+[worker bundling pattern](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/docs/worker-bundling.mdx)
+so consumers can use package APIs without passing private worker URLs.

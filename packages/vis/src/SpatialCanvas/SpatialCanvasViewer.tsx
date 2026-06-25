@@ -41,6 +41,7 @@ import {
   type VivImagePassthroughOptions,
   type VivImagePropsResolver,
 } from './vivImagePassthrough';
+import { ensureCodecWorkers } from '../codecWorkers';
 import { getAvailableElements } from './utils';
 
 export type {
@@ -200,6 +201,8 @@ export function useSpatialCanvasRendererFromLayerInputs({
   autoFit = true,
   vivPassthrough,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
+  ensureCodecWorkers();
+
   const availableElements = useMemo(() => {
     if (!spatialData || !coordinateSystem) {
       return getEmptyElementsByType();

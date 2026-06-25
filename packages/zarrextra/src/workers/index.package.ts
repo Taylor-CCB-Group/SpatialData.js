@@ -2,7 +2,7 @@ import {
   createWorkerChunkDecodeControls,
   type EnableWorkerChunkDecodeOptions,
 } from './workerControls';
-import { defaultWorkerUrl } from './workerUrl.source';
+import { defaultWorkerUrl } from './workerUrl.package';
 
 export type { ChunkCache, GetWorkerOptions } from '@fideus-labs/fizarrita';
 export type { EnableWorkerChunkDecodeOptions };
