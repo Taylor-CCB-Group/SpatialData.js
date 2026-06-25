@@ -25,14 +25,39 @@ export type LayerChannelDefaults = {
 
 type AxisSizes = Partial<Record<'z' | 'c' | 't', number>>;
 
-function channelConfigsEqual(a: LayerChannelConfig, b: LayerChannelConfig): boolean {
-  return (
-    JSON.stringify(a.channelIds) === JSON.stringify(b.channelIds) &&
-    JSON.stringify(a.colors) === JSON.stringify(b.colors) &&
-    JSON.stringify(a.contrastLimits) === JSON.stringify(b.contrastLimits) &&
-    JSON.stringify(a.channelsVisible) === JSON.stringify(b.channelsVisible) &&
-    JSON.stringify(a.selections) === JSON.stringify(b.selections)
-  );
+/**
+ * Canonical, order-stable serialization of a channel config.
+ *
+ * Unlike a plain `JSON.stringify(config)`, this emits a deterministic string for
+ * two semantically-equal configs. The array fields (`channelIds`, `colors`,
+ * `contrastLimits`, `channelsVisible`) are positional and already stable; the
+ * offender is `selections`, whose rows are `Partial<{ z, c, t }>` objects where
+ * `JSON.stringify` key order follows insertion order — so `{ z:0, c:0 }` and
+ * `{ c:0, z:0 }` would serialize differently despite being equal. Each selection
+ * row is normalized to a fixed-order `[z, c, t]` tuple (absent axes as `null`,
+ * which stays distinct from an explicit `0`). An omitted `selections` array is
+ * preserved as `null` (not `[]`), matching the other optional fields so `{}` and
+ * `{ selections: [] }` stay distinguishable.
+ *
+ * Use this as the single channel-config identity/equality basis on both sides of
+ * the bridge (it backs {@link channelConfigsEqual} here, and is the intended
+ * replacement for `JSON.stringify`-based `channelConfigKey` in the host).
+ */
+export function serializeChannelConfig(config: LayerChannelConfig): string {
+  const selections =
+    config.selections?.map((s) => [s.z ?? null, s.c ?? null, s.t ?? null]) ?? null;
+  return JSON.stringify({
+    channelIds: config.channelIds ?? null,
+    colors: config.colors ?? null,
+    contrastLimits: config.contrastLimits ?? null,
+    channelsVisible: config.channelsVisible ?? null,
+    selections,
+  });
+}
+
+/** Order-stable structural equality for channel configs, via {@link serializeChannelConfig}. */
+export function channelConfigsEqual(a: LayerChannelConfig, b: LayerChannelConfig): boolean {
+  return serializeChannelConfig(a) === serializeChannelConfig(b);
 }
 
 function emptySelectionRow(axisSizes: AxisSizes | undefined): LayerChannelSelection {

@@ -26,13 +26,14 @@ export {
   shouldRenderInternalTooltip,
   SpatialCanvasViewer,
   useSpatialCanvasRenderer,
+  useSpatialCanvasRendererFromLayerInputs,
 } from './SpatialCanvasViewer';
 export type {
   VivImageExtensionResolver,
   VivImageLayerContext,
   VivImagePropsResolver,
 } from './SpatialCanvasViewer';
-export { useImageLayerContext } from './ImageLayerContext';
+export { useImageLayerContext, ImageLayerContextProvider } from './ImageLayerContext';
 export type { ImageLayerContextValue } from './ImageLayerContext';
 export { mergeVivImagePassthroughProps } from './vivImagePassthrough';
 export type { VivImagePassthroughOptions } from './vivImagePassthrough';
@@ -61,4 +62,8 @@ export type {
   SpatialCanvasViewerRenderTooltip,
 } from './SpatialCanvasViewer';
 export type { SpatialCanvasProps } from './index';
-export type { ImageLayerConfig as VivImageLayerConfig, ImageLoaderData } from './useLayerData';
+export type {
+  ImageLayerConfig as VivImageLayerConfig,
+  ImageLoaderData,
+  LayerLoadState,
+} from './useLayerData';
