@@ -32,6 +32,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${1:-$ROOT/.local-pack}"
 
+# DEST is `rm -rf`'d below and can come from $1 — guard against a stray arg
+# (e.g. "/", "$HOME", a typo) nuking an unintended tree. Resolve DEST to an
+# absolute path WITHOUT requiring the leaf to exist (first run creates it), then
+# refuse anything that isn't strictly inside the repo.
+dest_parent="$(cd "$(dirname "$DEST")" 2>/dev/null && pwd -P)" || {
+  echo "ERROR: cannot resolve parent directory of DEST '$DEST'" >&2
+  exit 1
+}
+DEST_ABS="$dest_parent/$(basename "$DEST")"
+ROOT_ABS="$(cd "$ROOT" && pwd -P)"
+case "$DEST_ABS" in
+  "$ROOT_ABS"/*) ;;  # OK: strictly inside the repo (also excludes ROOT itself)
+  *)
+    echo "ERROR: refusing to 'rm -rf' a DEST outside the repo: $DEST_ABS" >&2
+    echo "       DEST must resolve to a path inside $ROOT_ABS" >&2
+    exit 1
+    ;;
+esac
+DEST="$DEST_ABS"
+
 # Publishable packages by directory (under packages/). Order is irrelevant for
 # packing; listed roughly in dependency order for readability.
 DIRS=(zarrextra avivatorish core layers react vis)

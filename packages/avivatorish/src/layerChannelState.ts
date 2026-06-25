@@ -35,14 +35,17 @@ type AxisSizes = Partial<Record<'z' | 'c' | 't', number>>;
  * `JSON.stringify` key order follows insertion order — so `{ z:0, c:0 }` and
  * `{ c:0, z:0 }` would serialize differently despite being equal. Each selection
  * row is normalized to a fixed-order `[z, c, t]` tuple (absent axes as `null`,
- * which stays distinct from an explicit `0`).
+ * which stays distinct from an explicit `0`). An omitted `selections` array is
+ * preserved as `null` (not `[]`), matching the other optional fields so `{}` and
+ * `{ selections: [] }` stay distinguishable.
  *
  * Use this as the single channel-config identity/equality basis on both sides of
  * the bridge (it backs {@link channelConfigsEqual} here, and is the intended
  * replacement for `JSON.stringify`-based `channelConfigKey` in the host).
  */
 export function serializeChannelConfig(config: LayerChannelConfig): string {
-  const selections = (config.selections ?? []).map((s) => [s.z ?? null, s.c ?? null, s.t ?? null]);
+  const selections =
+    config.selections?.map((s) => [s.z ?? null, s.c ?? null, s.t ?? null]) ?? null;
   return JSON.stringify({
     channelIds: config.channelIds ?? null,
     colors: config.colors ?? null,
