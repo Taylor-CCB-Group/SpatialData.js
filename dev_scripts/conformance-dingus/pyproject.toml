@@ -1,0 +1,17 @@
+[project]
+name = "spatialdata-js-transform-conformance"
+version = "0.0.0"
+description = "Dev harness: run the OME-Zarr transformations conformance suite against the SpatialData.js dingus"
+requires-python = ">=3.11"
+dependencies = []
+
+# The conformance runner (`oztc`) and its RFC-5 test cases come from the upstream
+# suite as a pinned git dependency, so SpatialData.js can run conformance on its
+# own (no sibling checkout required). Bump the rev to update.
+[dependency-groups]
+dev = [
+    "ome-zarr-transformations-conformance @ git+https://github.com/clbarnes/ome_zarr_transformations_conformance.git@6f933795aa61259c36914ff919f47d5f9255bd8d",
+]
+
+[tool.uv]
+package = false

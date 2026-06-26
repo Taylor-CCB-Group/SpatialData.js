@@ -5,6 +5,14 @@ A "dingus" CLI implementing the contract from
 used to validate SpatialData.js's coordinate-transform computation against the
 RFC-5 OME-Zarr transformations test cases.
 
+## Motivation
+
+The primary goal is to **mature the SpatialData.js transform implementation**:
+the conformance suite gives an objective, RFC-5-aligned target, and the baseline
+below is effectively the backlog of transform features still to implement. (A
+secondary, incidental use was ruling our transform *math* in/out while chasing a
+viv image-render bug — but that bug most likely lives in viv, not here.)
+
 This lives on the `transform-conformance` branch of SpatialData.js. It is a dev
 script (not shipped in any package).
 
@@ -40,15 +48,36 @@ which is the honest signal of current library coverage. Non-spatial axes (e.g.
 
 ## Run
 
-Requires `pnpm install` at the SpatialData.js root (provides `@math.gl/core`) and
-Node >= 22 (type stripping). From the conformance repo:
+Prerequisites: `pnpm install` at the SpatialData.js root (provides
+`@math.gl/core`) and Node >= 22 (type stripping).
+
+### Self-contained (recommended)
+
+The conformance runner (`oztc`) and its RFC-5 cases are a **pinned uv git
+dependency** declared in `pyproject.toml` here, so SpatialData.js can run
+conformance with no external checkout:
+
+```bash
+cd dev_scripts/conformance-dingus
+./run-conformance.sh            # uv sync + run all cases against the dingus
+./run-conformance.sh -v -p affine   # extra args forwarded to oztc
+```
+
+`run-conformance.sh` resolves the cases bundled into the installed package
+(site-packages/cases) and points `oztc` at them. Bump the rev in `pyproject.toml`
+to track a newer suite.
+
+### Against an external checkout
+
+If you have the suite checked out (e.g. as a sibling submodule), invoke its
+runner directly:
 
 ```bash
 ./transformation_conformance.py ./cases -- \
   /abs/path/to/SpatialData.js/dev_scripts/conformance-dingus/dingus.sh
 ```
 
-Single case (for debugging):
+### Single case (debugging)
 
 ```bash
 node --experimental-strip-types dingus.ts \
@@ -65,6 +94,24 @@ implements produced numerically correct coordinates, including inverse affine,
 composed sequences, and multi-edge paths. All 23 `error` rows are unsupported
 features (see assessment above), not wrong answers.
 
-To extend coverage, implement the missing transform types in
-`packages/core/src/transformations/transformations.ts` (and a native inverse),
-then re-run; failures would then surface real numerical bugs.
+## Maturation backlog (driving the implementation)
+
+Turning `error` rows into `pass` is the work this dingus exists to drive. In
+roughly increasing effort, implement in
+`packages/core/src/transformations/transformations.ts`:
+
+1. **`rotation`** — 8 cases; a rotation matrix is a special affine, so this is
+   mostly a `parseTransformEntry` case + `toArray()` mapping.
+2. **`mapAxis`** — 2 cases; finish the existing stub (permute axes).
+3. **Native inverse** — add `BaseTransformation.inverse()` so reverse traversal
+   is library-native instead of the dingus's generic 4x4 invert.
+4. **`byDimension`** — 4 cases; per-axis sub-transforms.
+5. **`bijection`** — 2 cases; explicit forward/inverse pair.
+6. **`displacements`** — 1 case; deformation field (largest lift; needs array IO).
+7. **Affine/rotation *by path*** — load parameters from the referenced zarr array.
+8. **Non-spatial / >3D axes** — generalise beyond the XYZ `Matrix4` fast path.
+
+A standalone `$.ome.scene` graph reader (with SOURCE→TARGET pathfinding +
+inversion) would let the library — not just this dingus — consume RFC-5 scenes
+directly. After each change, re-run the suite; any new `fail` (vs `error`)
+indicates a real numerical bug to fix.
