@@ -32,7 +32,7 @@
     "dev": "pnpm -r --parallel dev",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "publish": "pnpm build && changeset publish",
+    "publish:latest": "pnpm build && changeset publish",
     "publish:next": "pnpm build && changeset publish --tag next",
     "docs:dev": "pnpm --filter docs dev",
     "docs:build": "pnpm --filter docs build"

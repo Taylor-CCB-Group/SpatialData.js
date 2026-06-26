@@ -107,8 +107,12 @@ npm dist-tag add zarrextra@<latest-version> next
 9. Publish manually to the default `latest` dist-tag:
 
    ```bash
-   pnpm publish
+   pnpm publish:latest
    ```
+
+   Note: run the `publish:latest` script, not `pnpm publish`. `publish` is a
+   built-in pnpm command that would try to publish the private repo-root package
+   (and fail with `EPRIVATE`) instead of running Changesets.
 
    For a genuine prerelease (not the normal flow), publish to `next` instead:
 
