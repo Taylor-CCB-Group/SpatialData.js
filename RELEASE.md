@@ -11,8 +11,12 @@ publishing is intentionally manual for now.
   packages to npm.
 - Publish only from a clean local checkout after reviewing the final diff and
   generated package contents.
-- Use the npm `next` dist-tag for the MDV-targeted alpha line. Do not publish
-  this prerelease as `latest`.
+- Publish to the default `latest` dist-tag. The library is still alpha, but
+  versions follow normal semver and `latest` should always point at the newest
+  published version of each package.
+- Reserve the `next` dist-tag for genuine prereleases (e.g. release candidates
+  ahead of a `latest` cut). Never leave `next` pointing at a version older than
+  `latest` — if you are not actively shipping a prerelease, do not touch `next`.
 
 ## Package versioning
 
@@ -26,6 +30,28 @@ publishing is intentionally manual for now.
 - `zarrextra` participates in the first prerelease because `@spatialdata/core`
   depends on it, but it is not fixed to the `@spatialdata/*` version train for
   future releases.
+
+## Dist-tags
+
+Early releases mixed the `next` and `latest` dist-tags inconsistently, which
+left `next` pointing at stale versions (for example `zarrextra@next` resolved to
+an _older_ version than `zarrextra@latest`). Going forward, publish to `latest`
+only (see the normal flow) and treat `next` as opt-in for real prereleases.
+
+To inspect the current tags:
+
+```bash
+npm dist-tag ls zarrextra
+npm dist-tag ls @spatialdata/vis
+```
+
+If a `next` tag is stale and you are not shipping a prerelease, repoint it at the
+current `latest` version (or leave it alone — `latest` is what installs resolve
+to by default):
+
+```bash
+npm dist-tag add zarrextra@<latest-version> next
+```
 
 ## Normal flow
 
@@ -65,9 +91,9 @@ publishing is intentionally manual for now.
 7. Dry-run the important publish targets:
 
    ```bash
-   pnpm --filter zarrextra publish --dry-run --no-git-checks --tag next
-   pnpm --filter @spatialdata/core publish --dry-run --no-git-checks --tag next
-   pnpm --filter @spatialdata/vis publish --dry-run --no-git-checks --tag next
+   pnpm --filter zarrextra publish --dry-run --no-git-checks
+   pnpm --filter @spatialdata/core publish --dry-run --no-git-checks
+   pnpm --filter @spatialdata/vis publish --dry-run --no-git-checks
    ```
 
 8. Confirm the generated `@spatialdata/core` package manifest depends on
@@ -78,7 +104,13 @@ publishing is intentionally manual for now.
    tar -xOf /tmp/spatialdata-core-*.tgz package/package.json
    ```
 
-9. Publish manually with the `next` dist-tag:
+9. Publish manually to the default `latest` dist-tag:
+
+   ```bash
+   pnpm publish
+   ```
+
+   For a genuine prerelease (not the normal flow), publish to `next` instead:
 
    ```bash
    pnpm publish:next
@@ -87,7 +119,7 @@ publishing is intentionally manual for now.
 10. Smoke-test in MDV:
 
     ```bash
-    pnpm add @spatialdata/vis@next
+    pnpm add @spatialdata/vis
     ```
 
 ## If something looks wrong

@@ -16,18 +16,18 @@ There are several packages that aim to facilitate the use and development of thi
 
 | Package | Role | React? | npm status |
 |---------|------|--------|------------|
-| `zarrextra` | Lower-level zarr metadata helpers used by core | No | Prerelease via `next` |
-| `@spatialdata/core` | Load SpatialData Zarr stores; elements, transforms, table association | No | Prerelease via `next` |
-| `@spatialdata/react` | Thin hooks around core (`useSpatialData`, provider) | Yes | Prerelease via `next` |
-| `@spatialdata/layers` | deck.gl layers, shape/point renderers, versioned layer props | No | Prerelease via `next` |
-| `@spatialdata/avivatorish` | Viv loaders, channel stats, image Zustand stores | No | Prerelease via `next` |
-| `@spatialdata/vis` | `SpatialCanvas` UI + headless `SpatialCanvasViewer` | Yes | MDV-targeted prerelease via `next` |
+| `zarrextra` | Lower-level zarr metadata helpers used by core | No | Alpha |
+| `@spatialdata/core` | Load SpatialData Zarr stores; elements, transforms, table association | No | Alpha |
+| `@spatialdata/react` | Thin hooks around core (`useSpatialData`, provider) | Yes | Alpha |
+| `@spatialdata/layers` | deck.gl layers, shape/point renderers, versioned layer props | No | Alpha |
+| `@spatialdata/avivatorish` | Viv loaders, channel stats, image Zustand stores | No | Alpha |
+| `@spatialdata/vis` | `SpatialCanvas` UI + headless `SpatialCanvasViewer` | Yes | Alpha |
 
-The first npm release line is an MDV-targeted prerelease. Install with the
-`next` tag while the API is still alpha:
+These packages are published to npm under the default `latest` tag. The API is
+still alpha, so expect breaking changes between minor versions:
 
 ```bash
-pnpm add @spatialdata/vis@next
+pnpm add @spatialdata/vis
 ```
 
 Clone the monorepo or `pnpm pack` workspace packages for local integration
