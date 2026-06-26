@@ -1,5 +1,18 @@
 # @spatialdata/vis
 
+## 0.2.5
+
+### Patch Changes
+
+- [#63](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/63) [`c5e6deb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c5e6deb3c5f621844302c80ae92603b3f70cacf3) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Chunk worker enabled by default in vis, and hopefully resolve some bundling issues.
+
+- Updated dependencies [[`c5e6deb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c5e6deb3c5f621844302c80ae92603b3f70cacf3)]:
+  - zarrextra@0.2.3
+  - @spatialdata/avivatorish@0.2.5
+  - @spatialdata/core@0.2.5
+  - @spatialdata/react@0.2.5
+  - @spatialdata/layers@0.2.5
+
 ## 0.2.4
 
 ### Patch Changes
