@@ -1,5 +1,12 @@
 # @spatialdata/core
 
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [[`c5e6deb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c5e6deb3c5f621844302c80ae92603b3f70cacf3)]:
+  - zarrextra@0.2.3
+
 ## 0.2.4
 
 ## 0.2.3
