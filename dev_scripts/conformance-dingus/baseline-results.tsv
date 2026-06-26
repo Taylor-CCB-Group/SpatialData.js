@@ -1,0 +1,42 @@
+case	status	message
+affine	pass
+affine_downProjection	pass
+affine_identity	pass
+affine_identity_inverse	pass
+affine_inverse	pass
+affine_inverse_path_float32	error	transform 'inputToOutput' stores parameters by path; external parameter arrays are not supported
+affine_inverse_path_float64	error	transform 'inputToOutput' stores parameters by path; external parameter arrays are not supported
+affine_path_float32	error	transform 'inputToOutput' stores parameters by path; external parameter arrays are not supported
+affine_path_float64	error	transform 'inputToOutput' stores parameters by path; external parameter arrays are not supported
+affine_upProjection	pass
+bijection_forward	error	transform type 'bijection' is not implemented by SpatialData.js
+bijection_inverse	error	transform type 'bijection' is not implemented by SpatialData.js
+byDimension	error	transform type 'byDimension' is not implemented by SpatialData.js
+byDimension_inverse	error	transform type 'byDimension' is not implemented by SpatialData.js
+byDimension_nonContiguous	error	transform type 'byDimension' is not implemented by SpatialData.js
+byDimension_nonContiguous_inverse	error	transform type 'byDimension' is not implemented by SpatialData.js
+coordinates_1d	error	coordinate system 'input' axis 'i' is not x/y/z (unsupported)
+coordinates_2d-3d	error	coordinate system 'input' axis 'v' is not x/y/z (unsupported)
+displacements_constant	error	transform type 'displacements' is not implemented by SpatialData.js
+identity	pass
+identity_inverse	pass
+mapAxis	error	transform type 'mapAxis' is not implemented by SpatialData.js
+mapAxis_inverse	error	transform type 'mapAxis' is not implemented by SpatialData.js
+rotation	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_identity	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_identity_inverse	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_inverse	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_inverse_path_float32	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_inverse_path_float64	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_path_float32	error	transform type 'rotation' is not implemented by SpatialData.js
+rotation_path_float64	error	transform type 'rotation' is not implemented by SpatialData.js
+scale	pass
+scale_inverse	pass
+sequence	pass
+sequence_inverse	pass
+simple_path	pass
+simple_path_inverse	pass
+translation	pass
+translation_inverse	pass
+unknown_source	pass	unknown source coordinate system 'not_input'
+unknown_target	pass	unknown target coordinate system 'not_output'
