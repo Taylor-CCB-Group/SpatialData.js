@@ -1,4 +1,4 @@
-import { createWasmLocateFile, type OpenJphFactory, type RegisterImageCodecOptions } from './codecs';
+import { type OpenJphInitOptions, type RegisterImageCodecOptions } from './codecs';
 
 export type Htj2kPlaneDtype = 'uint8' | 'int8' | 'uint16' | 'int16';
 
@@ -10,25 +10,31 @@ export type Htj2kEncodeOptions = {
   locateFile?: RegisterImageCodecOptions['locateFile'];
 };
 
-type Htj2kFrameInfo = {
+type Htj2kPlane = Uint8Array | Uint16Array | Int8Array | Int16Array;
+
+/** Encode input accepted by the `openjph-wasm` `encode` function. */
+export type OpenJphEncodeInput = {
+  /** Planar, component-major samples; `length === components*width*height`. */
+  data: Htj2kPlane | Int32Array;
   width: number;
   height: number;
-  bitsPerSample: 8 | 16;
-  isSigned: boolean;
-  componentCount: 1;
-  isUsingColorTransform: false;
+  components?: number;
+  bitDepth?: number;
+  isSigned?: boolean;
+  reversible?: boolean;
+  quality?: number;
+  decompositions?: number;
+  blockSize?: [number, number];
 };
 
-type Htj2kEncoderClass = new () => {
-  /** OpenJPH WASM API: `setQuality(reversible, quality)`; quality is a quantization factor (lower = better). */
-  setQuality(reversible: boolean, quality: number): void;
-  getDecodedBuffer(frame: Htj2kFrameInfo): ArrayBufferView;
-  encode(): void;
-  getEncodedBuffer(): Uint8Array;
-};
+/** The `encode` function exported by `openjph-wasm`. */
+export type OpenJphEncode = (
+  input: OpenJphEncodeInput,
+  options?: OpenJphInitOptions
+) => Promise<Uint8Array>;
 
 export type OpenJphEncoder = (
-  plane: Uint8Array | Uint16Array | Int8Array | Int16Array,
+  plane: Htj2kPlane,
   size: { width: number; height: number },
   options?: Pick<Htj2kEncodeOptions, 'reversible' | 'quality'>
 ) => Promise<Uint8Array>;
@@ -37,93 +43,46 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
   specifier: string
 ) => Promise<Record<string, unknown>>;
 
-function bitsPerSampleForPlane(
-  plane: Uint8Array | Uint16Array | Int8Array | Int16Array
-): 8 | 16 {
-  return plane instanceof Uint16Array || plane instanceof Int16Array ? 16 : 8;
-}
-
-function isSignedPlane(plane: Uint8Array | Uint16Array | Int8Array | Int16Array): boolean {
-  return plane instanceof Int8Array || plane instanceof Int16Array;
-}
-
-function frameInfoForPlane(
-  plane: Uint8Array | Uint16Array | Int8Array | Int16Array,
-  size: { width: number; height: number }
-): Htj2kFrameInfo {
-  const { width, height } = size;
-  const expectedValues = width * height;
-  if (plane.length !== expectedValues) {
-    throw new Error(
-      `HTJ2K plane has ${plane.length} samples, expected ${expectedValues} for ${width}x${height}.`
-    );
-  }
-  return {
-    width,
-    height,
-    bitsPerSample: bitsPerSampleForPlane(plane),
-    isSigned: isSignedPlane(plane),
-    componentCount: 1,
-    isUsingColorTransform: false,
-  };
-}
-
-/** Create an HTJ2K encoder backed by an OpenJPH WASM factory. */
+/** Create an HTJ2K encoder backed by the `openjph-wasm` `encode` function. */
 export function createOpenJphEncoder(
-  factory: OpenJphFactory,
+  encode: OpenJphEncode,
   options: Pick<Htj2kEncodeOptions, 'locateFile'> = {}
 ): OpenJphEncoder {
-  let runtimePromise: Promise<Record<string, unknown>> | undefined;
-
-  async function getRuntime() {
-    runtimePromise ??= Promise.resolve(
-      factory({
-        locateFile: options.locateFile,
-      })
-    );
-    return await runtimePromise;
-  }
-
+  const initOptions = options.locateFile ? { locateFile: options.locateFile } : undefined;
   return async (plane, size, encodeOptions = {}) => {
-    const runtime = await getRuntime();
-    const Encoder = runtime.HTJ2KEncoder as Htj2kEncoderClass | undefined;
-    if (!Encoder) {
-      throw new Error('OpenJPH runtime does not expose HTJ2KEncoder.');
+    const expectedValues = size.width * size.height;
+    if (plane.length !== expectedValues) {
+      throw new Error(
+        `HTJ2K plane has ${plane.length} samples, expected ${expectedValues} for ${size.width}x${size.height}.`
+      );
     }
-
     const reversible = encodeOptions.reversible ?? true;
-    const quality = encodeOptions.quality ?? 0;
-    const frame = frameInfoForPlane(plane, size);
-    const encoder = new Encoder();
-    encoder.setQuality(reversible, quality);
-
-    const buffer = encoder.getDecodedBuffer(frame);
-    const target =
-      frame.bitsPerSample === 16
-        ? new Uint16Array(buffer.buffer, buffer.byteOffset, plane.length)
-        : new Uint8Array(buffer.buffer, buffer.byteOffset, plane.length);
-    target.set(plane);
-    encoder.encode();
-    return encoder.getEncodedBuffer();
+    // bitDepth / isSigned are inferred from the typed array by openjph-wasm.
+    const input: OpenJphEncodeInput = {
+      data: plane,
+      width: size.width,
+      height: size.height,
+      components: 1,
+      reversible,
+    };
+    if (!reversible) {
+      input.quality = encodeOptions.quality ?? 0;
+    }
+    return await encode(input, initOptions);
   };
 }
 
-/** Load the optional OpenJPH WASM encoder from @cornerstonejs/codec-openjph. */
+/** Load the optional OpenJPH WASM encoder from openjph-wasm. */
 export async function loadOpenJphEncoder(
   options: Htj2kEncodeOptions = {}
 ): Promise<OpenJphEncoder> {
-  const factoryMod = await dynamicImport('@cornerstonejs/codec-openjph/wasmjs').catch(() =>
-    dynamicImport('@cornerstonejs/codec-openjph')
-  );
-  const factory = (factoryMod.default ?? factoryMod.OpenJPHJS ?? factoryMod) as unknown;
-  if (typeof factory !== 'function') {
-    throw new Error('Could not find an OpenJPH factory export in @cornerstonejs/codec-openjph.');
+  const mod = await dynamicImport('openjph-wasm');
+  const encode = (mod.encode ??
+    (mod.default as Record<string, unknown> | undefined)?.encode) as OpenJphEncode | undefined;
+  if (typeof encode !== 'function') {
+    throw new Error('Could not find an encode() export in openjph-wasm.');
   }
-  const wasmMod = await dynamicImport('@cornerstonejs/codec-openjph/wasm').catch(() => null);
-  const wasmAsset = wasmMod ? ((wasmMod.default ?? wasmMod) as string | undefined) : undefined;
-  const locateFile =
-    options.locateFile ?? (wasmAsset ? createWasmLocateFile(wasmAsset) : undefined);
-  return createOpenJphEncoder(factory as OpenJphFactory, { locateFile });
+  return createOpenJphEncoder(encode, options);
 }
 
 export function planeArrayForDtype(

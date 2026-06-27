@@ -15,8 +15,8 @@ from spatialdata_codec_writer.htj2k_encode import (
 
 def test_vendored_encode_assets_exist() -> None:
     assert encode_script_path().is_file()
-    assert (openjph_vendor_dir() / "openjphjs.js").is_file()
-    assert (openjph_vendor_dir() / "openjphjs.wasm").is_file()
+    assert (openjph_vendor_dir() / "index.mjs").is_file()
+    assert (openjph_vendor_dir() / "wasm" / "libopenjph.wasm").is_file()
 
 
 @pytest.mark.skipif(

@@ -66,9 +66,32 @@ export type OpenJpegFactory = (opts?: {
   locateFile?: RegisterImageCodecOptions['locateFile'];
 }) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
-export type OpenJphFactory = (opts?: {
+/**
+ * Init options passed to the `openjph-wasm` `decode`/`encode` functions.
+ *
+ * Only `locateFile` is forwarded by zarrextra (bundlers use it to resolve the
+ * WASM url). The package also supports a `moduleFactory`; callers that need it
+ * can pass it to `decode`/`encode` directly.
+ */
+export type OpenJphInitOptions = {
   locateFile?: RegisterImageCodecOptions['locateFile'];
-}) => Promise<Record<string, unknown>> | Record<string, unknown>;
+};
+
+/** Planar, component-major decode result returned by `openjph-wasm` `decode`. */
+export type OpenJphDecodedImage = {
+  width: number;
+  height: number;
+  components: number;
+  bitDepth: number;
+  isSigned: boolean;
+  data: ArrayBufferView;
+};
+
+/** The `decode` function exported by `openjph-wasm`. */
+export type OpenJphDecode = (
+  codestream: Uint8Array,
+  options?: OpenJphInitOptions
+) => Promise<OpenJphDecodedImage>;
 
 /** Emscripten locateFile hook that resolves bundled codec WASM to a bundler URL. */
 export function createWasmLocateFile(
@@ -266,55 +289,32 @@ async function loadOpenJpegDecoder(options: RegisterImageCodecOptions): Promise<
   return createOpenJpegDecoder(factory as OpenJpegFactory, options);
 }
 
-type Htj2kDecoderClass = new () => {
-  getEncodedBuffer(length: number): Uint8Array;
-  decode(): void;
-  getDecodedBuffer(): DecodedImageBytes;
-};
-
+/**
+ * Adapt the `openjph-wasm` `decode` function to an {@link ImageCodecDecoder}.
+ *
+ * `decode` returns planar, component-major samples (`data[(c*h + y)*w + x]`),
+ * which already match a Zarr chunk laid out as `[..., z, y, x]` in C order, so
+ * the planar buffer is returned verbatim and validated against the chunk shape.
+ */
 export function createOpenJphDecoder(
-  factory: OpenJphFactory,
+  decode: OpenJphDecode,
   options: Pick<RegisterImageCodecOptions, 'locateFile'> = {}
 ): ImageCodecDecoder {
-  let runtimePromise: Promise<Record<string, unknown>> | undefined;
-  async function getRuntime() {
-    runtimePromise ??= Promise.resolve(
-      factory({
-        locateFile: options.locateFile,
-      })
-    );
-    return await runtimePromise;
-  }
+  const initOptions = options.locateFile ? { locateFile: options.locateFile } : undefined;
   return async (encoded) => {
-    const runtime = await getRuntime();
-    const Decoder = (runtime.HTJ2KDecoder ?? runtime.JPHDecoder ?? runtime.J2KDecoder) as
-      | Htj2kDecoderClass
-      | undefined;
-    if (!Decoder) {
-      throw new Error(
-        'OpenJPH runtime does not expose a known decoder class; pass a custom decoder option.'
-      );
-    }
-    const decoder = new Decoder();
-    decoder.getEncodedBuffer(encoded.length).set(encoded);
-    decoder.decode();
-    return decoder.getDecodedBuffer();
+    const result = await decode(encoded, initOptions);
+    return result.data;
   };
 }
 
 async function loadOpenJphDecoder(options: RegisterImageCodecOptions): Promise<ImageCodecDecoder> {
-  const factoryMod = await dynamicImport('@cornerstonejs/codec-openjph/wasmjs').catch(() =>
-    dynamicImport('@cornerstonejs/codec-openjph')
-  );
-  const factory = (factoryMod.default ?? factoryMod.OpenJPHJS ?? factoryMod) as unknown;
-  if (typeof factory !== 'function') {
-    throw new Error('Could not find an OpenJPH factory export in @cornerstonejs/codec-openjph.');
+  const mod = await dynamicImport('openjph-wasm');
+  const decode = (mod.decode ??
+    (mod.default as Record<string, unknown> | undefined)?.decode) as OpenJphDecode | undefined;
+  if (typeof decode !== 'function') {
+    throw new Error('Could not find a decode() export in openjph-wasm.');
   }
-  const wasmMod = await dynamicImport('@cornerstonejs/codec-openjph/wasm').catch(() => null);
-  const wasmAsset = wasmMod ? ((wasmMod.default ?? wasmMod) as string | undefined) : undefined;
-  const locateFile =
-    options.locateFile ?? (wasmAsset ? createWasmLocateFile(wasmAsset) : undefined);
-  return createOpenJphDecoder(factory as OpenJphFactory, { locateFile });
+  return createOpenJphDecoder(decode, options);
 }
 
 function registerImageCodec(

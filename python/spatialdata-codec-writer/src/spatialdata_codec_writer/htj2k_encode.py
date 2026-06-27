@@ -61,7 +61,7 @@ class OpenJphEncoderWorker:
             raise RuntimeError("Node.js is required for HTJ2K encode but was not found on PATH.")
         if not _ENCODE_SCRIPT.is_file():
             raise RuntimeError(f"HTJ2K encode script not found: {_ENCODE_SCRIPT}")
-        if not (openjph_vendor_dir() / "openjphjs.wasm").is_file():
+        if not (openjph_vendor_dir() / "wasm" / "libopenjph.wasm").is_file():
             raise RuntimeError(
                 f"Vendored OpenJPH WASM not found under {openjph_vendor_dir()}. "
                 "Run scripts/vendor-openjph-for-python.mjs before building the package."

@@ -27,8 +27,8 @@ For local development in this monorepo:
 pnpm test:codec-writer
 ```
 
-(`openjphjs.js` / `openjphjs.wasm` are gitignored; the script vendors them from
-`@cornerstonejs/codec-openjph` before pytest.)
+(The vendored `vendor/openjph/` assets are gitignored; the script vendors them
+from `openjph-wasm` before pytest.)
 
 Before building or running HTJ2K tests manually:
 

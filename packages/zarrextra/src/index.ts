@@ -213,7 +213,9 @@ export {
   registerExperimentalHtj2kCodec,
   type ImageCodecDecoder,
   type OpenJpegFactory,
-  type OpenJphFactory,
+  type OpenJphDecode,
+  type OpenJphDecodedImage,
+  type OpenJphInitOptions,
   type RegisterImageCodecOptions,
 } from './codecs';
 export {
@@ -223,6 +225,8 @@ export {
   planeArrayForDtype,
   type Htj2kEncodeOptions,
   type Htj2kPlaneDtype,
+  type OpenJphEncode,
+  type OpenJphEncodeInput,
   type OpenJphEncoder,
 } from './htj2k-encode';
 export {

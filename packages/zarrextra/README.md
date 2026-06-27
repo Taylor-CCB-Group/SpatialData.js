@@ -68,11 +68,15 @@ registerJpeg2kCodec({ decoder: createOpenJpegDecoder(OpenJPEGJS) });
 using either id clearly labelled until there is community/registry alignment.
 
 ```typescript
-import OpenJPHJS from '@cornerstonejs/codec-openjph';
+import { decode as openJphDecode } from 'openjph-wasm';
 import { createOpenJphDecoder, registerExperimentalHtj2kCodec } from 'zarrextra';
 
-registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(OpenJPHJS) });
+registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(openJphDecode) });
 ```
+
+`openjph-wasm` decodes J2K/HTJ2K codestreams (including multi-component) and
+returns planar, component-major samples, so a chunk's components map directly to
+a Zarr chunk laid out as `[..., z, y, x]`.
 
 For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
 `createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`
@@ -125,9 +129,9 @@ required for that path.
 | Browser without `@spatialdata/vis` | `enableWorkerChunkDecode()` from `zarrextra/workers` before loading JP2K or HTJ2K data |
 
 Optional dependencies: `@fideus-labs/fizarrita`, `@fideus-labs/worker-pool`,
-`@cornerstonejs/codec-openjpeg`, and `@cornerstonejs/codec-openjph` (bundled into
-the default worker script). Future worker entries may let applications opt into
-lighter worker bundles when JP2K or HTJ2K codecs are not needed.
+`@cornerstonejs/codec-openjpeg`, and `openjph-wasm` (bundled into the default
+worker script). Future worker entries may let applications opt into lighter
+worker bundles when JP2K or HTJ2K codecs are not needed.
 
 Contributor note: new worker-backed entry points should follow the documented
 [worker bundling pattern](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/docs/worker-bundling.mdx)

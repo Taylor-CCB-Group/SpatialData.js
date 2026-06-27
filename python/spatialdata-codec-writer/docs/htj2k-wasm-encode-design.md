@@ -5,10 +5,17 @@ of persistent Node.js workers (`spatialdata_codec_writer/vendor/encode-plane.mjs
 New stores are labelled `experimental.openjph_htj2k`.
 
 Native `imagecodecs` HTJ2K encode is intentionally **not** used: PyPI wheels are
-often stub-only, conda installs are awkward, and the WASM encoder exposes
-`setQuality(reversible, quality)` for preset control. We may re-evaluate native
-encode later; the frontend still decodes the legacy id
+often stub-only, conda installs are awkward, and the WASM encoder exposes a
+simple `encode({ data, width, height, components, reversible, quality })` call.
+We may re-evaluate native encode later; the frontend still decodes the legacy id
 `experimental.imagecodecs_htj2k` for older fixtures.
+
+The encoder/decoder is the [`openjph-wasm`](https://www.npmjs.com/package/openjph-wasm)
+package. Earlier versions used `@cornerstonejs/codec-openjph`, whose WASM build
+could not round-trip independent multi-component data
+(see [multi-component-codec-findings.md](./multi-component-codec-findings.md)).
+`openjph-wasm` decodes/encodes multi-component codestreams with planar,
+component-major buffers.
 
 ## Contracts
 
@@ -27,22 +34,22 @@ encode later; the frontend still decodes the legacy id
 Python spatialdata-codec-writer
   → EncoderPool (N persistent Node workers)
   → vendored encode-plane.mjs --worker
-  → OpenJPH HTJ2KEncoder.setQuality(reversible, quality).encode()
+  → openjph-wasm encode({ data, width, height, components, reversible, quality })
   → HTJ2K bytes per chunk
 ```
 
 Vendoring: run `node scripts/vendor-openjph-for-python.mjs` at the monorepo root
-to copy `@cornerstonejs/codec-openjph` dist assets into the Python package wheel.
-The copied `vendor/openjph/` blobs are gitignored; CI and `pnpm test:codec-writer`
-run the vendor step after `pnpm install`.
+to copy `openjph-wasm` dist assets (`index.mjs` + `wasm/`) into the Python package
+wheel. The copied `vendor/openjph/` blobs are gitignored; CI and
+`pnpm test:codec-writer` run the vendor step after `pnpm install`.
 
 Preset mapping:
 
-| Preset | `setQuality(reversible, quality)` |
+| Preset | `encode({ reversible, quality })` |
 |--------|-----------------------------------|
-| `lossless` | `(true, 0)` |
-| `balanced` | `(false, 0.0002)` |
-| `small` | `(false, 0.001)` |
+| `lossless` | `{ reversible: true }` |
+| `balanced` | `{ reversible: false, quality: 0.0002 }` |
+| `small` | `{ reversible: false, quality: 0.001 }` |
 
 `quality` is a float quantization factor (lower = better fidelity, larger output).
 Integer values above ~15 with `reversible=false` produce degenerate output.

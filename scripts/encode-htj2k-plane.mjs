@@ -14,17 +14,16 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function resolveOpenJphRoot() {
   const candidates = [
-    join(repoRoot, 'node_modules', '@cornerstonejs', 'codec-openjph'),
-    join(repoRoot, 'packages', 'zarrextra', 'node_modules', '@cornerstonejs', 'codec-openjph'),
+    join(repoRoot, 'node_modules', 'openjph-wasm'),
+    join(repoRoot, 'packages', 'zarrextra', 'node_modules', 'openjph-wasm'),
+    join(repoRoot, 'packages', 'vis', 'node_modules', 'openjph-wasm'),
   ];
   for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'dist', 'openjphjs.js'))) {
+    if (existsSync(join(candidate, 'dist', 'index.js'))) {
       return candidate;
     }
   }
-  throw new Error(
-    'Could not find @cornerstonejs/codec-openjph. Install monorepo dependencies with pnpm install.'
-  );
+  throw new Error('Could not find openjph-wasm. Install monorepo dependencies with pnpm install.');
 }
 
 async function readStdin() {
@@ -51,24 +50,15 @@ function planeArrayForDtype(dtype, bytes) {
 }
 
 async function loadEncoder() {
-  const openjphRoot = resolveOpenJphRoot();
-  const mod = await import(pathToFileURL(join(openjphRoot, 'dist/openjphjs.js')).href);
-  const factory = mod.default ?? mod.OpenJPHJS ?? mod;
-  if (typeof factory !== 'function') {
-    throw new Error('Could not load OpenJPH WASM factory.');
+  const indexPath = join(resolveOpenJphRoot(), 'dist', 'index.js');
+  const mod = await import(pathToFileURL(indexPath).href);
+  if (typeof mod.encode !== 'function') {
+    throw new Error('openjph-wasm does not expose encode().');
   }
-  const wasmPath = join(openjphRoot, 'dist/openjphjs.wasm');
-  return await factory({
-    locateFile: (path) => (path.endsWith('.wasm') ? wasmPath : path),
-  });
+  return mod;
 }
 
 async function encodePlane(runtime, request) {
-  const Encoder = runtime.HTJ2KEncoder;
-  if (!Encoder) {
-    throw new Error('OpenJPH runtime does not expose HTJ2KEncoder.');
-  }
-
   const { width, height, dtype } = request;
   const reversible = request.reversible ?? true;
   const quality = request.quality ?? 0;
@@ -79,25 +69,12 @@ async function encodePlane(runtime, request) {
     throw new Error(`Plane has ${plane.length} samples, expected ${expectedValues}.`);
   }
 
-  const frame = {
-    width,
-    height,
-    bitsPerSample: dtype === 'uint8' || dtype === 'int8' ? 8 : 16,
-    isSigned: dtype === 'int8' || dtype === 'int16',
-    componentCount: 1,
-    isUsingColorTransform: false,
-  };
-
-  const encoder = new Encoder();
-  encoder.setQuality(reversible, quality);
-  const buffer = encoder.getDecodedBuffer(frame);
-  const target =
-    frame.bitsPerSample === 16
-      ? new Uint16Array(buffer.buffer, buffer.byteOffset, plane.length)
-      : new Uint8Array(buffer.buffer, buffer.byteOffset, plane.length);
-  target.set(plane);
-  encoder.encode();
-  return encoder.getEncodedBuffer();
+  // bitDepth / isSigned are inferred from the typed array by openjph-wasm.
+  const input = { data: plane, width, height, components: 1, reversible };
+  if (!reversible) {
+    input.quality = quality;
+  }
+  return await runtime.encode(input);
 }
 
 async function main() {

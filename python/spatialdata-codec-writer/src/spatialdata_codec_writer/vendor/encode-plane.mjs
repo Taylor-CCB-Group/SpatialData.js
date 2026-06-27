@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Encode one 2D image plane to HTJ2K via vendored OpenJPH WASM.
+ * Encode one 2D image plane to HTJ2K via vendored openjph-wasm.
  *
  * One-shot mode (default):
  *   stdin: JSON { width, height, dtype, reversible?, quality?, plane: base64 }
@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const vendorDir = dirname(fileURLToPath(import.meta.url));
-const openjphDir = join(vendorDir, 'openjph');
+const openjphIndex = join(vendorDir, 'openjph', 'index.mjs');
 const workerMode = process.argv.includes('--worker');
 
 async function readStdin() {
@@ -44,23 +44,14 @@ function planeArrayForDtype(dtype, bytes) {
 }
 
 async function loadEncoder() {
-  const mod = await import(pathToFileURL(join(openjphDir, 'openjphjs.js')).href);
-  const factory = mod.default ?? mod.OpenJPHJS ?? mod;
-  if (typeof factory !== 'function') {
-    throw new Error('Could not load OpenJPH WASM factory.');
+  const mod = await import(pathToFileURL(openjphIndex).href);
+  if (typeof mod.encode !== 'function') {
+    throw new Error('Vendored openjph-wasm does not expose encode().');
   }
-  const wasmPath = join(openjphDir, 'openjphjs.wasm');
-  return await factory({
-    locateFile: (path) => (path.endsWith('.wasm') ? wasmPath : path),
-  });
+  return mod;
 }
 
 async function encodePlane(runtime, request) {
-  const Encoder = runtime.HTJ2KEncoder;
-  if (!Encoder) {
-    throw new Error('OpenJPH runtime does not expose HTJ2KEncoder.');
-  }
-
   const { width, height, dtype } = request;
   const reversible = request.reversible ?? true;
   const quality = request.quality ?? 0;
@@ -71,25 +62,12 @@ async function encodePlane(runtime, request) {
     throw new Error(`Plane has ${plane.length} samples, expected ${expectedValues}.`);
   }
 
-  const frame = {
-    width,
-    height,
-    bitsPerSample: dtype === 'uint8' || dtype === 'int8' ? 8 : 16,
-    isSigned: dtype === 'int8' || dtype === 'int16',
-    componentCount: 1,
-    isUsingColorTransform: false,
-  };
-
-  const encoder = new Encoder();
-  encoder.setQuality(reversible, quality);
-  const buffer = encoder.getDecodedBuffer(frame);
-  const target =
-    frame.bitsPerSample === 16
-      ? new Uint16Array(buffer.buffer, buffer.byteOffset, plane.length)
-      : new Uint8Array(buffer.buffer, buffer.byteOffset, plane.length);
-  target.set(plane);
-  encoder.encode();
-  return encoder.getEncodedBuffer();
+  // bitDepth / isSigned are inferred from the typed array by openjph-wasm.
+  const input = { data: plane, width, height, components: 1, reversible };
+  if (!reversible) {
+    input.quality = quality;
+  }
+  return await runtime.encode(input);
 }
 
 function writeResponse(status, payload) {

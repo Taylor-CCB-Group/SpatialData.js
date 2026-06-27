@@ -203,19 +203,16 @@ describe('codec registration', () => {
   it('encodes and decodes a small HTJ2K plane with OpenJPH WASM', async () => {
     let openjph: Record<string, unknown>;
     try {
-      openjph = await import('@cornerstonejs/codec-openjph');
+      openjph = await import('openjph-wasm');
     } catch {
-      console.warn(
-        'Skipping HTJ2K encode round-trip: @cornerstonejs/codec-openjph is not installed.'
-      );
+      console.warn('Skipping HTJ2K encode round-trip: openjph-wasm is not installed.');
       return;
     }
 
     const { createOpenJphEncoder } = await import('../src/htj2k-encode');
     const { createOpenJphDecoder } = await import('../src/codecs');
-    const factory = (openjph.default ?? openjph.OpenJPHJS ?? openjph) as Parameters<
-      typeof createOpenJphEncoder
-    >[0];
+    const encode = openjph.encode as Parameters<typeof createOpenJphEncoder>[0];
+    const decode = openjph.decode as Parameters<typeof createOpenJphDecoder>[0];
     const width = 64;
     const height = 64;
     const plane = new Uint16Array(width * height);
@@ -225,11 +222,11 @@ describe('codec registration', () => {
       }
     }
 
-    const encoder = createOpenJphEncoder(factory);
+    const encoder = createOpenJphEncoder(encode);
     const encoded = await encoder(plane, { width, height }, { reversible: true, quality: 0 });
     expect(encoded.byteLength).toBeGreaterThan(0);
 
-    const decoder = createOpenJphDecoder(factory);
+    const decoder = createOpenJphDecoder(decode);
     const decoded = toUint16Array(await decoder(encoded, {
       dataType: 'uint16',
       shape: [height, width],
@@ -242,18 +239,14 @@ describe('codec registration', () => {
   it('lossy OpenJPH quality changes encoded size on a fractal plane', async () => {
     let openjph: Record<string, unknown>;
     try {
-      openjph = await import('@cornerstonejs/codec-openjph');
+      openjph = await import('openjph-wasm');
     } catch {
-      console.warn(
-        'Skipping HTJ2K lossy quality test: @cornerstonejs/codec-openjph is not installed.'
-      );
+      console.warn('Skipping HTJ2K lossy quality test: openjph-wasm is not installed.');
       return;
     }
 
     const { createOpenJphEncoder } = await import('../src/htj2k-encode');
-    const factory = (openjph.default ?? openjph.OpenJPHJS ?? openjph) as Parameters<
-      typeof createOpenJphEncoder
-    >[0];
+    const encode = openjph.encode as Parameters<typeof createOpenJphEncoder>[0];
     const width = 64;
     const height = 64;
     const plane = new Uint16Array(width * height);
@@ -274,7 +267,7 @@ describe('codec registration', () => {
       }
     }
 
-    const encoder = createOpenJphEncoder(factory);
+    const encoder = createOpenJphEncoder(encode);
     const high = await encoder(plane, { width, height }, { reversible: false, quality: 0.001 });
     const mid = await encoder(plane, { width, height }, { reversible: false, quality: 0.01 });
     const low = await encoder(plane, { width, height }, { reversible: false, quality: 0.1 });
