@@ -237,7 +237,15 @@ function renderSubBitmaskLayers(props: any) {
   } = props.tile;
   const { data, id, loader, maxZoom, minZoom, zoomOffset } = props;
 
-  if (!data) {
+  // Cull tiles that fall outside the image extent. deck.gl's TileLayer emits
+  // tiles with negative bbox edges at some zoom levels (notably zoomed-out /
+  // overview levels for non-power-of-2 images); feeding those negative edges
+  // into the bounds formula below produces a grossly mis-placed/stretched
+  // raster. Mirrors Viv's own renderSubLayers guard.
+  if ([left, bottom, right, top].some((v) => v < 0) || !data) {
+    return null;
+  }
+  if (data.width === 0 || data.height === 0) {
     return null;
   }
 
@@ -327,6 +335,13 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       const { height, width } = getImageSize(baseLoader);
       const tileSize = baseLoader.tileSize;
       const zoomOffset = Math.round(Math.log2(modelMatrix ? modelMatrix.getScale()[0] : 1));
+      // Cap the coarsest tile zoom at the deepest available resolution level
+      // (matches Viv's MultiscaleImageLayer). Without this, deck.gl keeps
+      // subdividing past the last real level when zoomed out: getTileData
+      // clamps to the deepest loader and returns the same data, but the tile
+      // bbox keeps doubling, so the bounds formula stretches that data far
+      // beyond the image extent — the "wrong transformation" at low zoom.
+      const minZoom = Math.round(-(loader.length - 1));
 
       return new MultiscaleLabelsTileLayer(
         this.getSubLayerProps({
@@ -343,7 +358,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
           tileSize,
           extent: [0, 0, width, height],
           zoomOffset,
-          minZoom: MIN_LABELS_DISPLAY_ZOOM,
+          minZoom,
           maxZoom: 0,
           refinementStrategy: 'best-available',
           onTileError: baseLoader.onTileError,
