@@ -30,6 +30,7 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "dev": "pnpm -r --parallel dev",
+    "dev:stop": "node scripts/dev-stop.mjs",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "publish:latest": "pnpm build && changeset publish",

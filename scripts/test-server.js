@@ -6,11 +6,11 @@
  * via HTTP URLs for testing with FetchStore.
  */
 
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { readFile, stat, readdir } from 'node:fs/promises';
-import { join, extname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { extname, join, resolve } from 'node:path';
 import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { FIXTURE_SERVER_PORT } from './fixture-server-port.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -93,6 +93,18 @@ async function handleRequest(req, res) {
     // Remove query string and normalize path
     const urlPath = new URL(req.url, `http://${req.headers.host}`).pathname;
 
+    // Identity/health endpoint so tooling (e.g. the vis dev preflight) can tell
+    // an already-running SpatialData fixture server apart from a foreign server.
+    if (urlPath === '/__fixture-health__') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'X-SpatialData-Fixture-Server': '1',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(JSON.stringify({ server: 'spatialdata-fixture-server', port: PORT }));
+      return;
+    }
+
     // Remove leading /test-fixtures if present (for cleaner URLs)
     let filePath = urlPath.startsWith('/test-fixtures')
       ? urlPath.slice('/test-fixtures'.length)
@@ -157,6 +169,16 @@ async function handleRequest(req, res) {
 
 // Create and start server
 const server = createServer(handleRequest);
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(
+      `Fixture server port ${PORT} is already in use. Run \`pnpm dev:stop\` to clear stale SpatialData dev processes, or set SPATIALDATA_FIXTURE_PORT to another port.`
+    );
+    process.exit(1);
+  }
+  throw error;
+});
 
 server.listen(PORT, () => {
   console.log(`Test fixture server running at http://localhost:${PORT}`);
