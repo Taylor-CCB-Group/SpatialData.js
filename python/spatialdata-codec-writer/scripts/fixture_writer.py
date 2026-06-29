@@ -13,8 +13,8 @@ from spatialdata_codec_writer.codecs import (
     HTJ2K_ENCODER,
     CodecName,
     chunk_grid,
-    decode_image_plane,
-    encode_image_plane,
+    decode_image_chunk,
+    encode_image_chunk,
     is_htj2k_codec,
     package_version,
     sha256,
@@ -220,28 +220,36 @@ def _write_array_chunks(
 ) -> list[dict[str, Any]]:
     is_lossless = _is_lossless_encode(codec, encode_options)
     refs: list[dict[str, Any]] = []
+    # Each chunk's leading (t, c, z) dims become codestream components; the last
+    # two axes are the y/x plane. For z>1 chunks this is a multi-component codestream.
+    n_components = 1
+    for size in chunks[:-2]:
+        n_components *= int(size)
+    plane_h, plane_w = int(chunks[-2]), int(chunks[-1])
     for coords in chunk_grid(image.shape, chunks):
         chunk = _extract_chunk(image, chunks, coords)
-        encoded = encode_image_plane(
-            chunk.reshape(chunk.shape[-2], chunk.shape[-1]), codec, encode_options or {}
-        )
+        volume = chunk.reshape(n_components, plane_h, plane_w)
+        encoded = encode_image_chunk(volume, codec, encode_options or {})
         chunk_rel = f"{array_path}/c/" + "/".join(str(c) for c in coords)
         chunk_path = store_path / chunk_rel
         chunk_path.parent.mkdir(parents=True, exist_ok=True)
         chunk_path.write_bytes(encoded)
 
-        expected_plane = chunk.reshape(chunk.shape[-2], chunk.shape[-1])
         if len(refs) < 4:
-            decoded = decode_image_plane(encoded, codec).reshape(expected_plane.shape)
-            if is_lossless and not np.array_equal(decoded, expected_plane):
+            decoded = decode_image_chunk(
+                encoded, codec, components=n_components, height=plane_h, width=plane_w
+            )
+            if is_lossless and not np.array_equal(decoded, volume):
                 raise RuntimeError(f"Codec self-validation failed for chunk {coords}")
-            sample_plane = expected_plane if is_lossless else decoded
+            sample = volume if is_lossless else decoded
+            sample_plane = sample[0]
             refs.append(
                 {
                     "coords": list(coords),
                     "path": chunk_rel,
                     "encoded_sha256": sha256(encoded),
-                    "decoded_sha256": sha256(sample_plane.tobytes()),
+                    "decoded_sha256": sha256(sample.tobytes()),
+                    "components": n_components,
                     "samples": [
                         int(sample_plane[0, 0]),
                         int(sample_plane[0, min(1, sample_plane.shape[1] - 1)]),
@@ -255,8 +263,8 @@ def _write_array_chunks(
 def _validate_codec_chunks(chunks: tuple[int, int, int, int, int]) -> None:
     if len(chunks) != 5:
         raise ValueError("chunks must have shape [t, c, z, y, x]")
-    if chunks[:3] != (1, 1, 1):
-        raise ValueError("v1 codec fixtures require chunks beginning with (1, 1, 1)")
+    if chunks[:2] != (1, 1):
+        raise ValueError("codec fixtures require chunks beginning with (1, 1) for t and c")
 
 
 def _multiscale_levels(base: np.ndarray, multiscale: bool) -> list[np.ndarray]:
