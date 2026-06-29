@@ -14,11 +14,13 @@ The encoder/decoder is the [`openjph-wasm`](https://www.npmjs.com/package/openjp
 package. Earlier versions used `@cornerstonejs/codec-openjph`, whose WASM build
 could not round-trip independent multi-component data
 (see [multi-component-codec-findings.md](./multi-component-codec-findings.md));
-`openjph-wasm` does round-trip multi-component, planar, component-major buffers
-losslessly. That makes `z > 1` multi-component chunks *possible*, but they are
-not yet wired up end-to-end: the writer still encodes **one 2D plane per chunk**
-(chunk shapes begin `(1, 1, 1, ...)`), so volumetric `z > 1` chunk support
-remains future work.
+`openjph-wasm` round-trips multi-component, planar, component-major buffers
+losslessly, so a chunk's leading dims (e.g. z) are encoded as **codestream
+components**. `z > 1` chunks are now wired up end-to-end: the writer encodes a
+chunk's z-planes as one multi-component codestream, and the JS reader decodes it
+back to planar `[..., z, y, x]`. The `mandelbulb` fixture uses
+`(1, 1, 4, 128, 128)` chunks (4 z-planes per codestream). Chunk shapes must begin
+`(1, 1)` (t and c are not chunked across components).
 
 ## Contracts
 
@@ -28,7 +30,7 @@ remains future work.
 | Zarr codec id (legacy decode) | `experimental.imagecodecs_htj2k` |
 | Encoder label | `openjph-wasm` (manifest `encoder` field) |
 | Array metadata | Zarr v3; `codecs: [{ name, configuration: {} }]` |
-| Chunk bytes | Raw HTJ2K bitstream per 2D spatial plane (last two axes) |
+| Chunk bytes | One HTJ2K codestream per chunk; the chunk's leading dims (z) are codestream components, the last two axes are the y/x plane |
 | Browser read | `registerExperimentalHtj2kCodec()` registers both ids |
 
 ## Encode flow

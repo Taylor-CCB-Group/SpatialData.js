@@ -78,8 +78,8 @@ registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(openJphDecode) })
 samples. Unlike the older `@cornerstonejs/codec-openjph` build, it round-trips
 genuine multi-component data losslessly (the repo's `multi-component-codec-findings.md`
 has the details), so a multi-component codestream maps directly onto a Zarr
-chunk's `[..., z, y, x]` layout. The writer currently emits one 2D plane per
-chunk; end-to-end `z > 1` multi-component chunks are planned follow-up work.
+chunk's `[..., z, y, x]` layout. The `mandelbulb` test fixture exercises this:
+each chunk is a single codestream spanning 4 z-planes (`(1, 1, 4, 128, 128)`).
 
 For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
 `createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`

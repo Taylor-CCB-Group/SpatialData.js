@@ -11,7 +11,9 @@ MANDELBULB_FIXTURE_SIZE = 128
 MANDELBULB_FIXTURE_T = 2
 MANDELBULB_FIXTURE_C = 1
 MANDELBULB_FIXTURE_Z = 8
-MANDELBULB_FIXTURE_CHUNKS: tuple[int, int, int, int, int] = (1, 1, 1, 128, 128)
+# z>1 per chunk: each chunk is a 4-plane multi-component HTJ2K codestream, and z
+# (8) spans two chunks — exercising both multi-component and multi-z-chunk reads.
+MANDELBULB_FIXTURE_CHUNKS: tuple[int, int, int, int, int] = (1, 1, 4, 128, 128)
 MANDELBULB_FIXTURE_IMAGE_KEY = "mandelbulb"
 MANDELBULB_ENCODE_OPTIONS = {"reversible": True}
 

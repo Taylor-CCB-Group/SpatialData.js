@@ -1,20 +1,28 @@
 #!/usr/bin/env node
+import { dirname, join } from 'node:path';
 /**
- * Encode one 2D image plane to HTJ2K via vendored openjph-wasm.
+ * Encode/decode HTJ2K chunks via vendored openjph-wasm.
  *
- * One-shot mode (default):
- *   stdin: JSON { width, height, dtype, reversible?, quality?, plane: base64 }
+ * A chunk is one or more planar, component-major planes (e.g. z-planes of a
+ * volumetric chunk) encoded as a single multi-component codestream.
+ *
+ * One-shot mode (default): encode only.
+ *   stdin: JSON { width, height, components?, dtype, reversible?, quality?, plane: base64 }
  *   stdout: raw HTJ2K bytes
  *
  * Worker mode (--worker):
  *   Repeated length-prefixed requests on stdin; length-prefixed responses on stdout.
  *   Request:  [u32 BE length][JSON utf8]
+ *     encode (default): { width, height, components?, dtype, reversible?, quality?, plane: base64 }
+ *     decode:           { op: "decode", codestream: base64 }
  *   Response: [u8 status][u32 BE length][payload]
- *     status 0 = HTJ2K bytes
+ *     status 0 = payload (encode: HTJ2K bytes; decode: 14-byte header + planar samples)
  *     status 1 = UTF-8 error message
+ *
+ *   Decode header (little-endian): u32 components, u32 height, u32 width,
+ *     u8 bytesPerSample, u8 isSigned — followed by the raw component-major samples.
  */
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
 
 const vendorDir = dirname(fileURLToPath(import.meta.url));
 const openjphIndex = join(vendorDir, 'openjph', 'index.mjs');
@@ -43,31 +51,53 @@ function planeArrayForDtype(dtype, bytes) {
   }
 }
 
-async function loadEncoder() {
+async function loadRuntime() {
   const mod = await import(pathToFileURL(openjphIndex).href);
-  if (typeof mod.encode !== 'function') {
-    throw new Error('Vendored openjph-wasm does not expose encode().');
+  if (typeof mod.encode !== 'function' || typeof mod.decode !== 'function') {
+    throw new Error('Vendored openjph-wasm does not expose encode()/decode().');
   }
   return mod;
 }
 
-async function encodePlane(runtime, request) {
+async function encodeChunk(runtime, request) {
   const { width, height, dtype } = request;
+  const components = request.components ?? 1;
   const reversible = request.reversible ?? true;
   const quality = request.quality ?? 0;
   const planeBytes = Buffer.from(request.plane, 'base64');
-  const plane = planeArrayForDtype(dtype, planeBytes);
-  const expectedValues = width * height;
-  if (plane.length !== expectedValues) {
-    throw new Error(`Plane has ${plane.length} samples, expected ${expectedValues}.`);
+  const data = planeArrayForDtype(dtype, planeBytes);
+  const expectedValues = width * height * components;
+  if (data.length !== expectedValues) {
+    throw new Error(`Chunk has ${data.length} samples, expected ${expectedValues}.`);
   }
 
   // bitDepth / isSigned are inferred from the typed array by openjph-wasm.
-  const input = { data: plane, width, height, components: 1, reversible };
+  const input = { data, width, height, components, reversible };
   if (!reversible) {
     input.quality = quality;
   }
   return await runtime.encode(input);
+}
+
+async function decodeChunk(runtime, request) {
+  const codestream = Buffer.from(request.codestream, 'base64');
+  const result = await runtime.decode(new Uint8Array(codestream));
+  const samples = result.data;
+  const bytesPerSample = samples.BYTES_PER_ELEMENT;
+  const header = Buffer.alloc(14);
+  header.writeUInt32LE(result.components, 0);
+  header.writeUInt32LE(result.height, 4);
+  header.writeUInt32LE(result.width, 8);
+  header.writeUInt8(bytesPerSample, 12);
+  header.writeUInt8(result.isSigned ? 1 : 0, 13);
+  const body = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+  return Buffer.concat([header, body]);
+}
+
+async function handleRequest(runtime, request) {
+  return request.op === 'decode'
+    ? await decodeChunk(runtime, request)
+    : await encodeChunk(runtime, request);
 }
 
 function writeResponse(status, payload) {
@@ -99,8 +129,8 @@ async function* readLengthPrefixedJson(stream) {
 async function runWorker(runtime) {
   for await (const request of readLengthPrefixedJson(process.stdin)) {
     try {
-      const encoded = await encodePlane(runtime, request);
-      writeResponse(0, Buffer.from(encoded));
+      const payload = await handleRequest(runtime, request);
+      writeResponse(0, Buffer.from(payload));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       writeResponse(1, Buffer.from(message, 'utf8'));
@@ -110,12 +140,12 @@ async function runWorker(runtime) {
 
 async function runOnce(runtime) {
   const request = JSON.parse((await readStdin()).toString('utf8'));
-  const encoded = await encodePlane(runtime, request);
+  const encoded = await encodeChunk(runtime, request);
   process.stdout.write(Buffer.from(encoded));
 }
 
 async function main() {
-  const runtime = await loadEncoder();
+  const runtime = await loadRuntime();
   if (workerMode) {
     await runWorker(runtime);
     return;

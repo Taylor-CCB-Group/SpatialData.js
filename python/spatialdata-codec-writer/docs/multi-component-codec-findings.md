@@ -112,16 +112,24 @@ unrelated to the multi-component failure but worth knowing for test fixtures.
    container, not a single standards-compliant volumetric codestream, so external
    tools reading the chunk as a raw codestream will not understand it.
 
-## Current writer behaviour (for reference)
+## Resolution (implemented)
 
-The writer encodes **one 2D codestream per chunk** and enforces it:
+Switching to `openjph-wasm` (which round-trips multi-component data losslessly,
+verified for several component counts) resolved the blocker, and `z > 1` chunks
+are now implemented end-to-end:
 
-- `_validate_codec_chunks` requires chunk shape to begin `(1, 1, 1, …)`
-  (`scripts/fixture_writer.py`).
-- `_write_array_chunks` reshapes each chunk to `(y, x)` and calls
-  `encode_image_plane` (`scripts/fixture_writer.py`).
+- `_validate_codec_chunks` now only requires chunk shape to begin `(1, 1)` (t/c)
+  — z may be > 1 (`scripts/fixture_writer.py`).
+- `_write_array_chunks` reshapes each chunk to `(components, y, x)` and calls
+  `encode_image_chunk`, encoding the z-planes as one multi-component codestream;
+  it self-validates losslessly via `decode_image_chunk` (openjph-wasm worker).
 - The volumetric `mandelbulb` fixture is `t=2, c=1, z=8, 128×128` chunked at
-  `(1, 1, 1, 128, 128)` — one z-plane per chunk (`scripts/mandelbulb_fixtures.py`).
+  `(1, 1, 4, 128, 128)` — 4 z-planes per codestream (`scripts/mandelbulb_fixtures.py`).
 
-On the read side, `packages/zarrextra/src/codecs.ts` decodes one codestream per
-chunk and validates `decoded length === product(chunk_shape)`.
+On the read side, `packages/zarrextra/src/codecs.ts` decodes the codestream to a
+planar component-major buffer and validates `decoded length === product(chunk_shape)`,
+so a multi-component chunk maps straight onto `[..., z, y, x]`.
+
+`imagecodecs` is no longer on the HTJ2K path (encode and decode both go through
+the openjph-wasm worker — the same WASM as the JS reader); it remains only for
+the JPEG2000 fixture path.
