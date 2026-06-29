@@ -4,8 +4,8 @@ import {
   isPortInUse,
   listProcesses,
   portListeners,
-} from '../../scripts/dev-process-utils.mjs';
-import { FIXTURE_SERVER_PORT } from '../../scripts/fixture-server-port.mjs';
+} from '../../../scripts/dev-process-utils.mjs';
+import { FIXTURE_SERVER_PORT } from '../../../scripts/fixture-server-port.mjs';
 
 const DEMO_PORT = 5173;
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
