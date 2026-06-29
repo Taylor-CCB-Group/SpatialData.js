@@ -1,9 +1,10 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'node:path';
 import { createRequire } from 'node:module';
-import { createWorkspaceSourceAliases } from '../../vite.config.base';
+import path from 'node:path';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 import { fixtureServerOrigin } from '../../scripts/fixture-server-port.mjs';
+import { createWorkspaceSourceAliases } from '../../vite.config.base';
 
 // https://vitejs.dev/config/
 const workspaceRoot = path.resolve(__dirname, '../..');
@@ -13,7 +14,7 @@ const reactDomRoot = path.dirname(require.resolve('react-dom/package.json'));
 
 export default defineConfig({
   root: path.resolve(__dirname, 'demo'),
-  plugins: [react()],
+  plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
   resolve: {
     alias: [
       ...createWorkspaceSourceAliases(workspaceRoot),

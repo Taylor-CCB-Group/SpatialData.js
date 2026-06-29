@@ -23,6 +23,7 @@ const baseConfig = defineViteConfig({
     'zarrita',
     /^zarrextra(?:\/.*)?$/,
   ],
+  reactCompiler: true,
 });
 
 export default mergeConfig(baseConfig, {
