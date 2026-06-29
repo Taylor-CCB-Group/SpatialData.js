@@ -1,5 +1,5 @@
-import OpenJPHJS from '@cornerstonejs/codec-openjph';
-import openJphWasmUrl from '@cornerstonejs/codec-openjph/wasm?url';
+import { decode as openJphDecode } from 'openjph-wasm';
+import openJphWasmUrl from 'openjph-wasm/wasm/libopenjph.wasm?url';
 import OpenJPEGJS from '@cornerstonejs/codec-openjpeg/decode';
 import openJpegWasmUrl from '@cornerstonejs/codec-openjpeg/decodewasm?url';
 import {
@@ -18,7 +18,7 @@ registerJpeg2kCodec({
   }),
 });
 registerExperimentalHtj2kCodec({
-  decoder: createOpenJphDecoder(OpenJPHJS, {
+  decoder: createOpenJphDecoder(openJphDecode, {
     locateFile: createWasmLocateFile(openJphWasmUrl),
   }),
 });

@@ -66,9 +66,34 @@ export type OpenJpegFactory = (opts?: {
   locateFile?: RegisterImageCodecOptions['locateFile'];
 }) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
-export type OpenJphFactory = (opts?: {
+/**
+ * The subset of `openjph-wasm` init options that the zarrextra wrappers forward.
+ *
+ * Only `locateFile` is modelled here (bundlers use it to resolve the WASM url).
+ * `openjph-wasm` also accepts a `moduleFactory`, but it is intentionally omitted
+ * from this wrapper-facing type — callers that need it should call the package's
+ * `decode`/`encode` directly. {@link OpenJphDecode}/{@link OpenJphEncode}
+ * therefore describe only the call shape zarrextra relies on.
+ */
+export type OpenJphInitOptions = {
   locateFile?: RegisterImageCodecOptions['locateFile'];
-}) => Promise<Record<string, unknown>> | Record<string, unknown>;
+};
+
+/** Planar, component-major decode result returned by `openjph-wasm` `decode`. */
+export type OpenJphDecodedImage = {
+  width: number;
+  height: number;
+  components: number;
+  bitDepth: number;
+  isSigned: boolean;
+  data: ArrayBufferView;
+};
+
+/** The `decode` function exported by `openjph-wasm`. */
+export type OpenJphDecode = (
+  codestream: Uint8Array,
+  options?: OpenJphInitOptions
+) => Promise<OpenJphDecodedImage>;
 
 /** Emscripten locateFile hook that resolves bundled codec WASM to a bundler URL. */
 export function createWasmLocateFile(
@@ -89,6 +114,21 @@ const HTJ2K_CODEC_IDS = [HTJ2K_OPENJPH_CODEC_ID, ...HTJ2K_LEGACY_CODEC_IDS];
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (
   specifier: string
 ) => Promise<Record<string, unknown>>;
+
+/**
+ * Resolve a named export from a dynamically imported (untyped) module, falling
+ * back to a `default` namespace object. The `default` value is narrowed to an
+ * object before its property is read. Returns `unknown`; callers must validate
+ * the result (e.g. `typeof === 'function'`) before using it.
+ */
+export function resolveDynamicExport(mod: Record<string, unknown>, name: string): unknown {
+  if (mod[name] !== undefined) return mod[name];
+  const fallback = mod.default;
+  if (fallback && typeof fallback === 'object') {
+    return (fallback as Record<string, unknown>)[name];
+  }
+  return undefined;
+}
 
 function unsupportedEncode(codecName: string): never {
   throw new Error(`${codecName} encode is not implemented in zarrextra; decode-only for now.`);
@@ -266,55 +306,34 @@ async function loadOpenJpegDecoder(options: RegisterImageCodecOptions): Promise<
   return createOpenJpegDecoder(factory as OpenJpegFactory, options);
 }
 
-type Htj2kDecoderClass = new () => {
-  getEncodedBuffer(length: number): Uint8Array;
-  decode(): void;
-  getDecodedBuffer(): DecodedImageBytes;
-};
-
+/**
+ * Adapt the `openjph-wasm` `decode` function to an {@link ImageCodecDecoder}.
+ *
+ * `decode` returns planar, component-major samples (`data[(c*h + y)*w + x]`),
+ * which already match a Zarr chunk laid out as `[..., z, y, x]` in C order. This
+ * wrapper just calls `decode` and returns its planar buffer; shape validation
+ * against the chunk metadata happens downstream in the codec entry.
+ */
 export function createOpenJphDecoder(
-  factory: OpenJphFactory,
+  decode: OpenJphDecode,
   options: Pick<RegisterImageCodecOptions, 'locateFile'> = {}
 ): ImageCodecDecoder {
-  let runtimePromise: Promise<Record<string, unknown>> | undefined;
-  async function getRuntime() {
-    runtimePromise ??= Promise.resolve(
-      factory({
-        locateFile: options.locateFile,
-      })
-    );
-    return await runtimePromise;
-  }
+  const initOptions = options.locateFile ? { locateFile: options.locateFile } : undefined;
   return async (encoded) => {
-    const runtime = await getRuntime();
-    const Decoder = (runtime.HTJ2KDecoder ?? runtime.JPHDecoder ?? runtime.J2KDecoder) as
-      | Htj2kDecoderClass
-      | undefined;
-    if (!Decoder) {
-      throw new Error(
-        'OpenJPH runtime does not expose a known decoder class; pass a custom decoder option.'
-      );
-    }
-    const decoder = new Decoder();
-    decoder.getEncodedBuffer(encoded.length).set(encoded);
-    decoder.decode();
-    return decoder.getDecodedBuffer();
+    const result = await decode(encoded, initOptions);
+    return result.data;
   };
 }
 
 async function loadOpenJphDecoder(options: RegisterImageCodecOptions): Promise<ImageCodecDecoder> {
-  const factoryMod = await dynamicImport('@cornerstonejs/codec-openjph/wasmjs').catch(() =>
-    dynamicImport('@cornerstonejs/codec-openjph')
-  );
-  const factory = (factoryMod.default ?? factoryMod.OpenJPHJS ?? factoryMod) as unknown;
-  if (typeof factory !== 'function') {
-    throw new Error('Could not find an OpenJPH factory export in @cornerstonejs/codec-openjph.');
+  const mod = await dynamicImport('openjph-wasm');
+  const decode = resolveDynamicExport(mod, 'decode');
+  if (typeof decode !== 'function') {
+    throw new Error('Could not find a decode() export in openjph-wasm.');
   }
-  const wasmMod = await dynamicImport('@cornerstonejs/codec-openjph/wasm').catch(() => null);
-  const wasmAsset = wasmMod ? ((wasmMod.default ?? wasmMod) as string | undefined) : undefined;
-  const locateFile =
-    options.locateFile ?? (wasmAsset ? createWasmLocateFile(wasmAsset) : undefined);
-  return createOpenJphDecoder(factory as OpenJphFactory, { locateFile });
+  // External boundary: the dynamic import is untyped, so assert the validated
+  // function to the expected signature.
+  return createOpenJphDecoder(decode as OpenJphDecode, options);
 }
 
 function registerImageCodec(
@@ -353,10 +372,5 @@ export function registerJpeg2kCodec(options: RegisterImageCodecOptions = {}) {
  * `experimental.imagecodecs_htj2k`; both decode through the same OpenJPH WASM path.
  */
 export function registerExperimentalHtj2kCodec(options: RegisterImageCodecOptions = {}) {
-  registerImageCodec(
-    HTJ2K_OPENJPH_CODEC_ID,
-    HTJ2K_CODEC_IDS,
-    loadOpenJphDecoder,
-    options
-  );
+  registerImageCodec(HTJ2K_OPENJPH_CODEC_ID, HTJ2K_CODEC_IDS, loadOpenJphDecoder, options);
 }

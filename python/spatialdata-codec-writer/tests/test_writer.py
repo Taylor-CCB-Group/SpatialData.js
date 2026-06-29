@@ -88,11 +88,13 @@ def test_write_mandelbulb_fixture(tmp_path: Path) -> None:
     assert list(fixture.manifest["chunks"]) == list(MANDELBULB_FIXTURE_CHUNKS)
 
     first_chunk = fixture.manifest["chunks_checked"][0]
+    assert first_chunk["components"] == 4
     encoded = (fixture.store_path / first_chunk["path"]).read_bytes()
     decoded = decode_htj2k_plane(encoded)
 
-    assert decoded.shape == (128, 128)
-    assert int(decoded[0, 0]) == first_chunk["samples"][0]
+    # z>1 chunk: one multi-component codestream (4 z-planes) -> (components, y, x).
+    assert decoded.shape == (4, 128, 128)
+    assert int(decoded[0, 0, 0]) == first_chunk["samples"][0]
 
 
 def test_image_to_tczyx_uses_named_dimensions() -> None:

@@ -104,10 +104,10 @@ describe('codec fixtures', () => {
       return;
     }
     try {
-      await import('@cornerstonejs/codec-openjph');
+      await import('openjph-wasm');
     } catch {
       console.warn(
-        'Skipping Mandelbulb HTJ2K decode smoke test: @cornerstonejs/codec-openjph is not installed.'
+        'Skipping Mandelbulb HTJ2K decode smoke test: openjph-wasm is not installed.'
       );
       return;
     }
@@ -145,10 +145,10 @@ describe('codec fixtures', () => {
       return;
     }
     try {
-      await import('@cornerstonejs/codec-openjph');
+      await import('openjph-wasm');
     } catch {
       console.warn(
-        'Skipping HTJ2K decode smoke test: @cornerstonejs/codec-openjph is not installed.'
+        'Skipping HTJ2K decode smoke test: openjph-wasm is not installed.'
       );
       return;
     }

@@ -35,21 +35,44 @@ def openjph_encode_options(encode_options: dict[str, Any]) -> tuple[bool, float]
     return False, float(quality)
 
 
-def _plane_request_payload(
-    plane: np.ndarray, *, reversible: bool, quality: float
+def _encode_request_payload(
+    volume: np.ndarray, *, reversible: bool, quality: float
 ) -> dict[str, Any]:
-    array = np.ascontiguousarray(np.asarray(plane))
-    if array.ndim != 2:
-        raise ValueError(f"HTJ2K encode expects a 2D plane, got shape {array.shape}.")
-    height, width = (int(value) for value in array.shape)
+    """Build an encode request for a 2D plane or a 3D (components, y, x) volume.
+
+    The samples are sent planar / component-major (C-order of the array), which
+    is exactly the layout openjph-wasm expects for multi-component codestreams.
+    """
+    array = np.ascontiguousarray(np.asarray(volume))
+    if array.ndim == 2:
+        components, (height, width) = 1, (int(array.shape[0]), int(array.shape[1]))
+    elif array.ndim == 3:
+        components, height, width = (int(value) for value in array.shape)
+    else:
+        raise ValueError(
+            f"HTJ2K encode expects a 2D plane or 3D (components, y, x) volume, got shape {array.shape}."
+        )
     return {
         "width": width,
         "height": height,
+        "components": components,
         "dtype": array.dtype.name,
         "reversible": reversible,
         "quality": quality,
         "plane": base64.b64encode(array.tobytes(order="C")).decode("ascii"),
     }
+
+
+# Decode response header (see vendor/encode-plane.mjs): little-endian
+# u32 components, u32 height, u32 width, u8 bytesPerSample, u8 isSigned.
+_DECODE_HEADER = struct.Struct("<IIIBB")
+
+
+def _decode_response_to_array(resp: bytes) -> np.ndarray:
+    components, height, width, bytes_per_sample, is_signed = _DECODE_HEADER.unpack_from(resp, 0)
+    body = resp[_DECODE_HEADER.size :]
+    dtype = np.dtype(f"{'i' if is_signed else 'u'}{bytes_per_sample}")
+    return np.frombuffer(body, dtype=dtype).reshape(components, height, width)
 
 
 class OpenJphEncoderWorker:
@@ -61,10 +84,17 @@ class OpenJphEncoderWorker:
             raise RuntimeError("Node.js is required for HTJ2K encode but was not found on PATH.")
         if not _ENCODE_SCRIPT.is_file():
             raise RuntimeError(f"HTJ2K encode script not found: {_ENCODE_SCRIPT}")
-        if not (openjph_vendor_dir() / "openjphjs.wasm").is_file():
+        vendor_dir = openjph_vendor_dir()
+        missing = [
+            str(path.relative_to(vendor_dir))
+            for path in (vendor_dir / "index.mjs", vendor_dir / "wasm" / "libopenjph.wasm")
+            if not path.is_file()
+        ]
+        if missing:
             raise RuntimeError(
-                f"Vendored OpenJPH WASM not found under {openjph_vendor_dir()}. "
-                "Run scripts/vendor-openjph-for-python.mjs before building the package."
+                f"Vendored openjph-wasm assets missing under {vendor_dir}: {', '.join(missing)}. "
+                "Both index.mjs and wasm/libopenjph.wasm are required; "
+                "run scripts/vendor-openjph-for-python.mjs before building the package."
             )
 
         self._lock = threading.Lock()
@@ -92,29 +122,37 @@ class OpenJphEncoderWorker:
                         self._proc.kill()
             self._proc = None  # type: ignore[assignment]
 
-    def encode_plane(
-        self, plane: np.ndarray, *, reversible: bool = True, quality: float = 0.0
-    ) -> bytes:
+    def _request(self, payload: dict[str, Any]) -> bytes:
         with self._lock:
             if self._proc is None or self._proc.poll() is not None:
-                raise RuntimeError("HTJ2K encoder worker is not running.")
-            payload = json.dumps(
-                _plane_request_payload(plane, reversible=reversible, quality=quality)
-            ).encode("utf-8")
+                raise RuntimeError("HTJ2K worker is not running.")
+            body = json.dumps(payload).encode("utf-8")
             assert self._proc.stdin is not None
             assert self._proc.stdout is not None
-            self._proc.stdin.write(struct.pack(">I", len(payload)))
-            self._proc.stdin.write(payload)
+            self._proc.stdin.write(struct.pack(">I", len(body)))
+            self._proc.stdin.write(body)
             self._proc.stdin.flush()
 
             header = self._read_exact(self._proc.stdout, 5)
             status = header[0]
             length = struct.unpack(">I", header[1:5])[0]
-            body = self._read_exact(self._proc.stdout, length)
+            resp = self._read_exact(self._proc.stdout, length)
             if status != 0:
-                message = body.decode("utf-8", errors="replace")
-                raise RuntimeError(message or "HTJ2K encode failed.")
-            return bytes(body)
+                message = resp.decode("utf-8", errors="replace")
+                raise RuntimeError(message or "HTJ2K worker failed.")
+            return bytes(resp)
+
+    def encode(self, volume: np.ndarray, *, reversible: bool = True, quality: float = 0.0) -> bytes:
+        return self._request(
+            _encode_request_payload(volume, reversible=reversible, quality=quality)
+        )
+
+    def decode(self, codestream: bytes | bytearray) -> np.ndarray:
+        payload = {
+            "op": "decode",
+            "codestream": base64.b64encode(bytes(codestream)).decode("ascii"),
+        }
+        return _decode_response_to_array(self._request(payload))
 
     @staticmethod
     def _read_exact(stream: Any, length: int) -> bytes:
@@ -138,13 +176,17 @@ class EncoderPool:
         self._next = 0
         self._lock = threading.Lock()
 
-    def encode_plane(
-        self, plane: np.ndarray, *, reversible: bool = True, quality: float = 0.0
-    ) -> bytes:
+    def _next_worker(self) -> OpenJphEncoderWorker:
         with self._lock:
             worker = self._workers[self._next]
             self._next = (self._next + 1) % len(self._workers)
-        return worker.encode_plane(plane, reversible=reversible, quality=quality)
+        return worker
+
+    def encode(self, volume: np.ndarray, *, reversible: bool = True, quality: float = 0.0) -> bytes:
+        return self._next_worker().encode(volume, reversible=reversible, quality=quality)
+
+    def decode(self, codestream: bytes | bytearray) -> np.ndarray:
+        return self._next_worker().decode(codestream)
 
     def close(self) -> None:
         for worker in self._workers:
@@ -201,6 +243,16 @@ def htj2k_encode_available() -> bool:
     return True
 
 
+def encode_htj2k(
+    volume: np.ndarray,
+    *,
+    reversible: bool = True,
+    quality: float = 0.0,
+) -> bytes:
+    """Encode a 2D plane or 3D (components, y, x) volume to an HTJ2K codestream."""
+    return get_encoder_pool().encode(volume, reversible=reversible, quality=quality)
+
+
 def encode_htj2k_plane(
     plane: np.ndarray,
     *,
@@ -208,4 +260,9 @@ def encode_htj2k_plane(
     quality: float = 0.0,
 ) -> bytes:
     """Encode one 2D plane through the vendored OpenJPH WASM worker pool."""
-    return get_encoder_pool().encode_plane(plane, reversible=reversible, quality=quality)
+    return encode_htj2k(plane, reversible=reversible, quality=quality)
+
+
+def decode_htj2k(codestream: bytes | bytearray) -> np.ndarray:
+    """Decode an HTJ2K codestream to a (components, y, x) array via openjph-wasm."""
+    return get_encoder_pool().decode(codestream)

@@ -5,10 +5,22 @@ of persistent Node.js workers (`spatialdata_codec_writer/vendor/encode-plane.mjs
 New stores are labelled `experimental.openjph_htj2k`.
 
 Native `imagecodecs` HTJ2K encode is intentionally **not** used: PyPI wheels are
-often stub-only, conda installs are awkward, and the WASM encoder exposes
-`setQuality(reversible, quality)` for preset control. We may re-evaluate native
-encode later; the frontend still decodes the legacy id
+often stub-only, conda installs are awkward, and the WASM encoder exposes a
+simple `encode({ data, width, height, components, reversible, quality })` call.
+We may re-evaluate native encode later; the frontend still decodes the legacy id
 `experimental.imagecodecs_htj2k` for older fixtures.
+
+The encoder/decoder is the [`openjph-wasm`](https://www.npmjs.com/package/openjph-wasm)
+package. Earlier versions used `@cornerstonejs/codec-openjph`, whose WASM build
+could not round-trip independent multi-component data
+(see [multi-component-codec-findings.md](./multi-component-codec-findings.md));
+`openjph-wasm` round-trips multi-component, planar, component-major buffers
+losslessly, so a chunk's leading dims (e.g. z) are encoded as **codestream
+components**. `z > 1` chunks are now wired up end-to-end: the writer encodes a
+chunk's z-planes as one multi-component codestream, and the JS reader decodes it
+back to planar `[..., z, y, x]`. The `mandelbulb` fixture uses
+`(1, 1, 4, 128, 128)` chunks (4 z-planes per codestream). Chunk shapes must begin
+`(1, 1)` (t and c are not chunked across components).
 
 ## Contracts
 
@@ -18,7 +30,7 @@ encode later; the frontend still decodes the legacy id
 | Zarr codec id (legacy decode) | `experimental.imagecodecs_htj2k` |
 | Encoder label | `openjph-wasm` (manifest `encoder` field) |
 | Array metadata | Zarr v3; `codecs: [{ name, configuration: {} }]` |
-| Chunk bytes | Raw HTJ2K bitstream per 2D spatial plane (last two axes) |
+| Chunk bytes | One HTJ2K codestream per chunk; the chunk's leading dims (z) are codestream components, the last two axes are the y/x plane |
 | Browser read | `registerExperimentalHtj2kCodec()` registers both ids |
 
 ## Encode flow
@@ -27,22 +39,22 @@ encode later; the frontend still decodes the legacy id
 Python spatialdata-codec-writer
   → EncoderPool (N persistent Node workers)
   → vendored encode-plane.mjs --worker
-  → OpenJPH HTJ2KEncoder.setQuality(reversible, quality).encode()
+  → openjph-wasm encode({ data, width, height, components, reversible, quality })
   → HTJ2K bytes per chunk
 ```
 
 Vendoring: run `node scripts/vendor-openjph-for-python.mjs` at the monorepo root
-to copy `@cornerstonejs/codec-openjph` dist assets into the Python package wheel.
-The copied `vendor/openjph/` blobs are gitignored; CI and `pnpm test:codec-writer`
-run the vendor step after `pnpm install`.
+to copy `openjph-wasm` dist assets (`index.mjs` + `wasm/`) into the Python package
+wheel. The copied `vendor/openjph/` blobs are gitignored; CI and
+`pnpm test:codec-writer` run the vendor step after `pnpm install`.
 
 Preset mapping:
 
-| Preset | `setQuality(reversible, quality)` |
+| Preset | `encode({ reversible, quality })` |
 |--------|-----------------------------------|
-| `lossless` | `(true, 0)` |
-| `balanced` | `(false, 0.0002)` |
-| `small` | `(false, 0.001)` |
+| `lossless` | `{ reversible: true }` |
+| `balanced` | `{ reversible: false, quality: 0.0002 }` |
+| `small` | `{ reversible: false, quality: 0.001 }` |
 
 `quality` is a float quantization factor (lower = better fidelity, larger output).
 Integer values above ~15 with `reversible=false` produce degenerate output.
