@@ -1,8 +1,69 @@
 import { spawn } from 'node:child_process';
+import {
+  describeProcess,
+  isPortInUse,
+  listProcesses,
+  portListeners,
+} from '../../scripts/dev-process-utils.mjs';
+import { FIXTURE_SERVER_PORT } from '../../scripts/fixture-server-port.mjs';
 
+const DEMO_PORT = 5173;
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const children = [];
 let shuttingDown = false;
+
+/** One-line description of whoever is listening on a port, if we can find it. */
+function describePortHolder(port) {
+  const [pid] = portListeners(port);
+  if (!pid) return '';
+  const proc = listProcesses().find((p) => p.pid === pid);
+  return proc ? describeProcess(proc) : `pid ${pid}`;
+}
+
+/** Is the server on `port` our own fixture server (vs. a foreign process)? */
+async function fixtureServerIsOurs(port) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/__fixture-health__`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    return res.ok && res.headers.get('x-spatialdata-fixture-server') === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check the ports we need before spawning anything, so a leftover dev server
+ * (often from another checkout) produces a clear message instead of a cryptic
+ * strict-port crash. Returns whether we still need to start the fixture server.
+ */
+async function preflight() {
+  if (await isPortInUse(DEMO_PORT)) {
+    const holder = describePortHolder(DEMO_PORT);
+    console.error(
+      `\n[dev] Demo port ${DEMO_PORT} is already in use${holder ? `:\n  ${holder}` : '.'}`
+    );
+    console.error('[dev] Run `pnpm dev:stop` to clear SpatialData dev processes, then retry.\n');
+    process.exit(1);
+  }
+
+  if (await isPortInUse(FIXTURE_SERVER_PORT)) {
+    if (await fixtureServerIsOurs(FIXTURE_SERVER_PORT)) {
+      console.log(`[dev] Reusing the fixture server already running on :${FIXTURE_SERVER_PORT}.`);
+      return { startFixtures: false };
+    }
+    const holder = describePortHolder(FIXTURE_SERVER_PORT);
+    console.error(
+      `\n[dev] Fixture port ${FIXTURE_SERVER_PORT} is in use by a non-SpatialData process${
+        holder ? `:\n  ${holder}` : '.'
+      }`
+    );
+    console.error('[dev] Stop it, or set SPATIALDATA_FIXTURE_PORT to another port, then retry.\n');
+    process.exit(1);
+  }
+
+  return { startFixtures: true };
+}
 
 function start(name, args) {
   const child = spawn(pnpmCommand, ['exec', ...args], {
@@ -56,8 +117,14 @@ function shutdown(code) {
 process.on('SIGINT', () => shutdown(130));
 process.on('SIGTERM', () => shutdown(143));
 
-console.log('Starting fixture server, vis build watch, and demo server...');
-start('fixtures', ['node', '../../scripts/test-server.js']);
+const { startFixtures } = await preflight();
+
+const startedParts = ['vis build watch', 'demo server'];
+if (startFixtures) {
+  start('fixtures', ['node', '../../scripts/test-server.js']);
+  startedParts.unshift('fixture server');
+}
+console.log(`Starting ${startedParts.join(', ')}...`);
 start('watch', ['vite', 'build', '--watch']);
 start('demo', [
   'vite',
@@ -66,6 +133,6 @@ start('demo', [
   '--host',
   '127.0.0.1',
   '--port',
-  '5173',
+  String(DEMO_PORT),
   '--strictPort',
 ]);
