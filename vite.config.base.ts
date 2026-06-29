@@ -1,6 +1,7 @@
 import path from 'node:path';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
 import dts from 'vite-plugin-dts';
 
 export type WorkspaceAlias = {
@@ -45,15 +46,22 @@ interface DefineConfigOptions {
   pkgRoot: string;
   libName: string;
   external?: (string | RegExp)[];
+  /**
+   * Enable the React Compiler (babel-plugin-react-compiler) for this package.
+   * Only opt in for packages that ship React components; the plugin must be a
+   * dependency of any package that sets this to true.
+   */
+  reactCompiler?: boolean;
 }
 
 export function defineViteConfig(options: DefineConfigOptions) {
-  const { pkgRoot, libName, external = [] } = options;
+  const { pkgRoot, libName, external = [], reactCompiler = false } = options;
 
   return defineConfig({
     root: pkgRoot,
     plugins: [
       react(),
+      ...(reactCompiler ? [babel({ presets: [reactCompilerPreset()] })] : []),
       dts({
         root: pkgRoot,
         tsconfigPath: path.resolve(pkgRoot, 'tsconfig.json'),
@@ -82,7 +90,14 @@ export function defineViteConfig(options: DefineConfigOptions) {
         formats: ['es'],
       },
       rollupOptions: {
-        external: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime', ...external],
+        external: [
+          'react',
+          'react-dom',
+          'react/jsx-runtime',
+          'react/jsx-dev-runtime',
+          'react/compiler-runtime',
+          ...external,
+        ],
       },
     },
   });

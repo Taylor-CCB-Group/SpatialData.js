@@ -231,6 +231,10 @@ export function useSpatialCanvasRendererFromLayerInputs({
   }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, resolvedLayerOrder, sortDeckLayers]);
   const vivLayerProps = useMemo(
     () => layerData.getVivLayerProps(),
+    // useLayerData returns a fresh object every render, so we intentionally depend
+    // on its stable members (the useCallback'd getter plus the memoized load flags)
+    // rather than `layerData` itself, which would recompute this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [layerData.getVivLayerProps, vivPassthrough, layerData.isBlocking, layerData.isLoading]
   );
 
@@ -262,6 +266,10 @@ export function useSpatialCanvasRendererFromLayerInputs({
     onViewStateChange(
       bounds ? viewStateFromBounds(bounds, width, height) : { target: [0, 0], zoom: 0 }
     );
+    // useLayerData returns a fresh object every render, so we intentionally depend
+    // on its stable members (memoized flag + useCallback'd bounds getter) rather
+    // than `layerData` itself, which would re-run this effect on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     autoFit,
     hasEnabledLayers,

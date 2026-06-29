@@ -13,6 +13,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  react-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Surfaces React Hooks / React Compiler (Rules-of-React) findings for the
+    # React-shipping packages via eslint-plugin-react-hooks. Informational for
+    # now: there is an existing backlog of findings, so this must not gate merges.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.1'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint React packages (react-hooks / react-compiler rules)
+        # continue-on-error (at the step, not the job) keeps this check green
+        # while the backlog exists, so it does not read as a failing/required
+        # check; findings still show in this step's log. Remove this line once
+        # `pnpm lint:react` is clean to turn it into a required gate.
+        continue-on-error: true
+        run: pnpm lint:react
+
   test:
     runs-on: ubuntu-latest
     steps:
