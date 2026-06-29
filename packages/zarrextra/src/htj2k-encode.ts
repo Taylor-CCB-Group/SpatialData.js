@@ -1,4 +1,8 @@
-import { type OpenJphInitOptions, type RegisterImageCodecOptions } from './codecs';
+import {
+  type OpenJphInitOptions,
+  type RegisterImageCodecOptions,
+  resolveDynamicExport,
+} from './codecs';
 
 export type Htj2kPlaneDtype = 'uint8' | 'int8' | 'uint16' | 'int16';
 
@@ -10,7 +14,7 @@ export type Htj2kEncodeOptions = {
   locateFile?: RegisterImageCodecOptions['locateFile'];
 };
 
-type Htj2kPlane = Uint8Array | Uint16Array | Int8Array | Int16Array;
+export type Htj2kPlane = Uint8Array | Uint16Array | Int8Array | Int16Array;
 
 /** Encode input accepted by the `openjph-wasm` `encode` function. */
 export type OpenJphEncodeInput = {
@@ -77,18 +81,16 @@ export async function loadOpenJphEncoder(
   options: Htj2kEncodeOptions = {}
 ): Promise<OpenJphEncoder> {
   const mod = await dynamicImport('openjph-wasm');
-  const encode = (mod.encode ??
-    (mod.default as Record<string, unknown> | undefined)?.encode) as OpenJphEncode | undefined;
+  const encode = resolveDynamicExport(mod, 'encode');
   if (typeof encode !== 'function') {
     throw new Error('Could not find an encode() export in openjph-wasm.');
   }
-  return createOpenJphEncoder(encode, options);
+  // External boundary: the dynamic import is untyped, so assert the validated
+  // function to the expected signature.
+  return createOpenJphEncoder(encode as OpenJphEncode, options);
 }
 
-export function planeArrayForDtype(
-  dtype: Htj2kPlaneDtype,
-  bytes: Uint8Array
-) {
+export function planeArrayForDtype(dtype: Htj2kPlaneDtype, bytes: Uint8Array) {
   switch (dtype) {
     case 'uint8':
       return bytes;

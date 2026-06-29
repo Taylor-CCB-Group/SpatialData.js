@@ -224,6 +224,7 @@ export {
   loadOpenJphEncoder,
   planeArrayForDtype,
   type Htj2kEncodeOptions,
+  type Htj2kPlane,
   type Htj2kPlaneDtype,
   type OpenJphEncode,
   type OpenJphEncodeInput,

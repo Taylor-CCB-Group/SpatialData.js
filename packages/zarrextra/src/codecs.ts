@@ -67,11 +67,13 @@ export type OpenJpegFactory = (opts?: {
 }) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
 /**
- * Init options passed to the `openjph-wasm` `decode`/`encode` functions.
+ * The subset of `openjph-wasm` init options that the zarrextra wrappers forward.
  *
- * Only `locateFile` is forwarded by zarrextra (bundlers use it to resolve the
- * WASM url). The package also supports a `moduleFactory`; callers that need it
- * can pass it to `decode`/`encode` directly.
+ * Only `locateFile` is modelled here (bundlers use it to resolve the WASM url).
+ * `openjph-wasm` also accepts a `moduleFactory`, but it is intentionally omitted
+ * from this wrapper-facing type — callers that need it should call the package's
+ * `decode`/`encode` directly. {@link OpenJphDecode}/{@link OpenJphEncode}
+ * therefore describe only the call shape zarrextra relies on.
  */
 export type OpenJphInitOptions = {
   locateFile?: RegisterImageCodecOptions['locateFile'];
@@ -112,6 +114,21 @@ const HTJ2K_CODEC_IDS = [HTJ2K_OPENJPH_CODEC_ID, ...HTJ2K_LEGACY_CODEC_IDS];
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (
   specifier: string
 ) => Promise<Record<string, unknown>>;
+
+/**
+ * Resolve a named export from a dynamically imported (untyped) module, falling
+ * back to a `default` namespace object. The `default` value is narrowed to an
+ * object before its property is read. Returns `unknown`; callers must validate
+ * the result (e.g. `typeof === 'function'`) before using it.
+ */
+export function resolveDynamicExport(mod: Record<string, unknown>, name: string): unknown {
+  if (mod[name] !== undefined) return mod[name];
+  const fallback = mod.default;
+  if (fallback && typeof fallback === 'object') {
+    return (fallback as Record<string, unknown>)[name];
+  }
+  return undefined;
+}
 
 function unsupportedEncode(codecName: string): never {
   throw new Error(`${codecName} encode is not implemented in zarrextra; decode-only for now.`);
@@ -293,8 +310,9 @@ async function loadOpenJpegDecoder(options: RegisterImageCodecOptions): Promise<
  * Adapt the `openjph-wasm` `decode` function to an {@link ImageCodecDecoder}.
  *
  * `decode` returns planar, component-major samples (`data[(c*h + y)*w + x]`),
- * which already match a Zarr chunk laid out as `[..., z, y, x]` in C order, so
- * the planar buffer is returned verbatim and validated against the chunk shape.
+ * which already match a Zarr chunk laid out as `[..., z, y, x]` in C order. This
+ * wrapper just calls `decode` and returns its planar buffer; shape validation
+ * against the chunk metadata happens downstream in the codec entry.
  */
 export function createOpenJphDecoder(
   decode: OpenJphDecode,
@@ -309,12 +327,13 @@ export function createOpenJphDecoder(
 
 async function loadOpenJphDecoder(options: RegisterImageCodecOptions): Promise<ImageCodecDecoder> {
   const mod = await dynamicImport('openjph-wasm');
-  const decode = (mod.decode ??
-    (mod.default as Record<string, unknown> | undefined)?.decode) as OpenJphDecode | undefined;
+  const decode = resolveDynamicExport(mod, 'decode');
   if (typeof decode !== 'function') {
     throw new Error('Could not find a decode() export in openjph-wasm.');
   }
-  return createOpenJphDecoder(decode, options);
+  // External boundary: the dynamic import is untyped, so assert the validated
+  // function to the expected signature.
+  return createOpenJphDecoder(decode as OpenJphDecode, options);
 }
 
 function registerImageCodec(
@@ -353,10 +372,5 @@ export function registerJpeg2kCodec(options: RegisterImageCodecOptions = {}) {
  * `experimental.imagecodecs_htj2k`; both decode through the same OpenJPH WASM path.
  */
 export function registerExperimentalHtj2kCodec(options: RegisterImageCodecOptions = {}) {
-  registerImageCodec(
-    HTJ2K_OPENJPH_CODEC_ID,
-    HTJ2K_CODEC_IDS,
-    loadOpenJphDecoder,
-    options
-  );
+  registerImageCodec(HTJ2K_OPENJPH_CODEC_ID, HTJ2K_CODEC_IDS, loadOpenJphDecoder, options);
 }

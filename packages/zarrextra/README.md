@@ -74,9 +74,12 @@ import { createOpenJphDecoder, registerExperimentalHtj2kCodec } from 'zarrextra'
 registerExperimentalHtj2kCodec({ decoder: createOpenJphDecoder(openJphDecode) });
 ```
 
-`openjph-wasm` decodes J2K/HTJ2K codestreams (including multi-component) and
-returns planar, component-major samples, so a chunk's components map directly to
-a Zarr chunk laid out as `[..., z, y, x]`.
+`openjph-wasm` decodes J2K/HTJ2K codestreams and returns planar, component-major
+samples. Unlike the older `@cornerstonejs/codec-openjph` build, it round-trips
+genuine multi-component data losslessly (the repo's `multi-component-codec-findings.md`
+has the details), so a multi-component codestream maps directly onto a Zarr
+chunk's `[..., z, y, x]` layout. The writer currently emits one 2D plane per
+chunk; end-to-end `z > 1` multi-component chunks are planned follow-up work.
 
 For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
 `createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`

@@ -86,11 +86,14 @@ describe('codec registration', () => {
       if (!factory) throw new Error('Expected codec factory to be registered.');
 
       const entry = await factory();
-      const codec = entry.fromConfig({}, {
-        data_type: 'uint8',
-        chunk_shape: [2, 2],
-        codecs: [{ name: codecName, configuration: {} }],
-      });
+      const codec = entry.fromConfig(
+        {},
+        {
+          data_type: 'uint8',
+          chunk_shape: [2, 2],
+          codecs: [{ name: codecName, configuration: {} }],
+        }
+      );
 
       const chunk = await codec.decode(new Uint8Array([99]));
       expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([5, 6, 7, 8]);
@@ -153,11 +156,14 @@ describe('codec registration', () => {
       if (!factory) throw new Error('Expected codec factory to be registered.');
 
       const entry = await factory();
-      const codec = entry.fromConfig({}, {
-        data_type: 'uint8',
-        chunk_shape: [2, 2],
-        codecs: [{ name: codecName, configuration: {} }],
-      });
+      const codec = entry.fromConfig(
+        {},
+        {
+          data_type: 'uint8',
+          chunk_shape: [2, 2],
+          codecs: [{ name: codecName, configuration: {} }],
+        }
+      );
 
       const chunk = await codec.decode(new Uint8Array([99]));
       expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([13, 14, 15, 16]);
@@ -210,9 +216,16 @@ describe('codec registration', () => {
     }
 
     const { createOpenJphEncoder } = await import('../src/htj2k-encode');
-    const { createOpenJphDecoder } = await import('../src/codecs');
-    const encode = openjph.encode as Parameters<typeof createOpenJphEncoder>[0];
-    const decode = openjph.decode as Parameters<typeof createOpenJphDecoder>[0];
+    const { createOpenJphDecoder, resolveDynamicExport } = await import('../src/codecs');
+    // Mirror the production loaders: resolve named exports with a `default` fallback.
+    const encodeExport = resolveDynamicExport(openjph, 'encode');
+    const decodeExport = resolveDynamicExport(openjph, 'decode');
+    if (typeof encodeExport !== 'function' || typeof decodeExport !== 'function') {
+      console.warn('Skipping HTJ2K encode round-trip: openjph-wasm encode/decode not found.');
+      return;
+    }
+    const encode = encodeExport as Parameters<typeof createOpenJphEncoder>[0];
+    const decode = decodeExport as Parameters<typeof createOpenJphDecoder>[0];
     const width = 64;
     const height = 64;
     const plane = new Uint16Array(width * height);
@@ -227,12 +240,14 @@ describe('codec registration', () => {
     expect(encoded.byteLength).toBeGreaterThan(0);
 
     const decoder = createOpenJphDecoder(decode);
-    const decoded = toUint16Array(await decoder(encoded, {
-      dataType: 'uint16',
-      shape: [height, width],
-      codecs: [{ name: 'experimental.openjph_htj2k', configuration: {} }],
-      fillValue: 0,
-    }));
+    const decoded = toUint16Array(
+      await decoder(encoded, {
+        dataType: 'uint16',
+        shape: [height, width],
+        codecs: [{ name: 'experimental.openjph_htj2k', configuration: {} }],
+        fillValue: 0,
+      })
+    );
     expect(decoded).toEqual(plane);
   });
 
@@ -246,7 +261,14 @@ describe('codec registration', () => {
     }
 
     const { createOpenJphEncoder } = await import('../src/htj2k-encode');
-    const encode = openjph.encode as Parameters<typeof createOpenJphEncoder>[0];
+    const { resolveDynamicExport } = await import('../src/codecs');
+    // Mirror the production loader: resolve the named export with a `default` fallback.
+    const encodeExport = resolveDynamicExport(openjph, 'encode');
+    if (typeof encodeExport !== 'function') {
+      console.warn('Skipping HTJ2K lossy quality test: openjph-wasm encode not found.');
+      return;
+    }
+    const encode = encodeExport as Parameters<typeof createOpenJphEncoder>[0];
     const width = 64;
     const height = 64;
     const plane = new Uint16Array(width * height);

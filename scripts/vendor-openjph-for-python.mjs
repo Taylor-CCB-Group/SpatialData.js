@@ -54,8 +54,21 @@ const wasmSource = join(distDir, 'wasm');
 if (!existsSync(wasmSource)) {
   throw new Error(`Required openjph-wasm wasm directory not found: ${wasmSource}`);
 }
-for (const name of readdirSync(wasmSource)) {
-  const dest = join(vendorWasmDir, name);
-  copyFileSync(join(wasmSource, name), dest);
-  console.log(`Vendored wasm/${name} -> ${dest}`);
+
+/** Recursively copy a directory tree, copying files and recreating subdirs. */
+function copyTree(srcDir, destDir, relBase) {
+  mkdirSync(destDir, { recursive: true });
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const src = join(srcDir, entry.name);
+    const dest = join(destDir, entry.name);
+    const rel = `${relBase}/${entry.name}`;
+    if (entry.isDirectory()) {
+      copyTree(src, dest, rel);
+    } else {
+      copyFileSync(src, dest);
+      console.log(`Vendored ${rel} -> ${dest}`);
+    }
+  }
 }
+
+copyTree(wasmSource, vendorWasmDir, 'wasm');

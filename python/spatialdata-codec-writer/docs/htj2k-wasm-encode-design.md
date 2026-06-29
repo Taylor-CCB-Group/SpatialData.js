@@ -13,9 +13,12 @@ We may re-evaluate native encode later; the frontend still decodes the legacy id
 The encoder/decoder is the [`openjph-wasm`](https://www.npmjs.com/package/openjph-wasm)
 package. Earlier versions used `@cornerstonejs/codec-openjph`, whose WASM build
 could not round-trip independent multi-component data
-(see [multi-component-codec-findings.md](./multi-component-codec-findings.md)).
-`openjph-wasm` decodes/encodes multi-component codestreams with planar,
-component-major buffers.
+(see [multi-component-codec-findings.md](./multi-component-codec-findings.md));
+`openjph-wasm` does round-trip multi-component, planar, component-major buffers
+losslessly. That makes `z > 1` multi-component chunks *possible*, but they are
+not yet wired up end-to-end: the writer still encodes **one 2D plane per chunk**
+(chunk shapes begin `(1, 1, 1, ...)`), so volumetric `z > 1` chunk support
+remains future work.
 
 ## Contracts
 

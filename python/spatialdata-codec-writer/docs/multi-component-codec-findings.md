@@ -65,7 +65,7 @@ Interpreting the `N = 2`, 2×2 case (planar input
 Feeding **interleaved** input instead does not help — the encoder reads the first
 `N` samples as component 0 and discards the rest:
 
-```
+```text
 interleaved input: 10,200,11,201,12,202,13,203
 decoded output   : 10,10,200,200,11,11,201,201   (plane 1 lost, comp0 replicated)
 ```
