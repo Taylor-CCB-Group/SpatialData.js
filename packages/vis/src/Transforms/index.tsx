@@ -1,8 +1,8 @@
+import type { SpatialElement } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import JsonView from '@uiw/react-json-view';
 import { darkTheme } from '@uiw/react-json-view/dark';
-import { useEffect, useMemo, useState } from 'react';
-import type { SpatialElement } from '@spatialdata/core';
+import { useMemo, useState } from 'react';
 
 const SPATIAL_ELEMENT_TYPES = ['images', 'labels', 'shapes', 'points'] as const;
 type SpatialElementType = (typeof SPATIAL_ELEMENT_TYPES)[number];
@@ -40,10 +40,19 @@ export default function TransformsComponent() {
     return entries;
   }, [spatialData]);
 
+  // Default to the first element when the user hasn't picked one (or their pick
+  // is no longer available). Derived during render instead of synced via effect.
+  const effectiveElementId = useMemo(() => {
+    if (selectedElementId && allElements.some((e) => getElementId(e) === selectedElementId)) {
+      return selectedElementId;
+    }
+    return allElements[0] ? getElementId(allElements[0]) : '';
+  }, [allElements, selectedElementId]);
+
   // Find currently selected element
   const selectedEntry = useMemo(() => {
-    return allElements.find((e) => getElementId(e) === selectedElementId);
-  }, [allElements, selectedElementId]);
+    return allElements.find((e) => getElementId(e) === effectiveElementId);
+  }, [allElements, effectiveElementId]);
 
   // Get coordinate systems for selected element
   const coordinateSystems = useMemo(() => {
@@ -51,30 +60,17 @@ export default function TransformsComponent() {
     return selectedEntry.element.coordinateSystems;
   }, [selectedEntry]);
 
-  // Default to first element when data loads or changes
-  useEffect(() => {
-    if (
-      allElements.length > 0 &&
-      (!selectedElementId || !allElements.find((e) => getElementId(e) === selectedElementId))
-    ) {
-      setSelectedElementId(getElementId(allElements[0]));
-    }
-  }, [allElements, selectedElementId]);
-
-  // Default to first coordinate system when element changes
-  useEffect(() => {
-    if (coordinateSystems.length > 0 && (!selectedCS || !coordinateSystems.includes(selectedCS))) {
-      setSelectedCS(coordinateSystems[0]);
-    } else if (coordinateSystems.length === 0) {
-      setSelectedCS('');
-    }
+  // Default to the first coordinate system, derived the same way.
+  const effectiveCS = useMemo(() => {
+    if (selectedCS && coordinateSystems.includes(selectedCS)) return selectedCS;
+    return coordinateSystems[0] ?? '';
   }, [coordinateSystems, selectedCS]);
 
   // Get transformation result
   const transformData = useMemo(() => {
-    if (!selectedEntry || !selectedCS) return null;
+    if (!selectedEntry || !effectiveCS) return null;
 
-    const result = selectedEntry.element.getTransformation(selectedCS);
+    const result = selectedEntry.element.getTransformation(effectiveCS);
     if (result.ok) {
       const t = result.value;
       return {
@@ -90,7 +86,7 @@ export default function TransformsComponent() {
       error: result.error.message,
       availableCoordinateSystems: result.error.availableCoordinateSystems,
     };
-  }, [selectedEntry, selectedCS]);
+  }, [selectedEntry, effectiveCS]);
 
   if (loading) return <div>Loading...</div>;
   if (error) return <div>Error: {error.message}</div>;
@@ -104,7 +100,7 @@ export default function TransformsComponent() {
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
           <span>Element:</span>
           <select
-            value={selectedElementId}
+            value={effectiveElementId}
             onChange={(e) => setSelectedElementId(e.target.value)}
             style={{ minWidth: '200px' }}
           >
@@ -123,7 +119,7 @@ export default function TransformsComponent() {
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
           <span>Coordinate System:</span>
           <select
-            value={selectedCS}
+            value={effectiveCS}
             onChange={(e) => setSelectedCS(e.target.value)}
             disabled={coordinateSystems.length === 0}
             style={{ minWidth: '150px' }}

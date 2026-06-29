@@ -39,10 +39,16 @@ import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
 import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
-import type { SpatialCanvasStoreApi } from './stores';
 import { layerConfig } from './layerConfig';
+import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
+import {
+  type HoverPointerEvent,
+  isHoverDuringDrag,
+  useThrottledHoverTooltip,
+} from './useThrottledHoverTooltip';
+import { type ViewInteractionState, useViewInteractionGate } from './useViewInteractionGate';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
 // ============================================
@@ -218,6 +224,7 @@ interface ViewerSectionProps {
   vw: number;
   vh: number;
   onHover: (info: PickingInfo) => void;
+  onInteractionStateChange: (state: ViewInteractionState) => void;
   coordinateSystem: string | null;
   deckRef: React.RefObject<DeckGLRef | null>;
 }
@@ -234,9 +241,11 @@ function ViewerSection({
   vw,
   vh,
   onHover,
+  onInteractionStateChange,
   coordinateSystem,
   deckRef,
 }: ViewerSectionProps) {
+  const deckProps = useMemo(() => ({ onInteractionStateChange }), [onInteractionStateChange]);
   const viewState = useSpatialCanvasStore((s) => s.viewState);
   const actions = useSpatialCanvasActions();
 
@@ -300,6 +309,7 @@ function ViewerSection({
         layerOrder={layerOrder}
         vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
         onHover={onHover}
+        deckProps={deckProps}
         deckRef={deckRef}
       />
       {isBlocking && (
@@ -362,7 +372,9 @@ interface SpatialCanvasInnerProps {
   /** Override default tooltip UI; receives pick position in viewport coordinates. */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
   /**
-   * When true (default), hover tooltips include picks from all layers under the cursor.
+   * When true, hover tooltips include picks from all layers under the cursor.
+   * Defaults to false because aggregation issues extra per-move GPU pick passes
+   * over large geometry; enable only when stacked-layer tooltips are needed.
    */
   aggregateHoverTooltips?: boolean;
 }
@@ -370,7 +382,7 @@ interface SpatialCanvasInnerProps {
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
-  aggregateHoverTooltips = true,
+  aggregateHoverTooltips = false,
 }: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [measureRef, { width, height }] = useMeasure();
@@ -378,12 +390,15 @@ function SpatialCanvasInner({
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<DeckGLRef | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const [pendingFullscreenRefitSize, setPendingFullscreenRefitSize] = useState<{
+  // A one-shot request to refit the view after a fullscreen toggle changes the
+  // container size. Stored in a ref (not state) so consuming it in the resize
+  // effect doesn't require a setState-in-effect.
+  const pendingFullscreenRefitSizeRef = useRef<{
     width: number;
     height: number;
   } | null>(null);
   const [hoverTooltip, setHoverTooltip] = useState<
-    (SpatialFeatureTooltipData & { x: number; y: number }) | null
+    (SpatialFeatureTooltipData & { x: number; y: number; clientX: number; clientY: number }) | null
   >(null);
 
   const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
@@ -402,6 +417,10 @@ function SpatialCanvasInner({
 
   const vw = width ?? 0;
   const vh = height ?? 0;
+  // Disable shape picking while the camera is being panned/zoomed. `interacting`
+  // flips at most twice per gesture (start/settle), so this hook re-runs to
+  // rebuild layers with toggled pickability — not on every pan frame.
+  const { interacting, onInteractionStateChange } = useViewInteractionGate();
   const {
     availableElements,
     deckLayers,
@@ -426,17 +445,19 @@ function SpatialCanvasInner({
     // are managed entirely by ViewerSection so this hook never re-runs on pan.
     width: vw,
     height: vh,
+    interacting,
   });
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
+    const pending = pendingFullscreenRefitSizeRef.current;
     if (
-      !pendingFullscreenRefitSize ||
+      !pending ||
       !hasEnabledLayers ||
       vw <= 0 ||
       vh <= 0 ||
       isBlocking ||
-      (vw === pendingFullscreenRefitSize.width && vh === pendingFullscreenRefitSize.height)
+      (vw === pending.width && vh === pending.height)
     ) {
       return;
     }
@@ -446,16 +467,8 @@ function SpatialCanvasInner({
       ? viewStateFromBounds(bounds, vw, vh)
       : { target: [0, 0] as [number, number], zoom: 0 };
     actions.setViewState(next);
-    setPendingFullscreenRefitSize(null);
-  }, [
-    actions,
-    getWorldBoundsForVisibleLayers,
-    hasEnabledLayers,
-    isBlocking,
-    pendingFullscreenRefitSize,
-    vh,
-    vw,
-  ]);
+    pendingFullscreenRefitSizeRef.current = null;
+  }, [actions, getWorldBoundsForVisibleLayers, hasEnabledLayers, isBlocking, vh, vw]);
 
   useEffect(() => {
     actions.reset();
@@ -528,16 +541,46 @@ function SpatialCanvasInner({
       return columnName !== tableKeys.instanceKey && columnName !== tableKeys.regionKey;
     }) ?? [];
 
-  const handleHover = useCallback(
+  // The expensive part of hovering: aggregate-pick the feature(s) under the
+  // cursor and position the tooltip. Throttled to one run per animation frame.
+  const resolveTooltip = useCallback(
     (info: PickingInfo) => {
-      const tooltip = resolveHoverFeatureTooltip(info, getFeatureTooltip, {
-        aggregate: aggregateHoverTooltips,
-        deck: getDeckFromDeckGlRef(deckRef),
-        pickLayerIds: hoverPickLayerIds,
+      const tooltip =
+        info.picked && typeof info.x === 'number' && typeof info.y === 'number'
+          ? resolveHoverFeatureTooltip(info, getFeatureTooltip, {
+              aggregate: aggregateHoverTooltips,
+              deck: getDeckFromDeckGlRef(deckRef),
+              pickLayerIds: hoverPickLayerIds,
+            })
+          : null;
+      // Resolve viewport coordinates here (in the event handler) rather than
+      // reading the container ref during render.
+      if (!tooltip) {
+        setHoverTooltip(null);
+        return;
+      }
+      const rect = viewerContainerRef.current?.getBoundingClientRect();
+      setHoverTooltip({
+        ...tooltip,
+        clientX: (rect?.left ?? 0) + tooltip.x,
+        clientY: (rect?.top ?? 0) + tooltip.y,
       });
-      setHoverTooltip(tooltip);
     },
     [aggregateHoverTooltips, getFeatureTooltip, hoverPickLayerIds]
+  );
+  const scheduleTooltip = useThrottledHoverTooltip(resolveTooltip);
+
+  const handleHover = useCallback(
+    (info: PickingInfo, event?: HoverPointerEvent) => {
+      // While panning/dragging, deck keeps firing hover events; the gesture is
+      // changing the view, not inspecting features, so suppress tooltip work.
+      if (isHoverDuringDrag(event)) {
+        setHoverTooltip(null);
+        return;
+      }
+      scheduleTooltip(info);
+    },
+    [scheduleTooltip]
   );
 
   const handleViewerRef = useCallback(
@@ -574,15 +617,10 @@ function SpatialCanvasInner({
   }
 
   const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
-  const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
   /** Viewport coordinates of the deck.gl pick (for portaled `position: fixed` tooltip). */
-  const tooltipClientPosition =
-    hoverTooltip && viewerRect
-      ? {
-          x: viewerRect.left + hoverTooltip.x,
-          y: viewerRect.top + hoverTooltip.y,
-        }
-      : null;
+  const tooltipClientPosition = hoverTooltip
+    ? { x: hoverTooltip.clientX, y: hoverTooltip.clientY }
+    : null;
 
   const shellStyle: CSSProperties = fullscreen
     ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
@@ -633,7 +671,7 @@ function SpatialCanvasInner({
               type="button"
               style={{ ...selectStyle, marginLeft: 'auto', cursor: 'pointer' }}
               onClick={() => {
-                setPendingFullscreenRefitSize({ width: vw, height: vh });
+                pendingFullscreenRefitSizeRef.current = { width: vw, height: vh };
                 setFullscreen((f) => !f);
               }}
             >
@@ -683,6 +721,7 @@ function SpatialCanvasInner({
               vw={vw}
               vh={vh}
               onHover={handleHover}
+              onInteractionStateChange={onInteractionStateChange}
               coordinateSystem={coordinateSystem}
               deckRef={deckRef}
             />
@@ -866,7 +905,9 @@ export interface SpatialCanvasProps {
    */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
   /**
-   * When true (default), hover tooltips aggregate picks from all layers under the cursor.
+   * When true, hover tooltips aggregate picks from all layers under the cursor.
+   * Defaults to false because aggregation issues extra per-move GPU pick passes
+   * over large geometry; enable only when stacked-layer tooltips are needed.
    */
   aggregateHoverTooltips?: boolean;
 }

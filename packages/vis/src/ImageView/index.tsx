@@ -148,31 +148,24 @@ export default function ImageView() {
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [ref, { width, height }] = useMeasure();
 
-  useEffect(() => {
-    if (!spatialData?.images) return;
-    if (selectedImage === '' || !spatialData.images[selectedImage]) {
-      setSelectedImage(Object.keys(spatialData.images)[0]);
-    }
-  }, [spatialData?.images, selectedImage]);
+  const imageKeys = useMemo(() => Object.keys(spatialData?.images ?? {}), [spatialData?.images]);
+  // Default to the first available image, derived during render.
+  const effectiveImage =
+    selectedImage && imageKeys.includes(selectedImage) ? selectedImage : (imageKeys[0] ?? '');
 
   const vivStores = useMemo(() => {
     return createVivStores();
   }, []);
   const image = useMemo(() => {
-    return spatialData?.images?.[selectedImage];
-  }, [selectedImage, spatialData?.images]);
-  const [imageUrl, setImageUrl] = useState<string | URL>();
-  useEffect(() => {
-    if (image) {
-      setImageUrl(image.url ?? '');
-    } else {
-      setImageUrl('');
-    }
-  }, [image]);
+    return spatialData?.images?.[effectiveImage];
+  }, [effectiveImage, spatialData?.images]);
+  // The url is synchronously available on the image, so derive it rather than
+  // syncing through state in an effect.
+  const imageUrl = useMemo<string | URL>(() => image?.url ?? '', [image]);
   return (
     <div ref={ref} style={containerStyle}>
       {spatialData?.images && (
-        <select value={selectedImage || ''} onChange={(e) => setSelectedImage(e.target.value)}>
+        <select value={effectiveImage} onChange={(e) => setSelectedImage(e.target.value)}>
           {Object.keys(spatialData.images).map((key) => (
             <option key={key} value={key}>
               {key}

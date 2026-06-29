@@ -65,10 +65,16 @@ import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
-import type { AvailableElement, ChannelConfig, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
+import type {
+  AvailableElement,
+  ChannelConfig,
+  ElementsByType,
+  LayerConfig,
+  ShapesLayerConfig,
+} from './types';
 import {
-  mergeVivImagePassthroughProps,
   type VivImagePassthroughOptions,
+  mergeVivImagePassthroughProps,
 } from './vivImagePassthrough';
 
 export interface ImageLoaderData {
@@ -191,7 +197,7 @@ export type SpatialFeaturePickEventData = ShapeFeaturePickEventData | LabelFeatu
 
 interface UseLayerDataResult {
   /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
-  getLayers: () => Layer[];
+  getLayers: (options?: { pickingEnabled?: boolean }) => Layer[];
   /** Get Viv layer props for image layers */
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
@@ -480,8 +486,15 @@ export function useLayerData(
     Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
   >(new Map());
 
+  // Mirror the latest `layers` into a ref so async loaders (which run well after
+  // commit) can read the current config without a stale closure. Written in an
+  // effect rather than during render to satisfy the Rules of React; the only
+  // render-time reader (element resolution in `hasRenderableLayerData`) is
+  // unaffected by a one-commit lag because element type/key are stable per id.
   const layersRef = useRef(layers);
-  layersRef.current = layers;
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
   const [, setLoadedDataRevision] = useState(0);
@@ -1213,7 +1226,11 @@ export function useLayerData(
     return unionBoundsList(list);
   }, [layerOrder, layers, getWorldBoundsForLayer]);
 
-  const getLayers = useCallback((): Layer[] => {
+  const getLayers = useCallback((options?: { pickingEnabled?: boolean }): Layer[] => {
+    // When the camera is moving we disable shape picking (autoHighlight + hover)
+    // to avoid deck re-rendering the full shape geometry into the picking buffer
+    // on every pointer move. Defaults to enabled.
+    const pickingEnabled = options?.pickingEnabled ?? true;
     const deckLayers: Layer[] = [];
     const loaded = loadedDataRef.current;
 
@@ -1247,6 +1264,7 @@ export function useLayerData(
             ),
             renderData: shapeData.renderData,
             prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
+            pickingEnabled,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -1321,9 +1339,12 @@ export function useLayerData(
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
-  const getImageLoadedDataByElementKey = useCallback((elementKey: string): ImageLoaderData | undefined => {
-    return loadedDataRef.current.images.get(elementKey);
-  }, []);
+  const getImageLoadedDataByElementKey = useCallback(
+    (elementKey: string): ImageLoaderData | undefined => {
+      return loadedDataRef.current.images.get(elementKey);
+    },
+    []
+  );
 
   const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
@@ -1613,6 +1634,16 @@ export function useLayerData(
 
   const isBlocking = useMemo(
     () =>
+      // `hasRenderableLayerData` consults `loadedDataRef`, an imperatively
+      // maintained cache of already-loaded layer data. Reading it during render
+      // is intentional here: the blocking overlay must distinguish a layer that
+      // is loading for the first time (block) from one that is refreshing but
+      // already has data to show (don't block), and that distinction only lives
+      // in the cache. Freshness is guaranteed because `layerLoadStates` (a real
+      // state value in this memo's deps) changes in lockstep with every load,
+      // forcing this memo to recompute. Lifting the cache to state/useSyncExternalStore
+      // would satisfy the rule but defeats the performance reason the ref exists.
+      // eslint-disable-next-line react-hooks/refs -- intentional external-store read, see comment above
       layerOrder.some((layerId) => {
         const config = layers[layerId];
         if (!config?.visible) return false;

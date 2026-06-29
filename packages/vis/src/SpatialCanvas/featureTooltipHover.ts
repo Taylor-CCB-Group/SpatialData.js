@@ -181,15 +181,18 @@ function collectPicks(
       return picks;
     }
 
-    const supplementalPicks = missingLayerIds.flatMap((layerId) =>
-      deck.pickMultipleObjects({
-        x: info.x,
-        y: info.y,
-        radius: pickRadius,
-        depth: 1,
-        layerIds: resolveDeckPickLayerIds(deck, [layerId]),
-      })
-    );
+    // Most "missing" layers simply have no geometry under the cursor, so picking
+    // each one individually performs a wasted `readPixels` GPU round-trip per
+    // layer on every pointer move. Issue a single supplemental pick across all
+    // missing layers instead (depth covers one hit per layer) to recover the
+    // genuinely occluded ones without the per-layer readPixels storm.
+    const supplementalPicks = deck.pickMultipleObjects({
+      x: info.x,
+      y: info.y,
+      radius: pickRadius,
+      depth: missingLayerIds.length,
+      layerIds: resolveDeckPickLayerIds(deck, missingLayerIds),
+    });
     return supplementalPicks.length > 0 ? [...picks, ...supplementalPicks] : picks;
   }
   return [info];

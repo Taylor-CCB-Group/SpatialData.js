@@ -237,6 +237,12 @@ export interface CreateShapesDeckLayerOptions {
   spatialCoordinateSystem?: string | null;
   onShapeHover?: (event: ShapesLayerPickEvent) => void;
   onShapeClick?: (event: ShapesLayerPickEvent) => void;
+  /**
+   * When false, the layer is rendered non-pickable with autoHighlight disabled.
+   * Used to suppress deck.gl's per-pointer-move picking-buffer render over large
+   * shape geometry while the camera is being panned/zoomed. Defaults to true.
+   */
+  pickingEnabled?: boolean;
 }
 
 function multiplyAlpha(
@@ -603,8 +609,8 @@ function createPolygonDeckLayer(
     stroked: true,
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,
-    pickable: true,
-    autoHighlight: true,
+    pickable: options.pickingEnabled ?? true,
+    autoHighlight: options.pickingEnabled ?? true,
     highlightColor: [255, 255, 0, 128],
     onHover: createPickHandler(
       options.id,
@@ -648,8 +654,8 @@ function createCircleDeckLayer(
     },
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,
-    pickable: true,
-    autoHighlight: true,
+    pickable: options.pickingEnabled ?? true,
+    autoHighlight: options.pickingEnabled ?? true,
     highlightColor: [255, 255, 0, 128],
     onHover: createPickHandler(
       options.id,

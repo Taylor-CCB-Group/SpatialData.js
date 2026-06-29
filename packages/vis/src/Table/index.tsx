@@ -10,14 +10,20 @@ export default function TableComponent() {
   const table = useMemo(() => {
     return spatialData?.tables?.[selectedTable];
   }, [selectedTable, spatialData?.tables]);
-  const [tableData, setTableData] = useState<any>(undefined);
+  // Keep the resolved data tagged with the table it came from so stale data is
+  // hidden by deriving during render rather than clearing via setState-in-effect.
+  const [tableData, setTableData] = useState<{ table: unknown; data: any } | undefined>(undefined);
   useEffect(() => {
-    if (table) {
-      table.getAnnDataJS().then((t) => setTableData(t));
-    } else {
-      setTableData(undefined);
-    }
+    if (!table) return;
+    let cancelled = false;
+    table.getAnnDataJS().then((t) => {
+      if (!cancelled) setTableData({ table, data: t });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [table]);
+  const currentData = tableData && tableData.table === table ? tableData.data : undefined;
   return (
     <div>
       {spatialData?.tables && (
@@ -29,7 +35,7 @@ export default function TableComponent() {
           ))}
         </select>
       )}
-      {tableData && <JsonView value={tableData} style={darkTheme} />}
+      {currentData && <JsonView value={currentData} style={darkTheme} />}
     </div>
   );
 }
