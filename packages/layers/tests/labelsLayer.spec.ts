@@ -168,6 +168,84 @@ describe('LabelsLayer prop flow', () => {
     expect(bitmaskLayer.props.customExtensionProp).toBe('forwarded');
   });
 
+  it('caps minZoom at the deepest resolution level so zoom-out does not stretch labels', () => {
+    // deck.gl keeps subdividing past the coarsest real level when minZoom is
+    // too negative; getTileData then returns the same clamped data while the
+    // tile bbox doubles, stretching labels far beyond the image extent. Capping
+    // minZoom at -(levels - 1) (matching Viv) is what prevents that.
+    const twoLevel = renderLabelsLayer({ loader: makeLabelsLoader().loader });
+    expect(twoLevel.props.minZoom).toBe(-1);
+    expect(twoLevel.props.maxZoom).toBe(0);
+
+    const makeScale = () => ({
+      shape: [512, 512],
+      tileSize: 256,
+      getTile: vi.fn(async () => ({ data: new Float32Array([0, 1, 2, 0]), width: 2, height: 2 })),
+    });
+    const fourLevel = renderLabelsLayer({
+      loader: [makeScale(), makeScale(), makeScale(), makeScale()],
+    });
+    expect(fourLevel.props.minZoom).toBe(-3);
+  });
+
+  it('culls tiles whose bbox falls outside the image extent', () => {
+    const { loader } = makeLabelsLoader();
+    const tileLayer = renderLabelsLayer({ loader });
+    const data = {
+      data: [new Float32Array([0, 1, 2, 0])],
+      width: 2,
+      height: 2,
+    };
+
+    // A tile that extends past the left/top edge of the image carries negative
+    // bbox edges; rendering it produces the wrong-transformation glitch, so it
+    // must be culled rather than drawn with garbage bounds.
+    const outOfBounds = tileLayer.props.renderSubLayers({
+      ...tileLayer.props,
+      id: 'labels:mask-viewport-labels',
+      data,
+      tile: {
+        bbox: { left: -256, top: -256, right: 256, bottom: 256 },
+        index: { x: -1, y: -1, z: 0 },
+        zoom: 0,
+      },
+    });
+
+    expect(outOfBounds).toBeNull();
+
+    // A tile fully inside the extent still renders.
+    const inBounds = tileLayer.props.renderSubLayers({
+      ...tileLayer.props,
+      id: 'labels:mask-viewport-labels',
+      data,
+      tile: {
+        bbox: { left: 0, top: 0, right: 256, bottom: 256 },
+        index: { x: 0, y: 0, z: 0 },
+        zoom: 0,
+      },
+    });
+
+    expect(inBounds).toBeTruthy();
+  });
+
+  it('culls tiles with zero-sized data', () => {
+    const { loader } = makeLabelsLoader();
+    const tileLayer = renderLabelsLayer({ loader });
+
+    const empty = tileLayer.props.renderSubLayers({
+      ...tileLayer.props,
+      id: 'labels:mask-viewport-labels',
+      data: { data: [new Float32Array([])], width: 0, height: 0 },
+      tile: {
+        bbox: { left: 0, top: 0, right: 256, bottom: 256 },
+        index: { x: 0, y: 0, z: 0 },
+        zoom: 0,
+      },
+    });
+
+    expect(empty).toBeNull();
+  });
+
   it('keeps labels bitmask sublayer ids distinct across tile resolutions', () => {
     const { loader } = makeLabelsLoader();
     const tileLayer = renderLabelsLayer({ loader });
