@@ -486,15 +486,17 @@ export function useLayerData(
     Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
   >(new Map());
 
-  // Mirror the latest `layers` into a ref so async loaders (which run well after
-  // commit) can read the current config without a stale closure. Written in an
-  // effect rather than during render to satisfy the Rules of React; the only
-  // render-time reader (element resolution in `hasRenderableLayerData`) is
-  // unaffected by a one-commit lag because element type/key are stable per id.
+  // Mirror the latest `layers` into a ref. This is read both by async loaders
+  // (which run well after commit) AND synchronously during render by
+  // `hasRenderableLayerData` / the loaded-data getters consumed via context
+  // (e.g. the "Center on layer" button's enablement, image/labels panels). It
+  // must therefore be written during render, not in an effect: deferring it to a
+  // commit-phase effect lets those render-time readers observe a stale config on
+  // the render where a layer first appears, leaving derived UI (the Center
+  // button) wrongly disabled with no follow-up render to correct it.
   const layersRef = useRef(layers);
-  useEffect(() => {
-    layersRef.current = layers;
-  }, [layers]);
+  // eslint-disable-next-line react-hooks/refs -- intentional latest-`layers` mirror consumed during render, see comment above
+  layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
   const [, setLoadedDataRevision] = useState(0);
