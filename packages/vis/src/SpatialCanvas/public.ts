@@ -29,6 +29,7 @@ export {
   useSpatialCanvasRendererFromLayerInputs,
 } from './SpatialCanvasViewer';
 export type {
+  HoverTooltipMode,
   VivImageExtensionResolver,
   VivImageLayerContext,
   VivImagePropsResolver,

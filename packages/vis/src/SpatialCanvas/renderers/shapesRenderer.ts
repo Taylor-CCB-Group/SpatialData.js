@@ -64,6 +64,12 @@ export interface ShapesLayerRenderConfig {
    * layer assembly skips Record→Map conversion on every `getLayers()` call.
    */
   featureStateRuntime?: ShapeFeatureStateRuntime;
+  /**
+   * When false, render the layer non-pickable (autoHighlight + hover picking
+   * off). Used to disable shape picking while the camera is moving. Defaults to
+   * true.
+   */
+  pickingEnabled?: boolean;
 }
 
 /**
@@ -88,6 +94,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
     featureStateRuntime,
     renderData,
     prebuilt,
+    pickingEnabled,
   } = config;
 
   if (!visible) return null;
@@ -114,6 +121,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null
       visible,
       opacity,
       modelMatrix,
+      pickingEnabled,
     },
     prebuilt
   );

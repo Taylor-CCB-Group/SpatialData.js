@@ -65,10 +65,16 @@ import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
-import type { AvailableElement, ChannelConfig, ElementsByType, LayerConfig, ShapesLayerConfig } from './types';
+import type {
+  AvailableElement,
+  ChannelConfig,
+  ElementsByType,
+  LayerConfig,
+  ShapesLayerConfig,
+} from './types';
 import {
-  mergeVivImagePassthroughProps,
   type VivImagePassthroughOptions,
+  mergeVivImagePassthroughProps,
 } from './vivImagePassthrough';
 
 export interface ImageLoaderData {
@@ -191,7 +197,7 @@ export type SpatialFeaturePickEventData = ShapeFeaturePickEventData | LabelFeatu
 
 interface UseLayerDataResult {
   /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
-  getLayers: () => Layer[];
+  getLayers: (options?: { pickingEnabled?: boolean }) => Layer[];
   /** Get Viv layer props for image layers */
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
@@ -480,7 +486,16 @@ export function useLayerData(
     Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
   >(new Map());
 
+  // Mirror the latest `layers` into a ref. This is read both by async loaders
+  // (which run well after commit) AND synchronously during render by
+  // `hasRenderableLayerData` / the loaded-data getters consumed via context
+  // (e.g. the "Center on layer" button's enablement, image/labels panels). It
+  // must therefore be written during render, not in an effect: deferring it to a
+  // commit-phase effect lets those render-time readers observe a stale config on
+  // the render where a layer first appears, leaving derived UI (the Center
+  // button) wrongly disabled with no follow-up render to correct it.
   const layersRef = useRef(layers);
+  // eslint-disable-next-line react-hooks/refs -- intentional latest-`layers` mirror consumed during render, see comment above
   layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
@@ -490,18 +505,25 @@ export function useLayerData(
     setLoadedDataRevision((revision) => revision + 1);
   }, []);
 
-  // Build a map of element key -> AvailableElement for quick lookup
-  const elementMap = useRef<Map<string, AvailableElement>>(new Map());
-
-  useEffect(() => {
+  // Build a map of element key -> AvailableElement for quick lookup. Memoised so it
+  // only rebuilds when `availableElements` changes...
+  const elementMapValue = useMemo(() => {
     const map = new Map<string, AvailableElement>();
     for (const type of ['images', 'shapes', 'points', 'labels'] as const) {
       for (const elem of availableElements[type]) {
         map.set(`${elem.type}:${elem.key}`, elem);
       }
     }
-    elementMap.current = map;
+    return map;
   }, [availableElements]);
+  // ...and mirrored into a stable ref so render-time consumers (e.g. the "Center on
+  // layer" enablement via `hasRenderableLayerData`) and async loaders read the
+  // current map without adding it — and its identity churn — to every dependency
+  // array. Written during render, NOT in an effect: an effect-deferred write let
+  // render-time readers observe a commit-stale map, which left the button disabled.
+  const elementMap = useRef(elementMapValue);
+  // eslint-disable-next-line react-hooks/refs -- intentional synchronous latest-value mirror consumed during render, see comment above
+  elementMap.current = elementMapValue;
 
   const setLayerResourceStatus = useCallback(
     (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
@@ -1213,7 +1235,11 @@ export function useLayerData(
     return unionBoundsList(list);
   }, [layerOrder, layers, getWorldBoundsForLayer]);
 
-  const getLayers = useCallback((): Layer[] => {
+  const getLayers = useCallback((options?: { pickingEnabled?: boolean }): Layer[] => {
+    // When the camera is moving we disable shape picking (autoHighlight + hover)
+    // to avoid deck re-rendering the full shape geometry into the picking buffer
+    // on every pointer move. Defaults to enabled.
+    const pickingEnabled = options?.pickingEnabled ?? true;
     const deckLayers: Layer[] = [];
     const loaded = loadedDataRef.current;
 
@@ -1247,6 +1273,7 @@ export function useLayerData(
             ),
             renderData: shapeData.renderData,
             prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
+            pickingEnabled,
           });
           if (layer) deckLayers.push(layer);
         }
@@ -1321,9 +1348,12 @@ export function useLayerData(
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
-  const getImageLoadedDataByElementKey = useCallback((elementKey: string): ImageLoaderData | undefined => {
-    return loadedDataRef.current.images.get(elementKey);
-  }, []);
+  const getImageLoadedDataByElementKey = useCallback(
+    (elementKey: string): ImageLoaderData | undefined => {
+      return loadedDataRef.current.images.get(elementKey);
+    },
+    []
+  );
 
   const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
@@ -1613,6 +1643,16 @@ export function useLayerData(
 
   const isBlocking = useMemo(
     () =>
+      // `hasRenderableLayerData` consults `loadedDataRef`, an imperatively
+      // maintained cache of already-loaded layer data. Reading it during render
+      // is intentional here: the blocking overlay must distinguish a layer that
+      // is loading for the first time (block) from one that is refreshing but
+      // already has data to show (don't block), and that distinction only lives
+      // in the cache. Freshness is guaranteed because `layerLoadStates` (a real
+      // state value in this memo's deps) changes in lockstep with every load,
+      // forcing this memo to recompute. Lifting the cache to state/useSyncExternalStore
+      // would satisfy the rule but defeats the performance reason the ref exists.
+      // eslint-disable-next-line react-hooks/refs -- intentional external-store read, see comment above
       layerOrder.some((layerId) => {
         const config = layers[layerId];
         if (!config?.visible) return false;

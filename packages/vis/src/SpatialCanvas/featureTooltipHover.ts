@@ -5,6 +5,18 @@ import type { DeckGLRef, PickingInfo } from 'deck.gl';
 const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;
 
+/**
+ * Minimal shape of the deck.gl hover event (a mjolnir pointer event). `srcEvent`
+ * is the underlying DOM pointer event; its `buttons` bitmask is non-zero while a
+ * pointer button is held, which is how we detect an in-progress pan/drag.
+ */
+export type HoverPointerEvent = { srcEvent?: { buttons?: number } | null };
+
+/** True when the hover event fired while a pointer button is held (pan/drag). */
+export function isHoverDuringDrag(event?: HoverPointerEvent | null): boolean {
+  return (event?.srcEvent?.buttons ?? 0) !== 0;
+}
+
 export interface PickMultipleObjectsCapable {
   props?: {
     layers?: unknown;
@@ -181,15 +193,18 @@ function collectPicks(
       return picks;
     }
 
-    const supplementalPicks = missingLayerIds.flatMap((layerId) =>
-      deck.pickMultipleObjects({
-        x: info.x,
-        y: info.y,
-        radius: pickRadius,
-        depth: 1,
-        layerIds: resolveDeckPickLayerIds(deck, [layerId]),
-      })
-    );
+    // Most "missing" layers simply have no geometry under the cursor, so picking
+    // each one individually performs a wasted `readPixels` GPU round-trip per
+    // layer on every pointer move. Issue a single supplemental pick across all
+    // missing layers instead (depth covers one hit per layer) to recover the
+    // genuinely occluded ones without the per-layer readPixels storm.
+    const supplementalPicks = deck.pickMultipleObjects({
+      x: info.x,
+      y: info.y,
+      radius: pickRadius,
+      depth: missingLayerIds.length,
+      layerIds: resolveDeckPickLayerIds(deck, missingLayerIds),
+    });
     return supplementalPicks.length > 0 ? [...picks, ...supplementalPicks] : picks;
   }
   return [info];

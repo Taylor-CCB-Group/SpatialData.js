@@ -5,6 +5,7 @@
       "name": "vis-demo",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@spatialdata/vis", "dev:demo"],
+      "autoPort": true,
       "port": 5173
     },
     {

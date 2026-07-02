@@ -1,13 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   getAggregateHoverPickDepth,
+  isHoverDuringDrag,
   normalizeDeckLayerId,
   resolveDeckPickLayerIds,
   resolveHoverFeatureTooltip,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
 
-const LABELS_BITMASK_LAYER_ID =
-  'sub-layer-0-0-0-0,512,512,0-labels:mask-#spatial-view#-labels';
+describe('isHoverDuringDrag', () => {
+  it('treats a hover with no held button as a normal hover', () => {
+    expect(isHoverDuringDrag(undefined)).toBe(false);
+    expect(isHoverDuringDrag(null)).toBe(false);
+    expect(isHoverDuringDrag({})).toBe(false);
+    expect(isHoverDuringDrag({ srcEvent: null })).toBe(false);
+    expect(isHoverDuringDrag({ srcEvent: { buttons: 0 } })).toBe(false);
+  });
+
+  it('treats a hover with a held pointer button as an in-progress drag/pan', () => {
+    expect(isHoverDuringDrag({ srcEvent: { buttons: 1 } })).toBe(true);
+    expect(isHoverDuringDrag({ srcEvent: { buttons: 2 } })).toBe(true);
+    expect(isHoverDuringDrag({ srcEvent: { buttons: 4 } })).toBe(true);
+  });
+});
+
+const LABELS_BITMASK_LAYER_ID = 'sub-layer-0-0-0-0,512,512,0-labels:mask-#spatial-view#-labels';
 
 describe('featureTooltipHover', () => {
   it('normalizes viv-suffixed deck layer ids', () => {
@@ -345,6 +361,47 @@ describe('featureTooltipHover', () => {
       'labels:mask',
       expect.objectContaining({ object: { labelId: 7 } })
     );
+  });
+
+  it('recovers multiple occluded layers with a single batched supplemental pick', () => {
+    const getFeatureTooltip = vi.fn((layerId: string) => ({
+      elementKey: layerId,
+      elementType: 'shapes' as const,
+      layerId,
+      items: [{ label: 'element', value: layerId }],
+    }));
+    // First (aggregate) pass sees only shapes:a; shapes:b and shapes:c are
+    // "missing" and must be recovered without one readPixels per missing layer.
+    const pickMultipleObjects = vi.fn(({ layerIds }: { layerIds?: string[] }) => {
+      if (layerIds && layerIds.length === 3) {
+        return [{ picked: true, x: 10, y: 20, layer: { id: 'shapes:a' }, index: 0, object: {} }];
+      }
+      return [
+        { picked: true, x: 10, y: 20, layer: { id: 'shapes:b' }, index: 0, object: {} },
+        { picked: true, x: 10, y: 20, layer: { id: 'shapes:c' }, index: 0, object: {} },
+      ];
+    });
+
+    const result = resolveHoverFeatureTooltip(
+      { picked: true, x: 10, y: 20, layer: { id: 'shapes:a' }, index: 0, object: {} },
+      getFeatureTooltip,
+      {
+        deck: { pickMultipleObjects },
+        pickLayerIds: ['shapes:a', 'shapes:b', 'shapes:c'],
+      }
+    );
+
+    // One aggregate pass + one batched supplemental pass = 2 total (not 1 per
+    // missing layer).
+    expect(pickMultipleObjects).toHaveBeenCalledTimes(2);
+    expect(pickMultipleObjects).toHaveBeenLastCalledWith({
+      x: 10,
+      y: 20,
+      radius: 4,
+      depth: 2,
+      layerIds: ['shapes:b', 'shapes:c'],
+    });
+    expect(result?.sections).toHaveLength(3);
   });
 
   it('falls back to the original hover pick when filtered aggregation returns no picks', () => {

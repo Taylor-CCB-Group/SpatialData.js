@@ -12,6 +12,8 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { ensureCodecWorkers } from '../codecWorkers';
+import { ImageLayerContextProvider } from './ImageLayerContext';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
@@ -19,30 +21,34 @@ import {
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
-import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
 import {
+  type HoverPointerEvent,
+  getDeckFromDeckGlRef,
+  isHoverDuringDrag,
+  resolveHoverFeatureTooltip,
+} from './featureTooltipHover';
+import {
+  type RenderStackHostLayerResolver,
+  type RenderStackLayerInputs,
+  type UnknownRenderStackHostLayerHandler,
   renderStackOrder,
   renderStackToLayerInputs,
   resolveRenderStackHostLayers,
   sortLayersByRenderStackOrder,
-  type RenderStackHostLayerResolver,
-  type RenderStackLayerInputs,
-  type UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
-import { ImageLayerContextProvider } from './ImageLayerContext';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import {
   type LabelFeaturePickEventData,
   type ShapeFeaturePickEventData,
   useLayerData,
 } from './useLayerData';
-import {
-  type VivImageExtensionResolver,
-  type VivImagePassthroughOptions,
-  type VivImagePropsResolver,
-} from './vivImagePassthrough';
-import { ensureCodecWorkers } from '../codecWorkers';
+import { useViewInteractionGate } from './useViewInteractionGate';
 import { getAvailableElements } from './utils';
+import type {
+  VivImageExtensionResolver,
+  VivImagePassthroughOptions,
+  VivImagePropsResolver,
+} from './vivImagePassthrough';
 
 export type {
   VivImageExtensionResolver,
@@ -53,6 +59,21 @@ export type {
 export type SpatialCanvasViewerRenderTooltip =
   | false
   | ((props: SpatialCanvasTooltipRenderProps) => ReactNode);
+
+/**
+ * Hover tooltip / picking behaviour:
+ * - `'off'`: no hover tooltip, and shape layers are made non-pickable (no
+ *   autoHighlight, no picking buffer render) — the cheapest mode.
+ * - `'simple'` (default): tooltip from the single top-most pick under the cursor.
+ * - `'aggregate'`: tooltip aggregated across all layers under the cursor, which
+ *   issues extra `pickMultipleObjects` GPU passes per pointer move.
+ */
+export type HoverTooltipMode = 'off' | 'simple' | 'aggregate';
+
+/** Runtime narrowing for arbitrary strings (e.g. a `<select>` value) to a mode. */
+export function isHoverTooltipMode(value: string): value is HoverTooltipMode {
+  return value === 'off' || value === 'simple' || value === 'aggregate';
+}
 
 type SpatialFeaturePickEventRuntimeFields = {
   coordinateSystem: string | null;
@@ -95,9 +116,11 @@ export interface SpatialCanvasViewerProps {
   autoFit?: boolean;
   style?: CSSProperties;
   /**
-   * When true (default), hover tooltips aggregate picks from all layers under the cursor.
+   * Hover tooltip / picking behaviour: `'off'` | `'simple'` (default) |
+   * `'aggregate'`. See {@link HoverTooltipMode}. `'aggregate'` is more expensive
+   * (extra GPU pick passes per move); `'off'` disables shape picking entirely.
    */
-  aggregateHoverTooltips?: boolean;
+  hoverTooltipMode?: HoverTooltipMode;
   /** Global fallback Viv LayerExtension instances for image layers. */
   vivImageExtensions?: unknown[];
   /** Per-image LayerExtension factory (runtime attachment). */
@@ -184,6 +207,12 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   sortDeckLayers?: boolean;
   autoFit?: boolean;
   vivPassthrough?: VivImagePassthroughOptions;
+  /**
+   * When false, shape layers are built non-pickable (autoHighlight off), so deck
+   * does not render their geometry into the picking buffer. Used both for the
+   * "off" tooltip mode and to suppress picking during pan/zoom. Defaults to true.
+   */
+  pickingEnabled?: boolean;
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -200,6 +229,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   sortDeckLayers,
   autoFit = true,
   vivPassthrough,
+  pickingEnabled = true,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   ensureCodecWorkers();
 
@@ -221,7 +251,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
     vivPassthrough
   );
 
-  const generatedDeckLayers = layerData.getLayers();
+  const generatedDeckLayers = layerData.getLayers({ pickingEnabled });
   const deckLayers = useMemo(() => {
     const composed = composeSpatialDeckLayers(generatedDeckLayers, [
       ...(hostDeckLayers ?? []),
@@ -397,7 +427,7 @@ function SpatialCanvasViewerInner({
   showLoadingOverlay = true,
   autoFit = true,
   style,
-  aggregateHoverTooltips = true,
+  hoverTooltipMode = 'simple',
   vivImageExtensions,
   vivImageExtensionResolver,
   vivImagePropsResolver,
@@ -405,8 +435,11 @@ function SpatialCanvasViewerInner({
   const [measureRef, { width, height }] = useMeasure();
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<DeckGLRef | null>(null);
+  const { interacting, onInteractionStateChange } = useViewInteractionGate();
+  // Shapes are pickable unless tooltips are off or the camera is being moved.
+  const pickingEnabled = hoverTooltipMode !== 'off' && !interacting;
   const [hoverTooltip, setHoverTooltip] = useState<
-    (SpatialFeatureTooltipData & { x: number; y: number }) | null
+    (SpatialFeatureTooltipData & { x: number; y: number; clientX: number; clientY: number }) | null
   >(null);
 
   const vw = width ?? 0;
@@ -447,65 +480,99 @@ function SpatialCanvasViewerInner({
     sortDeckLayers: Boolean(renderStack),
     autoFit,
     vivPassthrough,
+    pickingEnabled,
   });
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
     [renderer.enabledLayerIds]
   );
+  // Feed deck's interaction state into the gate (via deckProps so the existing
+  // spread reaches both DeckGL branches) while still invoking any caller-supplied
+  // onInteractionStateChange handler.
+  const mergedDeckProps = useMemo(() => {
+    const callerOnInteractionStateChange = deckProps?.onInteractionStateChange;
+    return {
+      ...deckProps,
+      onInteractionStateChange: (
+        state: Parameters<NonNullable<DeckGLProps['onInteractionStateChange']>>[0]
+      ) => {
+        callerOnInteractionStateChange?.(state);
+        onInteractionStateChange(state);
+      },
+    };
+  }, [deckProps, onInteractionStateChange]);
 
-  const handleHover = useCallback(
+  // The expensive part of hovering: aggregate-pick the feature(s) under the
+  // cursor and position the tooltip. Throttled to one run per animation frame.
+  const resolveTooltip = useCallback(
     (info: PickingInfo) => {
-      onHover?.(info);
-      if (!info.picked || typeof info.x !== 'number' || typeof info.y !== 'number') {
+      if (hoverTooltipMode === 'off' || !shouldRenderInternalTooltip(renderTooltip)) {
         setHoverTooltip(null);
         return;
       }
-      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
-      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
-      const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
-        index: info.index,
-        object: info.object,
-      });
-      if (featurePickEvent) {
-        onFeatureHover?.({
-          ...featurePickEvent,
-          coordinateSystem,
-          spatialData,
-          pickInfo: info,
-        });
-      }
-      const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
-        index: info.index,
-        object: info.object,
-      });
-      if (shapePickEvent) {
-        onShapeHover?.({
-          ...shapePickEvent,
-          coordinateSystem,
-          pickInfo: info,
-        });
-      }
-      if (!shouldRenderInternalTooltip(renderTooltip)) {
+      const tooltip =
+        info.picked && typeof info.x === 'number' && typeof info.y === 'number'
+          ? resolveHoverFeatureTooltip(info, renderer.getFeatureTooltip, {
+              aggregate: hoverTooltipMode === 'aggregate',
+              deck: getDeckFromDeckGlRef(deckRef),
+              pickLayerIds: hoverPickLayerIds,
+            })
+          : null;
+      // Resolve viewport coordinates here (in the event handler) rather than
+      // reading the container ref during render.
+      if (!tooltip) {
+        setHoverTooltip(null);
         return;
       }
-      const tooltip = resolveHoverFeatureTooltip(info, renderer.getFeatureTooltip, {
-        aggregate: aggregateHoverTooltips,
-        deck: getDeckFromDeckGlRef(deckRef),
-        pickLayerIds: hoverPickLayerIds,
+      const rect = viewerContainerRef.current?.getBoundingClientRect();
+      setHoverTooltip({
+        ...tooltip,
+        clientX: (rect?.left ?? 0) + tooltip.x,
+        clientY: (rect?.top ?? 0) + tooltip.y,
       });
-      setHoverTooltip(tooltip);
     },
-    [
-      aggregateHoverTooltips,
-      coordinateSystem,
-      hoverPickLayerIds,
-      onFeatureHover,
-      onHover,
-      onShapeHover,
-      renderTooltip,
-      renderer,
-      spatialData,
-    ]
+    [hoverTooltipMode, hoverPickLayerIds, renderTooltip, renderer.getFeatureTooltip]
+  );
+
+  const handleHover = useCallback(
+    (info: PickingInfo, event?: HoverPointerEvent) => {
+      onHover?.(info);
+      // While panning/dragging, deck keeps firing hover events; the gesture is
+      // changing the view, not inspecting features, so suppress tooltip work.
+      if (isHoverDuringDrag(event)) {
+        setHoverTooltip(null);
+        return;
+      }
+      if (info.picked && typeof info.x === 'number' && typeof info.y === 'number') {
+        const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+        const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+        const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
+          index: info.index,
+          object: info.object,
+        });
+        if (featurePickEvent) {
+          onFeatureHover?.({
+            ...featurePickEvent,
+            coordinateSystem,
+            spatialData,
+            pickInfo: info,
+          });
+        }
+        const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+          index: info.index,
+          object: info.object,
+        });
+        if (shapePickEvent) {
+          onShapeHover?.({
+            ...shapePickEvent,
+            coordinateSystem,
+            pickInfo: info,
+          });
+        }
+      }
+      resolveTooltip(info);
+    },
+    [coordinateSystem, onFeatureHover, onHover, onShapeHover, renderer, resolveTooltip, spatialData]
   );
 
   const handleClick = useCallback(
@@ -551,20 +618,15 @@ function SpatialCanvasViewerInner({
     [measureRef]
   );
 
-  const viewerRect = viewerContainerRef.current?.getBoundingClientRect();
-  const tooltipClientPosition =
-    hoverTooltip && viewerRect
-      ? {
-          x: viewerRect.left + hoverTooltip.x,
-          y: viewerRect.top + hoverTooltip.y,
-        }
-      : null;
+  const tooltipClientPosition = hoverTooltip
+    ? { x: hoverTooltip.clientX, y: hoverTooltip.clientY }
+    : null;
 
-  const tooltipPayload: SpatialFeatureTooltipData | null =
-    hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
+  const tooltipPayload: SpatialFeatureTooltipData | null = hoverTooltip;
 
   const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
   const tooltipPortal =
+    hoverTooltipMode !== 'off' &&
     shouldRenderInternalTooltip(renderTooltip) &&
     tooltipPayload &&
     tooltipClientPosition &&
@@ -626,9 +688,9 @@ function SpatialCanvasViewerInner({
               layers={renderer.deckLayers}
               layerOrder={renderer.layerOrder}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
-              onHover={handleHover}
+              onHover={hoverTooltipMode === 'off' ? undefined : handleHover}
               onClick={handleClick}
-              deckProps={deckProps}
+              deckProps={mergedDeckProps}
               deckRef={deckRef}
             />
             {showLoadingOverlay && renderer.isBlocking && (
