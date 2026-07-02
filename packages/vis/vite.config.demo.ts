@@ -29,8 +29,11 @@ export default defineConfig({
   assetsInclude: ['**/*.wasm'],
   server: {
     host: '127.0.0.1',
-    port: 5173,
-    strictPort: true,
+    // Prefer 5173 but fall back to the next free port when it's taken (e.g. another
+    // dev server is already running). Honours the PORT env var when set, so a
+    // launcher can pin the port. `strictPort` stays off so the fallback can happen.
+    port: Number(process.env.PORT) || 5173,
+    strictPort: false,
     open: false,
     proxy: {
       '/test-fixtures': {

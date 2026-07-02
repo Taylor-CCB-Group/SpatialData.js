@@ -21,7 +21,7 @@
     "build": "vite build && tsc --noEmit",
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node ../../scripts/dev-stop.mjs",
-    "dev:demo": "vite --config vite.config.demo.ts --host 127.0.0.1 --port 5173 --strictPort",
+    "dev:demo": "vite --config vite.config.demo.ts",
     "watch": "vite build --watch",
     "test": "vitest run",
     "test:watch": "vitest",
