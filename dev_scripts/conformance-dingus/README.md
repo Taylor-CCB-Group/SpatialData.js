@@ -94,6 +94,28 @@ implements produced numerically correct coordinates, including inverse affine,
 rotation, mapAxis, composed sequences, and multi-edge paths. All 17 `error` rows
 are unsupported features (see assessment above), not wrong answers.
 
+## Maintenance: validating a new conformance suite revision
+
+The suite revision is pinned in `pyproject.toml`
+(`ome-zarr-transformations-conformance @ git+...@<rev>`). Since this isn't run
+in CI, staleness only surfaces when someone bumps it by hand — do that
+periodically (e.g. when RFC-5 gains new cases/clarifications) as follows:
+
+1. Bump `<rev>` in `pyproject.toml` to the new commit/tag, then
+   `cd dev_scripts/conformance-dingus && uv lock` to update `uv.lock`.
+2. `./run-conformance.sh -v` and diff the output against
+   `baseline-results.tsv`. Three outcomes matter differently:
+   - **New/renamed `error` rows** — expected when the suite adds cases for
+     features we don't implement yet; just fold them into the backlog below.
+   - **Any `fail` row** (as opposed to `error`) — a real numerical bug: the
+     dingus ran a case we claim to support and got the wrong answer. Treat
+     this as a blocking regression, not a backlog item.
+   - **A previously-`pass` case flips to `error`/`fail`** — the suite changed
+     semantics or fixed a case; re-read the case's `zarr.json`/
+     `conformance.toml` to see what changed before assuming our code is wrong.
+3. Regenerate `baseline-results.tsv` from the new run and update the pass/
+   error/fail counts quoted in the Baseline section above.
+
 ## Maturation backlog (driving the implementation)
 
 Turning `error` rows into `pass` is the work this dingus exists to drive. In
