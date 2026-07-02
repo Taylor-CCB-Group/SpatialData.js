@@ -1,0 +1,23 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "ome-zarr-transformations-conformance"
+version = "0.1.2"
+source = { git = "https://github.com/clbarnes/ome_zarr_transformations_conformance.git?rev=6f933795aa61259c36914ff919f47d5f9255bd8d#6f933795aa61259c36914ff919f47d5f9255bd8d" }
+
+[[package]]
+name = "spatialdata-js-transform-conformance"
+version = "0.0.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "ome-zarr-transformations-conformance" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ome-zarr-transformations-conformance", git = "https://github.com/clbarnes/ome_zarr_transformations_conformance.git?rev=6f933795aa61259c36914ff919f47d5f9255bd8d" }]
