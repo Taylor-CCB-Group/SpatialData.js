@@ -224,7 +224,7 @@ interface ViewerSectionProps {
   getWorldBoundsForVisibleLayers: () => import('@spatialdata/core').AxisAlignedBounds | null;
   vw: number;
   vh: number;
-  onHover: (info: PickingInfo) => void;
+  onHover?: (info: PickingInfo) => void;
   onInteractionStateChange: (state: ViewInteractionState) => void;
   coordinateSystem: string | null;
   deckRef: React.RefObject<DeckGLRef | null>;
@@ -740,7 +740,7 @@ function SpatialCanvasInner({
               getWorldBoundsForVisibleLayers={getWorldBoundsForVisibleLayers}
               vw={vw}
               vh={vh}
-              onHover={handleHover}
+              onHover={tooltipMode === 'off' ? undefined : handleHover}
               onInteractionStateChange={onInteractionStateChange}
               coordinateSystem={coordinateSystem}
               deckRef={deckRef}

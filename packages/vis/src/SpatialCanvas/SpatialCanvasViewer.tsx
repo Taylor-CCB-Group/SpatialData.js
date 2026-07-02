@@ -682,7 +682,7 @@ function SpatialCanvasViewerInner({
               layers={renderer.deckLayers}
               layerOrder={renderer.layerOrder}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
-              onHover={handleHover}
+              onHover={hoverTooltipMode === 'off' ? undefined : handleHover}
               onClick={handleClick}
               deckProps={mergedDeckProps}
               deckRef={deckRef}
