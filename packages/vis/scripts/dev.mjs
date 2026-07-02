@@ -33,18 +33,18 @@ async function fixtureServerIsOurs(port) {
 }
 
 /**
- * Check the ports we need before spawning anything, so a leftover dev server
- * (often from another checkout) produces a clear message instead of a cryptic
- * strict-port crash. Returns whether we still need to start the fixture server.
+ * Check the ports we need before spawning anything: a busy demo port just gets a
+ * heads-up (Vite falls back to a free one), while a foreign process on the fixed
+ * fixture port is fatal. Returns whether we still need to start the fixture server.
  */
 async function preflight() {
   if (await isPortInUse(DEMO_PORT)) {
     const holder = describePortHolder(DEMO_PORT);
-    console.error(
-      `\n[dev] Demo port ${DEMO_PORT} is already in use${holder ? `:\n  ${holder}` : '.'}`
+    console.log(
+      `[dev] Demo port ${DEMO_PORT} is already in use${
+        holder ? ` (${holder})` : ''
+      }; Vite will fall back to the next free port.`
     );
-    console.error('[dev] Run `pnpm dev:stop` to clear SpatialData dev processes, then retry.\n');
-    process.exit(1);
   }
 
   if (await isPortInUse(FIXTURE_SERVER_PORT)) {
@@ -126,13 +126,6 @@ if (startFixtures) {
 }
 console.log(`Starting ${startedParts.join(', ')}...`);
 start('watch', ['vite', 'build', '--watch']);
-start('demo', [
-  'vite',
-  '--config',
-  'vite.config.demo.ts',
-  '--host',
-  '127.0.0.1',
-  '--port',
-  String(DEMO_PORT),
-  '--strictPort',
-]);
+// Host/port (and the free-port fallback) are owned by vite.config.demo.ts so
+// the port selection stays in one place; honour PORT if the caller pins it.
+start('demo', ['vite', '--config', 'vite.config.demo.ts']);

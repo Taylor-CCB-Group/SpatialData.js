@@ -70,6 +70,11 @@ export type SpatialCanvasViewerRenderTooltip =
  */
 export type HoverTooltipMode = 'off' | 'simple' | 'aggregate';
 
+/** Runtime narrowing for arbitrary strings (e.g. a `<select>` value) to a mode. */
+export function isHoverTooltipMode(value: string): value is HoverTooltipMode {
+  return value === 'off' || value === 'simple' || value === 'aggregate';
+}
+
 type SpatialFeaturePickEventRuntimeFields = {
   coordinateSystem: string | null;
   spatialData?: SpatialData | null;
@@ -482,11 +487,20 @@ function SpatialCanvasViewerInner({
     [renderer.enabledLayerIds]
   );
   // Feed deck's interaction state into the gate (via deckProps so the existing
-  // spread reaches both DeckGL branches) without disturbing caller deckProps.
-  const mergedDeckProps = useMemo(
-    () => ({ ...deckProps, onInteractionStateChange }),
-    [deckProps, onInteractionStateChange]
-  );
+  // spread reaches both DeckGL branches) while still invoking any caller-supplied
+  // onInteractionStateChange handler.
+  const mergedDeckProps = useMemo(() => {
+    const callerOnInteractionStateChange = deckProps?.onInteractionStateChange;
+    return {
+      ...deckProps,
+      onInteractionStateChange: (
+        state: Parameters<NonNullable<DeckGLProps['onInteractionStateChange']>>[0]
+      ) => {
+        callerOnInteractionStateChange?.(state);
+        onInteractionStateChange(state);
+      },
+    };
+  }, [deckProps, onInteractionStateChange]);
 
   // The expensive part of hovering: aggregate-pick the feature(s) under the
   // cursor and position the tooltip. Throttled to one run per animation frame.
@@ -612,6 +626,7 @@ function SpatialCanvasViewerInner({
 
   const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
   const tooltipPortal =
+    hoverTooltipMode !== 'off' &&
     shouldRenderInternalTooltip(renderTooltip) &&
     tooltipPayload &&
     tooltipClientPosition &&

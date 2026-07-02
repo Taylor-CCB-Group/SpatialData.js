@@ -12,7 +12,10 @@ export default function TableComponent() {
   }, [selectedTable, spatialData?.tables]);
   // Keep the resolved data tagged with the table it came from so stale data is
   // hidden by deriving during render rather than clearing via setState-in-effect.
-  const [tableData, setTableData] = useState<{ table: unknown; data: any } | undefined>(undefined);
+  type AnnDataResult = Awaited<ReturnType<NonNullable<typeof table>['getAnnDataJS']>>;
+  const [tableData, setTableData] = useState<
+    { table: unknown; data: AnnDataResult } | undefined
+  >(undefined);
   useEffect(() => {
     if (!table) return;
     let cancelled = false;

@@ -27,6 +27,7 @@ import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
   type HoverTooltipMode,
+  isHoverTooltipMode,
   shouldAutoFitSpatialView,
   useSpatialCanvasRendererFromLayerInputs,
 } from './SpatialCanvasViewer';
@@ -224,7 +225,7 @@ interface ViewerSectionProps {
   getWorldBoundsForVisibleLayers: () => import('@spatialdata/core').AxisAlignedBounds | null;
   vw: number;
   vh: number;
-  onHover?: (info: PickingInfo) => void;
+  onHover?: (info: PickingInfo, event?: HoverPointerEvent) => void;
   onInteractionStateChange: (state: ViewInteractionState) => void;
   coordinateSystem: string | null;
   deckRef: React.RefObject<DeckGLRef | null>;
@@ -633,7 +634,7 @@ function SpatialCanvasInner({
     : { ...containerStyle, position: 'relative' };
 
   const tooltipPayload: SpatialFeatureTooltipData | null =
-    hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
+    tooltipMode !== 'off' && hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
 
   const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
 
@@ -678,7 +679,9 @@ function SpatialCanvasInner({
               <select
                 style={selectStyle}
                 value={tooltipMode}
-                onChange={(e) => setTooltipMode(e.target.value as HoverTooltipMode)}
+                onChange={(e) => {
+                  if (isHoverTooltipMode(e.target.value)) setTooltipMode(e.target.value);
+                }}
                 title="Off disables shape picking entirely (fastest); Aggregate picks all layers under the cursor (slowest)."
               >
                 <option value="off">Off</option>
