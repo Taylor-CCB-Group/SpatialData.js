@@ -1,5 +1,24 @@
 # @spatialdata/vis
 
+## 0.2.6
+
+### Patch Changes
+
+- [#68](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/68) [`25124c5`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/25124c50a2107a1813c3bac1ee8d48161b477422) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Bump viv to 0.22.0 and deck.gl/luma.gl ecosystem to 9.3.5
+
+- [#75](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/75) [`f109b95`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/f109b95ab44a5255537c9dbd861cf2c92fee2283) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Auto-select the coordinate system when a SpatialData object has exactly one. Previously the picker started unselected (showing "Select a coordinate system") even when there was only one choice, and a separate effect would eagerly pick the first of several. Now selection defaults only in the unambiguous single-coordinate-system case; multi-system datasets still require an explicit choice.
+
+- [#69](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/69) [`e343a72`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/e343a721ce949fd9592c8ead2edec9a238f70f92) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Switch HTJ2K codec from `@cornerstonejs/codec-openjph` to `openjph-wasm`, which correctly round-trips multi-component (volumetric) HTJ2K data. The cornerstone build silently dropped components 2..N on decode; `openjph-wasm` handles arbitrary component counts losslessly.
+
+  Also adds true z>1 multi-component chunk support: z-planes are now encoded as components of a single codestream rather than one plane per chunk. Exports `Htj2kPlane` from the package index.
+
+- Updated dependencies [[`bd594e2`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/bd594e2e1efddffb4b9280d0970abd0aa84fed0e), [`e343a72`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/e343a721ce949fd9592c8ead2edec9a238f70f92)]:
+  - @spatialdata/layers@0.2.6
+  - zarrextra@0.3.0
+  - @spatialdata/avivatorish@0.2.6
+  - @spatialdata/core@0.2.6
+  - @spatialdata/react@0.2.6
+
 ## 0.2.5
 
 ### Patch Changes
