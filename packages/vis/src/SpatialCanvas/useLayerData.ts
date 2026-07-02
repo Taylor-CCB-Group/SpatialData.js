@@ -505,18 +505,25 @@ export function useLayerData(
     setLoadedDataRevision((revision) => revision + 1);
   }, []);
 
-  // Build a map of element key -> AvailableElement for quick lookup
-  const elementMap = useRef<Map<string, AvailableElement>>(new Map());
-
-  useEffect(() => {
+  // Build a map of element key -> AvailableElement for quick lookup. Memoised so it
+  // only rebuilds when `availableElements` changes...
+  const elementMapValue = useMemo(() => {
     const map = new Map<string, AvailableElement>();
     for (const type of ['images', 'shapes', 'points', 'labels'] as const) {
       for (const elem of availableElements[type]) {
         map.set(`${elem.type}:${elem.key}`, elem);
       }
     }
-    elementMap.current = map;
+    return map;
   }, [availableElements]);
+  // ...and mirrored into a stable ref so render-time consumers (e.g. the "Center on
+  // layer" enablement via `hasRenderableLayerData`) and async loaders read the
+  // current map without adding it — and its identity churn — to every dependency
+  // array. Written during render, NOT in an effect: an effect-deferred write let
+  // render-time readers observe a commit-stale map, which left the button disabled.
+  const elementMap = useRef(elementMapValue);
+  // eslint-disable-next-line react-hooks/refs -- intentional synchronous latest-value mirror consumed during render, see comment above
+  elementMap.current = elementMapValue;
 
   const setLayerResourceStatus = useCallback(
     (layerId: string, resource: keyof LayerLoadState, status: ResourceLoadStatus) => {
