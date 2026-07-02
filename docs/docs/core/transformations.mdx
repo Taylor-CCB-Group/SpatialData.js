@@ -6,6 +6,31 @@ sidebar_position: 3
 
 Coordinate transformations are fundamental to SpatialData, allowing different elements to be placed in shared coordinate systems. The `@spatialdata/core` package aims to provide a comprehensive implementation of transformation classes that can be represented in the standard.
 
+## Supported transformation types
+
+| RFC-5 type | Support |
+|------------|---------|
+| `identity` | ✅ |
+| `scale` | ✅ |
+| `translation` | ✅ |
+| `affine` | ✅ (inline parameters only, not "by path") |
+| `rotation` | ✅ (inline parameters only, not "by path") |
+| `mapAxis` | ✅ |
+| `sequence` | ✅ |
+| `byDimension` | ❌ Not implemented |
+| `bijection` | ❌ Not implemented |
+| `displacements` | ❌ Not implemented |
+| affine/rotation **by path** (params in an external zarr array) | ❌ Not implemented |
+| non-spatial axes (e.g. `c`, `t`) alongside spatial ones | ⚠️ Spatial axes only; the matrix path is XYZ-only |
+
+We validate this against the upstream
+[`ome-zarr-transformations-conformance`](https://github.com/clbarnes/ome_zarr_transformations_conformance)
+package (pinned to
+[commit `6f93379`](https://github.com/clbarnes/ome_zarr_transformations_conformance/tree/6f933795aa61259c36914ff919f47d5f9255bd8d)),
+run via `dev_scripts/conformance-dingus/` — see that directory's README for how
+to run it and the current pass/error/fail baseline. That conformance run is the
+source of truth for the table above.
+
 :::info Read-Only API
 
 The current version of `@spatialdata/core` is focused on **reading** SpatialData stores. Stores are treated as immutable—you load elements and access their transformations, but you don't construct or modify them.
@@ -57,11 +82,12 @@ abstract class BaseTransformation {
   
   abstract toArray(): number[];           // 16-element column-major array
   toMatrix(): Matrix4;                    // Matrix4 from @math.gl/core
+  inverse(): Matrix4;                     // Inverted Matrix4; throws if singular
   abstract get type(): string;            // 'identity' | 'scale' | 'translation' | etc.
 }
 ```
 
-The following transformation types are supported:
+The transformation classes are:
 
 | Type | Description |
 |------|-------------|
@@ -69,8 +95,12 @@ The following transformation types are supported:
 | `Scale` | Uniform or non-uniform scaling |
 | `Translation` | Coordinate offset |
 | `Affine` | Full affine matrix (2×3, 3×3, or 4×4 formats) |
+| `Rotation` | Rotation matrix (square, no translation) |
+| `MapAxis` | Axis remapping/permutation |
 | `Sequence` | Composition of multiple transformations |
-| `MapAxis` | Axis remapping (stub implementation) |
+
+See [Supported transformation types](#supported-transformation-types) above
+for what's not yet implemented.
 
 ## Multiscale Image Transforms
 
@@ -145,8 +175,8 @@ const transformed = matrix.transform(point);
 // Compose with another matrix
 const combined = matrix.clone().multiplyRight(otherMatrix);
 
-// Get the inverse
-const inverse = matrix.clone().invert();
+// Get the inverse (throws if the transformation is singular/non-invertible)
+const inverse = transformResult.value.inverse();
 ```
 
 ## See Also

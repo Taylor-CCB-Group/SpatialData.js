@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   Affine,
+  MapAxis,
+  Rotation,
+  Scale,
   buildMatrix4FromTransforms,
   composeTransforms,
 } from '../src/transformations/transformations.js';
@@ -66,6 +69,65 @@ describe('Affine', () => {
     expect(mapped[0]).toBeCloseTo(18);
     expect(mapped[1]).toBeCloseTo(35);
     expect(mapped[2]).toBeCloseTo(0);
+  });
+});
+
+describe('Rotation', () => {
+  it('matches the RFC-5 conformance case (45deg rotation, y/x axis order)', () => {
+    const yx = {
+      name: 'input',
+      axes: [
+        { name: 'y', type: 'space' as const },
+        { name: 'x', type: 'space' as const },
+      ],
+    };
+    const transform = new Rotation(
+      [
+        [0.70710678, -0.70710678],
+        [0.70710678, 0.70710678],
+      ],
+      yx,
+      yx
+    );
+
+    // Raw input point [y=1, x=1] as an x/y/z vector (Matrix4 space): (x=1, y=1, 0).
+    const mapped = transform.toMatrix().transformPoint([1, 1, 0]);
+    // Expect raw output [y=0, x=1.41421356], i.e. xyz vector (x=1.41421356, y=0, 0).
+    expect(mapped[0]).toBeCloseTo(1.41421356);
+    expect(mapped[1]).toBeCloseTo(0);
+  });
+});
+
+describe('MapAxis', () => {
+  it('matches the RFC-5 conformance case (swap y/x)', () => {
+    const yx = {
+      name: 'input',
+      axes: [
+        { name: 'y', type: 'space' as const },
+        { name: 'x', type: 'space' as const },
+      ],
+    };
+    // output[0] (y) <- input[1] (x); output[1] (x) <- input[0] (y)
+    const transform = new MapAxis([1, 0], yx, yx);
+
+    // Raw input point [y=1, x=2] as an x/y/z vector (Matrix4 space): (x=2, y=1, 0).
+    const mapped = transform.toMatrix().transformPoint([2, 1, 0]);
+    // Expect raw output [y=2, x=1], i.e. xyz vector (x=1, y=2, 0).
+    expect(mapped[0]).toBeCloseTo(1); // x_out
+    expect(mapped[1]).toBeCloseTo(2); // y_out
+  });
+});
+
+describe('inverse', () => {
+  it('inverts a scale transformation', () => {
+    const transform = new Scale([2, 4]);
+    const inverted = transform.inverse();
+    expect(inverted.transformPoint([2, 4, 0])).toEqual([1, 1, 0]);
+  });
+
+  it('throws for a singular (non-invertible) transformation', () => {
+    const transform = new Scale([0, 4]);
+    expect(() => transform.inverse()).toThrow();
   });
 });
 

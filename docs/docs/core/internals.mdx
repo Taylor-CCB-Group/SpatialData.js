@@ -192,7 +192,15 @@ These classes represent parsed transformations internally. They're returned by e
 | `Translation` | `new Translation(translation[], input?, output?)` | Translation |
 | `Affine` | `new Affine(matrix[][], input?, output?)` | Full affine |
 | `Sequence` | `new Sequence(transforms[], input?, output?)` | Composed transforms |
-| `MapAxis` | `new MapAxis(...)` | Axis remapping (stub) |
+| `Rotation` | `new Rotation(matrix[][], input?, output?)` | Rotation matrix (square, no translation) |
+| `MapAxis` | `new MapAxis(mapAxis[], input?, output?)` | Axis remapping/permutation |
+
+Not yet implemented: `byDimension`, `bijection`, `displacements`, and affine/rotation
+"by path" (parameters stored in an external zarr array). See
+[Coordinate Transformations](./transformations#supported-transformation-types)
+for the current support summary, and
+`dev_scripts/conformance-dingus/` for the RFC-5 conformance harness that tracks
+this backlog.
 
 All classes extend `BaseTransformation` and provide:
 
@@ -203,6 +211,7 @@ abstract class BaseTransformation {
   
   abstract toArray(): number[];  // 16-element column-major
   toMatrix(): Matrix4;           // Matrix4 from @math.gl/core
+  inverse(): Matrix4;            // Inverted Matrix4; throws if singular
   abstract get type(): string;
 }
 ```
