@@ -8,11 +8,14 @@ SpatialCanvas hover/picking performance and Rules-of-React cleanup.
 
 Picking/tooltip performance:
 
-- `aggregateHoverTooltips` now defaults to `false`. Aggregation issued extra
-  `pickMultipleObjects` GPU passes on every pointer move (on top of the pick
-  deck.gl already does for hover/highlight), which is very expensive over large
-  pickable geometry. Single-pick hover uses the existing pick; enable
-  aggregation explicitly when stacked-layer tooltips are needed.
+- New `hoverTooltipMode` prop (`'off' | 'simple' | 'aggregate'`, default
+  `'simple'`) on `SpatialCanvas` and `SpatialCanvasViewer`, with a matching
+  selector in the `SpatialCanvas` UI. `'simple'` resolves the tooltip from the
+  single top-most pick deck.gl already does for hover/highlight; `'aggregate'`
+  adds `pickMultipleObjects` GPU passes to include every layer under the cursor
+  (more expensive); `'off'` makes shape layers non-pickable entirely (no
+  autoHighlight, no picking-buffer render) — the cheapest mode. Replaces the
+  earlier boolean `aggregateHoverTooltips`.
 - Shape layers are made non-pickable (and `autoHighlight` disabled) while the
   camera is being panned/zoomed, so deck.gl does not re-render the shape
   geometry into the picking buffer during gestures. New `pickingEnabled` option

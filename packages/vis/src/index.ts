@@ -74,6 +74,7 @@ export type {
   SpatialViewerProps,
   SpatialCanvasViewerProps,
   SpatialCanvasViewerRenderTooltip,
+  HoverTooltipMode,
   LabelsSpatialFeaturePickEvent,
   ShapesSpatialFeaturePickEvent,
   SpatialFeaturePickEvent,

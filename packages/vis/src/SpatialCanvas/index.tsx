@@ -26,6 +26,7 @@ import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
+  type HoverTooltipMode,
   shouldAutoFitSpatialView,
   useSpatialCanvasRendererFromLayerInputs,
 } from './SpatialCanvasViewer';
@@ -372,19 +373,19 @@ interface SpatialCanvasInnerProps {
   /** Override default tooltip UI; receives pick position in viewport coordinates. */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
   /**
-   * When true, hover tooltips include picks from all layers under the cursor.
-   * Defaults to false because aggregation issues extra per-move GPU pick passes
-   * over large geometry; enable only when stacked-layer tooltips are needed.
+   * Initial hover tooltip mode (`'off'` | `'simple'` | `'aggregate'`). The UI
+   * exposes a selector to change it live; this sets the starting value.
    */
-  aggregateHoverTooltips?: boolean;
+  hoverTooltipMode?: HoverTooltipMode;
 }
 
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
-  aggregateHoverTooltips = false,
+  hoverTooltipMode = 'simple',
 }: SpatialCanvasInnerProps) {
   const { spatialData, loading: sdLoading } = useSpatialData();
+  const [tooltipMode, setTooltipMode] = useState<HoverTooltipMode>(hoverTooltipMode);
   const [measureRef, { width, height }] = useMeasure();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -421,6 +422,8 @@ function SpatialCanvasInner({
   // flips at most twice per gesture (start/settle), so this hook re-runs to
   // rebuild layers with toggled pickability — not on every pan frame.
   const { interacting, onInteractionStateChange } = useViewInteractionGate();
+  // Shapes are pickable unless tooltips are off or the camera is being moved.
+  const pickingEnabled = tooltipMode !== 'off' && !interacting;
   const {
     availableElements,
     deckLayers,
@@ -445,7 +448,7 @@ function SpatialCanvasInner({
     // are managed entirely by ViewerSection so this hook never re-runs on pan.
     width: vw,
     height: vh,
-    interacting,
+    pickingEnabled,
   });
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
@@ -545,10 +548,14 @@ function SpatialCanvasInner({
   // cursor and position the tooltip. Throttled to one run per animation frame.
   const resolveTooltip = useCallback(
     (info: PickingInfo) => {
+      if (tooltipMode === 'off') {
+        setHoverTooltip(null);
+        return;
+      }
       const tooltip =
         info.picked && typeof info.x === 'number' && typeof info.y === 'number'
           ? resolveHoverFeatureTooltip(info, getFeatureTooltip, {
-              aggregate: aggregateHoverTooltips,
+              aggregate: tooltipMode === 'aggregate',
               deck: getDeckFromDeckGlRef(deckRef),
               pickLayerIds: hoverPickLayerIds,
             })
@@ -566,7 +573,7 @@ function SpatialCanvasInner({
         clientY: (rect?.top ?? 0) + tooltip.y,
       });
     },
-    [aggregateHoverTooltips, getFeatureTooltip, hoverPickLayerIds]
+    [tooltipMode, getFeatureTooltip, hoverPickLayerIds]
   );
   const scheduleTooltip = useThrottledHoverTooltip(resolveTooltip);
 
@@ -667,6 +674,19 @@ function SpatialCanvasInner({
                 </option>
               ))}
             </select>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: '#999', fontSize: '12px' }}>Tooltips:</span>
+              <select
+                style={selectStyle}
+                value={tooltipMode}
+                onChange={(e) => setTooltipMode(e.target.value as HoverTooltipMode)}
+                title="Off disables shape picking entirely (fastest); Aggregate picks all layers under the cursor (slowest)."
+              >
+                <option value="off">Off</option>
+                <option value="simple">Simple</option>
+                <option value="aggregate">Aggregate</option>
+              </select>
+            </label>
             <button
               type="button"
               style={{ ...selectStyle, marginLeft: 'auto', cursor: 'pointer' }}
@@ -905,11 +925,10 @@ export interface SpatialCanvasProps {
    */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
   /**
-   * When true, hover tooltips aggregate picks from all layers under the cursor.
-   * Defaults to false because aggregation issues extra per-move GPU pick passes
-   * over large geometry; enable only when stacked-layer tooltips are needed.
+   * Initial hover tooltip mode: `'off'` | `'simple'` (default) | `'aggregate'`.
+   * The canvas UI exposes a selector to change it live. See {@link HoverTooltipMode}.
    */
-  aggregateHoverTooltips?: boolean;
+  hoverTooltipMode?: HoverTooltipMode;
 }
 
 /**
@@ -964,7 +983,7 @@ export default function SpatialCanvas({
   store,
   tooltipContainer,
   renderTooltip,
-  aggregateHoverTooltips,
+  hoverTooltipMode,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -972,7 +991,7 @@ export default function SpatialCanvas({
         <SpatialCanvasInner
           tooltipContainer={tooltipContainer}
           renderTooltip={renderTooltip}
-          aggregateHoverTooltips={aggregateHoverTooltips}
+          hoverTooltipMode={hoverTooltipMode}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

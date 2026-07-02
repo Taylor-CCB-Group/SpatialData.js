@@ -60,6 +60,16 @@ export type SpatialCanvasViewerRenderTooltip =
   | false
   | ((props: SpatialCanvasTooltipRenderProps) => ReactNode);
 
+/**
+ * Hover tooltip / picking behaviour:
+ * - `'off'`: no hover tooltip, and shape layers are made non-pickable (no
+ *   autoHighlight, no picking buffer render) — the cheapest mode.
+ * - `'simple'` (default): tooltip from the single top-most pick under the cursor.
+ * - `'aggregate'`: tooltip aggregated across all layers under the cursor, which
+ *   issues extra `pickMultipleObjects` GPU passes per pointer move.
+ */
+export type HoverTooltipMode = 'off' | 'simple' | 'aggregate';
+
 type SpatialFeaturePickEventRuntimeFields = {
   coordinateSystem: string | null;
   spatialData?: SpatialData | null;
@@ -101,13 +111,11 @@ export interface SpatialCanvasViewerProps {
   autoFit?: boolean;
   style?: CSSProperties;
   /**
-   * When true, hover tooltips aggregate picks from all layers under the cursor.
-   * This issues extra `pickMultipleObjects` GPU passes per pointer move on top of
-   * the pick deck already does for hover/highlight, which is expensive over large
-   * pickable geometry — so it defaults to false (single top pick from the hover
-   * info). Enable it only when stacked-layer tooltips are needed.
+   * Hover tooltip / picking behaviour: `'off'` | `'simple'` (default) |
+   * `'aggregate'`. See {@link HoverTooltipMode}. `'aggregate'` is more expensive
+   * (extra GPU pick passes per move); `'off'` disables shape picking entirely.
    */
-  aggregateHoverTooltips?: boolean;
+  hoverTooltipMode?: HoverTooltipMode;
   /** Global fallback Viv LayerExtension instances for image layers. */
   vivImageExtensions?: unknown[];
   /** Per-image LayerExtension factory (runtime attachment). */
@@ -195,10 +203,11 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   autoFit?: boolean;
   vivPassthrough?: VivImagePassthroughOptions;
   /**
-   * When true, the camera is being panned/zoomed and shape picking is disabled
-   * to avoid per-move picking-buffer renders over large geometry.
+   * When false, shape layers are built non-pickable (autoHighlight off), so deck
+   * does not render their geometry into the picking buffer. Used both for the
+   * "off" tooltip mode and to suppress picking during pan/zoom. Defaults to true.
    */
-  interacting?: boolean;
+  pickingEnabled?: boolean;
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -215,7 +224,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   sortDeckLayers,
   autoFit = true,
   vivPassthrough,
-  interacting = false,
+  pickingEnabled = true,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   ensureCodecWorkers();
 
@@ -237,7 +246,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
     vivPassthrough
   );
 
-  const generatedDeckLayers = layerData.getLayers({ pickingEnabled: !interacting });
+  const generatedDeckLayers = layerData.getLayers({ pickingEnabled });
   const deckLayers = useMemo(() => {
     const composed = composeSpatialDeckLayers(generatedDeckLayers, [
       ...(hostDeckLayers ?? []),
@@ -413,7 +422,7 @@ function SpatialCanvasViewerInner({
   showLoadingOverlay = true,
   autoFit = true,
   style,
-  aggregateHoverTooltips = false,
+  hoverTooltipMode = 'simple',
   vivImageExtensions,
   vivImageExtensionResolver,
   vivImagePropsResolver,
@@ -422,6 +431,8 @@ function SpatialCanvasViewerInner({
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<DeckGLRef | null>(null);
   const { interacting, onInteractionStateChange } = useViewInteractionGate();
+  // Shapes are pickable unless tooltips are off or the camera is being moved.
+  const pickingEnabled = hoverTooltipMode !== 'off' && !interacting;
   const [hoverTooltip, setHoverTooltip] = useState<
     (SpatialFeatureTooltipData & { x: number; y: number; clientX: number; clientY: number }) | null
   >(null);
@@ -464,7 +475,7 @@ function SpatialCanvasViewerInner({
     sortDeckLayers: Boolean(renderStack),
     autoFit,
     vivPassthrough,
-    interacting,
+    pickingEnabled,
   });
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
@@ -481,13 +492,14 @@ function SpatialCanvasViewerInner({
   // cursor and position the tooltip. Throttled to one run per animation frame.
   const resolveTooltip = useCallback(
     (info: PickingInfo) => {
-      if (!shouldRenderInternalTooltip(renderTooltip)) {
+      if (hoverTooltipMode === 'off' || !shouldRenderInternalTooltip(renderTooltip)) {
+        setHoverTooltip(null);
         return;
       }
       const tooltip =
         info.picked && typeof info.x === 'number' && typeof info.y === 'number'
           ? resolveHoverFeatureTooltip(info, renderer.getFeatureTooltip, {
-              aggregate: aggregateHoverTooltips,
+              aggregate: hoverTooltipMode === 'aggregate',
               deck: getDeckFromDeckGlRef(deckRef),
               pickLayerIds: hoverPickLayerIds,
             })
@@ -505,7 +517,7 @@ function SpatialCanvasViewerInner({
         clientY: (rect?.top ?? 0) + tooltip.y,
       });
     },
-    [aggregateHoverTooltips, hoverPickLayerIds, renderTooltip, renderer.getFeatureTooltip]
+    [hoverTooltipMode, hoverPickLayerIds, renderTooltip, renderer.getFeatureTooltip]
   );
   const scheduleTooltip = useThrottledHoverTooltip(resolveTooltip);
 
