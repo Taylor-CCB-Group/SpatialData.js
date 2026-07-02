@@ -5,6 +5,17 @@ A "dingus" CLI implementing the contract from
 used to validate SpatialData.js's coordinate-transform computation against the
 RFC-5 OME-Zarr transformations test cases.
 
+## Current support (tl;dr)
+
+SpatialData.js implements RFC-5 `identity`, `scale`, `translation`, `affine`,
+`rotation`, `mapAxis`, and `sequence` (inline parameters, spatial axes only).
+**Not** implemented: `byDimension`, `bijection`, `displacements`, affine/rotation
+**by path** (parameters in an external zarr array), and non-spatial axes. Latest
+verified baseline: **24 pass, 17 error, 0 fail** — see [Baseline](#baseline)
+below for the full breakdown and [Maturation backlog](#maturation-backlog-driving-the-implementation)
+for what's left. The same summary lives in the docs site at
+[`docs/docs/core/transformations.mdx`](../../docs/docs/core/transformations.mdx#supported-transformation-types).
+
 ## Motivation
 
 The primary goal is to **mature the SpatialData.js transform implementation**:
