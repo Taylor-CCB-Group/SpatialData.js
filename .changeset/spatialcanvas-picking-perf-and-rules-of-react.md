@@ -20,9 +20,8 @@ Picking/tooltip performance:
   camera is being panned/zoomed, so deck.gl does not re-render the shape
   geometry into the picking buffer during gestures. New `pickingEnabled` option
   on the shapes layer (`@spatialdata/layers`) drives this.
-- Hover tooltip resolution is throttled to one run per animation frame, skips
-  redundant same-pixel work, is suppressed while a pointer button is held
-  (drag), and collapses the per-missing-layer supplemental pick storm into a
+- Hover tooltip resolution is suppressed while a pointer button is held (drag),
+  and the per-missing-layer supplemental aggregation pick is collapsed into a
   single batched pick.
 
 Rules-of-React fixes (eslint-plugin-react-hooks, `pnpm lint:react` now clean and

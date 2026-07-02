@@ -39,16 +39,16 @@ import { SpatialViewer } from './SpatialViewer';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
-import { getDeckFromDeckGlRef, resolveHoverFeatureTooltip } from './featureTooltipHover';
+import {
+  type HoverPointerEvent,
+  getDeckFromDeckGlRef,
+  isHoverDuringDrag,
+  resolveHoverFeatureTooltip,
+} from './featureTooltipHover';
 import { layerConfig } from './layerConfig';
 import type { SpatialCanvasStoreApi } from './stores';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
-import {
-  type HoverPointerEvent,
-  isHoverDuringDrag,
-  useThrottledHoverTooltip,
-} from './useThrottledHoverTooltip';
 import { type ViewInteractionState, useViewInteractionGate } from './useViewInteractionGate';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 
@@ -575,7 +575,6 @@ function SpatialCanvasInner({
     },
     [tooltipMode, getFeatureTooltip, hoverPickLayerIds]
   );
-  const scheduleTooltip = useThrottledHoverTooltip(resolveTooltip);
 
   const handleHover = useCallback(
     (info: PickingInfo, event?: HoverPointerEvent) => {
@@ -585,9 +584,9 @@ function SpatialCanvasInner({
         setHoverTooltip(null);
         return;
       }
-      scheduleTooltip(info);
+      resolveTooltip(info);
     },
-    [scheduleTooltip]
+    [resolveTooltip]
   );
 
   const handleViewerRef = useCallback(

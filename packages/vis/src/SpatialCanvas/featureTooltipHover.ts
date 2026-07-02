@@ -5,6 +5,18 @@ import type { DeckGLRef, PickingInfo } from 'deck.gl';
 const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;
 
+/**
+ * Minimal shape of the deck.gl hover event (a mjolnir pointer event). `srcEvent`
+ * is the underlying DOM pointer event; its `buttons` bitmask is non-zero while a
+ * pointer button is held, which is how we detect an in-progress pan/drag.
+ */
+export type HoverPointerEvent = { srcEvent?: { buttons?: number } | null };
+
+/** True when the hover event fired while a pointer button is held (pan/drag). */
+export function isHoverDuringDrag(event?: HoverPointerEvent | null): boolean {
+  return (event?.srcEvent?.buttons ?? 0) !== 0;
+}
+
 export interface PickMultipleObjectsCapable {
   props?: {
     layers?: unknown;
