@@ -249,6 +249,19 @@ export abstract class BaseTransformation {
     return new Matrix4(this.toArray());
   }
 
+  /**
+   * Get the inverse of this transformation as a Matrix4.
+   * Throws if the transformation's matrix is singular (not invertible).
+   */
+  inverse(): Matrix4 {
+    const matrix = this.toMatrix();
+    const det = matrix.determinant();
+    if (!Number.isFinite(det) || Math.abs(det) < 1e-12) {
+      throw new Error(`Transformation of type '${this.type}' is not invertible (det=${det})`);
+    }
+    return matrix.clone().invert();
+  }
+
   /** The transformation type name */
   abstract get type(): string;
 }
@@ -410,6 +423,49 @@ export class Affine extends BaseTransformation {
   }
 }
 
+export class Rotation extends BaseTransformation {
+  readonly rotation: number[][];
+
+  constructor(rotation: number[][], input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
+    super(input, output);
+    this.rotation = rotation;
+  }
+
+  get type() {
+    return 'rotation' as const;
+  }
+
+  toArray(): number[] {
+    // A rotation is a square matrix with no translation component. Reuse Affine's
+    // axis-name-aware matrix construction by appending a zero translation column.
+    const affine = this.rotation.map((row) => [...row, 0]);
+    return new Affine(affine, this.input, this.output).toArray();
+  }
+}
+
+export class MapAxis extends BaseTransformation {
+  /** For each output axis (by position), the input axis position it takes its value from. */
+  readonly mapAxis: number[];
+
+  constructor(mapAxis: number[], input?: CoordinateSystemRef, output?: CoordinateSystemRef) {
+    super(input, output);
+    this.mapAxis = mapAxis;
+  }
+
+  get type() {
+    return 'mapAxis' as const;
+  }
+
+  toArray(): number[] {
+    // mapAxis is a permutation: express it as a one-hot square matrix and reuse
+    // Affine's axis-name-aware matrix construction, same as Rotation above.
+    const affine = this.mapAxis.map((sourceIndex) =>
+      this.mapAxis.map((_, col) => (col === sourceIndex ? 1 : 0)).concat(0)
+    );
+    return new Affine(affine, this.input, this.output).toArray();
+  }
+}
+
 export class Sequence extends BaseTransformation {
   readonly transformations: BaseTransformation[];
 
@@ -432,18 +488,6 @@ export class Sequence extends BaseTransformation {
 
   toMatrix(): Matrix4 {
     return composeMatricesInApplicationOrder(this.transformations.map((t) => t.toMatrix()));
-  }
-}
-
-// MapAxis is less common, stub for now
-export class MapAxis extends BaseTransformation {
-  get type() {
-    return 'mapAxis' as const;
-  }
-
-  toArray(): number[] {
-    // TODO: implement axis mapping
-    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   }
 }
 
@@ -479,6 +523,12 @@ export function parseTransformEntry(t: TransformEntry): BaseTransformation {
 
     case 'affine':
       return new Affine(t.affine, input, output);
+
+    case 'rotation':
+      return new Rotation(t.rotation, input, output);
+
+    case 'mapAxis':
+      return new MapAxis(t.mapAxis, input, output);
 
     case 'sequence': {
       const children = t.transformations.map((sub: TransformEntry) => parseTransformEntry(sub));

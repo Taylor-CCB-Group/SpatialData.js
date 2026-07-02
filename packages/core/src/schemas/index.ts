@@ -67,6 +67,20 @@ const affineTransformSchema = z.object({
   output: coordinateSystemRefSchema.optional(),
 });
 
+const rotationTransformSchema = z.object({
+  type: z.literal('rotation'),
+  rotation: z.array(z.array(z.number())).min(2),
+  input: coordinateSystemRefSchema.optional(),
+  output: coordinateSystemRefSchema.optional(),
+});
+
+const mapAxisTransformSchema = z.object({
+  type: z.literal('mapAxis'),
+  mapAxis: z.array(z.number().int().nonnegative()).min(1),
+  input: coordinateSystemRefSchema.optional(),
+  output: coordinateSystemRefSchema.optional(),
+});
+
 /**
  * Union of base transformation types
  */
@@ -74,7 +88,9 @@ type BaseTransformation =
   | z.infer<typeof scaleTransformSchema>
   | z.infer<typeof translationTransformSchema>
   | z.infer<typeof identityTransformSchema>
-  | z.infer<typeof affineTransformSchema>;
+  | z.infer<typeof affineTransformSchema>
+  | z.infer<typeof rotationTransformSchema>
+  | z.infer<typeof mapAxisTransformSchema>;
 
 /**
  * Full transformation type including sequence (recursive)
@@ -95,6 +111,8 @@ const transformationSchema: z.ZodType<Transformation> = z.lazy(() =>
     translationTransformSchema,
     identityTransformSchema,
     affineTransformSchema,
+    rotationTransformSchema,
+    mapAxisTransformSchema,
     z.object({
       type: z.literal('sequence'),
       transformations: z.array(transformationSchema).min(1),

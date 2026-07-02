@@ -20,27 +20,27 @@ script (not shipped in any package).
 
 `dingus.ts` imports `parseTransformEntry` from
 `packages/core/src/transformations/transformations.ts` and uses the resulting
-`BaseTransformation.toMatrix()` (a `@math.gl/core` `Matrix4`). That is the actual
-SpatialData.js transform computation. The dingus adds only glue:
+`BaseTransformation.toMatrix()`/`.inverse()` (`@math.gl/core` `Matrix4`). That is
+the actual SpatialData.js transform computation. The dingus adds only glue:
 
 - reads `attributes.ome.scene` (coordinate systems + transformation edges) from
   the case `zarr.json`;
 - builds a graph and BFS-finds a path SOURCE -> TARGET;
 - composes per-edge matrices, applying coordinates in name-based `x/y/z` space;
-- for **reverse** edges, inverts the 4x4 with `Matrix4.invert()` (a generic
-  matrix inverse; SpatialData.js core has no native transform inversion);
+- for **reverse** edges, calls `BaseTransformation.inverse()` (native to core);
 - prints `{"coordinates": [...]}` (exit 0), or `{"message": "..."}` (exit 1) for
   any unsupported feature or failure, per the contract.
 
 ## RFC-5 support assessment (why many cases report `error`)
 
 SpatialData.js's `parseTransformEntry` implements **identity, scale, translation,
-affine, sequence** (with `input`/`output` coordinate-system refs and axis-name ->
-XYZ mapping). It does **not** implement: `rotation`, `mapAxis` (class is a stub),
-`byDimension`, `bijection`, `displacements`, or affine/rotation **by path**
-(parameters stored in an external zarr array). It also has no standalone
-`$.ome.scene` graph reader (its model is element -> coordinate-system via
-`element.getTransformation()` on multiscale `coordinateTransformations`).
+affine, rotation, mapAxis, sequence** (with `input`/`output` coordinate-system
+refs and axis-name -> XYZ mapping), plus a native `BaseTransformation.inverse()`.
+It does **not** implement: `byDimension`, `bijection`, `displacements`, or
+affine/rotation **by path** (parameters stored in an external zarr array). It
+also has no standalone `$.ome.scene` graph reader (its model is element ->
+coordinate-system via `element.getTransformation()` on multiscale
+`coordinateTransformations`).
 
 The dingus therefore reports those as unsupported (`error`) rather than guessing,
 which is the honest signal of current library coverage. Non-spatial axes (e.g.
@@ -86,13 +86,13 @@ node --experimental-strip-types dingus.ts \
 
 ## Baseline
 
-`baseline-results.tsv` records the run captured when this dingus was written
-(conformance suite pinned at commit `6f93379`): **18 pass, 23 error, 0 fail**.
+`baseline-results.tsv` records the latest run (conformance suite pinned at
+commit `6f93379`): **24 pass, 17 error, 0 fail**.
 
 The key positive result is **0 `fail`**: every transform SpatialData.js actually
 implements produced numerically correct coordinates, including inverse affine,
-composed sequences, and multi-edge paths. All 23 `error` rows are unsupported
-features (see assessment above), not wrong answers.
+rotation, mapAxis, composed sequences, and multi-edge paths. All 17 `error` rows
+are unsupported features (see assessment above), not wrong answers.
 
 ## Maturation backlog (driving the implementation)
 
@@ -100,11 +100,12 @@ Turning `error` rows into `pass` is the work this dingus exists to drive. In
 roughly increasing effort, implement in
 `packages/core/src/transformations/transformations.ts`:
 
-1. **`rotation`** — 8 cases; a rotation matrix is a special affine, so this is
-   mostly a `parseTransformEntry` case + `toArray()` mapping.
-2. **`mapAxis`** — 2 cases; finish the existing stub (permute axes).
-3. **Native inverse** — add `BaseTransformation.inverse()` so reverse traversal
-   is library-native instead of the dingus's generic 4x4 invert.
+1. ~~**`rotation`** — 8 cases; a rotation matrix is a special affine, so this is
+   mostly a `parseTransformEntry` case + `toArray()` mapping.~~ Done: 4/8 now
+   pass (the other 4 are the "by path" form, see item 7).
+2. ~~**`mapAxis`** — 2 cases; finish the existing stub (permute axes).~~ Done.
+3. ~~**Native inverse** — add `BaseTransformation.inverse()` so reverse traversal
+   is library-native instead of the dingus's generic 4x4 invert.~~ Done.
 4. **`byDimension`** — 4 cases; per-axis sub-transforms.
 5. **`bijection`** — 2 cases; explicit forward/inverse pair.
 6. **`displacements`** — 1 case; deformation field (largest lift; needs array IO).

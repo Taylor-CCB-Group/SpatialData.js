@@ -15,14 +15,13 @@
  *
  * What this wraps: the transform primitives in
  *   packages/core/src/transformations/transformations.ts
- * (`parseTransformEntry` -> `BaseTransformation.toMatrix()`), i.e. the actual
- * SpatialData.js transform computation. SpatialData.js implements
- * identity/scale/translation/affine/sequence; rotation/mapAxis/byDimension/
- * bijection/displacements are NOT implemented and are reported as unsupported.
+ * (`parseTransformEntry` -> `BaseTransformation.toMatrix()`/`.inverse()`), i.e.
+ * the actual SpatialData.js transform computation. SpatialData.js implements
+ * identity/scale/translation/affine/rotation/mapAxis/sequence; byDimension/
+ * bijection/displacements are NOT implemented and are reported as unsupported,
+ * as are "by path" parameter forms (external zarr array references).
  *
- * Reverse-edge traversal uses a generic math.gl 4x4 matrix inverse (a
- * dingus-level capability; SpatialData.js core has no native transform
- * inversion). This is documented so the conformance baseline is read correctly.
+ * Reverse-edge traversal uses `BaseTransformation.inverse()`, native to core.
  *
  * Run via Node type-stripping (Node >= 22):
  *   node --experimental-strip-types dev_scripts/conformance-dingus/dingus.ts \
@@ -42,7 +41,15 @@ import {
 
 // SpatialData.js parseTransformEntry recognises exactly these (others -> Identity
 // fallback). We treat anything else as explicitly unsupported.
-const SUPPORTED_TYPES = new Set(['identity', 'scale', 'translation', 'affine', 'sequence']);
+const SUPPORTED_TYPES = new Set([
+  'identity',
+  'scale',
+  'translation',
+  'affine',
+  'rotation',
+  'mapAxis',
+  'sequence',
+]);
 
 const AXIS_TO_XYZ: Record<string, 0 | 1 | 2> = { x: 0, y: 1, z: 2 };
 
@@ -201,15 +208,18 @@ function stepMatrix(
   const input: CoordinateSystemRef = { name: inCs.name, axes: inCs.axes as never };
   const output: CoordinateSystemRef = { name: outCs.name, axes: outCs.axes as never };
   const entry = { ...edge, input, output };
-  const matrix = parseTransformEntry(entry as never).toMatrix();
-  if (!reversed) return matrix;
+  const transformation = parseTransformEntry(entry as never);
+  if (!reversed) return transformation.toMatrix();
 
-  // Reverse traversal: invert the 4x4 (generic; not native to core).
-  const det = matrix.determinant();
-  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) {
-    throw new DingusError(`transform '${edge.name ?? edge.type}' is not invertible (det=${det})`);
+  // Reverse traversal: use SpatialData.js's native inverse() rather than a
+  // dingus-level generic 4x4 invert.
+  try {
+    return transformation.inverse();
+  } catch (err) {
+    throw new DingusError(
+      `transform '${edge.name ?? edge.type}' is not invertible: ${String(err)}`
+    );
   }
-  return matrix.clone().invert();
 }
 
 function toXYZ(point: number[], indices: Array<0 | 1 | 2>): [number, number, number] {
