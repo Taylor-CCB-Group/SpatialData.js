@@ -1,0 +1,37 @@
+[project]
+name = "spatialdata-experimental-writer"
+version = "0.1.0"
+description = "Experimental SpatialData vector optimization writers"
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "SpatialData.js contributors" }]
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pyarrow>=18",
+]
+
+[project.scripts]
+spatialdata-experimental-writer = "spatialdata_experimental_writer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+tui = [
+    "textual>=1.0",
+]
