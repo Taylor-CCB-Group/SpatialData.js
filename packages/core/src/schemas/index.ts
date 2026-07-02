@@ -69,14 +69,30 @@ const affineTransformSchema = z.object({
 
 const rotationTransformSchema = z.object({
   type: z.literal('rotation'),
-  rotation: z.array(z.array(z.number())).min(2),
+  rotation: z
+    .array(z.array(z.number()))
+    .min(2)
+    .refine(
+      (rotation) => rotation.every((row) => row.length === rotation.length),
+      'rotation must be a square matrix (row count must equal column count)'
+    ),
   input: coordinateSystemRefSchema.optional(),
   output: coordinateSystemRefSchema.optional(),
 });
 
 const mapAxisTransformSchema = z.object({
   type: z.literal('mapAxis'),
-  mapAxis: z.array(z.number().int().nonnegative()).min(1),
+  mapAxis: z
+    .array(z.number().int().nonnegative())
+    .min(1)
+    .refine(
+      (mapAxis) => mapAxis.every((sourceIndex) => sourceIndex < mapAxis.length),
+      'mapAxis values must each be a valid axis index (< mapAxis.length)'
+    )
+    .refine(
+      (mapAxis) => new Set(mapAxis).size === mapAxis.length,
+      'mapAxis values must be unique (a one-hot permutation)'
+    ),
   input: coordinateSystemRefSchema.optional(),
   output: coordinateSystemRefSchema.optional(),
 });

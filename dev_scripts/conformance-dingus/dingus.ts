@@ -38,6 +38,7 @@ import {
   type CoordinateSystemRef,
   parseTransformEntry,
 } from '../../packages/core/src/transformations/transformations.ts';
+import type { Axis, CoordinateTransformation } from '../../packages/core/src/schemas/index.ts';
 
 // SpatialData.js parseTransformEntry recognises exactly these (others -> Identity
 // fallback). We treat anything else as explicitly unsupported.
@@ -53,22 +54,19 @@ const SUPPORTED_TYPES = new Set([
 
 const AXIS_TO_XYZ: Record<string, 0 | 1 | 2> = { x: 0, y: 1, z: 2 };
 
-interface Axis {
-  name: string;
-  type?: string;
-  unit?: string;
-}
 interface CoordinateSystem {
   name: string;
   axes: Axis[];
 }
-interface TransformEdge {
+// A single transformation entry per `parseTransformEntry`'s real contract, plus
+// the RFC-5 scene-edge fields (`name`, and always-present `input`/`output`)
+// that aren't part of the schema for transformations nested inside a sequence.
+type TransformEdge = CoordinateTransformation[number] & {
   name?: string;
-  type: string;
+  path?: string;
   input: { name: string };
   output: { name: string };
-  [k: string]: unknown;
-}
+};
 interface Scene {
   coordinateSystems: CoordinateSystem[];
   coordinateTransformations: TransformEdge[];
@@ -179,24 +177,18 @@ function stepMatrix(
         `external parameter arrays are not supported`
     );
   }
-  if (edge.type === 'affine' && !Array.isArray((edge as { affine?: unknown }).affine)) {
+  if (edge.type === 'affine' && !Array.isArray(edge.affine)) {
     throw new DingusError(`affine transform missing inline 'affine' matrix (unsupported form)`);
   }
-  if (edge.type === 'scale' && !Array.isArray((edge as { scale?: unknown }).scale)) {
+  if (edge.type === 'scale' && !Array.isArray(edge.scale)) {
     throw new DingusError(`scale transform missing inline 'scale' array (unsupported form)`);
   }
-  if (
-    edge.type === 'translation' &&
-    !Array.isArray((edge as { translation?: unknown }).translation)
-  ) {
+  if (edge.type === 'translation' && !Array.isArray(edge.translation)) {
     throw new DingusError(
       `translation transform missing inline 'translation' array (unsupported form)`
     );
   }
-  if (
-    edge.type === 'sequence' &&
-    !Array.isArray((edge as { transformations?: unknown }).transformations)
-  ) {
+  if (edge.type === 'sequence' && !Array.isArray(edge.transformations)) {
     throw new DingusError(`sequence transform missing inline 'transformations' (unsupported form)`);
   }
   const inCs = csByName.get(edge.input.name);
@@ -205,10 +197,10 @@ function stepMatrix(
     throw new DingusError(`edge references unknown coordinate system`);
   }
   // Inject axes so SpatialData.js maps values by axis name into XYZ.
-  const input: CoordinateSystemRef = { name: inCs.name, axes: inCs.axes as never };
-  const output: CoordinateSystemRef = { name: outCs.name, axes: outCs.axes as never };
+  const input: CoordinateSystemRef = { name: inCs.name, axes: inCs.axes };
+  const output: CoordinateSystemRef = { name: outCs.name, axes: outCs.axes };
   const entry = { ...edge, input, output };
-  const transformation = parseTransformEntry(entry as never);
+  const transformation = parseTransformEntry(entry);
   if (!reversed) return transformation.toMatrix();
 
   // Reverse traversal: use SpatialData.js's native inverse() rather than a

@@ -169,6 +169,67 @@ describe('Schema Transformations', () => {
       expect(() => coordinateTransformationSchema.parse(transform)).not.toThrow();
     });
 
+    it('should validate rotation transformation', () => {
+      const transform = [
+        {
+          type: 'rotation',
+          rotation: [
+            [0, -1],
+            [1, 0],
+          ],
+        },
+      ];
+
+      expect(() => coordinateTransformationSchema.parse(transform)).not.toThrow();
+    });
+
+    it('should reject a non-square rotation matrix', () => {
+      const transform = [
+        {
+          type: 'rotation',
+          rotation: [
+            [0, -1, 0],
+            [1, 0, 0],
+          ],
+        },
+      ];
+
+      expect(() => coordinateTransformationSchema.parse(transform)).toThrow();
+    });
+
+    it('should validate mapAxis transformation', () => {
+      const transform = [
+        {
+          type: 'mapAxis',
+          mapAxis: [1, 0],
+        },
+      ];
+
+      expect(() => coordinateTransformationSchema.parse(transform)).not.toThrow();
+    });
+
+    it('should reject mapAxis with an out-of-range index', () => {
+      const transform = [
+        {
+          type: 'mapAxis',
+          mapAxis: [0, 2],
+        },
+      ];
+
+      expect(() => coordinateTransformationSchema.parse(transform)).toThrow();
+    });
+
+    it('should reject mapAxis with duplicate values', () => {
+      const transform = [
+        {
+          type: 'mapAxis',
+          mapAxis: [0, 0],
+        },
+      ];
+
+      expect(() => coordinateTransformationSchema.parse(transform)).toThrow();
+    });
+
     it('should validate transformations with coordinate system references', () => {
       const transform = [
         {
