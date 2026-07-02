@@ -13,8 +13,8 @@ below is effectively the backlog of transform features still to implement. (A
 secondary, incidental use was ruling our transform *math* in/out while chasing a
 viv image-render bug — but that bug most likely lives in viv, not here.)
 
-This lives on the `transform-conformance` branch of SpatialData.js. It is a dev
-script (not shipped in any package).
+This is a dev script (not shipped in any package) — run it manually when
+touching `packages/core/src/transformations/`.
 
 ## What it wraps
 
