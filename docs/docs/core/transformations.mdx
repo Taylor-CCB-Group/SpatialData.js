@@ -23,10 +23,13 @@ Coordinate transformations are fundamental to SpatialData, allowing different el
 | affine/rotation **by path** (params in an external zarr array) | ❌ Not implemented |
 | non-spatial axes (e.g. `c`, `t`) alongside spatial ones | ⚠️ Spatial axes only; the matrix path is XYZ-only |
 
-This is validated against the upstream
-[RFC-5 OME-Zarr transformations conformance suite](https://github.com/clbarnes/ome_zarr_transformations_conformance)
-via `dev_scripts/conformance-dingus/` — see that directory's README for how to
-run it and the current pass/error/fail baseline.
+We validate this against the upstream
+[`ome-zarr-transformations-conformance`](https://github.com/clbarnes/ome_zarr_transformations_conformance)
+package (pinned to
+[commit `6f93379`](https://github.com/clbarnes/ome_zarr_transformations_conformance/tree/6f933795aa61259c36914ff919f47d5f9255bd8d)),
+run via `dev_scripts/conformance-dingus/` — see that directory's README for how
+to run it and the current pass/error/fail baseline. That conformance run is the
+source of truth for the table above.
 
 :::info Read-Only API
 

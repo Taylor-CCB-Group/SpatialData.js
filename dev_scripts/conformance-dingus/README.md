@@ -16,6 +16,13 @@ below for the full breakdown and [Maturation backlog](#maturation-backlog-drivin
 for what's left. The same summary lives in the docs site at
 [`docs/docs/core/transformations.mdx`](../../docs/docs/core/transformations.mdx#supported-transformation-types).
 
+We validate this support against the
+[`ome-zarr-transformations-conformance`](https://github.com/clbarnes/ome_zarr_transformations_conformance)
+package (its `oztc` runner + bundled RFC-5 cases), pinned to
+[commit `6f93379`](https://github.com/clbarnes/ome_zarr_transformations_conformance/tree/6f933795aa61259c36914ff919f47d5f9255bd8d)
+in [`pyproject.toml`](./pyproject.toml) — this dingus is the only thing that
+runs it, and its output is what "supported" means above.
+
 ## Motivation
 
 The primary goal is to **mature the SpatialData.js transform implementation**:
@@ -98,7 +105,8 @@ node --experimental-strip-types dingus.ts \
 ## Baseline
 
 `baseline-results.tsv` records the latest run (conformance suite pinned at
-commit `6f93379`): **24 pass, 17 error, 0 fail**.
+[commit `6f93379`](https://github.com/clbarnes/ome_zarr_transformations_conformance/tree/6f933795aa61259c36914ff919f47d5f9255bd8d)):
+**24 pass, 17 error, 0 fail**.
 
 The key positive result is **0 `fail`**: every transform SpatialData.js actually
 implements produced numerically correct coordinates, including inverse affine,
