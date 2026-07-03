@@ -122,11 +122,22 @@ So this decomposition is groundwork for the FBO redo, not a detour from it.
 
 ## Sequencing
 
-1. **Move the two React-free resolver modules into `layers`.** `pointsLoadPlan.ts`
-   and `resolvePointsRenderResource.ts` already import only from `core`/`layers`
-   and import `layers`' own `createPointsRenderResource` — they move `vis → layers`
-   essentially verbatim, with near-zero behavioral risk. Re-export from `vis` if
-   any external consumer imports them. **Proof-of-direction; do this first.**
+> **Correction (2026-07-03):** current `main` is **bare of the entire points
+> render path** — none of the `core` loaders or `layers` strategies exist there
+> (the harvest took only python/docs/default-CS). So the two resolver modules
+> cannot move to `layers` in isolation; their dependency chain is absent. The
+> reconstruction must proceed in dependency order, core-first. Revised steps:
+
+0. **DONE — `core` points I/O foundation** (commit `4cc91eb`). Points
+   loaders/tiling/features + worker, bounded/capped loading on
+   `VPointsSource`, and the vendored parquet-wasm, brought onto current `main`.
+   Typecheck clean, 120 core tests pass. This is the dependency root.
+1. **`layers` strategies + relocate the two resolver modules here.** Bring the
+   render strategies (`preloadedScatterStrategy`, `mortonTiledStrategy`,
+   `geoArrowStrategies`, `pointsLoaderAdapter`, `PointsLayer`, tile-debug) onto
+   `main`, and land `pointsLoadPlan.ts` + `resolvePointsRenderResource.ts` in
+   `layers` (not `vis`) — they already import only `core`/`layers`, so this is
+   the proof-of-direction placement. Re-export from `vis` for MDV consumers.
 2. **Introduce `LayerDataEngine` in `layers`** with the cache + points
    orchestration extracted from `useLayerData`. Convert the points path of the
    hook to a thin binding over the engine. Add unit tests exercised without React.
