@@ -290,6 +290,9 @@ importers:
       '@math.gl/core':
         specifier: 'catalog:'
         version: 4.1.0
+      '@spatialdata/core':
+        specifier: workspace:*
+        version: link:../core
       zod:
         specifier: 'catalog:'
         version: 4.1.13
