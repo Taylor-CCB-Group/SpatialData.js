@@ -23,14 +23,27 @@ const log = console;
 
 // import SpatialDataTableSource from './SpatialDataTableSource.js';
 
-import type { TypedArray as ZarrTypedArray, Chunk, NumberDataType } from 'zarrita';
 import type { Table as ArrowTable } from 'apache-arrow';
 import type { Vector } from 'apache-arrow/vector';
-import SpatialDataTableSource from './VTableSource';
+import type { Chunk, NumberDataType, TypedArray as ZarrTypedArray } from 'zarrita';
+import type { SpatialBounds } from '../pointsTiling.js';
 import type { ShapesGeometryKind, ShapesRenderData } from '../shapes';
+import SpatialDataTableSource from './VTableSource';
 export type PolygonShape = Array<Array<[number, number]>>;
 //nb, not totally happy with this type.
 export type ZarrNumericArray = ZarrTypedArray<NumberDataType> | BigInt64Array | Array<number>;
+
+export interface ShapesInBoundsOptions {
+  bounds: SpatialBounds;
+  zoom?: number;
+  signal?: AbortSignal;
+  columns?: string[];
+}
+
+export type ShapesInBoundsResult = ShapesRenderData & {
+  bounds: SpatialBounds;
+  loadMode: 'full-filter';
+};
 
 // If the array path starts with table/something/rest
 // capture table/something.
@@ -62,6 +75,12 @@ function getParquetPath(arrPath?: string) {
     return `${elementPrefix}/shapes.parquet`;
   }
   throw new Error(`Cannot determine parquet path for shapes array path: ${arrPath}`);
+}
+
+function checkAbort(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  }
 }
 
 /**
@@ -363,11 +382,10 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     // However this may complicate applying transformations, at least in the current way.
     // Reference: https://deck.gl/docs/api-reference/layers/polygon-layer#data-accessors
     return arr.map((geom: ArrayBuffer) => {
-      const coords =
-      wkb
-      .readGeometry(geom)
-      // @ts-expect-error - getCoordinates is not a method of Geometry, check this<<<
-          .getCoordinates();
+      const coords = wkb
+        .readGeometry(geom)
+        // @ts-expect-error - getCoordinates is not a method of Geometry, check this<<<
+        .getCoordinates();
       // Take first polygon (if multipolygon)
       return coords[0];
     });
@@ -499,6 +517,20 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       polygons,
       geometryColumnName: 'geometry',
       rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
+    };
+  }
+
+  async loadShapesInBounds(
+    elementPath: string,
+    options: ShapesInBoundsOptions
+  ): Promise<ShapesInBoundsResult> {
+    checkAbort(options.signal);
+    const renderData = await this.loadShapesRenderData(elementPath);
+    checkAbort(options.signal);
+    return {
+      ...renderData,
+      bounds: options.bounds,
+      loadMode: 'full-filter',
     };
   }
 

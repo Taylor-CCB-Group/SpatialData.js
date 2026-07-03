@@ -94,3 +94,4 @@ export type SDataProps = {
   selection?: ElementName[];
   rootStore: ConsolidatedStore;
 };
+export type PointsLoadMode = 'row-groups' | 'full-filter' | 'clipped';
