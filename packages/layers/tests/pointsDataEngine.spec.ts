@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PointsDataEngine } from '../src/engine/PointsDataEngine.js';
-import type { PointsElement, PointsLoadResult } from '@spatialdata/core';
+import type { PointsElement, PointsFeatureCatalog, PointsLoadResult } from '@spatialdata/core';
 
 function makeBatch(): PointsLoadResult {
   return {
@@ -15,6 +15,39 @@ function makeBatch(): PointsLoadResult {
 function makeElement(key: string, batch = makeBatch()) {
   const loadPoints = vi.fn(async () => batch);
   return { element: { key, loadPoints } as unknown as PointsElement, loadPoints };
+}
+
+const sampleCatalog: PointsFeatureCatalog = {
+  featureKey: 'feature_name',
+  entries: [
+    { code: 0, name: 'GeneA', count: 10 },
+    { code: 1, name: 'GeneB', count: 5 },
+  ],
+};
+
+/** PointsElement stub covering the feature-filter surface. `catalog`/`rowCodes`
+ * default to sensible values; pass `null`/`undefined` to model an element with
+ * no `feature_key` or no codes. */
+function makeFeatureElement(
+  key: string,
+  opts: {
+    catalog?: PointsFeatureCatalog | null;
+    rowCodes?: ArrayLike<number> | undefined;
+  } = {}
+) {
+  // Use `in` checks, not destructuring defaults: an explicit `rowCodes: undefined`
+  // (modeling an element with no codes) must NOT fall back to the sample array.
+  const catalog = 'catalog' in opts ? opts.catalog : sampleCatalog;
+  const rowCodes = 'rowCodes' in opts ? opts.rowCodes : new Int32Array([0, 1, 0]);
+  const listFeaturesWithCounts = vi.fn(async () => catalog);
+  const loadRowFeatureCodes = vi.fn(async () => rowCodes);
+  const element = {
+    key,
+    loadPoints: vi.fn(async () => makeBatch()),
+    listFeaturesWithCounts,
+    loadRowFeatureCodes,
+  } as unknown as PointsElement;
+  return { element, listFeaturesWithCounts, loadRowFeatureCodes };
 }
 
 describe('PointsDataEngine', () => {
@@ -112,5 +145,129 @@ describe('PointsDataEngine', () => {
     engine.evict('pts:f');
     await engine.ensureLoaded({ key: 'pts:f', layerId: 'l', element });
     expect(listener).toHaveBeenCalledTimes(1); // no longer subscribed
+  });
+});
+
+describe('PointsDataEngine — feature catalog', () => {
+  it('builds the catalog once, reactively, and reports loading', async () => {
+    const engine = new PointsDataEngine();
+    const { element, listFeaturesWithCounts } = makeFeatureElement('pts:cat');
+    const listener = vi.fn();
+    engine.subscribe(listener);
+
+    expect(engine.getFeatureCatalog('pts:cat')).toBeUndefined(); // not requested
+    expect(engine.isFeatureCatalogLoading('pts:cat')).toBe(false);
+
+    const p = engine.ensureFeatureCatalog({ key: 'pts:cat', layerId: 'l', element });
+    expect(engine.isFeatureCatalogLoading('pts:cat')).toBe(true); // in flight
+    await p;
+
+    expect(engine.isFeatureCatalogLoading('pts:cat')).toBe(false);
+    expect(engine.getFeatureCatalog('pts:cat')).toEqual(sampleCatalog);
+    expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);
+    // one notify for the loading transition, one for settle
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('is idempotent: concurrent + post-settle calls scan once', async () => {
+    const engine = new PointsDataEngine();
+    const { element, listFeaturesWithCounts } = makeFeatureElement('pts:cat2');
+
+    await Promise.all([
+      engine.ensureFeatureCatalog({ key: 'pts:cat2', layerId: 'l', element }),
+      engine.ensureFeatureCatalog({ key: 'pts:cat2', layerId: 'l', element }),
+    ]);
+    await engine.ensureFeatureCatalog({ key: 'pts:cat2', layerId: 'l', element });
+
+    expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles to null for an element with no feature_key', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:nofk', { catalog: null });
+
+    await engine.ensureFeatureCatalog({ key: 'pts:nofk', layerId: 'l', element });
+
+    // null (settled), distinct from undefined (not requested)
+    expect(engine.getFeatureCatalog('pts:nofk')).toBeNull();
+    expect(engine.getFeatureCatalog('pts:other')).toBeUndefined();
+  });
+
+  it('records null and stays settled when the scan rejects', async () => {
+    const engine = new PointsDataEngine();
+    const element = {
+      key: 'pts:boom',
+      listFeaturesWithCounts: vi.fn(async () => {
+        throw new Error('scan failed');
+      }),
+    } as unknown as PointsElement;
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await engine.ensureFeatureCatalog({ key: 'pts:boom', layerId: 'l', element });
+
+    expect(engine.getFeatureCatalog('pts:boom')).toBeNull();
+    expect(engine.isFeatureCatalogLoading('pts:boom')).toBe(false);
+    errSpy.mockRestore();
+  });
+});
+
+describe('PointsDataEngine — row feature codes', () => {
+  it('loads codes aligned to the batch and passes the engine catalog', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadRowFeatureCodes } = makeFeatureElement('pts:rc');
+
+    // Build the catalog first so the engine reuses it (no redundant core scan).
+    await engine.ensureFeatureCatalog({ key: 'pts:rc', layerId: 'l', element });
+    await engine.ensureRowFeatureCodes({ key: 'pts:rc', layerId: 'l', element });
+
+    expect(engine.hasRowFeatureCodes('pts:rc')).toBe(true);
+    expect(Array.from(engine.getRowFeatureCodes('pts:rc')!)).toEqual([0, 1, 0]);
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith({ featureCatalog: sampleCatalog });
+  });
+
+  it('passes undefined catalog when none is built yet (core scans internally)', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadRowFeatureCodes } = makeFeatureElement('pts:rc2');
+
+    await engine.ensureRowFeatureCodes({ key: 'pts:rc2', layerId: 'l', element });
+
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith({ featureCatalog: undefined });
+  });
+
+  it('is idempotent', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadRowFeatureCodes } = makeFeatureElement('pts:rc3');
+
+    await Promise.all([
+      engine.ensureRowFeatureCodes({ key: 'pts:rc3', layerId: 'l', element }),
+      engine.ensureRowFeatureCodes({ key: 'pts:rc3', layerId: 'l', element }),
+    ]);
+    await engine.ensureRowFeatureCodes({ key: 'pts:rc3', layerId: 'l', element });
+
+    expect(loadRowFeatureCodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles even when the element exposes no codes', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:rc4', { rowCodes: undefined });
+
+    await engine.ensureRowFeatureCodes({ key: 'pts:rc4', layerId: 'l', element });
+
+    expect(engine.hasRowFeatureCodes('pts:rc4')).toBe(true);
+    expect(engine.getRowFeatureCodes('pts:rc4')).toBeUndefined();
+  });
+
+  it('evict clears catalog and row codes with the batch', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:rc5');
+    await engine.ensureLoaded({ key: 'pts:rc5', layerId: 'l', element });
+    await engine.ensureFeatureCatalog({ key: 'pts:rc5', layerId: 'l', element });
+    await engine.ensureRowFeatureCodes({ key: 'pts:rc5', layerId: 'l', element });
+
+    engine.evict('pts:rc5');
+
+    expect(engine.hasData('pts:rc5')).toBe(false);
+    expect(engine.getFeatureCatalog('pts:rc5')).toBeUndefined();
+    expect(engine.hasRowFeatureCodes('pts:rc5')).toBe(false);
   });
 });
