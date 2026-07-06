@@ -43,8 +43,8 @@ import {
 } from '@spatialdata/core';
 import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
+  PointsDataEngine,
   PointsLayer,
-  type PointsRenderResource,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
@@ -52,8 +52,6 @@ import {
   buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
-  pointsRenderResourceSignature,
-  resolvePointsRenderResource,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
@@ -67,7 +65,6 @@ import {
 } from './imageLoaderChannelDefaults';
 import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
-import { type PointData } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type {
   AvailableElement,
@@ -116,7 +113,7 @@ export interface WorldBoundsCacheEntry {
 
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
-  points: Map<string, PointData>;
+  // Points data lives in `pointsEngine` (PointsDataEngine), not here.
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
   labels: Map<string, LabelsLoaderData>;
   /**
@@ -476,7 +473,6 @@ export function useLayerData(
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
     shapes: new Map(),
-    points: new Map(),
     images: new Map(),
     labels: new Map(),
     shapePrebuiltData: new Map(),
@@ -488,15 +484,6 @@ export function useLayerData(
   >(new Map());
   const stableShapeFeatureStateRef = useRef<
     Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
-  >(new Map());
-  // Stable points render resources, keyed by element. `getLayers` runs on every
-  // viewer render (including every pan/zoom frame, via the pickingEnabled gate),
-  // and the PointsLayer composite resets its async-loaded batch whenever the
-  // resource's loader identity changes. Resolving a fresh resource each call
-  // would therefore blank the layer for a frame on every pan — so we memoize by
-  // signature and only re-resolve when the structural inputs actually change.
-  const stablePointsResourceRef = useRef<
-    Map<string, { signature: string; resource: PointsRenderResource }>
   >(new Map());
 
   // Mirror the latest `layers` into a ref. This is read both by async loaders
@@ -556,6 +543,25 @@ export function useLayerData(
     },
     []
   );
+
+  // Points loading/caching/resolution engine (LayerDataEngine step 1b). This
+  // framework-agnostic engine (in @spatialdata/layers) owns the points preload
+  // cache, the stable render-resource memo, and the async load orchestration
+  // that previously lived as `useRef` state + a load-effect branch in this hook.
+  // The hook is now a thin binding: it forwards status into `layerLoadStates`
+  // and re-renders when the engine's cache settles.
+  const pointsEngineRef = useRef<PointsDataEngine | null>(null);
+  if (pointsEngineRef.current === null) {
+    pointsEngineRef.current = new PointsDataEngine({
+      onStatus: (layerId, status) => setLayerResourceStatus(layerId, 'geometry', status),
+    });
+  }
+  const pointsEngine = pointsEngineRef.current;
+
+  useEffect(() => {
+    const unsubscribe = pointsEngine.subscribe(notifyLoadedDataChanged);
+    return unsubscribe;
+  }, [pointsEngine, notifyLoadedDataChanged]);
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -641,7 +647,7 @@ export function useLayerData(
               loadLabels,
             });
           }
-        } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
+        } else if (config.type === 'points' && !pointsEngine.hasData(elem.key)) {
           toLoad.push({
             layerId,
             element: elem,
@@ -816,17 +822,13 @@ export function useLayerData(
                 }
               }
             } else if (element.type === 'points' && loadPoints) {
-              try {
-                setLayerResourceStatus(layerId, 'geometry', 'loading');
-                // todo better type-guards etc here.
-                const e = element.element as PointsElement;
-                const data = await e.loadPoints();
-                loadedDataRef.current.points.set(element.key, data);
-                setLayerResourceStatus(layerId, 'geometry', 'ready');
-              } catch (error) {
-                setLayerResourceStatus(layerId, 'geometry', 'error');
-                console.error(`Failed to load points for ${layerId}:`, error);
-              }
+              // The engine owns loading/caching/status; it reports status back
+              // through the onStatus callback wired at construction.
+              await pointsEngine.ensureLoaded({
+                key: element.key,
+                layerId,
+                element: element.element as PointsElement,
+              });
             } else if (element.type === 'image' && loadImage) {
               try {
                 setLayerResourceStatus(layerId, 'image', 'loading');
@@ -1112,9 +1114,8 @@ export function useLayerData(
         }
       }
     } else if (type === 'points') {
-      loaded.points.delete(key);
+      pointsEngine.evict(key);
       loaded.worldBounds.delete(`points:${key}`);
-      stablePointsResourceRef.current.delete(key);
     } else if (type === 'image') {
       loaded.images.delete(key);
       loaded.worldBounds.delete(`image:${key}`);
@@ -1143,7 +1144,7 @@ export function useLayerData(
       return loadedDataRef.current.shapes.has(elem.key);
     }
     if (elem.type === 'points') {
-      return loadedDataRef.current.points.has(elem.key);
+      return pointsEngine.hasData(elem.key);
     }
     if (elem.type === 'image') {
       return loadedDataRef.current.images.has(elem.key);
@@ -1183,7 +1184,7 @@ export function useLayerData(
           );
         }
         if (elem.type === 'points') {
-          const pointData = loaded.points.get(elem.key);
+          const pointData = pointsEngine.getData(elem.key);
           if (!pointData) return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
@@ -1292,52 +1293,24 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       } else if (config.type === 'points') {
-        const pointData = loaded.points.get(elem.key);
-        if (pointData) {
-          // Parity slice (step 1a): render through the @spatialdata/layers
-          // PointsLayer composite instead of the legacy flat renderPointsLayer.
-          // The already-cached x/y batch is handed in as the resolver's
-          // `preloaded` input, so this is the same I/O and the same flat-colour
-          // scatter — just via the composite that later gains filter/colour.
-          //
-          // Resolve through a per-element memo so the composite sees a STABLE
-          // loader identity across renders. `getLayers` re-runs every pan/zoom
-          // frame; a fresh resource each time would reset the composite's loaded
-          // batch and blank the layer for a frame (visible flashing).
-          const resolveCache = { preloaded: pointData, metadataKnown: false };
-          const resolveOptions = { experimentalOptimizations: 'off' as const };
-          const signature = pointsRenderResourceSignature(
-            elem.element as PointsElement,
-            resolveCache,
-            resolveOptions
+        // The engine returns a STABLE render resource (memoized by signature),
+        // so re-running getLayers every pan/zoom frame reuses the same loader
+        // identity and the composite does not reset its batch (no flashing).
+        const resource = pointsEngine.getResource(elem.element as PointsElement, elem.key);
+        if (resource) {
+          deckLayers.push(
+            new PointsLayer({
+              id: layerId,
+              resource,
+              modelMatrix: elem.transform,
+              opacity: config.opacity,
+              visible: config.visible,
+              // Legacy renderPointsLayer defaulted radius to 1px; preserve that
+              // for parity (the composite's own default is smaller).
+              pointSize: config.pointSize ?? 1,
+              ...(config.color ? { color: config.color } : {}),
+            })
           );
-          const cached = stablePointsResourceRef.current.get(elem.key);
-          let resource = cached?.signature === signature ? cached.resource : null;
-          if (!resource) {
-            resource = resolvePointsRenderResource(
-              elem.element as PointsElement,
-              resolveCache,
-              resolveOptions
-            );
-            if (resource) {
-              stablePointsResourceRef.current.set(elem.key, { signature, resource });
-            }
-          }
-          if (resource) {
-            deckLayers.push(
-              new PointsLayer({
-                id: layerId,
-                resource,
-                modelMatrix: elem.transform,
-                opacity: config.opacity,
-                visible: config.visible,
-                // Legacy renderPointsLayer defaulted radius to 1px; preserve that
-                // for parity (the composite's own default is smaller).
-                pointSize: config.pointSize ?? 1,
-                ...(config.color ? { color: config.color } : {}),
-              })
-            );
-          }
         }
       } else if (config.type === 'labels') {
         const labelsData = loaded.labels.get(elem.key);

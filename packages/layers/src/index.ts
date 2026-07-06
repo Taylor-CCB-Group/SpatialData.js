@@ -123,3 +123,11 @@ export {
 // (no React) and belong in layers. Re-exported from vis for MDV compatibility.
 export * from './pointsLoadPlan.js';
 export * from './resolvePointsRenderResource.js';
+
+// Framework-agnostic points loading/caching engine (LayerDataEngine step 1b).
+export {
+  PointsDataEngine,
+  type PointsDataEngineCallbacks,
+  type PointsLoadStatus,
+  type PointsLoadTarget,
+} from './engine/PointsDataEngine.js';
