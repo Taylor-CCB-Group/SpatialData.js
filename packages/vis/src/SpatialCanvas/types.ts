@@ -96,10 +96,16 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
 export interface PointsLayerConfig extends BaseLayerConfig {
   type: 'points';
   // Points-specific settings
-  // TODO: these should be accessors for getColor etc based on e.g. transcript type
-  // should be able to filter etc. Some kind of LOD...
+  // TODO: colour should become an accessor (getColor by Points Feature) — MVP step 3.
   pointSize?: number;
   color?: [number, number, number, number];
+  /**
+   * Feature-filter selection by Feature Code. `undefined` means "all features
+   * shown" (no filter); an array restricts the drawn points to those codes. This
+   * is serializable Stack-Entry state (persists in a saved config), distinct from
+   * the runtime-only Feature Highlight added in MVP step 3.
+   */
+  featureCodes?: number[];
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

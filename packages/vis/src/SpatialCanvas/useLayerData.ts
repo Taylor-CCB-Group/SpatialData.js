@@ -1303,6 +1303,23 @@ export function useLayerData(
         // identity and the composite does not reset its batch (no flashing).
         const resource = pointsEngine.getResource(elem.element as PointsElement, elem.key);
         if (resource) {
+          // Feature filter: when a selection is active, ensure the row feature
+          // codes (the mask, aligned to the resident batch) are loaded. The
+          // engine call is idempotent, so kicking it here is a cheap no-op once
+          // loaded/in-flight; on settle it notifies → re-render → codes flow in.
+          // The composite only filters once BOTH featureCodes and
+          // preloadedFeatureCodes are present, so it draws unfiltered until then.
+          const filterActive = config.featureCodes !== undefined;
+          if (filterActive && !pointsEngine.hasRowFeatureCodes(elem.key)) {
+            void pointsEngine.ensureRowFeatureCodes({
+              key: elem.key,
+              layerId,
+              element: elem.element as PointsElement,
+            });
+          }
+          const preloadedFeatureCodes = filterActive
+            ? pointsEngine.getRowFeatureCodes(elem.key)
+            : undefined;
           deckLayers.push(
             new PointsLayer({
               id: layerId,
@@ -1314,6 +1331,8 @@ export function useLayerData(
               // for parity (the composite's own default is smaller).
               pointSize: config.pointSize ?? 1,
               ...(config.color ? { color: config.color } : {}),
+              ...(config.featureCodes ? { featureCodes: config.featureCodes } : {}),
+              ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
             })
           );
         }
