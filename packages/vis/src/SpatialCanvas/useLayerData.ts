@@ -44,6 +44,7 @@ import {
 import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsLayer,
+  type PointsRenderResource,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
@@ -51,6 +52,7 @@ import {
   buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  pointsRenderResourceSignature,
   resolvePointsRenderResource,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
@@ -486,6 +488,15 @@ export function useLayerData(
   >(new Map());
   const stableShapeFeatureStateRef = useRef<
     Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
+  >(new Map());
+  // Stable points render resources, keyed by element. `getLayers` runs on every
+  // viewer render (including every pan/zoom frame, via the pickingEnabled gate),
+  // and the PointsLayer composite resets its async-loaded batch whenever the
+  // resource's loader identity changes. Resolving a fresh resource each call
+  // would therefore blank the layer for a frame on every pan — so we memoize by
+  // signature and only re-resolve when the structural inputs actually change.
+  const stablePointsResourceRef = useRef<
+    Map<string, { signature: string; resource: PointsRenderResource }>
   >(new Map());
 
   // Mirror the latest `layers` into a ref. This is read both by async loaders
@@ -1103,6 +1114,7 @@ export function useLayerData(
     } else if (type === 'points') {
       loaded.points.delete(key);
       loaded.worldBounds.delete(`points:${key}`);
+      stablePointsResourceRef.current.delete(key);
     } else if (type === 'image') {
       loaded.images.delete(key);
       loaded.worldBounds.delete(`image:${key}`);
@@ -1287,11 +1299,30 @@ export function useLayerData(
           // The already-cached x/y batch is handed in as the resolver's
           // `preloaded` input, so this is the same I/O and the same flat-colour
           // scatter — just via the composite that later gains filter/colour.
-          const resource = resolvePointsRenderResource(
+          //
+          // Resolve through a per-element memo so the composite sees a STABLE
+          // loader identity across renders. `getLayers` re-runs every pan/zoom
+          // frame; a fresh resource each time would reset the composite's loaded
+          // batch and blank the layer for a frame (visible flashing).
+          const resolveCache = { preloaded: pointData, metadataKnown: false };
+          const resolveOptions = { experimentalOptimizations: 'off' as const };
+          const signature = pointsRenderResourceSignature(
             elem.element as PointsElement,
-            { preloaded: pointData, metadataKnown: false },
-            { experimentalOptimizations: 'off' }
+            resolveCache,
+            resolveOptions
           );
+          const cached = stablePointsResourceRef.current.get(elem.key);
+          let resource = cached?.signature === signature ? cached.resource : null;
+          if (!resource) {
+            resource = resolvePointsRenderResource(
+              elem.element as PointsElement,
+              resolveCache,
+              resolveOptions
+            );
+            if (resource) {
+              stablePointsResourceRef.current.set(elem.key, { signature, resource });
+            }
+          }
           if (resource) {
             deckLayers.push(
               new PointsLayer({
