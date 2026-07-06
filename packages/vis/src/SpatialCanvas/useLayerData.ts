@@ -43,6 +43,7 @@ import {
 } from '@spatialdata/core';
 import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
+  PointsLayer,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
@@ -50,6 +51,7 @@ import {
   buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  resolvePointsRenderResource,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
@@ -63,7 +65,7 @@ import {
 } from './imageLoaderChannelDefaults';
 import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
-import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
+import { type PointData } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type {
   AvailableElement,
@@ -1280,17 +1282,31 @@ export function useLayerData(
       } else if (config.type === 'points') {
         const pointData = loaded.points.get(elem.key);
         if (pointData) {
-          const layer = renderPointsLayer({
-            element: elem.element as PointsElement,
-            id: layerId,
-            modelMatrix: elem.transform,
-            opacity: config.opacity,
-            visible: config.visible,
-            pointSize: config.pointSize,
-            color: config.color,
-            pointData,
-          });
-          if (layer) deckLayers.push(layer);
+          // Parity slice (step 1a): render through the @spatialdata/layers
+          // PointsLayer composite instead of the legacy flat renderPointsLayer.
+          // The already-cached x/y batch is handed in as the resolver's
+          // `preloaded` input, so this is the same I/O and the same flat-colour
+          // scatter — just via the composite that later gains filter/colour.
+          const resource = resolvePointsRenderResource(
+            elem.element as PointsElement,
+            { preloaded: pointData, metadataKnown: false },
+            { experimentalOptimizations: 'off' }
+          );
+          if (resource) {
+            deckLayers.push(
+              new PointsLayer({
+                id: layerId,
+                resource,
+                modelMatrix: elem.transform,
+                opacity: config.opacity,
+                visible: config.visible,
+                // Legacy renderPointsLayer defaulted radius to 1px; preserve that
+                // for parity (the composite's own default is smaller).
+                pointSize: config.pointSize ?? 1,
+                ...(config.color ? { color: config.color } : {}),
+              })
+            );
+          }
         }
       } else if (config.type === 'labels') {
         const labelsData = loaded.labels.get(elem.key);
