@@ -57,7 +57,11 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       return null;
     }
 
-    return renderColumnarScatterLayer(layer.props.id, batch, {
+    // Namespace the sublayer id via the composite's sublayer-props helper.
+    // Passing layer.props.id raw makes the ScatterplotLayer collide with its
+    // parent PointsLayer id (deck asserts on every frame). The morton strategy
+    // already derives `${id}-scatter`; do the same here.
+    return renderColumnarScatterLayer(`${layer.props.id}-scatter`, batch, {
       color,
       pointSize,
       pointRadiusMinPixels,
