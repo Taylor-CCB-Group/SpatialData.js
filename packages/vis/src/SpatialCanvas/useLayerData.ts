@@ -550,13 +550,17 @@ export function useLayerData(
   // that previously lived as `useRef` state + a load-effect branch in this hook.
   // The hook is now a thin binding: it forwards status into `layerLoadStates`
   // and re-renders when the engine's cache settles.
-  const pointsEngineRef = useRef<PointsDataEngine | null>(null);
-  if (pointsEngineRef.current === null) {
-    pointsEngineRef.current = new PointsDataEngine({
-      onStatus: (layerId, status) => setLayerResourceStatus(layerId, 'geometry', status),
-    });
-  }
-  const pointsEngine = pointsEngineRef.current;
+  //
+  // Held in `useState` with a lazy initializer (not a ref): the engine is a
+  // stable value created once, so it is safe to read during render and to list
+  // in effect/callback dependency arrays — unlike a ref, whose `current` must
+  // not be read during render.
+  const [pointsEngine] = useState(
+    () =>
+      new PointsDataEngine({
+        onStatus: (layerId, status) => setLayerResourceStatus(layerId, 'geometry', status),
+      })
+  );
 
   useEffect(() => {
     const unsubscribe = pointsEngine.subscribe(notifyLoadedDataChanged);
@@ -1099,6 +1103,7 @@ export function useLayerData(
     spatialData,
     setLayerResourceStatus,
     notifyLoadedDataChanged,
+    pointsEngine,
   ]);
 
   const reloadElement = useCallback((type: string, key: string) => {
@@ -1124,7 +1129,7 @@ export function useLayerData(
       loaded.worldBounds.delete(`labels:${key}`);
     }
     // The useEffect will pick up the missing data and reload
-  }, []);
+  }, [pointsEngine]);
 
   const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
     const signature = serializeRasterSelections(selections);
@@ -1153,7 +1158,7 @@ export function useLayerData(
       return loadedDataRef.current.labels.has(elem.key);
     }
     return false;
-  }, []);
+  }, [pointsEngine]);
 
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
@@ -1236,7 +1241,7 @@ export function useLayerData(
         return null;
       }
     },
-    [layers]
+    [layers, pointsEngine]
   );
 
   const getWorldBoundsForVisibleLayers = useCallback((): AxisAlignedBounds | null => {
@@ -1360,7 +1365,7 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections]);
+  }, [layers, layerOrder, getStableSelections, pointsEngine]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
