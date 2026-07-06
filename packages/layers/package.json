@@ -30,6 +30,7 @@
     "@deck.gl/core": "catalog:",
     "@hms-dbmi/viv": "catalog:",
     "@math.gl/core": "catalog:",
+    "@spatialdata/core": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

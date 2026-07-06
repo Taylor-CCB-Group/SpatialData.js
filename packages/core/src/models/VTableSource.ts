@@ -1,58 +1,51 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
-import { tableFromIPC, type Table as ArrowTable } from 'apache-arrow';
+import { type Table as ArrowTable, tableFromIPC } from 'apache-arrow';
 import type { DataSourceParams } from '../Vutils';
+import {
+  getParquetModule,
+  type ParquetModule,
+  type ParquetRowGroupReadOptions,
+  type ParquetWasmMetadata,
+} from '../parquetWasmLoader.js';
 import type { TableColumnData } from '../types';
 import AnnDataSource from './VAnnDataSource';
+
+export type { ParquetRowGroupReadOptions };
+
+function parquetColumnValueToNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+  return null;
+}
+
+export interface ParquetPartMetadata {
+  path: string;
+  schema: ArrowTable['schema'];
+  schemaBytes: Uint8Array;
+  metadata: ParquetWasmMetadata;
+}
+
+export interface ParquetDatasetMetadata {
+  totalNumRows: number;
+  totalNumRowGroups: number;
+  numRowsByPart: number[];
+  numRowGroupsByPart: number[];
+  numRowsPerGroupByPart: number[];
+  rowGroupRows: number[];
+  schema: ArrowTable['schema'] | null;
+  parts: ParquetPartMetadata[];
+}
 
 // Note: This file also serves as the parent for
 // SpatialDataPointsSource and SpatialDataShapesSource,
 // because when a table annotates points and shapes, it can be helpful to
 // have all of the required functionality to load the
 // table data and the parquet data.
-
-async function getParquetModule() {
-  // Dynamic import for code-splitting. parquet-wasm is a WebAssembly module
-  // that needs to be initialized before use in browser environments.
-  // In Node.js, the module loads WASM synchronously so no init is needed.
-  //
-  // TODO: Replace with a more civilised parquet module that's built in a way we can actually consume.
-  // - probably ultimately may be using geoarrow-wasm / investigate deck.gl arrow layer
-  //   think about how that fits our 'core' (no deck deps) vs 'vis' structure etc.
-
-  // Try local import first (works in Node.js, tests, and production builds)
-  try {
-    const module = await import('parquet-wasm');
-    if (typeof module.default === 'function') {
-      await module.default();
-    }
-    return { readParquet: module.readParquet, readSchema: module.readSchema };
-  } catch (error) {
-    // Local import failed, try CDN fallback (needed in vite dev server)
-    // Reference: https://observablehq.com/@kylebarron/geoparquet-on-the-web
-    console.warn(
-      '[VTableSource] Local parquet-wasm import failed, falling back to CDN version. ' +
-        'This is a temporary workaround pending a better parquet module solution.',
-      error
-    );
-
-    try {
-      const cdnModule = await import(
-        // @ts-expect-error - CDN import not recognized by TypeScript
-        'https://cdn.vitessce.io/parquet-wasm@2c23652/esm/parquet_wasm.js'
-      );
-      await cdnModule.default();
-      return { readParquet: cdnModule.readParquet, readSchema: cdnModule.readSchema };
-    } catch (cdnError) {
-      // Both imports failed, throw an error
-      const localErrorMsg = error instanceof Error ? error.message : String(error);
-      const cdnErrorMsg = cdnError instanceof Error ? cdnError.message : String(cdnError);
-      throw new Error(
-        `Failed to load parquet-wasm from both local package and CDN. Local error: ${localErrorMsg}. CDN error: ${cdnErrorMsg}`
-      );
-    }
-  }
-}
 
 /**
  * Get the name of the index column from an Apache Arrow table.
@@ -162,6 +155,14 @@ function hasParquetTailMagic(bytes: Uint8Array) {
   return bytes.length >= 8 && hasParquetMagic(bytes, bytes.length - 4);
 }
 
+function toSafeNumber(value: number | bigint, label: string) {
+  const n = typeof value === 'bigint' ? Number(value) : value;
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new Error(`Invalid parquet ${label}: ${String(value)}`);
+  }
+  return n;
+}
+
 /**
  * This class is a parent class for tables, shapes, and points.
  * This is because these share functionality, for example:
@@ -170,10 +171,7 @@ function hasParquetTailMagic(bytes: Uint8Array) {
  * - logic for manipulating spatialdata element paths is shared across all elements.
  */
 export default class SpatialDataTableSource extends AnnDataSource {
-  static parquetModulePromise: Promise<{
-    readParquet: (bytes: Uint8Array, options?: { columns?: string[] }) => any;
-    readSchema: (bytes: Uint8Array) => any;
-  }>;
+  static parquetModulePromise: Promise<ParquetModule>;
   rootAttrs: { softwareVersion: string; formatVersion: string } | null;
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
@@ -186,6 +184,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * `loadPolygonShapes` all target the same file).
    */
   parquetTableCache: Record<string, Promise<ArrowTable>>;
+  /** Morton min/max per row group — avoids re-decoding row groups during bisect. */
+  rowGroupColumnExtentCache: Map<string, { min: number | null; max: number | null }>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -206,6 +206,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     // TODO: change to column-specific storage.
     this.parquetTableBytes = {};
     this.parquetTableCache = {};
+    this.rowGroupColumnExtentCache = new Map();
 
     // Table-specific properties
     this.obsIndices = {};
@@ -322,44 +323,12 @@ export default class SpatialDataTableSource extends AnnDataSource {
   async loadParquetSchemaBytes(parquetPath: string) {
     const { store } = this.storeRoot;
     if (store.getRange) {
-      // Step 1: Fetch last 8 bytes to get footer length and magic number
-      const TAIL_LENGTH = 8;
       let lastError: Error | null = null;
 
       for (const candidatePath of getParquetCandidatePaths(parquetPath)) {
         try {
-          const tailBytes = await store.getRange(`/${candidatePath}`, {
-            suffixLength: TAIL_LENGTH,
-          });
-          const normalizedTailBytes = toUint8Array(tailBytes);
-          if (!normalizedTailBytes || !hasParquetTailMagic(normalizedTailBytes)) {
-            continue;
-          }
-
-          // Step 2: Extract footer length and magic number
-          // little-endian
-          const footerLength = new DataView(
-            normalizedTailBytes.buffer,
-            normalizedTailBytes.byteOffset,
-            normalizedTailBytes.byteLength
-          ).getInt32(0, true);
-
-          // Step 3. Fetch the full footer bytes
-          const footerBytes = await store.getRange(`/${candidatePath}`, {
-            suffixLength: footerLength + TAIL_LENGTH,
-          });
-          const normalizedFooterBytes = toUint8Array(footerBytes);
-          if (
-            !normalizedFooterBytes ||
-            normalizedFooterBytes.length !== footerLength + TAIL_LENGTH ||
-            !hasParquetTailMagic(normalizedFooterBytes)
-          ) {
-            lastError = new Error(`Failed to load parquet footer bytes for ${parquetPath}`);
-            continue;
-          }
-
-          // Step 4: Return the footer bytes
-          return normalizedFooterBytes;
+          const footerBytes = await this.loadParquetFooterBytesForPath(candidatePath);
+          if (footerBytes) return footerBytes;
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
         }
@@ -369,6 +338,394 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }
     // Store does not support getRange.
     return null;
+  }
+
+  private async loadParquetFooterBytesForPath(path: string): Promise<Uint8Array | null> {
+    const { store } = this.storeRoot;
+    if (!store.getRange) {
+      return null;
+    }
+    const tailLength = 8;
+    const tailBytes = await store.getRange(`/${path}`, {
+      suffixLength: tailLength,
+    });
+    const normalizedTailBytes = toUint8Array(tailBytes);
+    if (!normalizedTailBytes || !hasParquetTailMagic(normalizedTailBytes)) {
+      return null;
+    }
+
+    const footerLength = new DataView(
+      normalizedTailBytes.buffer,
+      normalizedTailBytes.byteOffset,
+      normalizedTailBytes.byteLength
+    ).getInt32(0, true);
+
+    const footerBytes = await store.getRange(`/${path}`, {
+      suffixLength: footerLength + tailLength,
+    });
+    const normalizedFooterBytes = toUint8Array(footerBytes);
+    if (
+      !normalizedFooterBytes ||
+      normalizedFooterBytes.length !== footerLength + tailLength ||
+      !hasParquetTailMagic(normalizedFooterBytes)
+    ) {
+      return null;
+    }
+    return normalizedFooterBytes;
+  }
+
+  async loadParquetSchemaTable(parquetPath: string): Promise<ArrowTable | null> {
+    const schemaBytes = await this.loadParquetSchemaBytes(parquetPath);
+    if (!schemaBytes) {
+      return null;
+    }
+    const { readSchema } = await SpatialDataTableSource.parquetModulePromise;
+    const wasmSchema = readSchema(schemaBytes);
+    return tableFromIPC(wasmSchema.intoIPCStream());
+  }
+
+  private readParquetFooterBytesFromFileBytes(bytes: Uint8Array): Uint8Array | null {
+    if (bytes.length < 8) {
+      return null;
+    }
+    const footerLength = new DataView(
+      bytes.buffer,
+      bytes.byteOffset + bytes.length - 8,
+      8
+    ).getInt32(0, true);
+    const totalFooterSize = footerLength + 8;
+    if (totalFooterSize <= 0 || totalFooterSize > bytes.length) {
+      return null;
+    }
+    return bytes.subarray(bytes.length - totalFooterSize);
+  }
+
+  private async loadParquetPartMetadataFromFullFile(
+    path: string
+  ): Promise<ParquetPartMetadata | null> {
+    const { readMetadata, readSchema } = await SpatialDataTableSource.parquetModulePromise;
+    if (!readMetadata) {
+      return null;
+    }
+    const fileBytes = await this.loadParquetFileBytesAtPath(path);
+    if (!fileBytes) {
+      return null;
+    }
+    const schemaBytes = this.readParquetFooterBytesFromFileBytes(fileBytes);
+    if (!schemaBytes) {
+      return null;
+    }
+    const schemaTable = await tableFromIPC(readSchema(schemaBytes).intoIPCStream());
+    return {
+      path,
+      schema: schemaTable.schema,
+      schemaBytes,
+      metadata: readMetadata(schemaBytes),
+    };
+  }
+
+  private async countRowsFromFullParquetFile(path: string): Promise<number> {
+    const fileBytes = await this.loadParquetFileBytesAtPath(path);
+    if (!fileBytes) {
+      return 0;
+    }
+    const { readParquet } = await SpatialDataTableSource.parquetModulePromise;
+    const table = await tableFromIPC(readParquet(fileBytes, { columns: ['x'] }).intoIPCStream());
+    return table.numRows;
+  }
+
+  protected async resolveParquetRowCount(parquetPath: string): Promise<number> {
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    if (datasetMetadata?.totalNumRows) {
+      return datasetMetadata.totalNumRows;
+    }
+
+    const directPart = await this.loadParquetPartMetadataFromFullFile(parquetPath);
+    if (directPart) {
+      return directPart.metadata.fileMetadata().numRows();
+    }
+
+    let totalRows = 0;
+    let foundPart = false;
+    for (let partIndex = 0; ; partIndex += 1) {
+      const partPath = `${parquetPath}/part.${partIndex}.parquet`;
+      const part = await this.loadParquetPartMetadataFromFullFile(partPath);
+      if (part) {
+        foundPart = true;
+        totalRows += part.metadata.fileMetadata().numRows();
+        continue;
+      }
+      const columnCount = await this.countRowsFromFullParquetFile(partPath);
+      if (columnCount > 0) {
+        foundPart = true;
+        totalRows += columnCount;
+        continue;
+      }
+      break;
+    }
+    if (foundPart) {
+      return totalRows;
+    }
+
+    return this.countRowsFromFullParquetFile(parquetPath);
+  }
+
+  private async loadParquetPartMetadata(path: string): Promise<ParquetPartMetadata | null> {
+    const { readMetadata, readSchema } = await SpatialDataTableSource.parquetModulePromise;
+    if (!readMetadata) {
+      return null;
+    }
+    const schemaBytes = await this.loadParquetFooterBytesForPath(path);
+    if (!schemaBytes) {
+      return null;
+    }
+    const schemaTable = await tableFromIPC(readSchema(schemaBytes).intoIPCStream());
+    return {
+      path,
+      schema: schemaTable.schema,
+      schemaBytes,
+      metadata: readMetadata(schemaBytes),
+    };
+  }
+
+  async loadParquetDatasetMetadata(parquetPath: string): Promise<ParquetDatasetMetadata | null> {
+    const { readMetadata } = await SpatialDataTableSource.parquetModulePromise;
+    const { store } = this.storeRoot;
+    if (!readMetadata || !store.getRange) {
+      return null;
+    }
+
+    const directPart = await this.loadParquetPartMetadata(parquetPath);
+    const parts: ParquetPartMetadata[] = [];
+    if (directPart) {
+      parts.push(directPart);
+    } else {
+      for (let partIndex = 0; ; partIndex++) {
+        const part = await this.loadParquetPartMetadata(`${parquetPath}/part.${partIndex}.parquet`);
+        if (!part) {
+          break;
+        }
+        parts.push(part);
+      }
+    }
+
+    if (parts.length === 0) {
+      return null;
+    }
+
+    const numRowsByPart = parts.map((part) => part.metadata.fileMetadata().numRows());
+    const numRowGroupsByPart = parts.map((part) => part.metadata.numRowGroups());
+    const numRowsPerGroupByPart = parts.map((part) =>
+      part.metadata.numRowGroups() > 0 ? part.metadata.rowGroup(0).numRows() : 0
+    );
+    const rowGroupRows = parts.flatMap((part) =>
+      Array.from({ length: part.metadata.numRowGroups() }, (_value, rowGroupIndex) =>
+        part.metadata.rowGroup(rowGroupIndex).numRows()
+      )
+    );
+    return {
+      totalNumRows: numRowsByPart.reduce((acc, cur) => acc + cur, 0),
+      totalNumRowGroups: numRowGroupsByPart.reduce((acc, cur) => acc + cur, 0),
+      numRowsByPart,
+      numRowGroupsByPart,
+      numRowsPerGroupByPart,
+      rowGroupRows,
+      schema: parts[0]?.schema ?? null,
+      parts,
+    };
+  }
+
+  async canLoadParquetRowGroups(): Promise<boolean> {
+    const module = await SpatialDataTableSource.parquetModulePromise;
+    return (
+      typeof module.readMetadata === 'function' && typeof module.readParquetRowGroup === 'function'
+    );
+  }
+
+  /**
+   * Fetch compressed row-group bytes via range read (no parquet decode on the caller thread).
+   */
+  protected async readParquetRowGroupBytesByGroupIndex(
+    parquetPath: string,
+    rowGroupIndex: number
+  ): Promise<{
+    schemaBytes: Uint8Array;
+    rowGroupBytes: Uint8Array;
+    rowGroupIndex: number;
+    globalRowGroupIndex: number;
+  } | null> {
+    const { store } = this.storeRoot;
+    if (!store.getRange) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || rowGroupIndex < 0 || rowGroupIndex >= dataset.totalNumRowGroups) {
+      return null;
+    }
+
+    let cumulativeRowGroups = 0;
+    for (const part of dataset.parts) {
+      const partRowGroupCount = part.metadata.numRowGroups();
+      if (rowGroupIndex >= cumulativeRowGroups + partRowGroupCount) {
+        cumulativeRowGroups += partRowGroupCount;
+        continue;
+      }
+      const relativeRowGroupIndex = rowGroupIndex - cumulativeRowGroups;
+      const rowGroup = part.metadata.rowGroup(relativeRowGroupIndex);
+      const offset = toSafeNumber(rowGroup.fileOffset(), 'row-group file offset');
+      const length = toSafeNumber(rowGroup.compressedSize(), 'row-group compressed size');
+      const bytes = await store.getRange(`/${part.path}`, { offset, length });
+      const rowGroupBytes = toUint8Array(bytes);
+      if (!rowGroupBytes) {
+        return null;
+      }
+      return {
+        schemaBytes: part.schemaBytes,
+        rowGroupBytes,
+        rowGroupIndex: relativeRowGroupIndex,
+        globalRowGroupIndex: rowGroupIndex,
+      };
+    }
+    return null;
+  }
+
+  protected async readParquetRowGroupsBytesCapped(
+    parquetPath: string,
+    maxRows: number
+  ): Promise<
+    Array<{
+      schemaBytes: Uint8Array;
+      rowGroupBytes: Uint8Array;
+      rowGroupIndex: number;
+    }>
+  > {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.totalNumRowGroups <= 0) {
+      return [];
+    }
+
+    const chunks: Array<{
+      schemaBytes: Uint8Array;
+      rowGroupBytes: Uint8Array;
+      rowGroupIndex: number;
+    }> = [];
+    let accumulated = 0;
+    for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
+      if (accumulated >= maxRows) {
+        break;
+      }
+      const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+      if (!chunk) {
+        continue;
+      }
+      chunks.push(chunk);
+      const rowCount = dataset.rowGroupRows[rowGroupIndex];
+      if (typeof rowCount === 'number' && Number.isFinite(rowCount)) {
+        accumulated += rowCount;
+      } else {
+        accumulated = maxRows;
+      }
+    }
+    return chunks;
+  }
+
+  /**
+   * Row-group and part byte payloads for worker-side parquet decode.
+   */
+  protected async readParquetWorkerPayload(
+    parquetPath: string,
+    options: {
+      maxRows: number;
+      fullPartsForFallback?: boolean;
+      /** When false (default), only part bytes are fetched for worker decode. */
+      includeRowGroups?: boolean;
+    }
+  ): Promise<{
+    rowGroups: Array<{
+      schemaBytes: Uint8Array;
+      rowGroupBytes: Uint8Array;
+      rowGroupIndex: number;
+    }>;
+    parts: Uint8Array[];
+  }> {
+    const includeRowGroups = options.includeRowGroups === true;
+    const canUseRowGroups = includeRowGroups && (await this.canLoadParquetRowGroups());
+    const rowGroups = canUseRowGroups
+      ? await this.readParquetRowGroupsBytesCapped(parquetPath, options.maxRows)
+      : [];
+    const partsMaxRows = options.fullPartsForFallback
+      ? Number.POSITIVE_INFINITY
+      : options.maxRows;
+    const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, partsMaxRows);
+    return { rowGroups, parts };
+  }
+
+  async loadParquetRowGroupByGroupIndex(
+    parquetPath: string,
+    rowGroupIndex: number,
+    readOptions?: ParquetRowGroupReadOptions
+  ): Promise<ArrowTable | null> {
+    const { readParquetRowGroup } = await SpatialDataTableSource.parquetModulePromise;
+    if (!readParquetRowGroup) {
+      return null;
+    }
+    const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+    if (!chunk) {
+      return null;
+    }
+    return tableFromIPC(
+      readParquetRowGroup(
+        chunk.schemaBytes,
+        chunk.rowGroupBytes,
+        chunk.rowGroupIndex,
+        readOptions
+      ).intoIPCStream()
+    );
+  }
+
+  async loadParquetRowGroupColumnExtent(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<{ min: number | null; max: number | null } | null> {
+    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}`;
+    const cached = this.rowGroupColumnExtentCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const rowCount = dataset?.rowGroupRows?.[rowGroupIndex];
+    if (!rowCount) {
+      return null;
+    }
+    const columnOptions: ParquetRowGroupReadOptions = { columns: [columnName] };
+    const minTable = await this.loadParquetRowGroupByGroupIndex(
+      parquetPath,
+      rowGroupIndex,
+      { ...columnOptions, limit: 1 }
+    );
+    const minColumn = minTable?.getChild(columnName);
+    if (!minColumn || minColumn.length === 0) {
+      return null;
+    }
+    let maxValue: number | null = parquetColumnValueToNumber(minColumn.get(0));
+    if (rowCount > 1) {
+      const maxTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
+        ...columnOptions,
+        offset: rowCount - 1,
+        limit: 1,
+      });
+      const maxColumn = maxTable?.getChild(columnName);
+      if (maxColumn && maxColumn.length > 0) {
+        maxValue = parquetColumnValueToNumber(maxColumn.get(0));
+      }
+    }
+    const extent = {
+      min: parquetColumnValueToNumber(minColumn.get(0)),
+      max: maxValue,
+    };
+    this.rowGroupColumnExtentCache.set(cacheKey, extent);
+    return extent;
   }
 
   /**
@@ -409,75 +766,408 @@ export default class SpatialDataTableSource extends AnnDataSource {
     return tablePromise;
   }
 
-  private async _loadParquetTableUncached(parquetPath: string, columns?: string[]): Promise<ArrowTable> {
-    const { readParquet, readSchema } = await SpatialDataTableSource.parquetModulePromise;
+  private async discoverMultipartPartPaths(parquetPath: string): Promise<string[]> {
+    const partPaths: string[] = [];
+    for (let partIndex = 0; ; partIndex += 1) {
+      const partPath = `${parquetPath}/part.${partIndex}.parquet`;
+      const bytes = await this.loadParquetFileBytesAtPath(partPath);
+      if (!bytes) {
+        break;
+      }
+      partPaths.push(partPath);
+    }
+    return partPaths;
+  }
 
-    const options = {
-      columns,
-    };
+  private async loadMultipartParquetTableFromPartPaths(
+    parquetPath: string,
+    partPaths: string[],
+    columns: string[] | undefined,
+    readParquet: ParquetModule['readParquet'],
+    readSchema: ParquetModule['readSchema']
+  ): Promise<ArrowTable> {
+    const tables: ArrowTable[] = [];
+    for (const partPath of partPaths) {
+      const parquetBytes = await this.loadParquetFileBytesAtPath(partPath);
+      if (!parquetBytes) {
+        throw new Error(`Failed to load parquet part at ${partPath}.`);
+      }
+      tables.push(
+        await this.readParquetTableFromFileBytes(
+          parquetBytes,
+          columns,
+          readParquet,
+          readSchema,
+          parquetPath
+        )
+      );
+    }
+    if (tables.length === 0) {
+      throw new Error(`Failed to load multipart parquet data from ${parquetPath}.`);
+    }
+    return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
+  }
 
-    let indexColumnName: string | undefined;
+  protected async readParquetDatasetBytes(parquetPath: string): Promise<Uint8Array[]> {
+    const capped = await this.readParquetDatasetBytesCapped(parquetPath, Number.POSITIVE_INFINITY);
+    return capped.parts;
+  }
 
-    if (columns?.length) {
-      // If columns are specified, we also want to ensure that the index column is included.
-      // Otherwise, the user wants the full table anyway.
-
-      // We first try to load the schema bytes to determine the index column name.
-      // Perhaps in the future SpatialData can store the index column name
-      // in the .zattrs so that we do not need to load the schema first,
-      // since only certain stores such as FetchStores support getRange.
-      // Reference: https://github.com/scverse/spatialdata/issues/958
-      try {
-        const schemaBytes = await this.loadParquetSchemaBytes(parquetPath);
-        if (schemaBytes) {
-          const wasmSchema = readSchema(schemaBytes);
-          const arrowTableForSchema = await tableFromIPC(wasmSchema.intoIPCStream());
-          indexColumnName = tableToIndexColumnName(arrowTableForSchema);
+  /**
+   * Read parquet part bytes up to a row cap. Uses dataset metadata to avoid
+   * loading parts beyond the cap when row counts per part are known.
+   */
+  protected async readParquetDatasetBytesCapped(
+    parquetPath: string,
+    maxRows: number
+  ): Promise<{ parts: Uint8Array[]; totalRows: number; truncated: boolean }> {
+    const totalRows = await this.resolveParquetRowCount(parquetPath);
+    if (totalRows <= maxRows) {
+      const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+      if (dataset?.parts.length) {
+        const parts: Uint8Array[] = [];
+        for (const part of dataset.parts) {
+          const bytes = await this.loadParquetFileBytesAtPath(part.path);
+          if (!bytes) {
+            // Strict fail — see docs/plans/parquet-io-error-handling.md
+            throw new Error(`Missing parquet part bytes at ${part.path}`);
+          }
+          parts.push(bytes);
         }
-      } catch (e: unknown) {
-        // If we fail to load the schema bytes, we can proceed to try to load the full table bytes,
-        // for instance if range requests are not supported but the full table can be loaded.
-        //@ts-expect-error e.message not a property of e: unknown
-        console.warn(`Failed to load parquet schema bytes for ${parquetPath}: ${e.message}`);
+        return { parts, totalRows, truncated: false };
+      }
+      const bytes = await this.loadParquetFileBytesAtPath(parquetPath);
+      return { parts: bytes ? [bytes] : [], totalRows, truncated: false };
+    }
+
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    let partPaths: string[] = [];
+    if (dataset?.parts.length) {
+      partPaths = dataset.parts.map((part) => part.path);
+    } else {
+      const discovered = await this.discoverMultipartPartPaths(parquetPath);
+      partPaths = discovered.length > 0 ? discovered : [parquetPath];
+    }
+
+    const numRowsByPart = dataset?.numRowsByPart ?? [];
+    const parts: Uint8Array[] = [];
+    let accumulated = 0;
+    for (let partIndex = 0; partIndex < partPaths.length; partIndex += 1) {
+      const remaining = maxRows - accumulated;
+      if (remaining <= 0) {
+        break;
+      }
+      const partPath = partPaths[partIndex];
+      const bytes = await this.loadParquetFileBytesAtPath(partPath);
+      if (!bytes) {
+        // Strict fail (sibling capped table loader uses continue) — docs/plans/parquet-io-error-handling.md
+        throw new Error(`Missing parquet bytes at ${partPath}`);
+      }
+      parts.push(bytes);
+      const partRows = numRowsByPart[partIndex];
+      if (typeof partRows === 'number' && Number.isFinite(partRows)) {
+        accumulated += partRows;
+      } else {
+        accumulated = maxRows;
+      }
+      if (accumulated >= maxRows) {
+        break;
       }
     }
-    // Load the full table bytes.
 
-    // TODO: can we avoid loading the full table bytes
-    // if we only need a subset of columns?
-    // For example, if the store supports
-    // getRange like above to get the schema bytes.
-    // See https://github.com/kylebarron/parquet-wasm/issues/758
+    return { parts, totalRows, truncated: true };
+  }
+
+  async loadParquetTableCapped(
+    parquetPath: string,
+    columns: string[] | undefined,
+    maxRows: number,
+    options: { useRowGroupReads?: boolean } = {}
+  ): Promise<{ table: ArrowTable; totalRows: number; truncated: boolean }> {
+    const totalRows = await this.resolveParquetRowCount(parquetPath);
+    const truncated = totalRows > maxRows;
+    const targetRows = truncated ? maxRows : totalRows;
+
+    if (options.useRowGroupReads === true && (await this.canLoadParquetRowGroups())) {
+      try {
+        const table = await this._loadParquetTableRowGroupsCapped(
+          parquetPath,
+          columns,
+          targetRows
+        );
+        return { table, totalRows, truncated };
+      } catch (error) {
+        console.warn(
+          `Row-group parquet read failed for ${parquetPath}; falling back to full-file decode.`,
+          error
+        );
+      }
+    }
+
+    if (!truncated) {
+      const table = await this.loadParquetTable(parquetPath, columns);
+      return { table, totalRows, truncated: false };
+    }
+    const table = await this._loadParquetTableUncachedCapped(parquetPath, columns, maxRows);
+    return { table, totalRows, truncated: true };
+  }
+
+  /**
+   * Load up to {@link maxRows} via per-row-group range reads and optional column
+   * projection. Avoids fetching entire parquet part files when the store supports
+   * byte-range reads.
+   */
+  private async _loadParquetTableRowGroupsCapped(
+    parquetPath: string,
+    columns: string[] | undefined,
+    maxRows: number
+  ): Promise<ArrowTable> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.totalNumRowGroups <= 0) {
+      throw new Error(`No row groups available for ${parquetPath}.`);
+    }
+
+    const { readSchema } = await SpatialDataTableSource.parquetModulePromise;
+    const resolvedColumns = columns?.length
+      ? await this.resolveParquetTableColumns(
+          parquetPath,
+          columns,
+          readSchema,
+          dataset.parts[0]?.schemaBytes
+        )
+      : undefined;
+    const readOptions: ParquetRowGroupReadOptions | undefined = resolvedColumns?.length
+      ? { columns: resolvedColumns }
+      : undefined;
+
+    const tables: ArrowTable[] = [];
+    let accumulated = 0;
+    for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
+      if (accumulated >= maxRows) {
+        break;
+      }
+      let table = await this.loadParquetRowGroupByGroupIndex(
+        parquetPath,
+        rowGroupIndex,
+        readOptions
+      );
+      if (!table || table.numRows === 0) {
+        continue;
+      }
+      const remaining = maxRows - accumulated;
+      if (table.numRows > remaining) {
+        table = table.slice(0, remaining);
+      }
+      tables.push(table);
+      accumulated += table.numRows;
+    }
+
+    if (tables.length === 0) {
+      throw new Error(`Failed to load row-group capped parquet data from ${parquetPath}.`);
+    }
+    return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
+  }
+
+  private async _loadParquetTableUncachedCapped(
+    parquetPath: string,
+    columns: string[] | undefined,
+    maxRows: number
+  ): Promise<ArrowTable> {
+    const { readParquet, readSchema } = await SpatialDataTableSource.parquetModulePromise;
+
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    let partPaths: string[] = [];
+    if (dataset?.parts.length) {
+      partPaths = dataset.parts.map((part) => part.path);
+    } else {
+      const discovered = await this.discoverMultipartPartPaths(parquetPath);
+      partPaths = discovered.length > 0 ? discovered : [parquetPath];
+    }
+
+    const tables: ArrowTable[] = [];
+    let accumulated = 0;
+    for (let partIndex = 0; partIndex < partPaths.length; partIndex += 1) {
+      const remaining = maxRows - accumulated;
+      if (remaining <= 0) {
+        break;
+      }
+      const partPath = partPaths[partIndex];
+      const parquetBytes = await this.loadParquetFileBytesAtPath(partPath);
+      if (!parquetBytes) {
+        continue;
+      }
+      const partTable = await this.readParquetTableFromFileBytes(
+        parquetBytes,
+        columns,
+        readParquet,
+        readSchema,
+        parquetPath
+      );
+      if (partTable.numRows <= remaining) {
+        tables.push(partTable);
+        accumulated += partTable.numRows;
+      } else {
+        tables.push(partTable.slice(0, remaining));
+        break;
+      }
+    }
+
+    if (tables.length === 0) {
+      throw new Error(`Failed to load capped parquet data from ${parquetPath}.`);
+    }
+    return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
+  }
+
+  protected async loadParquetFileBytesAtPath(path: string): Promise<Uint8Array | null> {
+    try {
+      const parquetBytes = await this.storeRoot.store.get(`/${path}`);
+      const normalizedBytes = toUint8Array(parquetBytes);
+      if (!normalizedBytes || !isParquetFileBytes(normalizedBytes)) {
+        return null;
+      }
+      return normalizedBytes;
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveParquetTableColumns(
+    parquetPath: string,
+    columns: string[] | undefined,
+    readSchema: ParquetModule['readSchema'],
+    schemaBytesFromPath?: Uint8Array | null
+  ): Promise<string[] | undefined> {
+    if (!columns?.length) {
+      return undefined;
+    }
+
+    let indexColumnName: string | undefined;
+    try {
+      const schemaBytes = schemaBytesFromPath ?? (await this.loadParquetSchemaBytes(parquetPath));
+      if (schemaBytes) {
+        const wasmSchema = readSchema(schemaBytes);
+        const arrowTableForSchema = await tableFromIPC(wasmSchema.intoIPCStream());
+        indexColumnName = tableToIndexColumnName(arrowTableForSchema);
+      }
+    } catch (e: unknown) {
+      //@ts-expect-error e.message not a property of e: unknown
+      console.warn(`Failed to load parquet schema bytes for ${parquetPath}: ${e.message}`);
+    }
+
+    if (indexColumnName && !columns.includes(indexColumnName)) {
+      return [...columns, indexColumnName];
+    }
+    return columns;
+  }
+
+  private async readParquetTableFromFileBytes(
+    parquetBytes: Uint8Array,
+    columns: string[] | undefined,
+    readParquet: ParquetModule['readParquet'],
+    readSchema: ParquetModule['readSchema'],
+    parquetPath: string
+  ): Promise<ArrowTable> {
+    let normalizedBytes = parquetBytes;
+    if (!ArrayBuffer.isView(normalizedBytes)) {
+      normalizedBytes = new Uint8Array(normalizedBytes);
+    }
+
+    let resolvedColumns = columns;
+    if (columns?.length) {
+      resolvedColumns = await this.resolveParquetTableColumns(
+        parquetPath,
+        columns,
+        readSchema
+      );
+      const wasmSchema = readSchema(normalizedBytes);
+      const arrowTableForSchema = await tableFromIPC(wasmSchema.intoIPCStream());
+      const indexColumnName = tableToIndexColumnName(arrowTableForSchema);
+      if (indexColumnName && resolvedColumns && !resolvedColumns.includes(indexColumnName)) {
+        resolvedColumns = [...resolvedColumns, indexColumnName];
+      }
+    }
+
+    const wasmTable = readParquet(
+      normalizedBytes,
+      resolvedColumns?.length ? { columns: resolvedColumns } : undefined
+    );
+    return tableFromIPC(wasmTable.intoIPCStream());
+  }
+
+  private async loadMultipartParquetTable(
+    parquetPath: string,
+    columns: string[] | undefined,
+    dataset: ParquetDatasetMetadata,
+    readParquet: ParquetModule['readParquet'],
+    readSchema: ParquetModule['readSchema']
+  ): Promise<ArrowTable> {
+    const resolvedColumns = columns?.length
+      ? await this.resolveParquetTableColumns(
+          parquetPath,
+          columns,
+          readSchema,
+          dataset.parts[0]?.schemaBytes
+        )
+      : undefined;
+
+    const tables: ArrowTable[] = [];
+    for (const part of dataset.parts) {
+      const parquetBytes = await this.loadParquetFileBytesAtPath(part.path);
+      if (!parquetBytes) {
+        throw new Error(`Failed to load parquet part at ${part.path}.`);
+      }
+      const wasmTable = readParquet(
+        parquetBytes,
+        resolvedColumns?.length ? { columns: resolvedColumns } : undefined
+      );
+      tables.push(await tableFromIPC(wasmTable.intoIPCStream()));
+    }
+
+    if (tables.length === 0) {
+      throw new Error(`Failed to load multipart parquet data from ${parquetPath}.`);
+    }
+    return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
+  }
+
+  private async _loadParquetTableUncached(
+    parquetPath: string,
+    columns?: string[]
+  ): Promise<ArrowTable> {
+    const { readParquet, readSchema } = await SpatialDataTableSource.parquetModulePromise;
+
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (dataset && dataset.parts.length > 1) {
+      return this.loadMultipartParquetTable(
+        parquetPath,
+        columns,
+        dataset,
+        readParquet,
+        readSchema
+      );
+    }
+
+    const partPaths = await this.discoverMultipartPartPaths(parquetPath);
+    if (partPaths.length > 1) {
+      return this.loadMultipartParquetTableFromPartPaths(
+        parquetPath,
+        partPaths,
+        columns,
+        readParquet,
+        readSchema
+      );
+    }
+
     let parquetBytes = await this.loadParquetBytes(parquetPath);
     if (!parquetBytes) {
       throw new Error('Failed to load parquet data from store.');
     }
-    if (!ArrayBuffer.isView(parquetBytes)) {
-      // This is required because in vitessce-python the
-      // experimental.invoke store wrapper can return an ArrayBuffer,
-      // but readParquet expects a Uint8Array.
-      parquetBytes = new Uint8Array(parquetBytes);
-    }
-
-    if (columns?.length && !indexColumnName) {
-      // The user requested specific columns, but we did not load the schema bytes
-      // to successfully get the index column name.
-      // Here we try again to get the index column name, but this
-      // time from the full table bytes (rather than only the schema-bytes).
-      const wasmSchema = readSchema(parquetBytes);
-      /** @type {import('apache-arrow').Table} */
-      const arrowTableForSchema = await tableFromIPC(wasmSchema.intoIPCStream());
-      indexColumnName = tableToIndexColumnName(arrowTableForSchema);
-    }
-
-    if (options.columns?.length && indexColumnName) {
-      options.columns = [...options.columns, indexColumnName];
-    }
-
-    const wasmTable = readParquet(parquetBytes, options);
-    /** @type {import('apache-arrow').Table} */
-    const arrowTable = await tableFromIPC(wasmTable.intoIPCStream());
-    return arrowTable;
+    return this.readParquetTableFromFileBytes(
+      parquetBytes,
+      columns,
+      readParquet,
+      readSchema,
+      parquetPath
+    );
   }
 
   // TABLE-SPECIFIC METHODS

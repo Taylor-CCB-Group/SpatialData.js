@@ -529,12 +529,24 @@ function SpatialCanvasInner({
         : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
 
+  // The resource whose readiness means the layer has centerable geometry:
+  // image/labels are raster (image status); shapes/points are geometry.
+  const selectedLayerReadyResource =
+    selectedConfig?.type === 'image' || selectedConfig?.type === 'labels'
+      ? selectedLayerLoadState?.image
+      : selectedLayerLoadState?.geometry;
+
   const selectedLayerCanCenter =
     !!selectedConfig?.id &&
     selectedConfig.visible &&
     vw > 0 &&
     vh > 0 &&
-    hasRenderableLayerData(selectedConfig.id);
+    // Gate on the reactive load-state (not just `hasRenderableLayerData`, which
+    // reads an imperatively-mutated ref cache): a ref mutation does not trigger a
+    // re-render, so relying on it alone leaves this button stale-disabled until an
+    // unrelated re-render recomputes it. `selectedLayerLoadState` is real state and
+    // flips to 'ready' in lockstep with the load, so the button enables immediately.
+    (selectedLayerReadyResource === 'ready' || hasRenderableLayerData(selectedConfig.id));
 
   // TODO: include extra annotation columns carried by the shapes element itself,
   // not just associated table obs columns. Longer term, expose entries
@@ -812,6 +824,31 @@ function SpatialCanvasInner({
                     }
                   />
                 </label>
+                {selectedConfig.type === 'points' && (
+                  <label
+                    style={{
+                      color: '#ccc',
+                      fontSize: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    Point size ({(selectedConfig.pointSize ?? 1).toFixed(1)})
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={12}
+                      step={0.1}
+                      value={selectedConfig.pointSize ?? 1}
+                      onChange={(e) =>
+                        actions.updateLayer(selectedConfig.id, {
+                          pointSize: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                )}
                 {selectedLayerLoadState && (
                   <div
                     style={{

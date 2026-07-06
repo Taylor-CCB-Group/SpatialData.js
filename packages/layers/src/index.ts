@@ -68,3 +68,66 @@ export type {
   RenderStackSpatialElementType,
   RenderStackSpatialEntry,
 } from './renderStack';
+export { PointsLayer } from './PointsLayer';
+export type { PointsLayerProps } from './PointsLayer';
+export {
+  columnarBatchFromPointData,
+  pointDataFromColumnarBatch,
+  type ArrowRecordBatchPointsBatch,
+  type ColumnarNdarrayPointsBatch,
+  type PointData,
+  type PointsBatch,
+  type PointsBatchFormat,
+  type PointsEncodingKind,
+  type PointsLoadInBoundsOptions,
+  type PointsLoader,
+  type PointsLoaderCapabilities,
+  type PointsRenderResource,
+} from './pointsLoader.js';
+export {
+  createPointsRenderResource,
+  coreLoaderToPointsLoader,
+} from './pointsLoaderAdapter.js';
+export {
+  DEFAULT_POINT_RADIUS_MAX_PIXELS,
+  DEFAULT_POINT_RADIUS_MIN_PIXELS,
+  DEFAULT_POINT_SIZE,
+  MIN_POINT_SIZE_SCALE,
+  POINT_SIZE_ZOOM_REFERENCE,
+  zoomScaledPointSize,
+} from './pointsScatterLayer.js';
+export type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
+export {
+  createTileDebugStore,
+  createTiledPointsDebugHooks,
+  type TileDebugStore,
+  type TiledPointsDebugState,
+} from './pointsTiledDebugHooks.js';
+export {
+  POINTS_TILE_DEBUG_PICK_KIND,
+  formatPointsTileDebugTooltip,
+  isPointsTileDebugPickObject,
+  reduceTileDebugEntries,
+  tileDebugEntriesSignature,
+  tileDebugStatusFillColor,
+  tileDebugStatusLineColor,
+  type PointsTileDebugEntry,
+  type PointsTileDebugPickObject,
+  type PointsTileLoadProgress,
+  type PointsTileStatus,
+} from './pointsTileDebug.js';
+
+// Points render-resource resolution and load planning.
+// Relocated from @spatialdata/vis (SpatialCanvas) per
+// docs/plans/layer-data-engine-decomposition.md — these are framework-agnostic
+// (no React) and belong in layers. Re-exported from vis for MDV compatibility.
+export * from './pointsLoadPlan.js';
+export * from './resolvePointsRenderResource.js';
+
+// Framework-agnostic points loading/caching engine (LayerDataEngine step 1b).
+export {
+  PointsDataEngine,
+  type PointsDataEngineCallbacks,
+  type PointsLoadStatus,
+  type PointsLoadTarget,
+} from './engine/PointsDataEngine.js';

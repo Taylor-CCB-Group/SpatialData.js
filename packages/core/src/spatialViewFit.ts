@@ -22,7 +22,7 @@ export type OrthographicViewState2D = {
 
 /** Ndarray-style columnar points: data[0]=x, data[1]=y, optional data[2]=z. */
 export type PointsColumnarData = {
-  data: number[][];
+  data: ArrayLike<number>[];
   shape?: number[];
 };
 

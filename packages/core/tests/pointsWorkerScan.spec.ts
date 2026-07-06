@@ -1,0 +1,122 @@
+import { tableFromArrays, tableToIPC } from 'apache-arrow';
+import { describe, expect, it } from 'vitest';
+import {
+  decodeParquetRowGroupsToTable,
+  extractGeometryColumnar,
+  extractRowFeatureCodesFromTable,
+  scanFeatureCatalogFromPayload,
+} from '../src/workers/pointsWorkerScan.js';
+
+function mockReadParquetRowGroup(
+  chunks: Array<Array<{ name: string; code: number }>>
+): (
+  schemaBytes: Uint8Array,
+  rowGroupBytes: Uint8Array,
+  rowGroupIndex: number,
+  options?: { columns?: string[] }
+) => { intoIPCStream(): Uint8Array } {
+  return (_schemaBytes, _rowGroupBytes, rowGroupIndex) => {
+    const rows = chunks[rowGroupIndex] ?? [];
+    const table = tableFromArrays({
+      feature_name: rows.map((row) => row.name),
+      feature_name_codes: Int32Array.from(rows.map((row) => row.code)),
+    });
+    return { intoIPCStream: () => tableToIPC(table) };
+  };
+}
+
+describe('decodeParquetRowGroupsToTable', () => {
+  it('merges row groups and respects maxRows', async () => {
+    const table = await decodeParquetRowGroupsToTable(
+      mockReadParquetRowGroup([
+        [
+          { name: 'a', code: 0 },
+          { name: 'b', code: 1 },
+        ],
+        [
+          { name: 'c', code: 2 },
+          { name: 'd', code: 3 },
+        ],
+      ]),
+      [
+        { schemaBytes: new Uint8Array(0), rowGroupBytes: new Uint8Array(0), rowGroupIndex: 0 },
+        { schemaBytes: new Uint8Array(0), rowGroupBytes: new Uint8Array(0), rowGroupIndex: 1 },
+      ],
+      ['feature_name', 'feature_name_codes'],
+      3
+    );
+    expect(table.numRows).toBe(3);
+  });
+});
+
+describe('extractRowFeatureCodesFromTable with featureCodeByName', () => {
+  it('maps dictionary feature names to catalog codes', () => {
+    const names = ['gene_a', 'gene_b', 'gene_a'];
+    const table = tableFromArrays({
+      feature_name: names,
+    });
+    const featureCodeByName = new Map([
+      ['gene_a', 0],
+      ['gene_b', 1],
+    ]);
+    const codes = extractRowFeatureCodesFromTable(
+      table,
+      'feature_name',
+      undefined,
+      featureCodeByName
+    );
+    expect([...codes]).toEqual([0, 1, 0]);
+  });
+});
+
+describe('extractGeometryColumnar', () => {
+  it('returns float32 axis columns', () => {
+    const table = tableFromArrays({
+      x: [0, 1],
+      y: [2, 3],
+    });
+    const geometry = extractGeometryColumnar(table, ['x', 'y']);
+    expect(geometry.shape).toEqual([2, 2]);
+    expect([...geometry.xs]).toEqual([0, 1]);
+    expect([...geometry.ys]).toEqual([2, 3]);
+  });
+});
+
+function mockReadParquet(
+  rows: Array<{ name: string; code: number }>
+): (bytes: Uint8Array, options?: { columns?: string[] }) => { intoIPCStream(): Uint8Array } {
+  return () => {
+    const table = tableFromArrays({
+      feature_name: rows.map((row) => row.name),
+      feature_name_codes: Int32Array.from(rows.map((row) => row.code)),
+    });
+    return { intoIPCStream: () => tableToIPC(table) };
+  };
+}
+
+describe('scanFeatureCatalogFromPayload', () => {
+  it('accumulates catalog entries from row groups', async () => {
+    const catalog = await scanFeatureCatalogFromPayload(
+      mockReadParquet([]),
+      mockReadParquetRowGroup([
+        [
+          { name: 'gene_a', code: 0 },
+          { name: 'gene_b', code: 1 },
+        ],
+      ]),
+      {
+        rowGroups: [
+          { schemaBytes: new Uint8Array(0), rowGroupBytes: new Uint8Array(0), rowGroupIndex: 0 },
+        ],
+        parts: [new Uint8Array(0)],
+        columns: ['feature_name', 'feature_name_codes'],
+        featureKey: 'feature_name',
+        featureCodeColumnName: 'feature_name_codes',
+      }
+    );
+    expect(catalog?.entries).toEqual([
+      { code: 0, name: 'gene_a' },
+      { code: 1, name: 'gene_b' },
+    ]);
+  });
+});

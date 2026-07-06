@@ -43,6 +43,8 @@ import {
 } from '@spatialdata/core';
 import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
+  PointsDataEngine,
+  PointsLayer,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
@@ -63,7 +65,6 @@ import {
 } from './imageLoaderChannelDefaults';
 import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
-import { type PointData, renderPointsLayer } from './renderers/pointsRenderer';
 import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
 import type {
   AvailableElement,
@@ -112,7 +113,7 @@ export interface WorldBoundsCacheEntry {
 
 interface LoadedData {
   shapes: Map<string, LoadedShapesData>;
-  points: Map<string, PointData>;
+  // Points data lives in `pointsEngine` (PointsDataEngine), not here.
   images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
   labels: Map<string, LabelsLoaderData>;
   /**
@@ -472,7 +473,6 @@ export function useLayerData(
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
     shapes: new Map(),
-    points: new Map(),
     images: new Map(),
     labels: new Map(),
     shapePrebuiltData: new Map(),
@@ -543,6 +543,29 @@ export function useLayerData(
     },
     []
   );
+
+  // Points loading/caching/resolution engine (LayerDataEngine step 1b). This
+  // framework-agnostic engine (in @spatialdata/layers) owns the points preload
+  // cache, the stable render-resource memo, and the async load orchestration
+  // that previously lived as `useRef` state + a load-effect branch in this hook.
+  // The hook is now a thin binding: it forwards status into `layerLoadStates`
+  // and re-renders when the engine's cache settles.
+  //
+  // Held in `useState` with a lazy initializer (not a ref): the engine is a
+  // stable value created once, so it is safe to read during render and to list
+  // in effect/callback dependency arrays — unlike a ref, whose `current` must
+  // not be read during render.
+  const [pointsEngine] = useState(
+    () =>
+      new PointsDataEngine({
+        onStatus: (layerId, status) => setLayerResourceStatus(layerId, 'geometry', status),
+      })
+  );
+
+  useEffect(() => {
+    const unsubscribe = pointsEngine.subscribe(notifyLoadedDataChanged);
+    return unsubscribe;
+  }, [pointsEngine, notifyLoadedDataChanged]);
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -628,7 +651,7 @@ export function useLayerData(
               loadLabels,
             });
           }
-        } else if (config.type === 'points' && !loaded.points.has(elem.key)) {
+        } else if (config.type === 'points' && !pointsEngine.hasData(elem.key)) {
           toLoad.push({
             layerId,
             element: elem,
@@ -803,17 +826,13 @@ export function useLayerData(
                 }
               }
             } else if (element.type === 'points' && loadPoints) {
-              try {
-                setLayerResourceStatus(layerId, 'geometry', 'loading');
-                // todo better type-guards etc here.
-                const e = element.element as PointsElement;
-                const data = await e.loadPoints();
-                loadedDataRef.current.points.set(element.key, data);
-                setLayerResourceStatus(layerId, 'geometry', 'ready');
-              } catch (error) {
-                setLayerResourceStatus(layerId, 'geometry', 'error');
-                console.error(`Failed to load points for ${layerId}:`, error);
-              }
+              // The engine owns loading/caching/status; it reports status back
+              // through the onStatus callback wired at construction.
+              await pointsEngine.ensureLoaded({
+                key: element.key,
+                layerId,
+                element: element.element as PointsElement,
+              });
             } else if (element.type === 'image' && loadImage) {
               try {
                 setLayerResourceStatus(layerId, 'image', 'loading');
@@ -1084,6 +1103,7 @@ export function useLayerData(
     spatialData,
     setLayerResourceStatus,
     notifyLoadedDataChanged,
+    pointsEngine,
   ]);
 
   const reloadElement = useCallback((type: string, key: string) => {
@@ -1099,7 +1119,7 @@ export function useLayerData(
         }
       }
     } else if (type === 'points') {
-      loaded.points.delete(key);
+      pointsEngine.evict(key);
       loaded.worldBounds.delete(`points:${key}`);
     } else if (type === 'image') {
       loaded.images.delete(key);
@@ -1109,7 +1129,7 @@ export function useLayerData(
       loaded.worldBounds.delete(`labels:${key}`);
     }
     // The useEffect will pick up the missing data and reload
-  }, []);
+  }, [pointsEngine]);
 
   const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
     const signature = serializeRasterSelections(selections);
@@ -1129,7 +1149,7 @@ export function useLayerData(
       return loadedDataRef.current.shapes.has(elem.key);
     }
     if (elem.type === 'points') {
-      return loadedDataRef.current.points.has(elem.key);
+      return pointsEngine.hasData(elem.key);
     }
     if (elem.type === 'image') {
       return loadedDataRef.current.images.has(elem.key);
@@ -1138,7 +1158,7 @@ export function useLayerData(
       return loadedDataRef.current.labels.has(elem.key);
     }
     return false;
-  }, []);
+  }, [pointsEngine]);
 
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
@@ -1169,7 +1189,7 @@ export function useLayerData(
           );
         }
         if (elem.type === 'points') {
-          const pointData = loaded.points.get(elem.key);
+          const pointData = pointsEngine.getData(elem.key);
           if (!pointData) return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
@@ -1221,7 +1241,7 @@ export function useLayerData(
         return null;
       }
     },
-    [layers]
+    [layers, pointsEngine]
   );
 
   const getWorldBoundsForVisibleLayers = useCallback((): AxisAlignedBounds | null => {
@@ -1278,19 +1298,24 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       } else if (config.type === 'points') {
-        const pointData = loaded.points.get(elem.key);
-        if (pointData) {
-          const layer = renderPointsLayer({
-            element: elem.element as PointsElement,
-            id: layerId,
-            modelMatrix: elem.transform,
-            opacity: config.opacity,
-            visible: config.visible,
-            pointSize: config.pointSize,
-            color: config.color,
-            pointData,
-          });
-          if (layer) deckLayers.push(layer);
+        // The engine returns a STABLE render resource (memoized by signature),
+        // so re-running getLayers every pan/zoom frame reuses the same loader
+        // identity and the composite does not reset its batch (no flashing).
+        const resource = pointsEngine.getResource(elem.element as PointsElement, elem.key);
+        if (resource) {
+          deckLayers.push(
+            new PointsLayer({
+              id: layerId,
+              resource,
+              modelMatrix: elem.transform,
+              opacity: config.opacity,
+              visible: config.visible,
+              // Legacy renderPointsLayer defaulted radius to 1px; preserve that
+              // for parity (the composite's own default is smaller).
+              pointSize: config.pointSize ?? 1,
+              ...(config.color ? { color: config.color } : {}),
+            })
+          );
         }
       } else if (config.type === 'labels') {
         const labelsData = loaded.labels.get(elem.key);
@@ -1340,7 +1365,7 @@ export function useLayerData(
     }
 
     return deckLayers;
-  }, [layers, layerOrder, getStableSelections]);
+  }, [layers, layerOrder, getStableSelections, pointsEngine]);
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);

@@ -57,9 +57,6 @@ catalogs:
     jsdom:
       specifier: ^27.4.0
       version: 27.4.0
-    parquet-wasm:
-      specifier: ^0.6.1
-      version: 0.6.1
     react:
       specifier: ^19.2.1
       version: 19.2.1
@@ -155,9 +152,6 @@ importers:
       clsx:
         specifier: ^2.0.0
         version: 2.1.1
-      parquet-wasm:
-        specifier: 'catalog:'
-        version: 0.6.1
       prism-react-renderer:
         specifier: ^2.3.0
         version: 2.4.1(react@19.2.1)
@@ -256,9 +250,6 @@ importers:
       ol:
         specifier: ^10.6.1
         version: 10.6.1
-      parquet-wasm:
-        specifier: 'catalog:'
-        version: 0.6.1
       zarrextra:
         specifier: workspace:*
         version: link:../zarrextra
@@ -299,6 +290,9 @@ importers:
       '@math.gl/core':
         specifier: 'catalog:'
         version: 4.1.0
+      '@spatialdata/core':
+        specifier: workspace:*
+        version: link:../core
       zod:
         specifier: 'catalog:'
         version: 4.1.13
@@ -6364,9 +6358,6 @@ packages:
   parent-module@1.0.1:
     resolution: {integrity: sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==}
     engines: {node: '>=6'}
-
-  parquet-wasm@0.6.1:
-    resolution: {integrity: sha512-wTM/9Y4EHny8i0qgcOlL9UHsTXftowwCqDsAD8axaZbHp0Opp3ue8oxexbzTVNhqBjFhyhLiU3MT0rnEYnYU0Q==}
 
   parse-entities@4.0.2:
     resolution: {integrity: sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==}
@@ -15844,8 +15835,6 @@ snapshots:
   parent-module@1.0.1:
     dependencies:
       callsites: 3.1.0
-
-  parquet-wasm@0.6.1: {}
 
   parse-entities@4.0.2:
     dependencies:
