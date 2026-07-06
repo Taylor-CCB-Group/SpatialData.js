@@ -19,7 +19,13 @@ const pending = new Map<
 >();
 
 let enabled = false;
-let defaultEnabled = typeof window !== 'undefined';
+// Points worker is opt-in: hosts call enablePointsWorker() (or
+// setPointsWorkerDefaultEnabled(true)) once they have wired the worker bundle.
+// Auto-enabling in every browser caused loadPoints() to hang forever wherever
+// the worker isn't functionally wired (e.g. Vite dev serving core from source),
+// because the worker branch awaits a response that never arrives and the
+// main-thread fallback only triggers on a rejection, not a stuck promise.
+let defaultEnabled = false;
 
 function ensureWorkerListener() {
   if (!worker) {
