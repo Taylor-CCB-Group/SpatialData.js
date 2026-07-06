@@ -23,6 +23,7 @@ import {
 import { createPortal } from 'react-dom';
 import { ImageChannelPanelFromStore } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
+import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
@@ -438,6 +439,9 @@ function SpatialCanvasInner({
     hasEnabledLayers,
     hasLayersDrawn,
     hasRenderableLayerData,
+    requestPointsFeatureCatalog,
+    getPointsFeatureCatalog,
+    isPointsFeatureCatalogLoading,
     isBlocking,
     isLoading,
     vivLayerProps,
@@ -848,6 +852,16 @@ function SpatialCanvasInner({
                       }
                     />
                   </label>
+                )}
+                {selectedConfig.type === 'points' && (
+                  <PointsFeatureFilterPanel
+                    layerId={selectedConfig.id}
+                    config={selectedConfig}
+                    catalog={getPointsFeatureCatalog(selectedConfig.id)}
+                    catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
+                    onRequestCatalog={requestPointsFeatureCatalog}
+                    updateLayer={actions.updateLayer}
+                  />
                 )}
                 {selectedLayerLoadState && (
                   <div

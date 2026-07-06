@@ -23,6 +23,7 @@ import {
   type LabelsElement,
   type LabelsTooltipMetadata,
   type PointsElement,
+  type PointsFeatureCatalog,
   type ShapesElement,
   type ShapesRenderData,
   type ShapesTooltipMetadata,
@@ -211,6 +212,13 @@ interface UseLayerDataResult {
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
+  /** Trigger the points feature-catalog build for a layer (idempotent). */
+  requestPointsFeatureCatalog: (layerId: string) => void;
+  /** The points feature catalog: `undefined` until requested/settled, `null`
+   * when the element has no `feature_key`, else the catalog. */
+  getPointsFeatureCatalog: (layerId: string) => PointsFeatureCatalog | null | undefined;
+  /** Whether the points feature catalog is currently being built. */
+  isPointsFeatureCatalogLoading: (layerId: string) => boolean;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -1160,6 +1168,42 @@ export function useLayerData(
     return false;
   }, [pointsEngine]);
 
+  // --- Points feature catalog (filter panel) ---------------------------------
+  // Thin bindings over the engine's catalog cache. Reactivity is via the engine
+  // subscription wired at construction (notify -> notifyLoadedDataChanged ->
+  // re-render), so these read live engine state each render.
+
+  const requestPointsFeatureCatalog = useCallback(
+    (layerId: string): void => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return;
+      void pointsEngine.ensureFeatureCatalog({
+        key: elem.key,
+        layerId,
+        element: elem.element as PointsElement,
+      });
+    },
+    [pointsEngine]
+  );
+
+  const getPointsFeatureCatalog = useCallback(
+    (layerId: string): PointsFeatureCatalog | null | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return undefined;
+      return pointsEngine.getFeatureCatalog(elem.key);
+    },
+    [pointsEngine]
+  );
+
+  const isPointsFeatureCatalogLoading = useCallback(
+    (layerId: string): boolean => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return false;
+      return pointsEngine.isFeatureCatalogLoading(elem.key);
+    },
+    [pointsEngine]
+  );
+
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
       try {
@@ -1724,6 +1768,9 @@ export function useLayerData(
     getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
+    requestPointsFeatureCatalog,
+    getPointsFeatureCatalog,
+    isPointsFeatureCatalogLoading,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,
