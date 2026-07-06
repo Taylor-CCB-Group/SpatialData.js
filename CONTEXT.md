@@ -40,6 +40,26 @@ _Avoid_: serializable prop, stack entry prop
 A small MDV/control-layer UI area that edits observable state directly while passing plain values through renderer and third-party boundaries.
 _Avoid_: MobX renderer contract
 
+**Points Feature**:
+The categorical identity of a point, read from the points parquet column named by that element's `.zattrs` `feature_key` (e.g. `feature_name` — a gene/transcript species). This is the key that points **filter** and **colour-by** operate on. Distinct from the shape/table sense of "feature" (a column of an annotation `table`); a points element usually has no annotation table — the point *is* its own row.
+_Avoid_: assuming the column is literally `feature_name`; conflating with table-annotation features or `table.vars`
+
+**Feature Code**:
+An integer standing in for a **Points Feature** value. Authoritative only when the store emits an explicit `{feature_key}_codes` column (e.g. `feature_name_codes`), which is a global namespace aligned with the feature catalog. A dictionary-encoded `feature_key` column is **not** a code source: its dictionary indices are local to a chunk/row-group/part and must be mapped through the catalog by decoded string, never treated as global codes.
+_Avoid_: treating dictionary indices as global codes
+
+**Instance Key**:
+The points parquet column named by `.zattrs` `instance_key` (e.g. `cell_id`) — the instance a point belongs to. Reserved for future instance/table linking; not used in the current MVP.
+_Avoid_: wiring instance-key behaviour into MVP filter/colour/tooltip
+
+**Point Attribute Column**:
+Any other column of the same points parquet row (`x`, `y`, `z`, `qv`, `overlaps_nucleus`, …), surfaced in a per-point **tooltip**. Not the filter/colour key.
+_Avoid_: calling the points tooltip a "feature tooltip"; pulling tooltip values from a joined table in MVP
+
+**Feature Highlight**:
+Transient, interactive emphasis of *all* points belonging to one chosen **Points Feature** (e.g. hovering a gene in the catalog panel brightens its points and de-emphasises the rest). It is ephemeral **runtime** state — a cheap recolor/re-emphasis of the already-resident batch with **no reload or refilter** — not part of the serializable colour encoding or **Render Stack** config. Distinct from deck.gl `autoHighlight`, which emphasises a single *picked point*, not a whole feature.
+_Avoid_: persisting highlight into the Stack Entry; conflating with per-object `autoHighlight`; reloading geometry on highlight change
+
 ## Relationships
 
 - A **Render Stack** contains zero or more ordered **Stack Entries**.
