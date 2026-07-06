@@ -14,6 +14,7 @@ export {
   scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
   setPointsWorkerDefaultEnabled,
+  setPointsWorkerRequestTimeout,
   transferablesForParquetPayload,
 } from './pointsWorkerClient.js';
 

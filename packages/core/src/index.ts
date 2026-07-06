@@ -32,6 +32,7 @@ export {
   filterColumnarByFeatureCodesInWorker,
   isPointsWorkerEnabled,
   setPointsWorkerDefaultEnabled,
+  setPointsWorkerRequestTimeout,
 } from './workers/index.js';
 export {
   createMortonTiledPointsLoader,

@@ -133,5 +133,19 @@ strategy — not a big-bang rewrite of the god-hook.
    escape hatch and "all on" is the least surprising.)
 2. Worker-backed catalog: dictionary-from-metadata fast path vs. same-bytes
    off-thread decode. (Status doc P0 recommends metadata fast path first.)
+   **Finding (2026-07-06, live on a real Xenium `transcripts`):** the current
+   worker catalog path (`readParquetWorkerPayload` with `fullPartsForFallback` →
+   `scanParquetFeatureCatalogInWorker`) fetches the **entire** parquet file
+   before scanning, whereas the main-thread path does a *projected* single-column
+   range read of just the feature column. For a transcripts element with **no
+   `{feature_key}_codes` column** (so the cheap row-group *dictionary-page* scan
+   can't run), enabling the worker regressed catalog build from ~20s to >150s.
+   The request timeout in `pointsWorkerClient` (added this cycle) makes a silent
+   worker fall back safely, but does **not** fix this — the fetch is before the
+   worker call. **Next perf task:** give the worker a *projected/dictionary-only*
+   payload path (fetch only the feature column, or read dictionary pages) so
+   worker-offload is a win, not a regression — only then enable the worker in the
+   demo for catalog building. Until then the demo keeps the (blocking but faster)
+   main-thread path.
 3. Engine submodule placement and one-object-vs-per-type facade — deferred to the
    decomposition plan's open questions.

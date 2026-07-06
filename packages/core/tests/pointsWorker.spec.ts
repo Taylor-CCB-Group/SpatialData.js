@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   decodeParquetRowFeatureCodesInWorker,
   disablePointsWorker,
+  enablePointsWorker,
   filterColumnarByFeatureCodesInWorker,
   scanParquetFeatureCatalogInWorker,
   setPointsWorkerDefaultEnabled,
+  setPointsWorkerRequestTimeout,
 } from '../src/workers/pointsWorkerClient.js';
 import { filterColumnarByFeatureCodes as filterSync } from '../src/pointsTiling.js';
 
@@ -46,5 +48,43 @@ describe('points worker client', () => {
       featureKey: 'feature_name',
     });
     expect(result).toBeNull();
+  });
+
+  describe('timeout fallback for a silent worker', () => {
+    const originalWorker = (globalThis as { Worker?: unknown }).Worker;
+
+    afterEach(() => {
+      disablePointsWorker();
+      setPointsWorkerRequestTimeout(30_000);
+      setPointsWorkerDefaultEnabled(false);
+      (globalThis as { Worker?: unknown }).Worker = originalWorker;
+    });
+
+    it('rejects (so the caller can fall back) when an enabled worker never replies', async () => {
+      // A worker that loads but never posts a response — the exact hang the
+      // opt-in default guards against, here caught by the request timeout.
+      class SilentWorker {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: ((event: unknown) => void) | null = null;
+        postMessage() {
+          /* deliberately never reply */
+        }
+        terminate() {
+          /* no-op */
+        }
+      }
+      (globalThis as { Worker?: unknown }).Worker = SilentWorker;
+
+      enablePointsWorker({ workerUrl: 'about:blank' });
+      setPointsWorkerRequestTimeout(30);
+
+      await expect(
+        scanParquetFeatureCatalogInWorker({
+          parts: [new Uint8Array([1, 2, 3])],
+          columns: ['feature_name'],
+          featureKey: 'feature_name',
+        })
+      ).rejects.toThrow(/did not respond within 30ms/);
+    });
   });
 });
