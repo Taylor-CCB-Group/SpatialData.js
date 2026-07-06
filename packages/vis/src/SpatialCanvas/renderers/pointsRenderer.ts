@@ -19,8 +19,9 @@ export interface PointDataX {
 // not that we wouldn't also want to be able to have other data & accessors
 export interface PointData {
   shape: number[];
-  // this should most definitely be TypedArray...
-  data: number[][];
+  // Columns may be plain arrays or TypedArrays; the core loader now returns
+  // ArrayLike columns (PointsLoadResult), so keep this widened to match.
+  data: ArrayLike<number>[];
 }
 
 export interface PointsLayerRenderConfig {
