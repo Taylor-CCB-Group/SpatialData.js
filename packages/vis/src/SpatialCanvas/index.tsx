@@ -824,6 +824,31 @@ function SpatialCanvasInner({
                     }
                   />
                 </label>
+                {selectedConfig.type === 'points' && (
+                  <label
+                    style={{
+                      color: '#ccc',
+                      fontSize: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    Point size ({(selectedConfig.pointSize ?? 1).toFixed(1)} px)
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={12}
+                      step={0.1}
+                      value={selectedConfig.pointSize ?? 1}
+                      onChange={(e) =>
+                        actions.updateLayer(selectedConfig.id, {
+                          pointSize: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                )}
                 {selectedLayerLoadState && (
                   <div
                     style={{
