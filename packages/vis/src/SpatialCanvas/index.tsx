@@ -834,7 +834,7 @@ function SpatialCanvasInner({
                       gap: 4,
                     }}
                   >
-                    Point size ({(selectedConfig.pointSize ?? 1).toFixed(1)} px)
+                    Point size ({(selectedConfig.pointSize ?? 1).toFixed(1)})
                     <input
                       type="range"
                       min={0.1}

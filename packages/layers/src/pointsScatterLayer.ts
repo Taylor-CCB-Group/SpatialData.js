@@ -46,14 +46,16 @@ export function renderColumnarScatterLayer(
 ) {
   const pointData = pointDataFromColumnarBatch(batch);
   const d = pointData.data;
-  const effectivePointSize = props.tileSubLayer
-    ? props.pointSize
-    : zoomScaledPointSize(
-        props.pointSize,
-        props.viewZoom,
-        POINT_SIZE_ZOOM_REFERENCE,
-        props.pointMinSizeScale ?? MIN_POINT_SIZE_SCALE
-      );
+
+  // Preloaded scatter sizes points in WORLD (common) units so the GPU scales
+  // them with zoom — points shrink when you zoom out, which is exactly where
+  // scatter overdraw is worst — while `radiusMinPixels`/`radiusMaxPixels` clamp
+  // the projected radius so points never vanish or bloat. The Morton tile path
+  // keeps fixed pixel sizing (tiles are already viewport-bounded).
+  const isTile = props.tileSubLayer === true;
+  const radiusUnits: 'common' | 'pixels' = isTile ? 'pixels' : 'common';
+  const radiusMinPixels = props.pointRadiusMinPixels ?? DEFAULT_POINT_RADIUS_MIN_PIXELS;
+  const radiusMaxPixels = props.pointRadiusMaxPixels ?? DEFAULT_POINT_RADIUS_MAX_PIXELS;
 
   const pointCount = batch.pointCount ?? batch.shape[1] ?? d[0]?.length ?? 0;
 
@@ -67,14 +69,10 @@ export function renderColumnarScatterLayer(
       d[1][index],
       props.use3d ? d[2]?.[index] || 0 : 0,
     ],
-    getRadius: effectivePointSize,
-    ...(props.tileSubLayer
-      ? {
-          radiusMinPixels: props.pointRadiusMinPixels ?? DEFAULT_POINT_RADIUS_MIN_PIXELS,
-          radiusMaxPixels: props.pointRadiusMaxPixels ?? DEFAULT_POINT_RADIUS_MAX_PIXELS,
-        }
-      : {}),
-    radiusUnits: 'pixels',
+    getRadius: props.pointSize,
+    radiusUnits,
+    radiusMinPixels,
+    radiusMaxPixels,
     getFillColor: props.color,
     opacity: props.opacity,
     modelMatrix: props.modelMatrix,
@@ -83,13 +81,7 @@ export function renderColumnarScatterLayer(
     highlightColor: [255, 255, 0, 200],
     updateTriggers: {
       getPosition: [pointCount, d[0], d[1], d[2]],
-      getRadius: [
-        props.pointSize,
-        props.viewZoom,
-        props.pointRadiusMinPixels,
-        props.pointRadiusMaxPixels,
-        props.pointMinSizeScale,
-      ],
+      getRadius: [props.pointSize],
     },
   });
 }
