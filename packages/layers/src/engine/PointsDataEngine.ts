@@ -146,9 +146,21 @@ export class PointsDataEngine {
 
     const loading = (async () => {
       try {
-        const data = await element.loadPoints();
+        // Read the feature column with the geometry so the filter's catalog and
+        // per-row codes come from this one decode — no separate blocking load at
+        // filter time. They are stored as resident (settled) state below; the
+        // ensureFeatureCatalog / ensureRowFeatureCodes methods then no-op.
+        const data = await element.loadPoints({ includeFeatureCodes: true });
         entry.data = data;
         entry.status = 'ready';
+        if (data.featureCatalog !== undefined) {
+          entry.catalog = data.featureCatalog;
+          entry.catalogLoaded = true;
+        }
+        if (data.featureCodes !== undefined) {
+          entry.rowCodes = data.featureCodes;
+          entry.rowCodesLoaded = true;
+        }
         this.callbacks.onStatus?.(layerId, 'ready');
       } catch (error) {
         entry.status = 'error';
@@ -176,7 +188,14 @@ export class PointsDataEngine {
   }
 
   isFeatureCatalogLoading(key: string): boolean {
-    return this.entries.get(key)?.catalogLoading !== undefined;
+    const entry = this.entries.get(key);
+    if (!entry || entry.catalogLoaded) {
+      return false;
+    }
+    // The catalog rides the geometry preload (includeFeatureCodes), so a running
+    // geometry load counts as the catalog loading too — the panel shows a
+    // spinner rather than a premature "load feature list" prompt.
+    return entry.catalogLoading !== undefined || entry.loading !== undefined;
   }
 
   /**

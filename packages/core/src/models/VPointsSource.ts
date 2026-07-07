@@ -273,8 +273,35 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const maxRows = truncatePreload ? memoryCap : rowCount;
     const columnNames = [...axisNames];
 
+    // Optionally read the feature column(s) in the same projected, capped preload
+    // so the filter's catalog + per-row codes come from one decode — no separate
+    // blocking load at filter time (PointsLoadOptions.includeFeatureCodes).
+    const configuredFeatureKey = zattrs.spatialdata_attrs?.feature_key;
+    const wantFeatures =
+      options.includeFeatureCodes === true &&
+      typeof configuredFeatureKey === 'string' &&
+      configuredFeatureKey.length > 0;
+    const featureKey = wantFeatures ? (configuredFeatureKey as string) : undefined;
+    let featureCodeColumnName: string | undefined;
+    if (featureKey) {
+      const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+      const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+      const fields = datasetMetadata?.schema?.fields
+        ? datasetMetadata.schema.fields.flatMap((field) =>
+            typeof field.name === 'string' ? [field.name] : []
+          )
+        : arrowSchemaFieldNames(schemaTable);
+      featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+      columnNames.push(featureKey);
+      if (featureCodeColumnName) {
+        columnNames.push(featureCodeColumnName);
+      }
+    }
+
     ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    // The worker geometry decode is axis-only; when the feature column is wanted
+    // we stay on the main thread so the one decode also yields codes + catalog.
+    if (isPointsWorkerEnabled() && !featureKey) {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
         const workerGeometry = await decodeParquetGeometryCappedInWorker(
@@ -315,11 +342,38 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return column.toArray();
     });
 
+    let featureCodes: ArrayLike<number> | undefined;
+    let featureCatalog: PointsFeatureCatalog | undefined;
+    if (featureKey) {
+      const nameColumn = arrowTable.getChild(featureKey);
+      if (nameColumn) {
+        const codeColumn = featureCodeColumnName ? arrowTable.getChild(featureCodeColumnName) : null;
+        featureCatalog = buildFeatureCatalogFromColumns(
+          featureKey,
+          nameColumn,
+          codeColumn ?? null,
+          null,
+          arrowTable.numRows
+        );
+        const featureCodeByName = featureCodeColumnName
+          ? undefined
+          : featureCodeMapFromCatalog(featureCatalog);
+        featureCodes = resolveRowFeatureCodesFromTable(
+          arrowTable,
+          featureKey,
+          featureCodeColumnName,
+          featureCodeByName
+        );
+      }
+    }
+
     return {
       shape: [axisColumnArrs.length, arrowTable.numRows],
       data: axisColumnArrs,
       totalRowCount: totalRows,
       preloadTruncated: truncated,
+      ...(featureCodes ? { featureCodes } : {}),
+      ...(featureCatalog ? { featureCatalog } : {}),
     };
   }
 

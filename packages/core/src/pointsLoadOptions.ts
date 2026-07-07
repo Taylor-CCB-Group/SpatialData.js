@@ -1,3 +1,5 @@
+import type { PointsFeatureCatalog } from './pointsTiling.js';
+
 export interface PointsLoadProgress {
   scannedRows: number;
   matchedRows: number;
@@ -17,12 +19,23 @@ export interface PointsLoadOptions {
    * Default UI uses in-memory runtime filtering instead.
    */
   fullDatasetFeatureScan?: boolean;
+  /**
+   * Read the feature column alongside the geometry in the same (projected,
+   * capped) preload, and derive per-row feature codes + the feature catalog from
+   * that one decode. Lets the feature filter work with no separate, blocking
+   * catalog/row-code load at filter time. The catalog reflects the *resident*
+   * (preloaded) rows — i.e. the features present in the points actually drawn.
+   */
+  includeFeatureCodes?: boolean;
 }
 
 export interface PointsLoadResult {
   shape: number[];
   data: ArrayLike<number>[];
   featureCodes?: ArrayLike<number>;
+  /** Catalog derived from the resident feature column (present when the load was
+   * requested with {@link PointsLoadOptions.includeFeatureCodes}). */
+  featureCatalog?: PointsFeatureCatalog;
   totalRowCount?: number;
   preloadTruncated?: boolean;
   /** Rows scanned when loading with an active feature filter. */

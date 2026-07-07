@@ -271,3 +271,61 @@ describe('PointsDataEngine — row feature codes', () => {
     expect(engine.hasRowFeatureCodes('pts:rc5')).toBe(false);
   });
 });
+
+describe('PointsDataEngine — codes with the geometry preload', () => {
+  it('makes catalog + row codes resident from one load and no-ops the lazy paths', async () => {
+    const catalog = sampleCatalog;
+    const loadPoints = vi.fn(async () => ({
+      ...makeBatch(),
+      featureCatalog: catalog,
+      featureCodes: new Int32Array([0, 1, 0]),
+    }));
+    const listFeaturesWithCounts = vi.fn(async () => catalog);
+    const loadRowFeatureCodes = vi.fn(async () => new Int32Array([0, 1, 0]));
+    const element = {
+      key: 'pts:res',
+      loadPoints,
+      listFeaturesWithCounts,
+      loadRowFeatureCodes,
+    } as unknown as PointsElement;
+    const engine = new PointsDataEngine();
+
+    await engine.ensureLoaded({ key: 'pts:res', layerId: 'l', element });
+
+    // The preload requested the feature column, and both catalog and codes are
+    // now resident — no separate file loads needed.
+    expect(loadPoints).toHaveBeenCalledWith({ includeFeatureCodes: true });
+    expect(engine.getFeatureCatalog('pts:res')).toEqual(catalog);
+    expect(engine.hasRowFeatureCodes('pts:res')).toBe(true);
+    expect(Array.from(engine.getRowFeatureCodes('pts:res')!)).toEqual([0, 1, 0]);
+    expect(engine.isFeatureCatalogLoading('pts:res')).toBe(false);
+
+    // The lazy catalog / row-code paths become no-ops (no redundant scans).
+    await engine.ensureFeatureCatalog({ key: 'pts:res', layerId: 'l', element });
+    await engine.ensureRowFeatureCodes({ key: 'pts:res', layerId: 'l', element });
+    expect(listFeaturesWithCounts).not.toHaveBeenCalled();
+    expect(loadRowFeatureCodes).not.toHaveBeenCalled();
+  });
+
+  it('reports the catalog as loading while the geometry preload is in flight', async () => {
+    let resolveLoad: (v: unknown) => void = () => {};
+    const loadPoints = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve;
+        })
+    );
+    const element = { key: 'pts:inflight', loadPoints } as unknown as PointsElement;
+    const engine = new PointsDataEngine();
+
+    const p = engine.ensureLoaded({ key: 'pts:inflight', layerId: 'l', element });
+    // Geometry (which carries the catalog) is loading → catalog counts as loading.
+    expect(engine.isFeatureCatalogLoading('pts:inflight')).toBe(true);
+    expect(engine.getFeatureCatalog('pts:inflight')).toBeUndefined();
+
+    resolveLoad({ ...makeBatch(), featureCatalog: sampleCatalog, featureCodes: new Int32Array([0]) });
+    await p;
+    expect(engine.isFeatureCatalogLoading('pts:inflight')).toBe(false);
+    expect(engine.getFeatureCatalog('pts:inflight')).toEqual(sampleCatalog);
+  });
+});
