@@ -1,4 +1,9 @@
-import type { PointsElement, PointsFeatureCatalog, PointsLoadResult } from '@spatialdata/core';
+import {
+  DEFAULT_POINTS_MEMORY_CAP,
+  type PointsElement,
+  type PointsFeatureCatalog,
+  type PointsLoadResult,
+} from '@spatialdata/core';
 import { pointsRenderResourceSignature, resolvePointsRenderResource } from '../resolvePointsRenderResource.js';
 import type { PointsRenderResource } from '../pointsLoader.js';
 
@@ -69,6 +74,11 @@ interface PointsEntry {
    * `residentCodesSource` (see `getResidentFeatureCodes`). */
   residentCodes?: ReadonlySet<number>;
   residentCodesSource?: ArrayLike<number>;
+  /** Whole-dataset points for the active selection, loaded via the feature-index
+   * scan and keyed by the selected-codes `signature` so a selection change
+   * rebuilds it. `resource` is the stable render resource, built lazily. */
+  matching?: { signature: string; result: PointsLoadResult; resource?: PointsRenderResource };
+  matchingLoading?: { signature: string; promise: Promise<void> };
 }
 
 export class PointsDataEngine {
@@ -140,6 +150,91 @@ export class PointsDataEngine {
       entry.resource = { signature, resource };
     }
     return resource;
+  }
+
+  // --- Feature-index render scan (whole-dataset load of a selection) ----------
+
+  /** Order-independent cache key for a selected-codes set. */
+  private static matchingSignature(featureCodes: readonly number[]): string {
+    return [...featureCodes].sort((left, right) => left - right).join(',');
+  }
+
+  /**
+   * Idempotently load the whole-dataset points for the selected feature codes via
+   * the feature-index scan (footer stats skip non-matching row groups). Keyed by
+   * the selection signature, so it no-ops while the same selection is resident or
+   * in flight and reloads when the selection changes. Settles → `notify()`.
+   */
+  ensureMatchingFeaturesLoaded(
+    target: PointsLoadTarget,
+    featureCodes: readonly number[],
+    memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
+  ): Promise<void> {
+    const { key, element } = target;
+    const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
+    this.entries.set(key, entry);
+    const signature = PointsDataEngine.matchingSignature(featureCodes);
+    if (entry.matching?.signature === signature) {
+      return Promise.resolve();
+    }
+    if (entry.matchingLoading?.signature === signature) {
+      return entry.matchingLoading.promise;
+    }
+
+    const promise = (async () => {
+      try {
+        const result = await element.loadPointsMatchingFeatureCodes({
+          featureCodes,
+          memoryCap,
+        });
+        entry.matching = { signature, result };
+      } catch (error) {
+        console.error(`Failed feature-index scan for ${target.layerId}:`, error);
+      } finally {
+        if (entry.matchingLoading?.signature === signature) {
+          entry.matchingLoading = undefined;
+        }
+        this.notify();
+      }
+    })();
+    entry.matchingLoading = { signature, promise };
+    // Surface the loading transition, but DEFER it: this method is kicked from
+    // `getLayers` *during* render, so a synchronous notify would setState mid-
+    // render. A microtask runs after the current render commits.
+    queueMicrotask(() => this.notify());
+    return promise;
+  }
+
+  /** Stable render resource for the resident matched selection, or null if the
+   * scan for this selection has not settled. Built lazily and cached per
+   * selection so panning does not reset the composite's batch. */
+  getMatchingResource(
+    element: PointsElement,
+    key: string,
+    featureCodes: readonly number[]
+  ): PointsRenderResource | null {
+    const entry = this.entries.get(key);
+    const signature = PointsDataEngine.matchingSignature(featureCodes);
+    if (!entry?.matching || entry.matching.signature !== signature) {
+      return null;
+    }
+    if (entry.matching.resource) {
+      return entry.matching.resource;
+    }
+    const cache = { preloaded: entry.matching.result, metadataKnown: false };
+    const resource = resolvePointsRenderResource(element, cache, {
+      experimentalOptimizations: 'off' as const,
+    });
+    if (resource) {
+      entry.matching.resource = resource;
+    }
+    return resource;
+  }
+
+  /** Whether the feature-index scan for this exact selection is in flight. */
+  isMatchingLoading(key: string, featureCodes: readonly number[]): boolean {
+    const entry = this.entries.get(key);
+    return entry?.matchingLoading?.signature === PointsDataEngine.matchingSignature(featureCodes);
   }
 
   /**

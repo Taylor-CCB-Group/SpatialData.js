@@ -46,6 +46,7 @@ import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
+  type PointsRenderResource,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
@@ -1376,43 +1377,67 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       } else if (config.type === 'points') {
-        // The engine returns a STABLE render resource (memoized by signature),
-        // so re-running getLayers every pan/zoom frame reuses the same loader
-        // identity and the composite does not reset its batch (no flashing).
-        const resource = pointsEngine.getResource(elem.element as PointsElement, elem.key);
-        if (resource) {
-          // Feature filter: when a selection is active, ensure the row feature
-          // codes (the mask, aligned to the resident batch) are loaded. The
-          // engine call is idempotent, so kicking it here is a cheap no-op once
-          // loaded/in-flight; on settle it notifies → re-render → codes flow in.
-          // The composite only filters once BOTH featureCodes and
-          // preloadedFeatureCodes are present, so it draws unfiltered until then.
-          const filterActive = config.featureCodes !== undefined;
-          if (filterActive && !pointsEngine.hasRowFeatureCodes(elem.key)) {
-            void pointsEngine.ensureRowFeatureCodes({
-              key: elem.key,
-              layerId,
-              element: elem.element as PointsElement,
-            });
-          }
-          const preloadedFeatureCodes = filterActive
-            ? pointsEngine.getRowFeatureCodes(elem.key)
-            : undefined;
+        const element = elem.element as PointsElement;
+        const featureCodes = config.featureCodes;
+        const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
+
+        // Feature-index render scan: when a selection is active, load the WHOLE
+        // dataset's matching points (footer stats skip the row groups a selected
+        // feature can't live in), so features outside the resident preload window
+        // still render. The scan is idempotent per selection; kicking it here is a
+        // no-op once resident/in-flight. On settle it notifies → re-render → the
+        // matched resource appears below.
+        let matchingResource: PointsRenderResource | null = null;
+        if (selectionActive) {
+          void pointsEngine.ensureMatchingFeaturesLoaded({ key: elem.key, layerId, element }, featureCodes);
+          matchingResource = pointsEngine.getMatchingResource(element, elem.key, featureCodes);
+        }
+
+        if (matchingResource) {
+          // The matched batch is already filtered to the selection across the whole
+          // dataset — render it directly (no resident-mask filtering needed).
           deckLayers.push(
             new PointsLayer({
               id: layerId,
-              resource,
+              resource: matchingResource,
               modelMatrix: elem.transform,
               opacity: config.opacity,
               visible: config.visible,
-              // Legacy renderPointsLayer defaulted radius to 1px; preserve that
-              // for parity (the composite's own default is smaller).
               pointSize: config.pointSize ?? 1,
               ...(config.color ? { color: config.color } : {}),
-              ...(config.featureCodes ? { featureCodes: config.featureCodes } : {}),
-              ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
             })
           );
+        } else {
+          // Resident batch: the default view (no selection), and an instant preview
+          // of the resident subset while the feature-index scan is still running.
+          // The engine returns a STABLE render resource (memoized by signature), so
+          // re-running getLayers every pan/zoom frame reuses the same loader
+          // identity and the composite does not reset its batch (no flashing).
+          const resource = pointsEngine.getResource(element, elem.key);
+          if (resource) {
+            const filterActive = featureCodes !== undefined;
+            if (filterActive && !pointsEngine.hasRowFeatureCodes(elem.key)) {
+              void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
+            }
+            const preloadedFeatureCodes = filterActive
+              ? pointsEngine.getRowFeatureCodes(elem.key)
+              : undefined;
+            deckLayers.push(
+              new PointsLayer({
+                id: layerId,
+                resource,
+                modelMatrix: elem.transform,
+                opacity: config.opacity,
+                visible: config.visible,
+                // Legacy renderPointsLayer defaulted radius to 1px; preserve that
+                // for parity (the composite's own default is smaller).
+                pointSize: config.pointSize ?? 1,
+                ...(config.color ? { color: config.color } : {}),
+                ...(featureCodes ? { featureCodes } : {}),
+                ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
+              })
+            );
+          }
         }
       } else if (config.type === 'labels') {
         const labelsData = loaded.labels.get(elem.key);

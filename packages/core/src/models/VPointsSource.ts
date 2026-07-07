@@ -17,6 +17,10 @@ import {
   scanParquetFeatureCountsInWorker,
 } from '../workers/pointsWorkerClient.js';
 import { exceedsPointsPreloadLimit, resolvePointsMemoryCap } from '../pointsLimits.js';
+import {
+  decodeIntStat,
+  parseParquetFileMetaData,
+} from '../parquetFooterStats.js';
 import type {
   PointsLoadOptions,
   PointsLoadProgress,
@@ -26,6 +30,68 @@ import type {
 interface ColumnarPointsChunk {
   shape: number[];
   data: ArrayLike<number>[];
+}
+
+/** Inclusive `[min, max]` code range a row group's feature-code column spans. */
+interface FeatureCodeExtent {
+  min: number;
+  max: number;
+}
+
+/**
+ * Per-row-group `[min, max]` for the feature-code column, parsed from each part's
+ * footer statistics and flattened into global row-group order. Powers the
+ * feature-primary index: a row group whose range can't contain any selected code
+ * is skipped without fetching it. Returns `[]` to signal "stats unavailable —
+ * scan everything" (footer parse failed, a column had no statistics, or the
+ * flattened count didn't match the dataset's row-group count). An entry is `null`
+ * when that specific row group lacks usable stats, so it is scanned rather than
+ * wrongly skipped.
+ */
+function rowGroupFeatureCodeExtents(
+  parts: readonly { schemaBytes: Uint8Array }[],
+  featureCodeColumnName: string,
+  expectedRowGroupCount: number
+): Array<FeatureCodeExtent | null> {
+  const extents: Array<FeatureCodeExtent | null> = [];
+  for (const part of parts) {
+    // `schemaBytes` is the parquet footer: FileMetaData thrift + trailing 4-byte
+    // length + "PAR1". Strip the trailing 8 to get the FileMetaData for the parser.
+    if (part.schemaBytes.length <= 8) {
+      return [];
+    }
+    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
+    let footer;
+    try {
+      footer = parseParquetFileMetaData(metaBytes);
+    } catch {
+      return [];
+    }
+    for (const rowGroup of footer.rowGroups) {
+      const column = rowGroup.columns.find((col) => col.path === featureCodeColumnName);
+      if (!column) {
+        extents.push(null);
+        continue;
+      }
+      const min = decodeIntStat(column.minValue, column.physicalType);
+      const max = decodeIntStat(column.maxValue, column.physicalType);
+      extents.push(min !== null && max !== null ? { min, max } : null);
+    }
+  }
+  return extents.length === expectedRowGroupCount ? extents : [];
+}
+
+/** Whether a row group's code range can contain any selected code. `null` extent
+ * (missing stats) is treated as "might match" so it is scanned, not skipped. */
+function extentMayContainSelectedCodes(
+  extent: FeatureCodeExtent | null,
+  selectedMin: number,
+  selectedMax: number
+): boolean {
+  if (!extent) {
+    return true;
+  }
+  return extent.max >= selectedMin && extent.min <= selectedMax;
 }
 
 function emptyFilteredPointsResult(axisNames: string[], totalRowCount: number): PointsLoadResult {
@@ -422,7 +488,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return parts.length > 0 ? { parts } : null;
   }
 
-  private async loadPointsMatchingFeatureCodes(
+  async loadPointsMatchingFeatureCodes(
     elementPath: string,
     options: {
       memoryCap: number;
@@ -476,9 +542,35 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
 
     if (canUseRowGroups && datasetRowGroups > 0) {
+      // Feature-primary index: skip row groups whose feature-code range cannot
+      // contain any selected code. For a feature-ordered file this leaves only
+      // the few row groups a gene actually lives in, so we fetch/decode almost
+      // nothing; unsorted files get `[]` (no stats) and fall back to a full scan.
+      const selectedMin = Math.min(...options.featureCodes);
+      const selectedMax = Math.max(...options.featureCodes);
+      const rowGroupExtents =
+        featureCodeColumnName && datasetMetadata
+          ? rowGroupFeatureCodeExtents(
+              datasetMetadata.parts,
+              featureCodeColumnName,
+              datasetRowGroups
+            )
+          : [];
+      const canSkipRowGroups = rowGroupExtents.length === datasetRowGroups;
+
       for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
         if (matchedRows >= options.memoryCap) {
           break;
+        }
+        if (
+          canSkipRowGroups &&
+          !extentMayContainSelectedCodes(
+            rowGroupExtents[rowGroupIndex],
+            selectedMin,
+            selectedMax
+          )
+        ) {
+          continue;
         }
         const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
         if (!chunk) {
