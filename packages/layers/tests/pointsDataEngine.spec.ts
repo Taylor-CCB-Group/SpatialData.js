@@ -273,14 +273,26 @@ describe('PointsDataEngine — row feature codes', () => {
 });
 
 describe('PointsDataEngine — codes with the geometry preload', () => {
-  it('makes catalog + row codes resident from one load and no-ops the lazy paths', async () => {
-    const catalog = sampleCatalog;
+  it('shows an instant preview catalog, then supersedes it with the full-dataset scan', async () => {
+    // The geometry preload's catalog reflects only the resident batch (a
+    // feature-ordered file's first part holds a slice of the features), so it is
+    // an instant *preview*. The full-dataset scan supersedes it with the complete
+    // list + counts. Row codes are complete for the resident batch, so their lazy
+    // path stays a no-op.
+    const previewCatalog = sampleCatalog;
+    const fullCatalog = {
+      ...sampleCatalog,
+      entries: [
+        ...sampleCatalog.entries,
+        { code: 99, name: 'LATE_PART_GENE', count: 7 },
+      ],
+    };
     const loadPoints = vi.fn(async () => ({
       ...makeBatch(),
-      featureCatalog: catalog,
+      featureCatalog: previewCatalog,
       featureCodes: new Int32Array([0, 1, 0]),
     }));
-    const listFeaturesWithCounts = vi.fn(async () => catalog);
+    const listFeaturesWithCounts = vi.fn(async () => fullCatalog);
     const loadRowFeatureCodes = vi.fn(async () => new Int32Array([0, 1, 0]));
     const element = {
       key: 'pts:res',
@@ -292,19 +304,26 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
 
     await engine.ensureLoaded({ key: 'pts:res', layerId: 'l', element });
 
-    // The preload requested the feature column, and both catalog and codes are
-    // now resident — no separate file loads needed.
+    // The preload requested the feature column: the preview catalog and the row
+    // codes are resident with no separate file loads, and the preview shows
+    // without a loading spinner.
     expect(loadPoints).toHaveBeenCalledWith({ includeFeatureCodes: true });
-    expect(engine.getFeatureCatalog('pts:res')).toEqual(catalog);
+    expect(engine.getFeatureCatalog('pts:res')).toEqual(previewCatalog);
     expect(engine.hasRowFeatureCodes('pts:res')).toBe(true);
     expect(Array.from(engine.getRowFeatureCodes('pts:res')!)).toEqual([0, 1, 0]);
     expect(engine.isFeatureCatalogLoading('pts:res')).toBe(false);
 
-    // The lazy catalog / row-code paths become no-ops (no redundant scans).
+    // The full-dataset catalog scan runs (even with a preview present) and
+    // supersedes the preview; the row-code lazy path stays a no-op.
     await engine.ensureFeatureCatalog({ key: 'pts:res', layerId: 'l', element });
     await engine.ensureRowFeatureCodes({ key: 'pts:res', layerId: 'l', element });
-    expect(listFeaturesWithCounts).not.toHaveBeenCalled();
+    expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);
+    expect(engine.getFeatureCatalog('pts:res')).toEqual(fullCatalog);
     expect(loadRowFeatureCodes).not.toHaveBeenCalled();
+
+    // A second call is a no-op once the full scan has settled.
+    await engine.ensureFeatureCatalog({ key: 'pts:res', layerId: 'l', element });
+    expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);
   });
 
   it('reports the catalog as loading while the geometry preload is in flight', async () => {

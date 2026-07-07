@@ -55,18 +55,31 @@ interface PointsEntry {
   catalog?: PointsFeatureCatalog | null;
   catalogLoaded?: boolean;
   catalogLoading?: Promise<void>;
+  /** True once the full-dataset catalog scan (`listFeaturesWithCounts`) has
+   * replaced any resident-subset preview. Until then `catalog` may reflect only
+   * the resident batch, so the full scan is allowed to run and supersede it. */
+  catalogComplete?: boolean;
   /** Per-row feature codes aligned to the resident batch (see class doc). Value
    * is `undefined` when the element exposes no feature codes; `rowCodesLoaded`
    * marks the settled state. */
   rowCodes?: ArrayLike<number>;
   rowCodesLoaded?: boolean;
   rowCodesLoading?: Promise<void>;
+  /** Memoized distinct codes in {@link rowCodes}, invalidated by identity via
+   * `residentCodesSource` (see `getResidentFeatureCodes`). */
+  residentCodes?: ReadonlySet<number>;
+  residentCodesSource?: ArrayLike<number>;
 }
 
 export class PointsDataEngine {
   private readonly entries = new Map<string, PointsEntry>();
   private readonly listeners = new Set<() => void>();
   private readonly callbacks: PointsDataEngineCallbacks;
+  /** Monotonic cache-mutation counter. Backs a `useSyncExternalStore` snapshot so
+   * React reliably re-renders on every settled load — including late async
+   * completions (e.g. the full-dataset catalog scan) that a plain subscribe →
+   * bump-a-counter → pull-during-render pattern was dropping. */
+  private version = 0;
 
   constructor(callbacks: PointsDataEngineCallbacks = {}) {
     this.callbacks = callbacks;
@@ -80,7 +93,13 @@ export class PointsDataEngine {
     };
   }
 
+  /** Snapshot for `useSyncExternalStore`: changes on every {@link notify}. */
+  getVersion(): number {
+    return this.version;
+  }
+
   private notify(): void {
+    this.version += 1;
     for (const listener of this.listeners) {
       listener();
     }
@@ -148,12 +167,15 @@ export class PointsDataEngine {
       try {
         // Read the feature column with the geometry so the filter's catalog and
         // per-row codes come from this one decode — no separate blocking load at
-        // filter time. They are stored as resident (settled) state below; the
-        // ensureFeatureCatalog / ensureRowFeatureCodes methods then no-op.
+        // filter time. The catalog here reflects only the *resident* batch, so it
+        // is an instant preview (`catalogLoaded`, not `catalogComplete`): the
+        // full-dataset `ensureFeatureCatalog` scan is still allowed to run and
+        // supersede it (a feature-ordered file's first part holds only a slice of
+        // the features). Row codes are complete for the resident batch.
         const data = await element.loadPoints({ includeFeatureCodes: true });
         entry.data = data;
         entry.status = 'ready';
-        if (data.featureCatalog !== undefined) {
+        if (data.featureCatalog !== undefined && !entry.catalogComplete) {
           entry.catalog = data.featureCatalog;
           entry.catalogLoaded = true;
         }
@@ -199,15 +221,58 @@ export class PointsDataEngine {
   }
 
   /**
-   * Idempotently build the feature catalog (feature-column scan; worker-offloaded
-   * for oversized datasets). No-op once settled or in flight. Uses
-   * `listFeaturesWithCounts` so the panel can show/sort by per-feature counts.
+   * True while the full-dataset catalog scan is still running behind an instant
+   * resident-subset preview. Lets the panel show a "loading the full feature
+   * list" hint without hiding the preview it already has.
+   */
+  isFeatureCatalogRefining(key: string): boolean {
+    const entry = this.entries.get(key);
+    return (
+      entry?.catalogLoaded === true &&
+      entry.catalogComplete !== true &&
+      entry.catalogLoading !== undefined
+    );
+  }
+
+  /**
+   * The distinct feature codes actually present in the resident batch (the
+   * preload cap means a feature-ordered file only loads a slice of its features).
+   * The panel greys features outside this set so selecting one that isn't loaded
+   * — which would render no points — is understandable rather than a glitch.
+   * Returns `undefined` when the row codes are not yet resident. Memoized against
+   * the row-codes identity so the O(rows) scan runs once per batch.
+   */
+  getResidentFeatureCodes(key: string): ReadonlySet<number> | undefined {
+    const entry = this.entries.get(key);
+    const rowCodes = entry?.rowCodes;
+    if (!entry || rowCodes === undefined) {
+      return undefined;
+    }
+    if (entry.residentCodes && entry.residentCodesSource === rowCodes) {
+      return entry.residentCodes;
+    }
+    const set = new Set<number>();
+    for (let i = 0; i < rowCodes.length; i += 1) {
+      set.add(rowCodes[i]);
+    }
+    entry.residentCodes = set;
+    entry.residentCodesSource = rowCodes;
+    return set;
+  }
+
+  /**
+   * Idempotently build the *full-dataset* feature catalog (feature-column scan;
+   * worker-offloaded for oversized datasets). Uses `listFeaturesWithCounts` so the
+   * panel can show/sort by per-feature counts. Runs even when a resident-subset
+   * preview is already showing (`catalogLoaded` but not `catalogComplete`) and
+   * supersedes it; no-op once the full scan has settled (`catalogComplete`) or is
+   * in flight.
    */
   ensureFeatureCatalog(target: PointsLoadTarget): Promise<void> {
     const { key, element } = target;
     const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
     this.entries.set(key, entry);
-    if (entry.catalogLoaded) {
+    if (entry.catalogComplete) {
       return Promise.resolve();
     }
     if (entry.catalogLoading) {
@@ -218,10 +283,12 @@ export class PointsDataEngine {
       try {
         entry.catalog = await element.listFeaturesWithCounts();
       } catch (error) {
-        entry.catalog = null;
+        // Keep any resident preview catalog on failure rather than blanking it.
+        if (!entry.catalogLoaded) entry.catalog = null;
         console.error(`Failed to build points feature catalog for ${target.layerId}:`, error);
       } finally {
         entry.catalogLoaded = true;
+        entry.catalogComplete = true;
         entry.catalogLoading = undefined;
         this.notify();
       }

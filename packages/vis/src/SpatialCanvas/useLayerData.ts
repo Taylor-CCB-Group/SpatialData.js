@@ -58,7 +58,7 @@ import {
   resolveShapeTooltipRowIndex,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
 import {
   type VivLoaderMetadata,
@@ -219,6 +219,12 @@ interface UseLayerDataResult {
   getPointsFeatureCatalog: (layerId: string) => PointsFeatureCatalog | null | undefined;
   /** Whether the points feature catalog is currently being built. */
   isPointsFeatureCatalogLoading: (layerId: string) => boolean;
+  /** Whether the full-dataset catalog scan is still refining an instant preview. */
+  isPointsFeatureCatalogRefining: (layerId: string) => boolean;
+  /** Distinct feature codes present in the resident batch (features outside this
+   * set are in the catalog but not loaded, so they render no points yet), or
+   * `undefined` until the row codes are resident. */
+  getPointsResidentFeatureCodes: (layerId: string) => ReadonlySet<number> | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -570,10 +576,20 @@ export function useLayerData(
       })
   );
 
-  useEffect(() => {
-    const unsubscribe = pointsEngine.subscribe(notifyLoadedDataChanged);
-    return unsubscribe;
-  }, [pointsEngine, notifyLoadedDataChanged]);
+  // Re-render on every points-engine cache mutation via useSyncExternalStore.
+  // This is deliberately NOT a subscribe → setState(counter) effect: that pattern
+  // dropped late async completions (notably the full-dataset feature-catalog
+  // scan, which lands ~tens of seconds after the geometry preload), leaving the
+  // filter panel stuck on the resident-subset preview. useSyncExternalStore
+  // re-checks the snapshot after subscribing and on every commit, so it cannot
+  // miss an update. `notifyLoadedDataChanged` remains for the non-points loaders
+  // (images/shapes/labels) that push into `loadedDataRef` directly.
+  const subscribePointsEngine = useCallback(
+    (onStoreChange: () => void) => pointsEngine.subscribe(onStoreChange),
+    [pointsEngine]
+  );
+  const getPointsEngineVersion = useCallback(() => pointsEngine.getVersion(), [pointsEngine]);
+  useSyncExternalStore(subscribePointsEngine, getPointsEngineVersion);
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -1204,6 +1220,24 @@ export function useLayerData(
     [pointsEngine]
   );
 
+  const isPointsFeatureCatalogRefining = useCallback(
+    (layerId: string): boolean => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return false;
+      return pointsEngine.isFeatureCatalogRefining(elem.key);
+    },
+    [pointsEngine]
+  );
+
+  const getPointsResidentFeatureCodes = useCallback(
+    (layerId: string): ReadonlySet<number> | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return undefined;
+      return pointsEngine.getResidentFeatureCodes(elem.key);
+    },
+    [pointsEngine]
+  );
+
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
       try {
@@ -1771,6 +1805,8 @@ export function useLayerData(
     requestPointsFeatureCatalog,
     getPointsFeatureCatalog,
     isPointsFeatureCatalogLoading,
+    isPointsFeatureCatalogRefining,
+    getPointsResidentFeatureCodes,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,

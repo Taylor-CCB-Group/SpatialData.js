@@ -442,6 +442,8 @@ function SpatialCanvasInner({
     requestPointsFeatureCatalog,
     getPointsFeatureCatalog,
     isPointsFeatureCatalogLoading,
+    isPointsFeatureCatalogRefining,
+    getPointsResidentFeatureCodes,
     isBlocking,
     isLoading,
     vivLayerProps,
@@ -859,6 +861,8 @@ function SpatialCanvasInner({
                     config={selectedConfig}
                     catalog={getPointsFeatureCatalog(selectedConfig.id)}
                     catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
+                    catalogRefining={isPointsFeatureCatalogRefining(selectedConfig.id)}
+                    residentCodes={getPointsResidentFeatureCodes(selectedConfig.id)}
                     onRequestCatalog={requestPointsFeatureCatalog}
                     updateLayer={actions.updateLayer}
                   />

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PointsFeatureCatalog } from '@spatialdata/core';
 import type { PointsLayerConfig } from './types';
 
@@ -72,6 +72,12 @@ export interface PointsFeatureFilterPanelProps {
   config: PointsLayerConfig;
   catalog?: PointsFeatureCatalog | null;
   catalogLoading?: boolean;
+  /** The full-dataset catalog scan is still refining the instant preview. */
+  catalogRefining?: boolean;
+  /** Feature codes present in the loaded (resident) batch. Features outside this
+   * set are in the catalog but not loaded, so selecting them renders no points.
+   * `undefined` disables the distinction (treat every feature as loaded). */
+  residentCodes?: ReadonlySet<number>;
   onRequestCatalog: (layerId: string) => void;
   updateLayer: (id: string, updates: Partial<PointsLayerConfig>) => void;
 }
@@ -81,10 +87,18 @@ export function PointsFeatureFilterPanel({
   config,
   catalog,
   catalogLoading = false,
+  catalogRefining = false,
+  residentCodes,
   onRequestCatalog,
   updateLayer,
 }: PointsFeatureFilterPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  // Request the full-dataset catalog whenever this panel is shown for a layer.
+  // The engine dedupes (no-op once the full scan has settled), so this simply
+  // upgrades the instant resident-subset preview to the complete list + counts.
+  useEffect(() => {
+    onRequestCatalog(layerId);
+  }, [layerId, onRequestCatalog]);
   const entries = catalog?.entries ?? [];
   const hasCounts = entries.some((entry) => entry.count !== undefined);
   const allSelected = config.featureCodes === undefined;
@@ -174,6 +188,14 @@ export function PointsFeatureFilterPanel({
 
   const selectedCount = noneSelected ? 0 : allSelected ? entries.length : selectedCodes.size;
   const showSearch = entries.length > FEATURE_LIST_SEARCH_THRESHOLD;
+  // Features present in the catalog but absent from the loaded (resident) batch.
+  // Selecting one renders no points until the on-demand feature scan lands, so we
+  // surface the count and grey those rows to explain the otherwise-baffling
+  // "nothing shows up" — see the resident-subset limitation in the points MVP.
+  const residentKnown = residentCodes !== undefined;
+  const notLoadedCount = residentKnown
+    ? entries.reduce((total, entry) => total + (residentCodes.has(entry.code) ? 0 : 1), 0)
+    : 0;
 
   return (
     <div style={panelStyle}>
@@ -185,6 +207,16 @@ export function PointsFeatureFilterPanel({
           {hasCounts ? ' · sorted by count' : ''}
         </span>
       </div>
+      {catalogRefining ? (
+        <div style={helperStyle}>Loading the full feature list…</div>
+      ) : null}
+      {notLoadedCount > 0 ? (
+        <div style={helperStyle}>
+          {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'} aren’t in the
+          loaded subset yet (greyed below) — selecting them shows no points until on-demand loading
+          lands.
+        </div>
+      ) : null}
       <label style={checkboxLabelStyle}>
         <input
           type="checkbox"
@@ -221,18 +253,26 @@ export function PointsFeatureFilterPanel({
       <div style={listStyle}>
         {visibleEntries.map((entry) => {
           const checked = !noneSelected && (allSelected || selectedCodes.has(entry.code));
+          const notLoaded = residentKnown && !residentCodes.has(entry.code);
           return (
             <label
               key={entry.code}
-              style={checkboxLabelStyle}
-              title={`code ${entry.code}${entry.count !== undefined ? ` · ${entry.count.toLocaleString()} points` : ''}`}
+              style={notLoaded ? { ...checkboxLabelStyle, opacity: 0.45 } : checkboxLabelStyle}
+              title={
+                `code ${entry.code}` +
+                (entry.count !== undefined ? ` · ${entry.count.toLocaleString()} points` : '') +
+                (notLoaded ? ' · not in the loaded subset (renders no points yet)' : '')
+              }
             >
               <input
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
               />
-              <span>{entry.name}</span>
+              <span>
+                {entry.name}
+                {notLoaded ? ' ·' : ''}
+              </span>
               {hasCounts ? <span style={countStyle}>{formatFeatureCount(entry.count)}</span> : null}
             </label>
           );
