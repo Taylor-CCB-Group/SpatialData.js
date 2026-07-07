@@ -57,6 +57,42 @@ the CPU-heavy decode runs in the points worker. See the off-thread
 geometry+features decode in `VPointsSource.loadPoints` /
 `decodeGeometryWithFeaturesFromPayload`.
 
+## Runtime probe (2026-07-07): what the Vitessce build actually exposes
+
+The `.d.ts` types `readMetadata` as `unknown` and our `ParquetModule` wrapper only
+surfaces `numRows/fileOffset/compressedSize`, but the underlying wasm object
+exposes **more** than the wrapper. Introspecting the live object:
+
+- `ParquetMetaData`: `fileMetadata()`, `numRowGroups()`, `rowGroup(i)`, `rowGroups()`.
+- `RowGroupMetaData`: `numColumns()`, `column(j)`, `columns()`, `numRows()`,
+  `totalByteSize()`, `compressedSize()`, `fileOffset()`.
+- `ColumnChunkMetaData`: `filePath()`, `fileOffset()`, `columnPath()`,
+  `encodings()`, `numValues()`, `compression()`, `compressedSize()`,
+  `uncompressedSize()`.
+- **`ColumnChunkMetaData.statistics()` does NOT exist** — `col.statistics` is
+  `null`. So per-column-chunk **min/max are not reachable** even though the parquet
+  footer contains them (pyarrow reads them fine).
+
+So the situation is more nuanced than "no column info":
+
+- **Column-chunk *offsets* ARE available** (`column(j).fileOffset()` +
+  `compressedSize()` + `columnPath()`). A projected byte range per column is
+  computable. What still blocks a projected *fetch* is #804: `readParquetRowGroup`
+  needs the *contiguous* row-group bytes, and hand-concatenating a subset of column
+  chunks breaks the footer offsets — so we can compute the ranges but not feed a
+  sparse buffer back in for decode.
+- **Column *statistics* are NOT available.** This blocks the **feature-primary
+  index** (skipping row groups whose feature range doesn't overlap the selected
+  genes): we'd need per-row-group `feature_name_codes` min/max to pick the ~3 of
+  245 row groups a gene lives in, and the wasm won't give them. Reading them via
+  first/last-row reads (`loadParquetRowGroupColumnExtent`) fetches the *whole*
+  row group each time — fetching the entire 449 MB file just to build the index.
+  Getting stats efficiently needs one of: (a) a JS parse of the footer's Thrift
+  `FileMetaData` for `Statistics.min/max_value`; (b) an alternative metadata reader
+  (e.g. hyparquet, pure-JS, exposes row-group column stats); (c) extending the
+  vitessce/parquet-wasm build to surface `.statistics()`; or (d) a sidecar
+  per-row-group feature index emitted by the writer.
+
 ## What we'd ideally have
 
 Roughly in priority order for our use case (points/transcripts):
