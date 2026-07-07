@@ -1,6 +1,7 @@
 export {
   buildFeatureCatalogInWorker,
   countFeatureCodesInWorker,
+  decodeGeometryWithFeaturesInWorker,
   decodeParquetGeometryCappedInWorker,
   decodeParquetPartsInWorker,
   decodeParquetRowFeatureCodesInWorker,

@@ -86,6 +86,17 @@ export type PointsWorkerRequest =
       featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
     }
   | {
+      type: 'decodeGeometryWithFeatures';
+      parts?: Uint8Array[];
+      rowGroups?: ParquetRowGroupBytesChunk[];
+      axisNames: string[];
+      /** Projected columns: axes + feature key (+ code column when present). */
+      columns: string[];
+      maxRows?: number;
+      featureKey: string;
+      featureCodeColumnName?: string;
+    }
+  | {
       type: 'scanParquetByFeatureCodes';
       parts?: Uint8Array[];
       rowGroups?: ParquetRowGroupBytesChunk[];
@@ -126,6 +137,15 @@ export type PointsWorkerResponse =
       result:
         | PointsWorkerColumnarResult
         | PointsWorkerScanResult
+        | {
+            kind: 'geometryWithFeatures';
+            shape: number[];
+            xs: Float32Array;
+            ys: Float32Array;
+            zs?: Float32Array;
+            featureCodes?: Int32Array;
+            featureCatalog?: PointsFeatureCatalog;
+          }
         | { kind: 'parquetTable'; tableIpc: Uint8Array }
         | { kind: 'catalog'; catalog: PointsFeatureCatalog }
         | { kind: 'rowFeatureCodes'; codes: Int32Array; numRows: number }

@@ -9,6 +9,7 @@ import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
 import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
 import {
   countFeatureCodesFromArray,
+  decodeGeometryWithFeaturesFromPayload,
   decodeParquetPartsToTable,
   decodeParquetPayloadToTable,
   extractGeometryColumnar,
@@ -151,6 +152,30 @@ async function handleDecodeParquetGeometryCapped(
       kind: 'columnar',
       ...geometry,
       ...(featureCodes ? { featureCodes } : {}),
+    },
+  };
+}
+
+async function handleDecodeGeometryWithFeatures(
+  request: Extract<PointsWorkerRequest, { type: 'decodeGeometryWithFeatures' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  const result = await decodeGeometryWithFeaturesFromPayload(
+    parquetModule.readParquet,
+    parquetModule.readParquetRowGroup,
+    request
+  );
+  const [xs, ys, zs] = result.data;
+  return {
+    ok: true,
+    result: {
+      kind: 'geometryWithFeatures',
+      shape: result.shape,
+      xs,
+      ys,
+      ...(zs ? { zs } : {}),
+      ...(result.featureCodes ? { featureCodes: result.featureCodes } : {}),
+      ...(result.featureCatalog ? { featureCatalog: result.featureCatalog } : {}),
     },
   };
 }
@@ -413,6 +438,8 @@ async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorker
       return handleScanParquetFeatureCatalog(request);
     case 'decodeParquetGeometryCapped':
       return handleDecodeParquetGeometryCapped(request);
+    case 'decodeGeometryWithFeatures':
+      return handleDecodeGeometryWithFeatures(request);
     case 'countFeatureCodes':
       return handleCountFeatureCodes(request);
     case 'scanParquetFeatureCounts':
@@ -444,6 +471,14 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
             transferables.push(response.result.zs.buffer);
           }
           if (response.result.kind === 'columnar' && response.result.featureCodes) {
+            transferables.push(response.result.featureCodes.buffer);
+          }
+        } else if (response.result.kind === 'geometryWithFeatures') {
+          transferables.push(response.result.xs.buffer, response.result.ys.buffer);
+          if (response.result.zs) {
+            transferables.push(response.result.zs.buffer);
+          }
+          if (response.result.featureCodes) {
             transferables.push(response.result.featureCodes.buffer);
           }
         } else if (response.result.kind === 'parquetTable') {

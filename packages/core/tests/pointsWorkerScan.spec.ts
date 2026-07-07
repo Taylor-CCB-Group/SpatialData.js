@@ -1,11 +1,29 @@
 import { tableFromArrays, tableToIPC } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import {
+  decodeGeometryWithFeaturesFromPayload,
   decodeParquetRowGroupsToTable,
   extractGeometryColumnar,
   extractRowFeatureCodesFromTable,
   scanFeatureCatalogFromPayload,
 } from '../src/workers/pointsWorkerScan.js';
+
+const throwingReadParquet = (() => {
+  throw new Error('readParquet should not be called on the rowGroup path');
+}) as unknown as (bytes: Uint8Array, options?: { columns?: string[] }) => {
+  intoIPCStream(): Uint8Array;
+};
+
+function singleRowGroup(columns: Record<string, unknown>) {
+  const table = tableFromArrays(columns as never);
+  const read = () => ({ intoIPCStream: () => tableToIPC(table) });
+  return {
+    read,
+    rowGroups: [
+      { schemaBytes: new Uint8Array(0), rowGroupBytes: new Uint8Array(0), rowGroupIndex: 0 },
+    ],
+  };
+}
 
 function mockReadParquetRowGroup(
   chunks: Array<Array<{ name: string; code: number }>>
@@ -46,6 +64,55 @@ describe('decodeParquetRowGroupsToTable', () => {
       3
     );
     expect(table.numRows).toBe(3);
+  });
+});
+
+describe('decodeGeometryWithFeaturesFromPayload', () => {
+  it('derives geometry, row codes, and catalog from one projected decode', async () => {
+    const { read, rowGroups } = singleRowGroup({
+      x: Float32Array.from([0, 1, 2]),
+      y: Float32Array.from([0, 1, 2]),
+      feature_name: ['gene_a', 'gene_b', 'gene_a'],
+      feature_name_codes: Int32Array.from([0, 1, 0]),
+    });
+    const result = await decodeGeometryWithFeaturesFromPayload(throwingReadParquet, read, {
+      rowGroups,
+      axisNames: ['x', 'y'],
+      columns: ['x', 'y', 'feature_name', 'feature_name_codes'],
+      featureKey: 'feature_name',
+      featureCodeColumnName: 'feature_name_codes',
+    });
+
+    expect(result.shape).toEqual([2, 3]);
+    expect(Array.from(result.data[0])).toEqual([0, 1, 2]);
+    expect(result.featureCodes && Array.from(result.featureCodes)).toEqual([0, 1, 0]);
+    expect(result.featureCatalog).toEqual({
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'gene_a' },
+        { code: 1, name: 'gene_b' },
+      ],
+    });
+  });
+
+  it('assigns codes by first-seen order for dict-only columns (no code column)', async () => {
+    const { read, rowGroups } = singleRowGroup({
+      x: Float32Array.from([0, 1, 2]),
+      y: Float32Array.from([3, 4, 5]),
+      feature_name: ['B', 'A', 'B'],
+    });
+    const result = await decodeGeometryWithFeaturesFromPayload(throwingReadParquet, read, {
+      rowGroups,
+      axisNames: ['x', 'y'],
+      columns: ['x', 'y', 'feature_name'],
+      featureKey: 'feature_name',
+    });
+
+    expect(result.featureCodes && Array.from(result.featureCodes)).toEqual([0, 1, 0]);
+    expect(result.featureCatalog?.entries).toEqual([
+      { code: 0, name: 'B' },
+      { code: 1, name: 'A' },
+    ]);
   });
 });
 

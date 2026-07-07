@@ -1,18 +1,21 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { enablePointsWorker, setPointsWorkerRequestTimeout } from '@spatialdata/core';
+// Vite bundles the core points worker and hands us a runtime URL. Enabling it
+// moves the CPU-heavy work off the main thread so the UI stays responsive:
+//  - the codes-with-geometry preload decode (decodeGeometryWithFeatures) — the
+//    main thread only does async range-read fetches, the worker decodes;
+//  - the per-interaction batch filter (filterColumnarByFeatureCodes, transfers
+//    the resident batch — no file re-fetch).
+// A silent/misconfigured worker still falls back to the main thread via the
+// pointsWorkerClient request timeout. Large transcripts decodes can legitimately
+// run tens of seconds in the worker, so widen the timeout accordingly.
+import pointsWorkerUrl from '../../../core/src/workers/points-worker.ts?worker&url';
 import App from './App';
 import './index.css';
 
-// NOTE: the points worker is intentionally NOT enabled here yet. The core worker
-// is fully wired and safe to enable (see enablePointsWorker + the request-timeout
-// fallback in pointsWorkerClient), but for the feature-catalog build on a
-// transcripts element WITHOUT an explicit `{feature_key}_codes` column, the
-// worker path reads the *full* parquet parts (readParquetWorkerPayload with
-// fullPartsForFallback) before scanning, which is far slower than the
-// main-thread path's *projected* single-column range read. Enabling it here
-// regressed a real Xenium dataset from ~20s to >150s. Efficient worker-offload
-// needs a projected/dictionary-only worker payload path — tracked as a follow-up
-// in docs/plans/points-mvp-and-roadmap.md.
+enablePointsWorker({ workerUrl: pointsWorkerUrl });
+setPointsWorkerRequestTimeout(120_000);
 
 const root = document.getElementById('root');
 if (!root) {

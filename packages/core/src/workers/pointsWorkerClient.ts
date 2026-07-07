@@ -138,6 +138,7 @@ function transferablesForRequest(request: PointsWorkerRequest): Transferable[] {
     case 'decodeParquetRowFeatureCodes':
     case 'scanParquetFeatureCounts':
     case 'decodeParquetGeometryCapped':
+    case 'decodeGeometryWithFeatures':
     case 'scanParquetByFeatureCodes':
     case 'scanParquetFeatureCatalog':
       return transferablesForParquetPayload(request.parts, request.rowGroups);
@@ -340,6 +341,59 @@ export async function decodeParquetGeometryCappedInWorker(
     shape: result.shape,
     data,
     featureCodes: result.featureCodes,
+  };
+}
+
+export type DecodeGeometryWithFeaturesInput = ParquetWorkerPayload & {
+  axisNames: string[];
+  columns: string[];
+  maxRows?: number;
+  featureKey: string;
+  featureCodeColumnName?: string;
+};
+
+/**
+ * Off-thread codes-with-geometry preload: decode geometry + per-row feature
+ * codes + the feature catalog from one projected decode in the worker. The
+ * caller fetches whole row-group (or part) bytes via async range reads, so the
+ * CPU-heavy decode never blocks the main thread. Returns null when the worker is
+ * disabled or the payload is empty (caller falls back to the main-thread decode).
+ */
+export async function decodeGeometryWithFeaturesInWorker(
+  input: DecodeGeometryWithFeaturesInput
+): Promise<{
+  shape: number[];
+  data: ArrayLike<number>[];
+  featureCodes?: Int32Array;
+  featureCatalog?: PointsFeatureCatalog;
+} | null> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    return null;
+  }
+  if (!input.parts?.length && !input.rowGroups?.length) {
+    return null;
+  }
+  if (input.parts?.length && input.rowGroups?.length) {
+    throw new Error('decodeGeometryWithFeaturesInWorker requires parts or rowGroups, not both');
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'decodeGeometryWithFeatures' }> = {
+    type: 'decodeGeometryWithFeatures',
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
+  if (result.kind !== 'geometryWithFeatures') {
+    throw new Error('Unexpected points worker response for decodeGeometryWithFeatures');
+  }
+  const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
+  return {
+    shape: result.shape,
+    data,
+    ...(result.featureCodes ? { featureCodes: result.featureCodes } : {}),
+    ...(result.featureCatalog ? { featureCatalog: result.featureCatalog } : {}),
   };
 }
 

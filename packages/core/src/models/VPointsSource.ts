@@ -6,6 +6,7 @@ import {
   resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
 import {
+  decodeGeometryWithFeaturesInWorker,
   decodeParquetGeometryCappedInWorker,
   decodeParquetRowFeatureCodesInWorker,
   ensurePointsWorker,
@@ -299,30 +300,57 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     ensurePointsWorker();
-    // The worker geometry decode is axis-only; when the feature column is wanted
-    // we stay on the main thread so the one decode also yields codes + catalog.
-    if (isPointsWorkerEnabled() && !featureKey) {
+    if (isPointsWorkerEnabled()) {
       try {
-        const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
-        const workerGeometry = await decodeParquetGeometryCappedInWorker(
-          {
+        if (featureKey) {
+          // Off-thread the codes-with-geometry decode: fetch whole row-group (or
+          // part) bytes via async range reads, then decode geometry + per-row
+          // codes + catalog in the worker so the CPU-heavy decode never blocks the
+          // main thread. parquet-wasm cannot fetch individual column chunks, so we
+          // still fetch all columns' bytes — see docs/parquet-wasm-limitations.md.
+          const payload = await this.fetchParquetPayloadCapped(parquetPath, maxRows);
+          const workerResult = payload
+            ? await decodeGeometryWithFeaturesInWorker({
+                ...payload,
+                axisNames,
+                columns: columnNames,
+                maxRows,
+                featureKey,
+                featureCodeColumnName,
+              })
+            : null;
+          if (workerResult) {
+            return {
+              shape: workerResult.shape as [number, number],
+              data: workerResult.data,
+              totalRowCount: rowCount,
+              preloadTruncated: truncatePreload,
+              ...(workerResult.featureCodes ? { featureCodes: workerResult.featureCodes } : {}),
+              ...(workerResult.featureCatalog
+                ? { featureCatalog: workerResult.featureCatalog }
+                : {}),
+            };
+          }
+        } else {
+          const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
+          const workerGeometry = await decodeParquetGeometryCappedInWorker({
             parts: payload.parts,
             axisNames,
             columns: columnNames,
             maxRows,
+          });
+          if (workerGeometry) {
+            return {
+              shape: workerGeometry.shape as [number, number],
+              data: workerGeometry.data,
+              totalRowCount: rowCount,
+              preloadTruncated: truncatePreload,
+            };
           }
-        );
-        if (workerGeometry) {
-          return {
-            shape: workerGeometry.shape as [number, number],
-            data: workerGeometry.data,
-            totalRowCount: rowCount,
-            preloadTruncated: truncatePreload,
-          };
         }
       } catch (error) {
         console.warn(
-          `Worker geometry preload failed for ${elementPath}; falling back to main thread.`,
+          `Worker points preload failed for ${elementPath}; falling back to main thread.`,
           error
         );
       }
@@ -375,6 +403,23 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       ...(featureCodes ? { featureCodes } : {}),
       ...(featureCatalog ? { featureCatalog } : {}),
     };
+  }
+
+  /**
+   * Fetch enough parquet bytes (via async range reads) to cover `maxRows` for a
+   * worker decode. Uses whole-part reads (decoded with `readParquet`) rather than
+   * per-row-group reads: `readParquetRowGroup` mis-decodes dictionary-encoded
+   * columns (e.g. `feature_name`) — the same reason `scanFeatureCatalogFromPayload`
+   * falls back to parts — which would corrupt the catalog + codes. The fetch is
+   * async I/O only; the CPU-heavy decode happens in the worker. Returns `null` if
+   * no bytes are available.
+   */
+  private async fetchParquetPayloadCapped(
+    parquetPath: string,
+    maxRows: number
+  ): Promise<{ parts: Uint8Array[] } | null> {
+    const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, maxRows);
+    return parts.length > 0 ? { parts } : null;
   }
 
   private async loadPointsMatchingFeatureCodes(

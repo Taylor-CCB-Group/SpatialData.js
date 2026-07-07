@@ -1,9 +1,11 @@
 import { tableFromIPC, type Table } from 'apache-arrow';
 import {
   accumulateFeatureCatalogFromTable,
+  buildFeatureCatalogFromColumns,
   countFeatureCodesHistogram,
   featureCatalogFromCodeMap,
   featureCatalogNeedsParquetFallback,
+  featureCodeMapFromCatalog,
   resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
@@ -149,6 +151,85 @@ export function extractGeometryColumnar(
   const zs = zColumn ? Float32Array.from(zColumn.toArray() as ArrayLike<number>) : undefined;
   const shape = zs ? [3, xs.length] : [2, xs.length];
   return { shape, xs, ys, ...(zs ? { zs } : {}) };
+}
+
+export type DecodeGeometryWithFeaturesInput = ParquetWorkerPayloadInput & {
+  axisNames: string[];
+  /** Projected columns to decode: axes + feature key (+ code column if present). */
+  columns: string[];
+  featureKey: string;
+  featureCodeColumnName?: string;
+  maxRows?: number;
+};
+
+export type DecodeGeometryWithFeaturesResult = {
+  shape: number[];
+  data: Float32Array[];
+  featureCodes?: Int32Array;
+  featureCatalog?: PointsFeatureCatalog;
+};
+
+/**
+ * One projected decode → geometry + per-row feature codes + feature catalog.
+ *
+ * This is the off-thread half of the codes-with-geometry preload: the caller
+ * fetches whole row-group (or part) bytes via async range reads and hands them
+ * here (in the worker) so the CPU-heavy parquet decode never touches the main
+ * thread. Column projection still runs during decode, but the *bytes* are whole
+ * row groups (all columns) — parquet-wasm cannot fetch individual column chunks
+ * (see docs/parquet-wasm-limitations.md). Mirrors the main-thread derivation in
+ * `VPointsSource.loadPoints` so both paths produce identical codes + catalog.
+ */
+export async function decodeGeometryWithFeaturesFromPayload(
+  readParquet: ParquetModule['readParquet'],
+  readParquetRowGroup: ReadParquetRowGroup | undefined,
+  input: DecodeGeometryWithFeaturesInput
+): Promise<DecodeGeometryWithFeaturesResult> {
+  const table = await decodeParquetPayloadToTable(
+    readParquet,
+    readParquetRowGroup,
+    { rowGroups: input.rowGroups, parts: input.parts },
+    input.columns,
+    input.maxRows
+  );
+
+  const geometry = extractGeometryColumnar(table, input.axisNames);
+  const data = geometry.zs ? [geometry.xs, geometry.ys, geometry.zs] : [geometry.xs, geometry.ys];
+
+  let featureCodes: Int32Array | undefined;
+  let featureCatalog: PointsFeatureCatalog | undefined;
+  const nameColumn = table.getChild(input.featureKey);
+  if (nameColumn) {
+    const codeColumn = input.featureCodeColumnName
+      ? table.getChild(input.featureCodeColumnName)
+      : null;
+    featureCatalog = buildFeatureCatalogFromColumns(
+      input.featureKey,
+      nameColumn,
+      codeColumn ?? null,
+      null,
+      table.numRows
+    );
+    const featureCodeByName = input.featureCodeColumnName
+      ? undefined
+      : featureCodeMapFromCatalog(featureCatalog);
+    const codes = resolveRowFeatureCodesFromTable(
+      table,
+      input.featureKey,
+      input.featureCodeColumnName,
+      featureCodeByName
+    );
+    if (codes) {
+      featureCodes = codes instanceof Int32Array ? codes : Int32Array.from(codes);
+    }
+  }
+
+  return {
+    shape: geometry.shape,
+    data,
+    ...(featureCodes ? { featureCodes } : {}),
+    ...(featureCatalog ? { featureCatalog } : {}),
+  };
 }
 
 export async function scanFeatureCatalogFromPayload(
