@@ -453,6 +453,7 @@ function SpatialCanvasInner({
     isPointsFeatureCatalogRefining,
     getPointsResidentFeatureCodes,
     getPointsMatchingLoadState,
+    getPointsLoadedMatchingFeatureCodes,
     isBlocking,
     isLoading,
     vivLayerProps,
@@ -872,6 +873,7 @@ function SpatialCanvasInner({
                     catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
                     catalogRefining={isPointsFeatureCatalogRefining(selectedConfig.id)}
                     residentCodes={getPointsResidentFeatureCodes(selectedConfig.id)}
+                    loadedMatchingCodes={getPointsLoadedMatchingFeatureCodes(selectedConfig.id)}
                     matchingLoadState={getPointsMatchingLoadState(
                       selectedConfig.id,
                       selectedConfig.featureCodes

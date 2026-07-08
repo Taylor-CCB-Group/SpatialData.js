@@ -287,6 +287,27 @@ export class PointsDataEngine {
   }
 
   /**
+   * Feature codes of the **last completed** matched selection — i.e. the
+   * non-resident features whose points are actually on screen right now (see
+   * {@link getMatchingResource}, which keeps that batch during a new scan).
+   *
+   * The panel greys features that are neither resident nor rendered. Deriving
+   * "rendered" from this last-completed set (not the current scan's settled
+   * state) is what keeps already-loaded features un-greyed while a newly added
+   * feature's scan is still in flight. `undefined` when nothing has settled.
+   */
+  getLoadedMatchingFeatureCodes(key: string): ReadonlySet<number> | undefined {
+    const signature = this.entries.get(key)?.matching?.signature;
+    if (signature === undefined) {
+      return undefined;
+    }
+    if (signature === '') {
+      return new Set();
+    }
+    return new Set(signature.split(',').map(Number));
+  }
+
+  /**
    * Stable render resource for the **last completed** matched selection, or null
    * if no selection has ever settled. Deliberately NOT keyed to the current
    * selection: while a new selection's scan is in flight, this keeps returning the

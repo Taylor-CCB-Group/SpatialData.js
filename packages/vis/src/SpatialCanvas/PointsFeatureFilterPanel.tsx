@@ -94,6 +94,10 @@ export interface PointsFeatureFilterPanelProps {
    * triggers an on-demand feature-index scan. `undefined` disables the
    * distinction (treat every feature as resident). */
   residentCodes?: ReadonlySet<number>;
+  /** Non-resident feature codes currently on screen (the last-completed matched
+   * selection). Features here are "loaded" regardless of whether a newer scan is
+   * still running, so adding a feature doesn't grey the already-loaded ones. */
+  loadedMatchingCodes?: ReadonlySet<number>;
   /** Progressive load state of the feature-index scan for the current selection. */
   matchingLoadState?: PointsMatchingLoadState;
   onRequestCatalog: (layerId: string) => void;
@@ -107,6 +111,7 @@ export function PointsFeatureFilterPanel({
   catalogLoading = false,
   catalogRefining = false,
   residentCodes,
+  loadedMatchingCodes,
   matchingLoadState,
   onRequestCatalog,
   updateLayer,
@@ -208,16 +213,13 @@ export function PointsFeatureFilterPanel({
   const selectedCount = noneSelected ? 0 : allSelected ? entries.length : selectedCodes.size;
   const showSearch = entries.length > FEATURE_LIST_SEARCH_THRESHOLD;
   // A feature's points are "loaded" (renderable now, not greyed) if it is in the
-  // instant resident preview OR it is part of the current selection whose
-  // feature-index scan has settled. So a non-resident feature greys until you
-  // select it and its scan finishes, then un-greys.
+  // instant resident preview OR its points are currently on screen via the
+  // last-completed feature-index scan (`loadedMatchingCodes`). Keying off what's
+  // rendered — not the current scan's settled state — keeps already-loaded
+  // features un-greyed while a newly added feature's scan is still in flight.
   const residentKnown = residentCodes !== undefined;
-  const settledSelectionCodes =
-    matchingLoadState?.settled && config.featureCodes
-      ? new Set(config.featureCodes)
-      : undefined;
   const isLoaded = (code: number): boolean =>
-    !residentKnown || residentCodes.has(code) || (settledSelectionCodes?.has(code) ?? false);
+    !residentKnown || residentCodes.has(code) || (loadedMatchingCodes?.has(code) ?? false);
   const notLoadedCount = residentKnown
     ? entries.reduce((total, entry) => total + (isLoaded(entry.code) ? 0 : 1), 0)
     : 0;

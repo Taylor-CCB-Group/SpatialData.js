@@ -233,6 +233,10 @@ interface UseLayerDataResult {
     layerId: string,
     featureCodes: readonly number[] | undefined
   ) => PointsMatchingLoadState | undefined;
+  /** Feature codes of the last-completed matched selection — the non-resident
+   * features currently on screen. Used to grey by what's rendered, so already
+   * loaded features stay un-greyed while a newly added feature's scan runs. */
+  getPointsLoadedMatchingFeatureCodes: (layerId: string) => ReadonlySet<number> | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -1251,6 +1255,18 @@ export function useLayerData(
     [pointsEngine]
   );
 
+  // Plain function (NOT useCallback): it is only ever called inline in the
+  // panel's render, so referential stability is irrelevant, and adding a hook to
+  // this compiler-processed god-hook perturbs its hook sequence (a Rules-of-Hooks
+  // violation once compiled). Keep it hook-free until useLayerData is refactored.
+  const getPointsLoadedMatchingFeatureCodes = (
+    layerId: string
+  ): ReadonlySet<number> | undefined => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (!elem || elem.type !== 'points') return undefined;
+    return pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
+  };
+
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
       try {
@@ -1853,6 +1869,7 @@ export function useLayerData(
     isPointsFeatureCatalogRefining,
     getPointsResidentFeatureCodes,
     getPointsMatchingLoadState,
+    getPointsLoadedMatchingFeatureCodes,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,
