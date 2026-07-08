@@ -24,6 +24,8 @@ export type OrthographicViewState2D = {
 export type PointsColumnarData = {
   data: ArrayLike<number>[];
   shape?: number[];
+  /** Optional per-point feature code, aligned row-for-row with {@link data}. */
+  featureCodes?: ArrayLike<number>;
 };
 
 /** Same default as Viv ImageView detail framing. */

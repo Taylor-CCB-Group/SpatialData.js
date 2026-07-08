@@ -23,6 +23,10 @@ export interface ColumnarNdarrayPointsBatch {
   bounds?: SpatialBounds;
   loadMode?: PointsLoadMode;
   pointCount?: number;
+  /** Per-point feature code, aligned row-for-row with {@link data}. Carried
+   * through filtering/capping so the render path can build a GPU `featureCode`
+   * attribute (colour-by-feature, per-code visibility). */
+  featureCodes?: ArrayLike<number>;
 }
 
 /** Placeholder for future GeoArrow strategies. */

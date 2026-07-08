@@ -17,8 +17,18 @@ function resolveScatterBatch(layer: PointsLayer): ColumnarNdarrayPointsBatch | u
     filteredBatchSignature?: string;
   };
   const signature = filterBatchSignature(featureCodes, preloadedFeatureCodes, renderCap);
-  const cappedPreloaded = (): ColumnarNdarrayPointsBatch | undefined =>
-    state.preloadedBatch ? applyRenderCapToColumnar(state.preloadedBatch, renderCap) : undefined;
+  const cappedPreloaded = (): ColumnarNdarrayPointsBatch | undefined => {
+    if (!state.preloadedBatch) {
+      return undefined;
+    }
+    // Attach the row-aligned codes so this transient (pre-first-filter) fallback
+    // colours by feature too; applyRenderCapToColumnar truncates them in lockstep.
+    const withCodes =
+      preloadedFeatureCodes && preloadedFeatureCodes.length > 0
+        ? { ...state.preloadedBatch, featureCodes: preloadedFeatureCodes }
+        : state.preloadedBatch;
+    return applyRenderCapToColumnar(withCodes, renderCap);
+  };
 
   // Row codes not loaded yet: we cannot filter, so draw the full batch. This is
   // only reachable on first load before the codes arrive (documented behavior).

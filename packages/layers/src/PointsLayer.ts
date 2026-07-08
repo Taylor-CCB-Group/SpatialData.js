@@ -55,6 +55,7 @@ function emptyFilteredBatch(batch: ColumnarNdarrayPointsBatch): ColumnarNdarrayP
     data: emptyData,
     shape: [axisCount, 0],
     pointCount: 0,
+    featureCodes: new Int32Array(0),
   };
 }
 
@@ -63,8 +64,13 @@ async function filterPreloadedBatch(
   featureCodes: readonly number[] | undefined,
   preloadedFeatureCodes: ArrayLike<number> | undefined
 ): Promise<ColumnarNdarrayPointsBatch> {
+  // No feature filter: draw everything, but carry the row-aligned codes so the
+  // render path can colour by feature. `preloadedFeatureCodes` is aligned to the
+  // full preloaded batch, so it maps row-for-row onto the unfiltered geometry.
   if (featureCodes === undefined) {
-    return batch;
+    return hasPreloadedRowFeatureCodes(preloadedFeatureCodes)
+      ? { ...batch, featureCodes: preloadedFeatureCodes }
+      : batch;
   }
   if (featureCodes.length === 0) {
     return emptyFilteredBatch(batch);
@@ -84,6 +90,7 @@ async function filterPreloadedBatch(
     data: filtered.data,
     shape: filteredShape,
     pointCount,
+    ...(filtered.featureCodes ? { featureCodes: filtered.featureCodes } : {}),
   };
 }
 

@@ -164,5 +164,6 @@ export function columnarDataFromWorkerResult(
   result: PointsWorkerColumnarResult | PointsWorkerScanResult
 ): PointsColumnarData {
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
-  return { shape: result.shape, data };
+  const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;
+  return { shape: result.shape, data, ...(featureCodes ? { featureCodes } : {}) };
 }

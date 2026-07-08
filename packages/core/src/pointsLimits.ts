@@ -11,6 +11,8 @@ export interface PointsColumnarLike {
   shape: number[];
   data: ArrayLike<number>[];
   pointCount?: number;
+  /** Per-point feature code, aligned with {@link data}; truncated alongside it. */
+  featureCodes?: ArrayLike<number>;
 }
 
 export function resolvePointsMemoryCap(configured?: number): number {
@@ -37,6 +39,24 @@ export function columnarPointCount(shape: number[], data: ArrayLike<number>[]): 
   return data[0]?.length ?? shape[0] ?? 0;
 }
 
+/** Truncate a per-point feature-code array to `count`, preserving its element
+ * type via `subarray` for typed arrays (zero-copy) and `slice` otherwise. */
+function capFeatureCodes(
+  featureCodes: ArrayLike<number> | undefined,
+  count: number
+): ArrayLike<number> | undefined {
+  if (!featureCodes || featureCodes.length <= count) {
+    return featureCodes;
+  }
+  if (ArrayBuffer.isView(featureCodes) && 'subarray' in featureCodes) {
+    return (featureCodes as { subarray(begin: number, end: number): ArrayLike<number> }).subarray(
+      0,
+      count
+    );
+  }
+  return Array.prototype.slice.call(featureCodes, 0, count) as ArrayLike<number>;
+}
+
 export function applyRenderCapToColumnar<T extends PointsColumnarLike>(
   batch: T,
   renderCap: number | undefined
@@ -55,11 +75,13 @@ export function applyRenderCapToColumnar<T extends PointsColumnarLike>(
     }
     return Float32Array.from(column as ArrayLike<number>).subarray(0, renderCap);
   });
+  const nextFeatureCodes = capFeatureCodes(batch.featureCodes, renderCap);
   return {
     ...batch,
     data: nextData,
     shape: [axisCount, renderCap],
     pointCount: renderCap,
+    ...(nextFeatureCodes ? { featureCodes: nextFeatureCodes } : {}),
   };
 }
 

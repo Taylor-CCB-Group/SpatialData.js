@@ -29,6 +29,14 @@ export interface ColumnarNdarrayPointsBatch {
   bounds?: SpatialBounds;
   loadMode?: PointsLoadMode;
   pointCount?: number;
+  /**
+   * Per-point feature code, aligned row-for-row with the geometry columns in
+   * {@link data}. Present when the source resolved a feature key; consumed by the
+   * render path to build a GPU `featureCode` attribute (colour-by-feature and
+   * per-code visibility). Any transform that reorders or truncates {@link data}
+   * (feature filter, render cap) must permute this in lockstep.
+   */
+  featureCodes?: ArrayLike<number>;
 }
 
 export type PointsBatch = ColumnarNdarrayPointsBatch;

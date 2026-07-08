@@ -28,6 +28,13 @@ function toFloat32Array(values: ArrayLike<number>): Float32Array {
   return Float32Array.from(values);
 }
 
+function toInt32Array(values: ArrayLike<number>): Int32Array {
+  if (values instanceof Int32Array) {
+    return values;
+  }
+  return Int32Array.from(values);
+}
+
 function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'filterColumnarByFeatureCodes' }>) {
   const filtered = filterColumnarByFeatureCodes(
     {
@@ -40,6 +47,7 @@ function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'fil
   const xs = toFloat32Array(filtered.data[0]);
   const ys = toFloat32Array(filtered.data[1]);
   const zs = filtered.data[2] ? toFloat32Array(filtered.data[2]) : undefined;
+  const featureCodes = filtered.featureCodes ? toInt32Array(filtered.featureCodes) : undefined;
   const shape: number[] =
     filtered.shape && filtered.shape.length > 0
       ? filtered.shape
@@ -54,6 +62,7 @@ function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'fil
       xs,
       ys,
       ...(zs ? { zs } : {}),
+      ...(featureCodes ? { featureCodes } : {}),
     },
   };
 }
