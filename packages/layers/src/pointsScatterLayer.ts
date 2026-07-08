@@ -2,7 +2,7 @@ import type { Matrix4 } from '@math.gl/core';
 import { COORDINATE_SYSTEM } from '@deck.gl/core';
 import { ScatterplotLayer } from 'deck.gl';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
-import { pointDataFromColumnarBatch } from './pointsLoader.js';
+import { buildPointsAttributes } from './pointsRenderAttributes.js';
 
 /** Orthographic zoom at which configured pointSize applies at full scale. */
 export const POINT_SIZE_ZOOM_REFERENCE = 0;
@@ -44,9 +44,6 @@ export function renderColumnarScatterLayer(
   batch: ColumnarNdarrayPointsBatch,
   props: PointsScatterStyleProps
 ) {
-  const pointData = pointDataFromColumnarBatch(batch);
-  const d = pointData.data;
-
   // Preloaded scatter sizes points in WORLD (common) units so the GPU scales
   // them with zoom — points shrink when you zoom out, which is exactly where
   // scatter overdraw is worst — while `radiusMinPixels`/`radiusMaxPixels` clamp
@@ -57,18 +54,21 @@ export function renderColumnarScatterLayer(
   const radiusMinPixels = props.pointRadiusMinPixels ?? DEFAULT_POINT_RADIUS_MIN_PIXELS;
   const radiusMaxPixels = props.pointRadiusMaxPixels ?? DEFAULT_POINT_RADIUS_MAX_PIXELS;
 
-  const pointCount = batch.pointCount ?? batch.shape[1] ?? d[0]?.length ?? 0;
+  // Feed deck GPU-ready binary attributes (interleaved positions) instead of a
+  // per-object `getPosition` closure. The buffer is memoized on the batch, so a
+  // stable batch hands deck the same array every render (no re-upload).
+  const attributes = buildPointsAttributes(batch, props.use3d === true);
 
   return new ScatterplotLayer({
     id,
     coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
-    data: d[0],
+    data: {
+      length: attributes.length,
+      attributes: {
+        getPosition: { value: attributes.positions, size: 3 },
+      },
+    },
     ...(props.tileBounds ? { bounds: props.tileBounds } : {}),
-    getPosition: (_d, { index, target }) => [
-      d[0][index],
-      d[1][index],
-      props.use3d ? d[2]?.[index] || 0 : 0,
-    ],
     getRadius: props.pointSize,
     radiusUnits,
     radiusMinPixels,
@@ -80,7 +80,6 @@ export function renderColumnarScatterLayer(
     autoHighlight: true,
     highlightColor: [255, 255, 0, 200],
     updateTriggers: {
-      getPosition: [pointCount, d[0], d[1], d[2]],
       getRadius: [props.pointSize],
     },
   });
