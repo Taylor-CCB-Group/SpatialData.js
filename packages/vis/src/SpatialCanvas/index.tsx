@@ -386,6 +386,14 @@ function SpatialCanvasInner({
   renderTooltip,
   hoverTooltipMode = 'simple',
 }: SpatialCanvasInnerProps) {
+  // Opt this component out of the React Compiler. It reads mutable engine state
+  // through getters (getPointsFeatureCatalog, getPointsMatchingLoadState, the
+  // deck layers) whose results change without a compiler-tracked dependency, so
+  // the compiler memoizes stale JSX and async engine-cache settles (feature
+  // catalog scan, feature-index render scan progress) never repaint. Until the
+  // points logic moves out of useLayerData behind a properly reactive snapshot,
+  // this escape hatch keeps engine-driven updates live.
+  'use no memo';
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [tooltipMode, setTooltipMode] = useState<HoverTooltipMode>(hoverTooltipMode);
   const [measureRef, { width, height }] = useMeasure();
@@ -444,6 +452,7 @@ function SpatialCanvasInner({
     isPointsFeatureCatalogLoading,
     isPointsFeatureCatalogRefining,
     getPointsResidentFeatureCodes,
+    getPointsMatchingLoadState,
     isBlocking,
     isLoading,
     vivLayerProps,
@@ -863,6 +872,10 @@ function SpatialCanvasInner({
                     catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
                     catalogRefining={isPointsFeatureCatalogRefining(selectedConfig.id)}
                     residentCodes={getPointsResidentFeatureCodes(selectedConfig.id)}
+                    matchingLoadState={getPointsMatchingLoadState(
+                      selectedConfig.id,
+                      selectedConfig.featureCodes
+                    )}
                     onRequestCatalog={requestPointsFeatureCatalog}
                     updateLayer={actions.updateLayer}
                   />

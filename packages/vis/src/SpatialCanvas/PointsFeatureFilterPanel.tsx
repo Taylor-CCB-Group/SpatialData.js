@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PointsFeatureCatalog } from '@spatialdata/core';
+import type { PointsMatchingLoadState } from '@spatialdata/layers';
 import type { PointsLayerConfig } from './types';
 
 const panelStyle: CSSProperties = {
@@ -28,6 +29,11 @@ const checkboxLabelStyle: CSSProperties = {
 
 const helperStyle: CSSProperties = {
   color: '#888',
+  fontSize: '11px',
+};
+
+const loadingStatStyle: CSSProperties = {
+  color: '#6cb6ff',
   fontSize: '11px',
 };
 
@@ -75,9 +81,12 @@ export interface PointsFeatureFilterPanelProps {
   /** The full-dataset catalog scan is still refining the instant preview. */
   catalogRefining?: boolean;
   /** Feature codes present in the loaded (resident) batch. Features outside this
-   * set are in the catalog but not loaded, so selecting them renders no points.
-   * `undefined` disables the distinction (treat every feature as loaded). */
+   * set are in the catalog but not in the instant preview, so selecting them
+   * triggers an on-demand feature-index scan. `undefined` disables the
+   * distinction (treat every feature as resident). */
   residentCodes?: ReadonlySet<number>;
+  /** Progressive load state of the feature-index scan for the current selection. */
+  matchingLoadState?: PointsMatchingLoadState;
   onRequestCatalog: (layerId: string) => void;
   updateLayer: (id: string, updates: Partial<PointsLayerConfig>) => void;
 }
@@ -89,6 +98,7 @@ export function PointsFeatureFilterPanel({
   catalogLoading = false,
   catalogRefining = false,
   residentCodes,
+  matchingLoadState,
   onRequestCatalog,
   updateLayer,
 }: PointsFeatureFilterPanelProps) {
@@ -188,10 +198,9 @@ export function PointsFeatureFilterPanel({
 
   const selectedCount = noneSelected ? 0 : allSelected ? entries.length : selectedCodes.size;
   const showSearch = entries.length > FEATURE_LIST_SEARCH_THRESHOLD;
-  // Features present in the catalog but absent from the loaded (resident) batch.
-  // Selecting one renders no points until the on-demand feature scan lands, so we
-  // surface the count and grey those rows to explain the otherwise-baffling
-  // "nothing shows up" — see the resident-subset limitation in the points MVP.
+  // Features present in the catalog but absent from the instant resident preview.
+  // Selecting one triggers an on-demand feature-index scan, so we grey those rows
+  // and surface the count to explain why they don't appear instantly.
   const residentKnown = residentCodes !== undefined;
   const notLoadedCount = residentKnown
     ? entries.reduce((total, entry) => total + (residentCodes.has(entry.code) ? 0 : 1), 0)
@@ -213,8 +222,14 @@ export function PointsFeatureFilterPanel({
       {notLoadedCount > 0 ? (
         <div style={helperStyle}>
           {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'} aren’t in the
-          loaded subset yet (greyed below) — selecting them shows no points until on-demand loading
-          lands.
+          instant preview (greyed below) — selecting one loads it on demand.
+        </div>
+      ) : null}
+      {matchingLoadState ? (
+        <div style={matchingLoadState.loading ? loadingStatStyle : helperStyle}>
+          {matchingLoadState.loading
+            ? `Loading selected features… ${matchingLoadState.matchedRows.toLocaleString()} points so far`
+            : `${matchingLoadState.matchedRows.toLocaleString()} points loaded for this selection`}
         </div>
       ) : null}
       <label style={checkboxLabelStyle}>

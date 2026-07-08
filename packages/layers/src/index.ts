@@ -130,4 +130,5 @@ export {
   type PointsDataEngineCallbacks,
   type PointsLoadStatus,
   type PointsLoadTarget,
+  type PointsMatchingLoadState,
 } from './engine/PointsDataEngine.js';

@@ -78,7 +78,26 @@ interface PointsEntry {
    * scan and keyed by the selected-codes `signature` so a selection change
    * rebuilds it. `resource` is the stable render resource, built lazily. */
   matching?: { signature: string; result: PointsLoadResult; resource?: PointsRenderResource };
-  matchingLoading?: { signature: string; promise: Promise<void> };
+  /** In-flight feature-index scan, with progressive counts updated from the
+   * scan's `onProgress` so the panel can show partial stats as they accumulate. */
+  matchingLoading?: {
+    signature: string;
+    promise: Promise<void>;
+    matchedRows: number;
+    scannedRows: number;
+  };
+}
+
+/** Public snapshot of a selection's feature-index load, for the filter panel. */
+export interface PointsMatchingLoadState {
+  /** The scan for this exact selection is in flight. */
+  loading: boolean;
+  /** Matched points so far (progressive while loading; final once settled). */
+  matchedRows: number;
+  /** Rows examined so far (progressive while loading; final once settled). */
+  scannedRows: number;
+  /** True once the scan for this selection has settled. */
+  settled: boolean;
 }
 
 export class PointsDataEngine {
@@ -181,11 +200,29 @@ export class PointsDataEngine {
       return entry.matchingLoading.promise;
     }
 
+    // Notify at most every `PROGRESS_NOTIFY_STEP` matched rows so the panel's
+    // partial stats update live without a re-render per scanned row group.
+    const PROGRESS_NOTIFY_STEP = 25_000;
+    let lastNotifiedMatched = 0;
+    const onProgress = (progress: { matchedRows: number; scannedRows: number }): void => {
+      const loading = entry.matchingLoading;
+      if (!loading || loading.signature !== signature) {
+        return;
+      }
+      loading.matchedRows = progress.matchedRows;
+      loading.scannedRows = progress.scannedRows;
+      if (progress.matchedRows - lastNotifiedMatched >= PROGRESS_NOTIFY_STEP) {
+        lastNotifiedMatched = progress.matchedRows;
+        this.notify(); // runs during the async scan, not render — safe to notify sync
+      }
+    };
+
     const promise = (async () => {
       try {
         const result = await element.loadPointsMatchingFeatureCodes({
           featureCodes,
           memoryCap,
+          onProgress,
         });
         entry.matching = { signature, result };
       } catch (error) {
@@ -197,12 +234,44 @@ export class PointsDataEngine {
         this.notify();
       }
     })();
-    entry.matchingLoading = { signature, promise };
+    entry.matchingLoading = { signature, promise, matchedRows: 0, scannedRows: 0 };
     // Surface the loading transition, but DEFER it: this method is kicked from
     // `getLayers` *during* render, so a synchronous notify would setState mid-
     // render. A microtask runs after the current render commits.
     queueMicrotask(() => this.notify());
     return promise;
+  }
+
+  /**
+   * Load-state snapshot for a selection's feature-index scan: whether it is in
+   * flight, its progressive matched/scanned counts, and its final counts once
+   * settled. Drives the panel's "loading … / N points" indicator. Returns
+   * `undefined` when this selection has neither loaded nor started.
+   */
+  getMatchingLoadState(
+    key: string,
+    featureCodes: readonly number[]
+  ): PointsMatchingLoadState | undefined {
+    const entry = this.entries.get(key);
+    const signature = PointsDataEngine.matchingSignature(featureCodes);
+    if (entry?.matchingLoading?.signature === signature) {
+      return {
+        loading: true,
+        matchedRows: entry.matchingLoading.matchedRows,
+        scannedRows: entry.matchingLoading.scannedRows,
+        settled: false,
+      };
+    }
+    if (entry?.matching?.signature === signature) {
+      const result = entry.matching.result;
+      return {
+        loading: false,
+        matchedRows: result.shape[1] ?? 0,
+        scannedRows: result.scannedRowCount ?? 0,
+        settled: true,
+      };
+    }
+    return undefined;
   }
 
   /** Stable render resource for the resident matched selection, or null if the

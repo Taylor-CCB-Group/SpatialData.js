@@ -46,6 +46,7 @@ import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
+  type PointsMatchingLoadState,
   type PointsRenderResource,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
@@ -59,7 +60,7 @@ import {
   resolveShapeTooltipRowIndex,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
 import {
   type VivLoaderMetadata,
@@ -226,6 +227,12 @@ interface UseLayerDataResult {
    * set are in the catalog but not loaded, so they render no points yet), or
    * `undefined` until the row codes are resident. */
   getPointsResidentFeatureCodes: (layerId: string) => ReadonlySet<number> | undefined;
+  /** Load state (progressive counts) of the feature-index scan for the given
+   * selection, or `undefined` when nothing is selected / it has not started. */
+  getPointsMatchingLoadState: (
+    layerId: string,
+    featureCodes: readonly number[] | undefined
+  ) => PointsMatchingLoadState | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -577,20 +584,15 @@ export function useLayerData(
       })
   );
 
-  // Re-render on every points-engine cache mutation via useSyncExternalStore.
-  // This is deliberately NOT a subscribe → setState(counter) effect: that pattern
-  // dropped late async completions (notably the full-dataset feature-catalog
-  // scan, which lands ~tens of seconds after the geometry preload), leaving the
-  // filter panel stuck on the resident-subset preview. useSyncExternalStore
-  // re-checks the snapshot after subscribing and on every commit, so it cannot
-  // miss an update. `notifyLoadedDataChanged` remains for the non-points loaders
-  // (images/shapes/labels) that push into `loadedDataRef` directly.
-  const subscribePointsEngine = useCallback(
-    (onStoreChange: () => void) => pointsEngine.subscribe(onStoreChange),
-    [pointsEngine]
+  // Re-render on every points-engine cache mutation (async loads/scans settling).
+  // NOTE: the consuming component (SpatialCanvasInner) must opt out of the React
+  // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from
+  // these engine getters and never repaints on a late async settle, since the
+  // getters read mutable engine state with no compiler-tracked dependency.
+  useEffect(
+    () => pointsEngine.subscribe(notifyLoadedDataChanged),
+    [pointsEngine, notifyLoadedDataChanged]
   );
-  const getPointsEngineVersion = useCallback(() => pointsEngine.getVersion(), [pointsEngine]);
-  useSyncExternalStore(subscribePointsEngine, getPointsEngineVersion);
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -1239,6 +1241,16 @@ export function useLayerData(
     [pointsEngine]
   );
 
+  const getPointsMatchingLoadState = useCallback(
+    (layerId: string, featureCodes: readonly number[] | undefined): PointsMatchingLoadState | undefined => {
+      if (!featureCodes || featureCodes.length === 0) return undefined;
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return undefined;
+      return pointsEngine.getMatchingLoadState(elem.key, featureCodes);
+    },
+    [pointsEngine]
+  );
+
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
       try {
@@ -1832,6 +1844,7 @@ export function useLayerData(
     isPointsFeatureCatalogLoading,
     isPointsFeatureCatalogRefining,
     getPointsResidentFeatureCodes,
+    getPointsMatchingLoadState,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,
