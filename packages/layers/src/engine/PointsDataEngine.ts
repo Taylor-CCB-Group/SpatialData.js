@@ -1,5 +1,6 @@
 import {
   DEFAULT_POINTS_MEMORY_CAP,
+  remapRowFeatureCodes,
   type PointsElement,
   type PointsFeatureCatalog,
   type PointsLoadResult,
@@ -70,6 +71,17 @@ interface PointsEntry {
   rowCodes?: ArrayLike<number>;
   rowCodesLoaded?: boolean;
   rowCodesLoading?: Promise<void>;
+  /** The catalog whose code space {@link rowCodes} are expressed in. When the
+   * catalog is upgraded (resident preview → full-dataset), `reconcileRowCodes`
+   * remaps `rowCodes` into the new space and updates this — keeping the render's
+   * per-row codes aligned with the panel's selection codes for dictionary-only
+   * datasets, where codes are app-assigned and can differ between catalog builds. */
+  rowCodesCatalog?: PointsFeatureCatalog;
+  /** True when the element has a file-backed feature code column (authoritative
+   * codes; a real feature index). Undefined until the resident batch loads; false
+   * for dictionary-only feature columns. Gates the whole-dataset feature-index
+   * scan — see {@link hasFeatureCodeColumn}. */
+  featureCodeColumn?: boolean;
   /** Memoized distinct codes in {@link rowCodes}, invalidated by identity via
    * `residentCodesSource` (see `getResidentFeatureCodes`). */
   residentCodes?: ReadonlySet<number>;
@@ -322,6 +334,14 @@ export class PointsDataEngine {
     if (!entry?.matching) {
       return null;
     }
+    // Empty-lock guard: a scan that matched no rows must NOT supersede the resident
+    // preview — otherwise the render locks to an empty batch with no way to recover
+    // (the settled selection never re-scans). Returning null falls back to resident
+    // filtering. A legitimately empty selection can't reach here: an empty
+    // `featureCodes` selection short-circuits before any scan is kicked.
+    if ((entry.matching.result.shape[1] ?? 0) === 0) {
+      return null;
+    }
     if (entry.matching.resource) {
       return entry.matching.resource;
     }
@@ -374,6 +394,7 @@ export class PointsDataEngine {
         const data = await element.loadPoints({ includeFeatureCodes: true });
         entry.data = data;
         entry.status = 'ready';
+        entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
         if (data.featureCatalog !== undefined && !entry.catalogComplete) {
           entry.catalog = data.featureCatalog;
           entry.catalogLoaded = true;
@@ -381,6 +402,11 @@ export class PointsDataEngine {
         if (data.featureCodes !== undefined) {
           entry.rowCodes = data.featureCodes;
           entry.rowCodesLoaded = true;
+          // The preload derived these codes against its own catalog (the resident
+          // preview, unless a full-dataset catalog already superseded it). Record
+          // that space and reconcile to whatever catalog is current now.
+          entry.rowCodesCatalog = data.featureCatalog;
+          this.reconcileRowCodes(entry);
         }
         this.callbacks.onStatus?.(layerId, 'ready');
       } catch (error) {
@@ -441,6 +467,40 @@ export class PointsDataEngine {
    * Returns `undefined` when the row codes are not yet resident. Memoized against
    * the row-codes identity so the O(rows) scan runs once per batch.
    */
+  /**
+   * True when the element has a file-backed feature code column — a real feature
+   * index whose codes are globally authoritative. False for dictionary-only
+   * feature columns (codes app-assigned, only stable within one catalog build) or
+   * an element with no feature codes. Undefined-safe: false until the resident
+   * batch has loaded. Gates the whole-dataset feature-index scan.
+   */
+  hasFeatureCodeColumn(key: string): boolean {
+    return this.entries.get(key)?.featureCodeColumn === true;
+  }
+
+  /**
+   * Re-express {@link PointsEntry.rowCodes} in the current catalog's code space
+   * when it was derived against an older one (resident preview → full-dataset
+   * upgrade). No-op for authoritative file-backed codes (identical across builds)
+   * and when the source/target catalogs are the same object. See
+   * {@link remapRowFeatureCodes} for why dictionary-only codes need this.
+   */
+  private reconcileRowCodes(entry: PointsEntry): void {
+    if (entry.featureCodeColumn === true) {
+      return;
+    }
+    const source = entry.rowCodesCatalog;
+    const target = entry.catalog;
+    if (!entry.rowCodes || !source || !target || source === target) {
+      return;
+    }
+    entry.rowCodes = remapRowFeatureCodes(entry.rowCodes, source, target);
+    entry.rowCodesCatalog = target;
+    // The distinct-codes memo was keyed to the old array identity — invalidate.
+    entry.residentCodes = undefined;
+    entry.residentCodesSource = undefined;
+  }
+
   getResidentFeatureCodes(key: string): ReadonlySet<number> | undefined {
     const entry = this.entries.get(key);
     const rowCodes = entry?.rowCodes;
@@ -480,7 +540,12 @@ export class PointsDataEngine {
 
     const loading = (async () => {
       try {
-        entry.catalog = await element.listFeaturesWithCounts();
+        const fullCatalog = await element.listFeaturesWithCounts();
+        entry.catalog = fullCatalog;
+        // The full-dataset catalog is authoritative. Re-express any resident row
+        // codes (derived against the resident-preview catalog) in its code space
+        // so the render's per-row codes match the panel's selection + swatches.
+        this.reconcileRowCodes(entry);
       } catch (error) {
         // Keep any resident preview catalog on failure rather than blanking it.
         if (!entry.catalogLoaded) entry.catalog = null;
@@ -529,9 +594,12 @@ export class PointsDataEngine {
 
     const loading = (async () => {
       try {
-        entry.rowCodes = await element.loadRowFeatureCodes({
-          featureCatalog: this.getFeatureCatalog(key),
-        });
+        const catalog = this.getFeatureCatalog(key);
+        entry.rowCodes = await element.loadRowFeatureCodes({ featureCatalog: catalog });
+        // These codes were derived against `catalog`; record that space so a later
+        // catalog upgrade reconciles them (see reconcileRowCodes).
+        entry.rowCodesCatalog = catalog ?? undefined;
+        this.reconcileRowCodes(entry);
       } catch (error) {
         entry.rowCodes = undefined;
         console.error(`Failed to load points row feature codes for ${target.layerId}:`, error);

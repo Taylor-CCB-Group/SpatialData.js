@@ -326,6 +326,92 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);
   });
 
+  it('remaps resident row codes into the full catalog space on upgrade (dict-only)', async () => {
+    // Dictionary-only dataset: the resident preview saw GeneB first (code 0) and
+    // GeneA second (code 1); the full-dataset scan assigns the reverse. Without
+    // reconciliation, the render's per-row codes would be in the preview space
+    // while the panel selects in the full space — filtering/colouring the wrong
+    // genes. `hasFeatureCodeColumn: false` marks the codes as app-assigned.
+    const previewCatalog: PointsFeatureCatalog = {
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'GeneB' },
+        { code: 1, name: 'GeneA' },
+      ],
+    };
+    const fullCatalog: PointsFeatureCatalog = {
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'GeneA' },
+        { code: 1, name: 'GeneB' },
+      ],
+    };
+    const element = {
+      key: 'pts:remap',
+      loadPoints: vi.fn(async () => ({
+        ...makeBatch(),
+        featureCatalog: previewCatalog,
+        featureCodes: new Int32Array([0, 1, 0]), // GeneB, GeneA, GeneB (preview space)
+        hasFeatureCodeColumn: false,
+      })),
+      listFeaturesWithCounts: vi.fn(async () => fullCatalog),
+      loadRowFeatureCodes: vi.fn(),
+    } as unknown as PointsElement;
+    const engine = new PointsDataEngine();
+
+    await engine.ensureLoaded({ key: 'pts:remap', layerId: 'l', element });
+    // Before the upgrade, codes are in the preview space.
+    expect(Array.from(engine.getRowFeatureCodes('pts:remap')!)).toEqual([0, 1, 0]);
+
+    await engine.ensureFeatureCatalog({ key: 'pts:remap', layerId: 'l', element });
+    // After the upgrade, the same genes are re-expressed in the full space:
+    // GeneB→1, GeneA→0.
+    expect(Array.from(engine.getRowFeatureCodes('pts:remap')!)).toEqual([1, 0, 1]);
+    // The resident-codes memo reflects the remapped values.
+    expect([...engine.getResidentFeatureCodes('pts:remap')!].sort()).toEqual([0, 1]);
+  });
+
+  it('does not remap when codes are authoritative (a real feature-code column)', async () => {
+    // With a file-backed code column the codes are identical across catalog
+    // builds, so reconciliation is skipped — the row-codes array keeps its
+    // identity (no needless re-filter) and its values.
+    const previewCatalog: PointsFeatureCatalog = {
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'GeneA' },
+        { code: 1, name: 'GeneB' },
+      ],
+    };
+    const fullCatalog: PointsFeatureCatalog = {
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'GeneA' },
+        { code: 1, name: 'GeneB' },
+        { code: 2, name: 'GeneC' },
+      ],
+    };
+    const residentCodes = new Int32Array([0, 1, 0]);
+    const element = {
+      key: 'pts:auth',
+      loadPoints: vi.fn(async () => ({
+        ...makeBatch(),
+        featureCatalog: previewCatalog,
+        featureCodes: residentCodes,
+        hasFeatureCodeColumn: true,
+      })),
+      listFeaturesWithCounts: vi.fn(async () => fullCatalog),
+      loadRowFeatureCodes: vi.fn(),
+    } as unknown as PointsElement;
+    const engine = new PointsDataEngine();
+
+    await engine.ensureLoaded({ key: 'pts:auth', layerId: 'l', element });
+    await engine.ensureFeatureCatalog({ key: 'pts:auth', layerId: 'l', element });
+
+    expect(engine.hasFeatureCodeColumn('pts:auth')).toBe(true);
+    // Same array identity: authoritative codes are never rewritten.
+    expect(engine.getRowFeatureCodes('pts:auth')).toBe(residentCodes);
+  });
+
   it('reports the catalog as loading while the geometry preload is in flight', async () => {
     let resolveLoad: (v: unknown) => void = () => {};
     const loadPoints = vi.fn(
@@ -346,5 +432,60 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     await p;
     expect(engine.isFeatureCatalogLoading('pts:inflight')).toBe(false);
     expect(engine.getFeatureCatalog('pts:inflight')).toEqual(sampleCatalog);
+  });
+});
+
+describe('PointsDataEngine — hasFeatureCodeColumn', () => {
+  it('defaults to false and reflects the resident load flag', async () => {
+    const engine = new PointsDataEngine();
+    expect(engine.hasFeatureCodeColumn('pts:unknown')).toBe(false); // never loaded
+
+    const withColumn = {
+      key: 'pts:hascol',
+      loadPoints: vi.fn(async () => ({ ...makeBatch(), hasFeatureCodeColumn: true })),
+    } as unknown as PointsElement;
+    await engine.ensureLoaded({ key: 'pts:hascol', layerId: 'l', element: withColumn });
+    expect(engine.hasFeatureCodeColumn('pts:hascol')).toBe(true);
+
+    const dictOnly = {
+      key: 'pts:dict',
+      loadPoints: vi.fn(async () => ({ ...makeBatch(), hasFeatureCodeColumn: false })),
+    } as unknown as PointsElement;
+    await engine.ensureLoaded({ key: 'pts:dict', layerId: 'l', element: dictOnly });
+    expect(engine.hasFeatureCodeColumn('pts:dict')).toBe(false);
+  });
+});
+
+describe('PointsDataEngine — matching resource (empty-lock guard)', () => {
+  function matchingElement(key: string, result: PointsLoadResult) {
+    return {
+      key,
+      loadPoints: vi.fn(async () => makeBatch()),
+      loadPointsMatchingFeatureCodes: vi.fn(async () => result),
+    } as unknown as PointsElement;
+  }
+
+  it('returns null for a scan that matched no rows, so the view is never locked empty', async () => {
+    const engine = new PointsDataEngine();
+    // A degenerate scan settles with 0 matched rows (e.g. a selection whose codes
+    // matched nothing). It must NOT supersede the resident preview.
+    const element = matchingElement('pts:empty', {
+      shape: [2, 0],
+      data: [new Float32Array(0), new Float32Array(0)],
+    });
+    await engine.ensureMatchingFeaturesLoaded({ key: 'pts:empty', layerId: 'l', element }, [7]);
+
+    expect(engine.getMatchingResource(element, 'pts:empty')).toBeNull();
+  });
+
+  it('returns a resource when the scan matched rows', async () => {
+    const engine = new PointsDataEngine();
+    const element = matchingElement('pts:hit', {
+      shape: [2, 2],
+      data: [new Float32Array([0, 1]), new Float32Array([0, 1])],
+    });
+    await engine.ensureMatchingFeaturesLoaded({ key: 'pts:hit', layerId: 'l', element }, [1]);
+
+    expect(engine.getMatchingResource(element, 'pts:hit')).toBeTruthy();
   });
 });

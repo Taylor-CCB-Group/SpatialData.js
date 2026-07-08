@@ -406,6 +406,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
               data: workerResult.data,
               totalRowCount: rowCount,
               preloadTruncated: truncatePreload,
+              hasFeatureCodeColumn: featureCodeColumnName !== undefined,
               ...(workerResult.featureCodes ? { featureCodes: workerResult.featureCodes } : {}),
               ...(workerResult.featureCatalog
                 ? { featureCatalog: workerResult.featureCatalog }
@@ -426,6 +427,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
               data: workerGeometry.data,
               totalRowCount: rowCount,
               preloadTruncated: truncatePreload,
+              // No feature key requested/available on this branch → no code column.
+              hasFeatureCodeColumn: false,
             };
           }
         }
@@ -481,6 +484,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       data: axisColumnArrs,
       totalRowCount: totalRows,
       preloadTruncated: truncated,
+      hasFeatureCodeColumn: featureCodeColumnName !== undefined,
       ...(featureCodes ? { featureCodes } : {}),
       ...(featureCatalog ? { featureCatalog } : {}),
     };

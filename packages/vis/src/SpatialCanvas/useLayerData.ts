@@ -237,6 +237,10 @@ interface UseLayerDataResult {
    * features currently on screen. Used to grey by what's rendered, so already
    * loaded features stay un-greyed while a newly added feature's scan runs. */
   getPointsLoadedMatchingFeatureCodes: (layerId: string) => ReadonlySet<number> | undefined;
+  /** Whether selecting a non-resident feature can fetch its points on demand
+   * (the feature-index scan). False for dictionary-only datasets, which can only
+   * show features present in the resident preload window. */
+  getPointsSupportsOnDemandLoad: (layerId: string) => boolean;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -1250,21 +1254,33 @@ export function useLayerData(
       if (!featureCodes || featureCodes.length === 0) return undefined;
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem || elem.type !== 'points') return undefined;
+      // Only the feature-index scan reports a load state; dictionary-only datasets
+      // filter the resident batch in memory (no scan), so there is nothing to show.
+      if (!pointsEngine.hasFeatureCodeColumn(elem.key)) return undefined;
       return pointsEngine.getMatchingLoadState(elem.key, featureCodes);
     },
     [pointsEngine]
   );
 
-  // Plain function (NOT useCallback): it is only ever called inline in the
-  // panel's render, so referential stability is irrelevant, and adding a hook to
-  // this compiler-processed god-hook perturbs its hook sequence (a Rules-of-Hooks
-  // violation once compiled). Keep it hook-free until useLayerData is refactored.
+  // Plain functions (NOT useCallback): only ever called inline in the panel's
+  // render, so referential stability is irrelevant, and adding a hook to this
+  // compiler-processed god-hook perturbs its hook sequence (a Rules-of-Hooks
+  // violation once compiled). Keep them hook-free until useLayerData is refactored.
   const getPointsLoadedMatchingFeatureCodes = (
     layerId: string
   ): ReadonlySet<number> | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem || elem.type !== 'points') return undefined;
     return pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
+  };
+
+  // Whether selecting a non-resident feature can fetch its points on demand (the
+  // feature-index scan). True only for datasets with a real feature-code column;
+  // dictionary-only datasets can only show what's in the resident preload window.
+  const getPointsSupportsOnDemandLoad = (layerId: string): boolean => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (!elem || elem.type !== 'points') return false;
+    return pointsEngine.hasFeatureCodeColumn(elem.key);
   };
 
   const getWorldBoundsForLayer = useCallback(
@@ -1417,8 +1433,16 @@ export function useLayerData(
         // matched resource appears below. `getMatchingResource` returns the LAST
         // completed matched batch, so a selection change keeps showing the prior
         // selection's points until the new scan settles (no blank mid-scan).
+        //
+        // Gated on a real feature-code column: only then are codes globally
+        // authoritative and can footer stats skip row groups. On dictionary-only
+        // datasets the scan can neither skip (unsorted) nor derive matching codes
+        // (no shared code space), so it would read the whole file only to match
+        // nothing — locking the view empty. Those fall through to resident
+        // in-memory filtering, which is correct within the preload window.
+        const canFeatureScan = pointsEngine.hasFeatureCodeColumn(elem.key);
         let matchingResource: PointsRenderResource | null = null;
-        if (selectionActive) {
+        if (selectionActive && canFeatureScan) {
           void pointsEngine.ensureMatchingFeaturesLoaded({ key: elem.key, layerId, element }, featureCodes);
           matchingResource = pointsEngine.getMatchingResource(element, elem.key);
         }
@@ -1870,6 +1894,7 @@ export function useLayerData(
     getPointsResidentFeatureCodes,
     getPointsMatchingLoadState,
     getPointsLoadedMatchingFeatureCodes,
+    getPointsSupportsOnDemandLoad,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,

@@ -98,6 +98,11 @@ export interface PointsFeatureFilterPanelProps {
    * selection). Features here are "loaded" regardless of whether a newer scan is
    * still running, so adding a feature doesn't grey the already-loaded ones. */
   loadedMatchingCodes?: ReadonlySet<number>;
+  /** Whether selecting a non-resident (greyed) feature fetches its points on
+   * demand via the feature-index scan. False for dictionary-only datasets, whose
+   * greyed features simply aren't in the loaded preview window and can't be shown
+   * until the cap is raised or the dataset is written with a feature index. */
+  supportsOnDemandLoad?: boolean;
   /** Progressive load state of the feature-index scan for the current selection. */
   matchingLoadState?: PointsMatchingLoadState;
   onRequestCatalog: (layerId: string) => void;
@@ -112,6 +117,7 @@ export function PointsFeatureFilterPanel({
   catalogRefining = false,
   residentCodes,
   loadedMatchingCodes,
+  supportsOnDemandLoad = true,
   matchingLoadState,
   onRequestCatalog,
   updateLayer,
@@ -239,8 +245,10 @@ export function PointsFeatureFilterPanel({
       ) : null}
       {notLoadedCount > 0 ? (
         <div style={helperStyle}>
-          {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'} not loaded yet
-          (greyed below) — selecting one loads it on demand.
+          {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'}{' '}
+          {supportsOnDemandLoad
+            ? 'not loaded yet (greyed below) — selecting one loads it on demand.'
+            : "not in the loaded sample (greyed below) — this dataset has no feature index, so they can't be shown until the row cap is raised or it's rewritten with one."}
         </div>
       ) : null}
       {matchingLoadState ? (
@@ -294,7 +302,11 @@ export function PointsFeatureFilterPanel({
               title={
                 `code ${entry.code}` +
                 (entry.count !== undefined ? ` · ${entry.count.toLocaleString()} points` : '') +
-                (notLoaded ? ' · not loaded (select to load its points)' : '')
+                (notLoaded
+                  ? supportsOnDemandLoad
+                    ? ' · not loaded (select to load its points)'
+                    : ' · not in the loaded sample'
+                  : '')
               }
             >
               <input
