@@ -1419,6 +1419,7 @@ export function useLayerData(
               visible: config.visible,
               pointSize: config.pointSize ?? 1,
               ...(config.color ? { color: config.color } : {}),
+              ...(config.colorByFeature ? { colorByFeature: true } : {}),
             })
           );
         } else {
@@ -1430,10 +1431,14 @@ export function useLayerData(
           const resource = pointsEngine.getResource(element, elem.key);
           if (resource) {
             const filterActive = featureCodes !== undefined;
-            if (filterActive && !pointsEngine.hasRowFeatureCodes(elem.key)) {
+            // Row codes are needed to filter by feature AND to colour by feature.
+            // Colour-by-feature applies even with no filter ("all features"), so
+            // load/pass the codes whenever either is on — not just when filtering.
+            const needsRowCodes = filterActive || config.colorByFeature === true;
+            if (needsRowCodes && !pointsEngine.hasRowFeatureCodes(elem.key)) {
               void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
             }
-            const preloadedFeatureCodes = filterActive
+            const preloadedFeatureCodes = needsRowCodes
               ? pointsEngine.getRowFeatureCodes(elem.key)
               : undefined;
             deckLayers.push(
@@ -1447,6 +1452,7 @@ export function useLayerData(
                 // for parity (the composite's own default is smaller).
                 pointSize: config.pointSize ?? 1,
                 ...(config.color ? { color: config.color } : {}),
+                ...(config.colorByFeature ? { colorByFeature: true } : {}),
                 ...(featureCodes ? { featureCodes } : {}),
                 ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
               })

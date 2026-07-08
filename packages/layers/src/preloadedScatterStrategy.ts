@@ -74,6 +74,7 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       viewZoom,
       color = [255, 100, 100, 200],
       use3d,
+      colorByFeature,
     } = layer.props;
 
     if (!visible) {
@@ -99,6 +100,7 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       opacity,
       modelMatrix: layer.props.modelMatrix,
       use3d,
+      colorByFeature,
     });
   },
 };

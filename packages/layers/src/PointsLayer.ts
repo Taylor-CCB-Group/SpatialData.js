@@ -27,6 +27,8 @@ export interface PointsLayerProps {
   pointMinSizeScale?: number;
   viewZoom?: number | null;
   color?: [number, number, number, number];
+  /** Colour points by their per-point feature code instead of the flat color. */
+  colorByFeature?: boolean;
   featureCodes?: readonly number[];
   /** Source-side integer codes aligned with the preloaded table rows. */
   preloadedFeatureCodes?: ArrayLike<number>;

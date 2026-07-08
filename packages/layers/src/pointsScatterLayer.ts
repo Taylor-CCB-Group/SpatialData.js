@@ -3,6 +3,7 @@ import { COORDINATE_SYSTEM } from '@deck.gl/core';
 import { ScatterplotLayer } from 'deck.gl';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import { buildPointsAttributes } from './pointsRenderAttributes.js';
+import { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
 
 /** Orthographic zoom at which configured pointSize applies at full scale. */
 export const POINT_SIZE_ZOOM_REFERENCE = 0;
@@ -37,7 +38,14 @@ export interface PointsScatterStyleProps {
   use3d?: boolean;
   tileBounds?: [number, number, number, number];
   tileSubLayer?: boolean;
+  /** Colour points by their per-point feature code (requires batch codes). */
+  colorByFeature?: boolean;
 }
+
+// One shared extension instance: it is stateless, so every scatter layer that
+// opts into colour-by-feature can reuse it (deck keys shader compilation by the
+// extension's identity + props).
+const pointsFeatureColorExtension = new PointsFeatureColorExtension();
 
 export function renderColumnarScatterLayer(
   id: string,
@@ -59,6 +67,18 @@ export function renderColumnarScatterLayer(
   // stable batch hands deck the same array every render (no re-upload).
   const attributes = buildPointsAttributes(batch, props.use3d === true);
 
+  // Colour-by-feature rides an extra `getFeatureCode` binary attribute consumed
+  // by the shader extension. Only wire it when codes are present; the extension
+  // gates on an `enabled` uniform so toggling colour is a uniform swap, not a
+  // re-batch. Kept off the Morton tile path (tiles carry no codes yet).
+  // The colour extension is attached to EVERY scatter layer (see the extension
+  // docs: deck only runs an extension's initializeState at first mount, so
+  // attaching lazily would never register the attribute). Colour is gated by the
+  // buffer: supply the per-point codes only when colour-by-feature is on and the
+  // batch has them; otherwise the attribute reads its -1 default and the shader
+  // leaves the flat fill colour alone. Buffer is keyed by the accessor name.
+  const colorByFeature = props.colorByFeature === true && attributes.featureCodes !== undefined;
+
   return new ScatterplotLayer({
     id,
     coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
@@ -66,9 +86,17 @@ export function renderColumnarScatterLayer(
       length: attributes.length,
       attributes: {
         getPosition: { value: attributes.positions, size: 3 },
+        ...(colorByFeature
+          ? { getFeatureCode: { value: attributes.featureCodes as Float32Array, size: 1 } }
+          : {}),
       },
     },
     ...(props.tileBounds ? { bounds: props.tileBounds } : {}),
+    extensions: [pointsFeatureColorExtension],
+    // Constant default: the binary getFeatureCode attribute overrides it when
+    // colouring; when it is withdrawn (colour off), deck reverts to this -1, so
+    // the shader's `featureCode >= 0.0` guard falls through to the flat colour.
+    getFeatureCode: -1,
     getRadius: props.pointSize,
     radiusUnits,
     radiusMinPixels,

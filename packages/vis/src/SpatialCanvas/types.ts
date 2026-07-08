@@ -96,9 +96,14 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
 export interface PointsLayerConfig extends BaseLayerConfig {
   type: 'points';
   // Points-specific settings
-  // TODO: colour should become an accessor (getColor by Points Feature) — MVP step 3.
   pointSize?: number;
   color?: [number, number, number, number];
+  /**
+   * Colour each point by its feature code (categorical, GPU-shaded) instead of
+   * the flat {@link color}. Serializable Stack-Entry state. The runtime-only
+   * Feature Highlight (grey non-selected) is layered on top of this later.
+   */
+  colorByFeature?: boolean;
   /**
    * Feature-filter selection by Feature Code. `undefined` means "all features
    * shown" (no filter); an array restricts the drawn points to those codes. This

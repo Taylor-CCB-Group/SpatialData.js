@@ -865,6 +865,22 @@ function SpatialCanvasInner({
                   </label>
                 )}
                 {selectedConfig.type === 'points' && (
+                  <label
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '12px' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedConfig.colorByFeature ?? false}
+                      onChange={(e) =>
+                        actions.updateLayer(selectedConfig.id, {
+                          colorByFeature: e.target.checked,
+                        })
+                      }
+                    />
+                    Colour by feature
+                  </label>
+                )}
+                {selectedConfig.type === 'points' && (
                   <PointsFeatureFilterPanel
                     layerId={selectedConfig.id}
                     config={selectedConfig}
