@@ -77,7 +77,10 @@ export function renderColumnarScatterLayer(
   // buffer: supply the per-point codes only when colour-by-feature is on and the
   // batch has them; otherwise the attribute reads its -1 default and the shader
   // leaves the flat fill colour alone. Buffer is keyed by the accessor name.
-  const colorByFeature = props.colorByFeature === true && attributes.featureCodes !== undefined;
+  // Colour-by-feature is on by default (opt-out via colorByFeature: false) and
+  // applies whenever the batch carries codes. Future customisation (palettes,
+  // highlight modes) will hang off richer config.
+  const colorByFeature = props.colorByFeature !== false && attributes.featureCodes !== undefined;
 
   return new ScatterplotLayer({
     id,

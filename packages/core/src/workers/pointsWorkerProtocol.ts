@@ -125,7 +125,7 @@ export type PointsWorkerColumnarResult = {
   featureCodes?: Int32Array;
 };
 
-export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind' | 'featureCodes'> & {
+export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind'> & {
   kind: 'columnarScan';
   matchedRows: number;
   scannedRows: number;

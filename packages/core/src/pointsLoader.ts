@@ -56,6 +56,8 @@ export interface CorePointsLoader {
 export interface PreloadedColumnarInput {
   shape: number[];
   data: ArrayLike<number>[];
+  /** Optional per-point feature codes, carried onto the batch for colouring. */
+  featureCodes?: ArrayLike<number>;
 }
 
 export function resolvePointsEncoding(
@@ -90,6 +92,7 @@ function toColumnarBatch(
   const shape = result.shape ?? [];
   const data = result.data;
   const pointCount = columnarPointCount(shape, data);
+  const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;
   return {
     format: 'columnar-ndarray',
     data,
@@ -97,6 +100,7 @@ function toColumnarBatch(
     bounds: 'bounds' in result ? result.bounds : overrides?.bounds,
     loadMode: 'loadMode' in result ? result.loadMode : overrides?.loadMode,
     pointCount,
+    ...(featureCodes ? { featureCodes } : {}),
     ...overrides,
   };
 }

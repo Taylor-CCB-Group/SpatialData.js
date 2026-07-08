@@ -97,6 +97,7 @@ export {
   zoomScaledPointSize,
 } from './pointsScatterLayer.js';
 export { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
+export { featureCodeToRgb, featureCodeToCssColor } from './pointsFeatureColor.js';
 export { buildPointsAttributes } from './pointsRenderAttributes.js';
 export type { PointsRenderAttributes } from './pointsRenderAttributes.js';
 export type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';

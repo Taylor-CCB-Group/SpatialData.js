@@ -2,7 +2,16 @@ import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PointsFeatureCatalog } from '@spatialdata/core';
 import type { PointsMatchingLoadState } from '@spatialdata/layers';
+import { featureCodeToCssColor } from '@spatialdata/layers';
 import type { PointsLayerConfig } from './types';
+
+const swatchStyle: CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: 2,
+  flexShrink: 0,
+  border: '1px solid rgba(255, 255, 255, 0.25)',
+};
 
 const panelStyle: CSSProperties = {
   display: 'flex',
@@ -290,6 +299,10 @@ export function PointsFeatureFilterPanel({
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
+              />
+              <span
+                aria-hidden
+                style={{ ...swatchStyle, background: featureCodeToCssColor(entry.code) }}
               />
               <span>
                 {entry.name}

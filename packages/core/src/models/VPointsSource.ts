@@ -30,6 +30,7 @@ import type {
 interface ColumnarPointsChunk {
   shape: number[];
   data: ArrayLike<number>[];
+  featureCodes?: ArrayLike<number>;
 }
 
 /** Inclusive `[min, max]` code range a row group's feature-code column spans. */
@@ -108,13 +109,14 @@ function emptyFilteredPointsResult(axisNames: string[], totalRowCount: number): 
 }
 
 function toColumnarPointsChunk(
-  data: { shape?: number[]; data: ArrayLike<number>[] },
+  data: { shape?: number[]; data: ArrayLike<number>[]; featureCodes?: ArrayLike<number> },
   axisCount: number
 ): ColumnarPointsChunk {
   const rowCount = data.shape?.[1] ?? data.data[0]?.length ?? 0;
   return {
     shape: data.shape ?? [axisCount, rowCount],
     data: data.data,
+    ...(data.featureCodes ? { featureCodes: data.featureCodes } : {}),
   };
 }
 
@@ -142,7 +144,20 @@ function concatColumnarPointChunks(chunks: ColumnarPointsChunk[]): ColumnarPoint
     }
     return merged;
   });
-  return { shape: [axisCount, totalRows], data };
+  // Concatenate per-point feature codes in lockstep when every chunk carries
+  // them (they do when the source resolved a feature key).
+  let featureCodes: Int32Array | undefined;
+  if (chunks.every((chunk) => chunk.featureCodes)) {
+    featureCodes = new Int32Array(totalRows);
+    let offset = 0;
+    for (const chunk of chunks) {
+      const codes = chunk.featureCodes as ArrayLike<number>;
+      const values = codes instanceof Int32Array ? codes : Int32Array.from(codes);
+      featureCodes.set(values, offset);
+      offset += values.length;
+    }
+  }
+  return { shape: [axisCount, totalRows], data, ...(featureCodes ? { featureCodes } : {}) };
 }
 import {
   MORTON_CODE_2D_COLUMN,
@@ -645,6 +660,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return {
       shape: data.shape,
       data: data.data,
+      ...(data.featureCodes ? { featureCodes: data.featureCodes } : {}),
       totalRowCount,
       scannedRowCount: scannedRows,
       filterActive: true,

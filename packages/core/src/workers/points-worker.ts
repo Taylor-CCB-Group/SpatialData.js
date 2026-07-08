@@ -259,6 +259,7 @@ async function scanPayloadByFeatureCodes(
     xs: number[];
     ys: number[];
     zs: number[];
+    codes: number[];
     scannedRows: number;
   }
 ): Promise<{ matchedRows: number; scannedRows: number }> {
@@ -294,6 +295,7 @@ async function scanPayloadByFeatureCodes(
         xs: input.xs,
         ys: input.ys,
         zs: input.zs,
+        codes: input.codes,
       });
     }
     return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
@@ -316,6 +318,7 @@ async function scanPayloadByFeatureCodes(
       xs: input.xs,
       ys: input.ys,
       zs: input.zs,
+      codes: input.codes,
     });
   }
   return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
@@ -329,16 +332,19 @@ async function handleScanParquetByFeatureCodes(
   const xs: number[] = [];
   const ys: number[] = [];
   const zs: number[] = [];
+  const codes: number[] = [];
   const { matchedRows, scannedRows } = await scanPayloadByFeatureCodes(parquetModule, request, {
     matchedRows: 0,
     xs,
     ys,
     zs,
+    codes,
     scannedRows: 0,
   });
   const outX = Float32Array.from(xs);
   const outY = Float32Array.from(ys);
   const outZ = hasZ ? Float32Array.from(zs) : undefined;
+  const outCodes = codes.length > 0 ? Int32Array.from(codes) : undefined;
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,
@@ -348,6 +354,7 @@ async function handleScanParquetByFeatureCodes(
       xs: outX,
       ys: outY,
       ...(outZ ? { zs: outZ } : {}),
+      ...(outCodes ? { featureCodes: outCodes } : {}),
       matchedRows,
       scannedRows,
     },
@@ -479,7 +486,7 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
           if (response.result.zs) {
             transferables.push(response.result.zs.buffer);
           }
-          if (response.result.kind === 'columnar' && response.result.featureCodes) {
+          if (response.result.featureCodes) {
             transferables.push(response.result.featureCodes.buffer);
           }
         } else if (response.result.kind === 'geometryWithFeatures') {

@@ -411,6 +411,8 @@ export function scanTableByFeatureCodes(input: {
   xs: number[];
   ys: number[];
   zs: number[];
+  /** Optional per-matched-row feature codes, collected for colour-by-feature. */
+  codes?: number[];
 }): number {
   const allowed = featureCodeAllowSet(input.featureCodes);
   if (allowed !== null && allowed.size === 0) {
@@ -446,6 +448,7 @@ export function scanTableByFeatureCodes(input: {
       const z = zColumn.get(rowIndex);
       input.zs.push(typeof z === 'number' ? z : 0);
     }
+    input.codes?.push(rowCodes[rowIndex] ?? -1);
     matchedRows += 1;
   }
   return matchedRows;
