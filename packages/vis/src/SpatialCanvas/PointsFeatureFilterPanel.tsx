@@ -198,12 +198,19 @@ export function PointsFeatureFilterPanel({
 
   const selectedCount = noneSelected ? 0 : allSelected ? entries.length : selectedCodes.size;
   const showSearch = entries.length > FEATURE_LIST_SEARCH_THRESHOLD;
-  // Features present in the catalog but absent from the instant resident preview.
-  // Selecting one triggers an on-demand feature-index scan, so we grey those rows
-  // and surface the count to explain why they don't appear instantly.
+  // A feature's points are "loaded" (renderable now, not greyed) if it is in the
+  // instant resident preview OR it is part of the current selection whose
+  // feature-index scan has settled. So a non-resident feature greys until you
+  // select it and its scan finishes, then un-greys.
   const residentKnown = residentCodes !== undefined;
+  const settledSelectionCodes =
+    matchingLoadState?.settled && config.featureCodes
+      ? new Set(config.featureCodes)
+      : undefined;
+  const isLoaded = (code: number): boolean =>
+    !residentKnown || residentCodes.has(code) || (settledSelectionCodes?.has(code) ?? false);
   const notLoadedCount = residentKnown
-    ? entries.reduce((total, entry) => total + (residentCodes.has(entry.code) ? 0 : 1), 0)
+    ? entries.reduce((total, entry) => total + (isLoaded(entry.code) ? 0 : 1), 0)
     : 0;
 
   return (
@@ -221,8 +228,8 @@ export function PointsFeatureFilterPanel({
       ) : null}
       {notLoadedCount > 0 ? (
         <div style={helperStyle}>
-          {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'} aren’t in the
-          instant preview (greyed below) — selecting one loads it on demand.
+          {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'} not loaded yet
+          (greyed below) — selecting one loads it on demand.
         </div>
       ) : null}
       {matchingLoadState ? (
@@ -268,7 +275,7 @@ export function PointsFeatureFilterPanel({
       <div style={listStyle}>
         {visibleEntries.map((entry) => {
           const checked = !noneSelected && (allSelected || selectedCodes.has(entry.code));
-          const notLoaded = residentKnown && !residentCodes.has(entry.code);
+          const notLoaded = !isLoaded(entry.code);
           return (
             <label
               key={entry.code}
@@ -276,7 +283,7 @@ export function PointsFeatureFilterPanel({
               title={
                 `code ${entry.code}` +
                 (entry.count !== undefined ? ` · ${entry.count.toLocaleString()} points` : '') +
-                (notLoaded ? ' · not in the loaded subset (renders no points yet)' : '')
+                (notLoaded ? ' · not loaded (select to load its points)' : '')
               }
             >
               <input

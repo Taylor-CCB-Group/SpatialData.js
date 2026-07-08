@@ -1398,11 +1398,13 @@ export function useLayerData(
         // feature can't live in), so features outside the resident preload window
         // still render. The scan is idempotent per selection; kicking it here is a
         // no-op once resident/in-flight. On settle it notifies → re-render → the
-        // matched resource appears below.
+        // matched resource appears below. `getMatchingResource` returns the LAST
+        // completed matched batch, so a selection change keeps showing the prior
+        // selection's points until the new scan settles (no blank mid-scan).
         let matchingResource: PointsRenderResource | null = null;
         if (selectionActive) {
           void pointsEngine.ensureMatchingFeaturesLoaded({ key: elem.key, layerId, element }, featureCodes);
-          matchingResource = pointsEngine.getMatchingResource(element, elem.key, featureCodes);
+          matchingResource = pointsEngine.getMatchingResource(element, elem.key);
         }
 
         if (matchingResource) {

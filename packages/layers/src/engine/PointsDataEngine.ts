@@ -194,6 +194,12 @@ export class PointsDataEngine {
     this.entries.set(key, entry);
     const signature = PointsDataEngine.matchingSignature(featureCodes);
     if (entry.matching?.signature === signature) {
+      // Already resident for this exact selection. Abandon any superseded scan
+      // still in flight (e.g. the user changed the selection and changed back) so
+      // its late completion can't overwrite this resident batch.
+      if (entry.matchingLoading && entry.matchingLoading.signature !== signature) {
+        entry.matchingLoading = undefined;
+      }
       return Promise.resolve();
     }
     if (entry.matchingLoading?.signature === signature) {
@@ -224,7 +230,13 @@ export class PointsDataEngine {
           memoryCap,
           onProgress,
         });
-        entry.matching = { signature, result };
+        // Apply only if this is still the latest requested scan — a newer
+        // selection may have superseded it while we were loading. Keeping the
+        // previous `matching` batch until the current one is ready is what lets
+        // the render keep showing the prior selection instead of blanking.
+        if (entry.matchingLoading?.signature === signature) {
+          entry.matching = { signature, result };
+        }
       } catch (error) {
         console.error(`Failed feature-index scan for ${target.layerId}:`, error);
       } finally {
@@ -274,17 +286,19 @@ export class PointsDataEngine {
     return undefined;
   }
 
-  /** Stable render resource for the resident matched selection, or null if the
-   * scan for this selection has not settled. Built lazily and cached per
-   * selection so panning does not reset the composite's batch. */
-  getMatchingResource(
-    element: PointsElement,
-    key: string,
-    featureCodes: readonly number[]
-  ): PointsRenderResource | null {
+  /**
+   * Stable render resource for the **last completed** matched selection, or null
+   * if no selection has ever settled. Deliberately NOT keyed to the current
+   * selection: while a new selection's scan is in flight, this keeps returning the
+   * previous selection's batch so the render shows those points instead of
+   * blanking for the (potentially multi-second) scan. The resource is cached on
+   * the matched batch and only changes identity when the batch does, so panning
+   * doesn't reset the composite. Pair with `getMatchingLoadState` (exact-signature)
+   * for the "is the current selection loaded" question.
+   */
+  getMatchingResource(element: PointsElement, key: string): PointsRenderResource | null {
     const entry = this.entries.get(key);
-    const signature = PointsDataEngine.matchingSignature(featureCodes);
-    if (!entry?.matching || entry.matching.signature !== signature) {
+    if (!entry?.matching) {
       return null;
     }
     if (entry.matching.resource) {
