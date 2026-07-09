@@ -210,6 +210,23 @@ export class PointsDataEngine {
   }
 
   /**
+   * Whether an already-loaded matched batch still satisfies a (possibly changed)
+   * memory cap. A COMPLETE batch (the scan found all matching rows before hitting
+   * the cap) always does. A TRUNCATED batch (it filled up to its cap) only does
+   * while the new cap doesn't ask for more rows than it already holds — so
+   * lowering the cap never rescans, and raising it past a truncated batch does.
+   */
+  private static matchedBatchAdequateForCap(
+    result: PointsLoadResult,
+    memoryCap: number
+  ): boolean {
+    if (!result.preloadTruncated) {
+      return true;
+    }
+    return (result.shape[1] ?? 0) >= memoryCap;
+  }
+
+  /**
    * Ensure the selected features' points are available for rendering. The scan
    * loads the whole dataset for a selection (footer stats skip non-matching row
    * groups) and retains the per-row codes, so the render can **filter that batch
@@ -232,9 +249,15 @@ export class PointsDataEngine {
       const covered = PointsDataEngine.coveredCodes(sig);
       return featureCodes.every((code) => covered.has(code));
     };
-    // A completed batch already covers this selection → reuse it, the layer
-    // filters down to the current codes. No scan (this is the removal fast path).
-    if (entry.matching && isCoveredBy(entry.matching.signature)) {
+    // A loaded batch already covers this selection AND still satisfies the memory
+    // cap → reuse it, the layer filters down to the current codes. No scan. This
+    // is both the removal fast path and the cap-lowering fast path: dropping the
+    // cap (or any cap change where the loaded rows already suffice) never rescans.
+    if (
+      entry.matching &&
+      isCoveredBy(entry.matching.signature) &&
+      PointsDataEngine.matchedBatchAdequateForCap(entry.matching.result, memoryCap)
+    ) {
       // Any in-flight scan for a different (now-unneeded) selection is superseded.
       entry.matchingLoading = undefined;
       return Promise.resolve();
@@ -420,10 +443,12 @@ export class PointsDataEngine {
     return entry?.data !== undefined && entry.memoryCap === memoryCap;
   }
 
-  /** Reset the cap-dependent resident state (geometry, row codes, render
-   * resource, matched selection) so a new cap reloads it. The **full-dataset
-   * catalog is cap-independent and preserved** — it must not trigger a fresh
-   * (potentially ~30s) scan on a cap change. */
+  /** Reset the RESIDENT cap-dependent state (geometry, row codes, render
+   * resource) so a new cap reloads it. The **full-dataset catalog** is
+   * cap-independent and preserved (must not trigger a fresh ~30s scan), and the
+   * **matched selection is preserved too** — whether it still satisfies the new
+   * cap is decided lazily in `ensureMatchingFeaturesLoaded`, so lowering the cap
+   * reuses the loaded matched batch instead of rescanning it. */
   private resetCapDependentState(entry: PointsEntry): void {
     // Cancel the superseded in-flight preload (if any) before dropping its state.
     entry.loadAbort?.abort();
@@ -436,8 +461,6 @@ export class PointsDataEngine {
     entry.rowCodesCatalog = undefined;
     entry.residentCodes = undefined;
     entry.residentCodesSource = undefined;
-    entry.matching = undefined;
-    entry.matchingLoading = undefined;
   }
 
   /**

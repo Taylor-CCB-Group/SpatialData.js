@@ -650,4 +650,56 @@ describe('PointsDataEngine — matched-selection subset reuse', () => {
     expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(2);
     expect([...engine.getLoadedMatchingFeatureCodes('pts:add')!].sort()).toEqual([1, 3]);
   });
+
+  it('does not rescan when the cap is lowered and the loaded selection already fits', async () => {
+    const engine = new PointsDataEngine();
+    // A COMPLETE batch: the scan found all matching rows before the cap.
+    const loadPointsMatchingFeatureCodes = vi.fn(async (opts: { featureCodes: readonly number[] }) => ({
+      shape: [2, 500],
+      data: [new Float32Array(500), new Float32Array(500)],
+      featureCodes: Int32Array.from({ length: 500 }, () => opts.featureCodes[0]),
+      preloadTruncated: false,
+    }));
+    const element = {
+      key: 'pts:caplow',
+      loadPoints: vi.fn(async () => makeBatch()),
+      loadPointsMatchingFeatureCodes,
+    } as unknown as PointsElement;
+    const target = { key: 'pts:caplow', layerId: 'l', element };
+
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2], 4_000_000);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+    // Lower the cap 4M → 2M: the complete batch still covers the selection and
+    // fits — reuse, NO rescan (the user's case: the selection totals < 2M).
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2], 2_000_000);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('rescans only when the cap is raised past a truncated batch', async () => {
+    const engine = new PointsDataEngine();
+    // A TRUNCATED batch: the scan filled up to its cap (more rows exist).
+    const loadPointsMatchingFeatureCodes = vi.fn(
+      async (opts: { featureCodes: readonly number[]; memoryCap: number }) => ({
+        shape: [2, opts.memoryCap],
+        data: [new Float32Array(1), new Float32Array(1)],
+        featureCodes: Int32Array.from([opts.featureCodes[0]]),
+        preloadTruncated: true,
+      })
+    );
+    const element = {
+      key: 'pts:capraise',
+      loadPoints: vi.fn(async () => makeBatch()),
+      loadPointsMatchingFeatureCodes,
+    } as unknown as PointsElement;
+    const target = { key: 'pts:capraise', layerId: 'l', element };
+
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2], 2_000_000);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+    // Lowering 2M → 1M: batch holds 2M ≥ 1M rows → reuse even though truncated.
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2], 1_000_000);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+    // Raising 1M → 4M: the batch was truncated at 2M < 4M → rescan for more.
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2], 4_000_000);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(2);
+  });
 });
