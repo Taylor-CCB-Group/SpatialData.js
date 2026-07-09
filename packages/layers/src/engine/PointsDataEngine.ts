@@ -1,5 +1,6 @@
 import {
   DEFAULT_POINTS_MEMORY_CAP,
+  featureCodeMapFromCatalog,
   remapRowFeatureCodes,
   type PointsElement,
   type PointsFeatureCatalog,
@@ -225,6 +226,31 @@ export class PointsDataEngine {
   }
 
   /**
+   * Copy a resident batch keeping only its first `rows` points (file order),
+   * marked truncated. Used to shed rows when the memory cap is LOWERED below what
+   * is resident — so a 4M cap never keeps 8M rows around — without re-fetching.
+   * Columnar geometry + per-row codes are sliced in lockstep.
+   */
+  private static sliceResidentBatch(data: PointsLoadResult, rows: number): PointsLoadResult {
+    const sliceArray = (array: ArrayLike<number>): ArrayLike<number> => {
+      const maybeSliceable = array as unknown as {
+        slice?: (start: number, end: number) => ArrayLike<number>;
+      };
+      return typeof maybeSliceable.slice === 'function'
+        ? maybeSliceable.slice(0, rows)
+        : Array.prototype.slice.call(array, 0, rows);
+    };
+    const dims = data.shape[0] ?? data.data.length;
+    return {
+      ...data,
+      shape: [dims, rows],
+      data: data.data.map(sliceArray),
+      ...(data.featureCodes ? { featureCodes: sliceArray(data.featureCodes) } : {}),
+      preloadTruncated: true,
+    };
+  }
+
+  /**
    * Ensure the selected features' points are available for rendering. The scan
    * loads the whole dataset for a selection (footer stats skip non-matching row
    * groups) and retains the per-row codes, so the render can **filter that batch
@@ -285,10 +311,19 @@ export class PointsDataEngine {
 
     const promise = (async () => {
       try {
+        // Dict-only elements have no file-backed code column, so the scan must
+        // resolve each row's feature_name against the same catalog the selection
+        // was made in. Pass that map; the core call ignores it for indexed
+        // elements (which match on their code column instead).
+        const featureCodeByName =
+          entry.featureCodeColumn === true
+            ? undefined
+            : featureCodeMapFromCatalog(entry.catalog);
         const result = await element.loadPointsMatchingFeatureCodes({
           featureCodes,
           memoryCap,
           onProgress,
+          ...(featureCodeByName ? { featureCodeByName } : {}),
         });
         // Apply only if this is still the latest requested scan — a newer
         // selection may have superseded it while we were loading. Keeping the
@@ -433,14 +468,21 @@ export class PointsDataEngine {
     return entry?.matchingLoading?.signature === PointsDataEngine.matchingSignature(featureCodes);
   }
 
-  /** Whether the resident batch already satisfies this memory cap — i.e. no
-   * reload is needed. True when data is present and it is complete, or already
-   * holds at least `memoryCap` rows. So the host only reloads when the cap is
-   * RAISED past a truncated batch; lowering or a raise that a complete batch
-   * already covers is a no-op. */
+  /** Whether the resident batch is in its final state for this cap — i.e. no
+   * resident work is needed. False (work needed) when it must GROW (a truncated
+   * batch and the cap was raised past it → reload) or SHRINK (it holds more rows
+   * than the cap → shed the excess). So raising past a truncated batch reloads,
+   * lowering below what's loaded sheds, and any cap a complete batch within the
+   * cap already covers is a no-op. */
   isLoadedWithCap(key: string, memoryCap: number): boolean {
     const entry = this.entries.get(key);
-    return entry?.data !== undefined && PointsDataEngine.batchAdequateForCap(entry.data, memoryCap);
+    if (entry?.data === undefined) {
+      return false;
+    }
+    return (
+      PointsDataEngine.batchAdequateForCap(entry.data, memoryCap) &&
+      (entry.data.shape[1] ?? 0) <= memoryCap
+    );
   }
 
   /**
@@ -463,6 +505,35 @@ export class PointsDataEngine {
   }
 
   /**
+   * Truncation state of what is actually on screen. With an active selection that
+   * a scanned batch covers, that batch is the render — report ITS count and
+   * whether it hit the cap (`filtered`), not the resident preload's, so the panel
+   * doesn't keep saying "showing 4M" while a filtered subset is drawn. Otherwise
+   * falls back to the resident preload. `undefined` until something has loaded.
+   */
+  getActiveTruncation(
+    key: string,
+    featureCodes: readonly number[] | undefined
+  ): { truncated: boolean; loaded: number; total?: number; filtered?: boolean } | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (featureCodes && featureCodes.length > 0 && entry.matching) {
+      const covered = PointsDataEngine.coveredCodes(entry.matching.signature);
+      if (covered.size > 0 && featureCodes.every((code) => covered.has(code))) {
+        const result = entry.matching.result;
+        return {
+          truncated: result.preloadTruncated === true,
+          loaded: result.shape[1] ?? 0,
+          filtered: true,
+        };
+      }
+    }
+    return this.getResidentTruncation(key);
+  }
+
+  /**
    * Idempotently preload an element's points at a given memory cap. A no-op when
    * the resident data already satisfies the cap (see {@link isLoadedWithCap}) —
    * so lowering the cap, or raising it when a complete batch already covers it,
@@ -477,7 +548,8 @@ export class PointsDataEngine {
   ): Promise<void> {
     const { key, layerId, element } = target;
     const existing = this.entries.get(key);
-    // (1) Existing data already satisfies this cap → accept the cap, no reload.
+    // (1) Existing data covers this cap without a reload (it is complete, or a
+    // truncated batch the lowered cap doesn't outgrow).
     if (existing?.data !== undefined && PointsDataEngine.batchAdequateForCap(existing.data, memoryCap)) {
       // Cancel a now-unneeded in-flight load (e.g. the cap was raised then
       // lowered back to what we already hold).
@@ -487,6 +559,19 @@ export class PointsDataEngine {
         existing.loadAbort = undefined;
       }
       existing.memoryCap = memoryCap;
+      // Cap lowered below what's resident → shed the excess in memory (no
+      // re-fetch), so a 4M cap doesn't keep holding an 8M batch. Rebuild the
+      // render resource / resident-code memos from the sliced batch.
+      if ((existing.data.shape[1] ?? 0) > memoryCap) {
+        existing.data = PointsDataEngine.sliceResidentBatch(existing.data, memoryCap);
+        existing.resource = undefined;
+        existing.residentCodes = undefined;
+        existing.residentCodesSource = undefined;
+        if (existing.rowCodes && existing.rowCodes.length > memoryCap) {
+          existing.rowCodes = Array.prototype.slice.call(existing.rowCodes, 0, memoryCap);
+        }
+        this.notify();
+      }
       return Promise.resolve();
     }
     // (2) A load for this exact cap is already in flight → dedup.
@@ -623,6 +708,24 @@ export class PointsDataEngine {
    */
   hasFeatureCodeColumn(key: string): boolean {
     return this.entries.get(key)?.featureCodeColumn === true;
+  }
+
+  /**
+   * Whether a whole-dataset feature scan can run for this element — i.e. reach
+   * matching points beyond the resident preload window. True with a file-backed
+   * code column (footer stats skip row groups), AND for dictionary-only elements
+   * once a catalog is loaded: the scan resolves each row's `feature_name` against
+   * that catalog's code space (no row-group skipping, so it reads the whole file,
+   * but it retains every match up to the cap). False before any catalog loads —
+   * dict-only codes are only stable relative to a catalog, so there'd be nothing
+   * to match names against. Gates the render scan and the on-demand affordance.
+   */
+  supportsFeatureScan(key: string): boolean {
+    const entry = this.entries.get(key);
+    if (!entry) {
+      return false;
+    }
+    return entry.featureCodeColumn === true || (entry.catalogLoaded === true && !!entry.catalog);
   }
 
   /**

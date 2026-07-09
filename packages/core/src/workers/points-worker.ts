@@ -269,6 +269,9 @@ async function scanPayloadByFeatureCodes(
     request.featureKey,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
   ];
+  const featureCodeByName = request.featureCodeEntries
+    ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
+    : undefined;
 
   if (request.rowGroups?.length && parquetModule.readParquetRowGroup) {
     for (const chunk of request.rowGroups) {
@@ -296,6 +299,7 @@ async function scanPayloadByFeatureCodes(
         ys: input.ys,
         zs: input.zs,
         codes: input.codes,
+        featureCodeByName,
       });
     }
     return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
@@ -319,6 +323,7 @@ async function scanPayloadByFeatureCodes(
       ys: input.ys,
       zs: input.zs,
       codes: input.codes,
+      featureCodeByName,
     });
   }
   return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };

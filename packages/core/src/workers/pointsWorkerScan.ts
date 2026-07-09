@@ -413,6 +413,9 @@ export function scanTableByFeatureCodes(input: {
   zs: number[];
   /** Optional per-matched-row feature codes, collected for colour-by-feature. */
   codes?: number[];
+  /** Authoritative name→code map for dict-only elements (no code column), so a
+   * row's feature_name resolves to the same code space the selection uses. */
+  featureCodeByName?: ReadonlyMap<string, number>;
 }): number {
   const allowed = featureCodeAllowSet(input.featureCodes);
   if (allowed !== null && allowed.size === 0) {
@@ -421,7 +424,8 @@ export function scanTableByFeatureCodes(input: {
   const rowCodes = extractRowFeatureCodesFromTable(
     input.table,
     input.featureKey,
-    input.featureCodeColumnName
+    input.featureCodeColumnName,
+    input.featureCodeByName
   );
   const xColumn = input.axisNames.includes('x') ? input.table.getChild('x') : null;
   const yColumn = input.axisNames.includes('y') ? input.table.getChild('y') : null;

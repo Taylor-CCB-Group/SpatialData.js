@@ -242,11 +242,14 @@ interface UseLayerDataResult {
    * (the feature-index scan). False for dictionary-only datasets, which can only
    * show features present in the resident preload window. */
   getPointsSupportsOnDemandLoad: (layerId: string) => boolean;
-  /** Resident preload truncation (loaded/total rows + whether it's capped), so
-   * the UI can show when raising the memory cap would load more points. */
+  /** Truncation of what's on screen (loaded/total rows + whether it's capped), so
+   * the UI can show when raising the memory cap would load more points. Pass the
+   * active selection to report the matched (scanned) batch instead of the
+   * resident preload when a filter is applied. */
   getPointsResidentTruncation: (
-    layerId: string
-  ) => { truncated: boolean; loaded: number; total?: number } | undefined;
+    layerId: string,
+    featureCodes?: readonly number[]
+  ) => { truncated: boolean; loaded: number; total?: number; filtered?: boolean } | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -1273,9 +1276,10 @@ export function useLayerData(
       if (!featureCodes || featureCodes.length === 0) return undefined;
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem || elem.type !== 'points') return undefined;
-      // Only the feature-index scan reports a load state; dictionary-only datasets
-      // filter the resident batch in memory (no scan), so there is nothing to show.
-      if (!pointsEngine.hasFeatureCodeColumn(elem.key)) return undefined;
+      // Only a whole-dataset scan reports a load state; before a catalog loads a
+      // dict-only element can only filter the resident batch in memory (no scan),
+      // so there is nothing to show.
+      if (!pointsEngine.supportsFeatureScan(elem.key)) return undefined;
       return pointsEngine.getMatchingLoadState(elem.key, featureCodes);
     },
     [pointsEngine]
@@ -1294,23 +1298,26 @@ export function useLayerData(
   };
 
   // Whether selecting a non-resident feature can fetch its points on demand (the
-  // feature-index scan). True only for datasets with a real feature-code column;
-  // dictionary-only datasets can only show what's in the resident preload window.
+  // whole-dataset scan). True for a real feature-code column and for dict-only
+  // elements once a catalog is loaded (the scan matches by feature_name); false
+  // only before any catalog exists, where we can show just the preload window.
   const getPointsSupportsOnDemandLoad = (layerId: string): boolean => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem || elem.type !== 'points') return false;
-    return pointsEngine.hasFeatureCodeColumn(elem.key);
+    return pointsEngine.supportsFeatureScan(elem.key);
   };
 
-  // Resident preload truncation: whether the loaded points are the whole dataset
-  // or a capped window (and the counts), so the panel can tell the user when
-  // raising the memory cap would show more.
+  // Truncation of what's on screen: a capped window vs. the whole dataset (and
+  // counts), so the panel can tell the user when raising the memory cap shows
+  // more. Selection-aware — with a scanned selection active it reports the
+  // matched batch (what's drawn), not the resident preload.
   const getPointsResidentTruncation = (
-    layerId: string
-  ): { truncated: boolean; loaded: number; total?: number } | undefined => {
+    layerId: string,
+    featureCodes?: readonly number[]
+  ): { truncated: boolean; loaded: number; total?: number; filtered?: boolean } | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
     if (!elem || elem.type !== 'points') return undefined;
-    return pointsEngine.getResidentTruncation(elem.key);
+    return pointsEngine.getActiveTruncation(elem.key, featureCodes);
   };
 
   const getWorldBoundsForLayer = useCallback(
@@ -1464,13 +1471,14 @@ export function useLayerData(
         // completed matched batch, so a selection change keeps showing the prior
         // selection's points until the new scan settles (no blank mid-scan).
         //
-        // Gated on a real feature-code column: only then are codes globally
-        // authoritative and can footer stats skip row groups. On dictionary-only
-        // datasets the scan can neither skip (unsorted) nor derive matching codes
-        // (no shared code space), so it would read the whole file only to match
-        // nothing — locking the view empty. Those fall through to resident
-        // in-memory filtering, which is correct within the preload window.
-        const canFeatureScan = pointsEngine.hasFeatureCodeColumn(elem.key);
+        // Gated on scan capability: an authoritative code column (footer stats
+        // skip row groups) OR a dictionary-only element with a catalog loaded —
+        // there the scan reads the whole file and matches each row's feature_name
+        // against the catalog's code space, so a selected gene's points render
+        // even when they fall outside the resident preload window. Before any
+        // catalog loads (no shared code space) there is nothing to match names
+        // against, so it falls through to resident in-memory filtering.
+        const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
         let matchingResource: PointsRenderResource | null = null;
         if (selectionActive && canFeatureScan) {
           void pointsEngine.ensureMatchingFeaturesLoaded(

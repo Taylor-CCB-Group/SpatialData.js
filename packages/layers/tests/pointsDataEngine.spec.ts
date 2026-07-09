@@ -95,7 +95,7 @@ describe('PointsDataEngine', () => {
     expect(loadPoints).toHaveBeenCalledTimes(1);
   });
 
-  it('reloads a TRUNCATED resident batch only when raised, keeping the old data meanwhile', async () => {
+  it('sheds a resident batch in memory when the cap is lowered, reloads only when raised', async () => {
     const engine = new PointsDataEngine();
     // Truncated batch: filled to its cap; more rows exist (total 12M).
     const truncatedAt = (cap: number): PointsLoadResult => ({
@@ -116,23 +116,27 @@ describe('PointsDataEngine', () => {
     const element = { key: 'pts:trunc', loadPoints } as unknown as PointsElement;
     const target = { key: 'pts:trunc', layerId: 'l', element };
 
-    const first = await engine.ensureLoaded(target, 4_000_000).then(() => engine.getData('pts:trunc'));
+    await engine.ensureLoaded(target, 4_000_000);
     expect(engine.getResidentTruncation('pts:trunc')).toMatchObject({
       truncated: true,
       loaded: 4_000_000,
       total: 12_000_000,
     });
-    // Lowering: the batch holds 4M ≥ 2M → no reload.
-    expect(engine.isLoadedWithCap('pts:trunc', 2_000_000)).toBe(true);
+    // Lowering 4M → 2M: shed the excess IN MEMORY (no re-fetch) so a 2M cap does
+    // not keep holding 4M rows. isLoadedWithCap is false until the shed runs.
+    expect(engine.isLoadedWithCap('pts:trunc', 2_000_000)).toBe(false);
     await engine.ensureLoaded(target, 2_000_000);
-    expect(loadPoints).toHaveBeenCalledTimes(1);
+    expect(loadPoints).toHaveBeenCalledTimes(1); // shed is in-memory, no reload
+    expect(engine.getResidentTruncation('pts:trunc')).toMatchObject({ loaded: 2_000_000 });
+    expect(engine.isLoadedWithCap('pts:trunc', 2_000_000)).toBe(true);
+    const shed = engine.getData('pts:trunc');
 
-    // Raising past the truncated batch → reload, but the old data stays visible
+    // Raising past the truncated batch → reload, but the shed batch stays visible
     // while the larger batch is in flight (no blank).
     expect(engine.isLoadedWithCap('pts:trunc', 8_000_000)).toBe(false);
     const raise = engine.ensureLoaded(target, 8_000_000);
     expect(loadPoints).toHaveBeenCalledTimes(2);
-    expect(engine.getData('pts:trunc')).toBe(first); // old batch still there
+    expect(engine.getData('pts:trunc')).toBe(shed); // old batch still there
 
     resolveRaise(truncatedAt(8_000_000));
     await raise;
@@ -740,5 +744,102 @@ describe('PointsDataEngine — matched-selection subset reuse', () => {
     // Raising 1M → 4M: the batch was truncated at 2M < 4M → rescan for more.
     await engine.ensureMatchingFeaturesLoaded(target, [1, 2], 4_000_000);
     expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('PointsDataEngine — dict-only feature scan', () => {
+  const dictCatalog: PointsFeatureCatalog = {
+    featureKey: 'feature_name',
+    entries: [
+      { code: 0, name: 'GeneA', count: 3 },
+      { code: 1, name: 'GeneB', count: 2 },
+      { code: 2, name: 'GeneC', count: 4 },
+    ],
+  };
+
+  function dictElement(key: string, hasCodeColumn: boolean) {
+    const loadPoints = vi.fn(async () => ({
+      ...makeBatch(),
+      featureCatalog: dictCatalog,
+      featureCodes: new Int32Array([0, 1]),
+      hasFeatureCodeColumn: hasCodeColumn,
+    }));
+    const loadPointsMatchingFeatureCodes = vi.fn(
+      async (opts: { featureCodes: readonly number[] }) => ({
+        shape: [2, opts.featureCodes.length],
+        data: [new Float32Array(opts.featureCodes.length), new Float32Array(opts.featureCodes.length)],
+        featureCodes: Int32Array.from(opts.featureCodes),
+      })
+    );
+    const element = {
+      key,
+      loadPoints,
+      loadPointsMatchingFeatureCodes,
+    } as unknown as PointsElement;
+    return { element, loadPointsMatchingFeatureCodes };
+  }
+
+  it('supports a scan once a catalog is loaded, even with no code column', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = dictElement('pts:dict', false);
+    const target = { key: 'pts:dict', layerId: 'l', element };
+    expect(engine.supportsFeatureScan('pts:dict')).toBe(false); // nothing loaded yet
+    await engine.ensureLoaded(target, DEFAULT_POINTS_MEMORY_CAP);
+    expect(engine.hasFeatureCodeColumn('pts:dict')).toBe(false);
+    expect(engine.supportsFeatureScan('pts:dict')).toBe(true); // catalog present
+  });
+
+  it('passes the catalog name→code map to the scan for a dict-only element', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadPointsMatchingFeatureCodes } = dictElement('pts:dictscan', false);
+    const target = { key: 'pts:dictscan', layerId: 'l', element };
+    await engine.ensureLoaded(target, DEFAULT_POINTS_MEMORY_CAP);
+    await engine.ensureMatchingFeaturesLoaded(target, [2]);
+    const arg = loadPointsMatchingFeatureCodes.mock.calls[0][0] as {
+      featureCodeByName?: ReadonlyMap<string, number>;
+    };
+    expect(arg.featureCodeByName).toBeInstanceOf(Map);
+    expect(arg.featureCodeByName?.get('GeneC')).toBe(2);
+  });
+
+  it('omits the name→code map for an element with a file-backed code column', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadPointsMatchingFeatureCodes } = dictElement('pts:indexed', true);
+    const target = { key: 'pts:indexed', layerId: 'l', element };
+    await engine.ensureLoaded(target, DEFAULT_POINTS_MEMORY_CAP);
+    await engine.ensureMatchingFeaturesLoaded(target, [2]);
+    const arg = loadPointsMatchingFeatureCodes.mock.calls[0][0] as {
+      featureCodeByName?: ReadonlyMap<string, number>;
+    };
+    expect(arg.featureCodeByName).toBeUndefined();
+  });
+});
+
+describe('PointsDataEngine — shed complete batch on lower', () => {
+  it('slices a complete batch down to the cap in memory (no reload), marking it truncated', async () => {
+    const engine = new PointsDataEngine();
+    // A COMPLETE batch of 5M rows (the whole dataset fits; not truncated).
+    const complete: PointsLoadResult = {
+      shape: [2, 5_000_000],
+      data: [new Float32Array([0, 1]), new Float32Array([0, 1])],
+      totalRowCount: 5_000_000,
+    };
+    const loadPoints = vi.fn(async () => complete);
+    const element = { key: 'pts:shed', loadPoints } as unknown as PointsElement;
+    const target = { key: 'pts:shed', layerId: 'l', element };
+
+    await engine.ensureLoaded(target, 8_000_000);
+    expect(engine.getResidentTruncation('pts:shed')).toMatchObject({
+      truncated: false,
+      loaded: 5_000_000,
+    });
+    // Lower 8M → 4M below the 5M loaded → shed to 4M in memory, now truncated.
+    expect(engine.isLoadedWithCap('pts:shed', 4_000_000)).toBe(false);
+    await engine.ensureLoaded(target, 4_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(1); // no re-fetch
+    expect(engine.getResidentTruncation('pts:shed')).toMatchObject({
+      truncated: true,
+      loaded: 4_000_000,
+    });
   });
 });

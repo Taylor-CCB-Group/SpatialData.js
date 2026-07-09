@@ -10,7 +10,11 @@ export * from './store/index.js';
 export * from './models/index.js';
 export * from './spatialViewFit.js';
 export * from './pointsTiling.js';
-export { mergeFeatureCountsIntoCatalog, remapRowFeatureCodes } from './pointsFeatures.js';
+export {
+  featureCodeMapFromCatalog,
+  mergeFeatureCountsIntoCatalog,
+  remapRowFeatureCodes,
+} from './pointsFeatures.js';
 export {
   POINTS_PRELOAD_MAX_ROWS,
   DEFAULT_POINTS_MEMORY_CAP,

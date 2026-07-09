@@ -523,6 +523,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       memoryCap: number;
       featureCodes: readonly number[];
       onProgress?: (progress: PointsLoadProgress) => void;
+      /** Authoritative name→code map for dict-only elements (no `*_codes`
+       * column), letting the scan resolve each row's `feature_name` to the same
+       * code space the selection was made in. When absent for a dict-only
+       * element the scan cannot match by name and returns nothing. */
+      featureCodeByName?: ReadonlyMap<string, number>;
     }
   ): Promise<PointsLoadResult> {
     ensurePointsWorker();
@@ -563,11 +568,27 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       columnNames.push(featureKey);
     }
 
+    // Dict-only elements have no file-backed code column, so the worker resolves
+    // each row's `feature_name` against this authoritative map (from the caller's
+    // catalog) into the same code space the selection uses. A no-op for indexed
+    // elements (they match on `featureCodeColumnName`).
+    const featureCodeEntries =
+      !featureCodeColumnName && options.featureCodeByName
+        ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
+        : undefined;
+
     const matchedChunks: ColumnarPointsChunk[] = [];
     let matchedRows = 0;
     let scannedRows = 0;
 
-    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    // Row-group scanning only helps when a feature-code column lets footer stats
+    // skip row groups (feature-ordered index). Dict-only elements have no stats to
+    // skip on, so the row-group path would scan every group anyway — and its
+    // projected decode of the *dictionary* feature_name column is unreliable for
+    // multipart stores. Route dict-only scans through the parts path, which the
+    // catalog build already uses successfully.
+    const canUseRowGroups =
+      featureCodeColumnName !== undefined && (await this.canLoadParquetRowGroups());
     const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
 
     if (canUseRowGroups && datasetRowGroups > 0) {
@@ -612,6 +633,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           featureCodeColumnName,
           featureCodes: options.featureCodes,
           memoryCap: options.memoryCap - matchedRows,
+          ...(featureCodeEntries ? { featureCodeEntries } : {}),
         });
         if (!partial) {
           throw new Error('Feature-filtered points loading requires the points worker.');
@@ -652,6 +674,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           featureCodeColumnName,
           featureCodes: options.featureCodes,
           memoryCap: options.memoryCap - matchedRows,
+          ...(featureCodeEntries ? { featureCodeEntries } : {}),
         });
         if (!partial) {
           throw new Error('Feature-filtered points loading requires the points worker.');

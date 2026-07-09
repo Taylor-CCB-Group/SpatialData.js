@@ -462,6 +462,8 @@ export type ScanParquetByFeatureCodesInput = ParquetWorkerPayload & {
   featureCodeColumnName?: string;
   featureCodes: readonly number[];
   memoryCap: number;
+  /** Authoritative name→code entries for dict-only elements (no code column). */
+  featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
 };
 
 export async function scanParquetByFeatureCodesInWorker(

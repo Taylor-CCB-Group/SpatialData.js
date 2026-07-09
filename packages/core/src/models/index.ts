@@ -555,6 +555,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     memoryCap: number;
     featureCodes: readonly number[];
     onProgress?: (progress: PointsLoadProgress) => void;
+    featureCodeByName?: ReadonlyMap<string, number>;
   }) {
     return this.vPoints.loadPointsMatchingFeatureCodes(`points/${this.key}`, options);
   }

@@ -918,8 +918,19 @@ function SpatialCanvasInner({
                           limited to ~16.7M/layer.
                         </span>
                         {(() => {
-                          const t = getPointsResidentTruncation(selectedConfig.id);
+                          const t = getPointsResidentTruncation(
+                            selectedConfig.id,
+                            selectedConfig.featureCodes
+                          );
                           if (!t) return null;
+                          const noun = t.filtered ? 'matching points' : 'points';
+                          const message = t.truncated
+                            ? `Showing ${t.loaded.toLocaleString()}${
+                                t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
+                              } ${noun} — capped; raise the cap for more.`
+                            : t.filtered
+                              ? `Loaded all ${t.loaded.toLocaleString()} ${noun}.`
+                              : `All ${t.loaded.toLocaleString()} ${noun} loaded (not capped).`;
                           return (
                             <span
                               style={{
@@ -927,11 +938,7 @@ function SpatialCanvasInner({
                                 fontSize: '11px',
                               }}
                             >
-                              {t.truncated
-                                ? `Showing ${t.loaded.toLocaleString()}${
-                                    t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
-                                  } points — capped; raise the cap for more.`
-                                : `All ${t.loaded.toLocaleString()} points loaded (not capped).`}
+                              {message}
                             </span>
                           );
                         })()}

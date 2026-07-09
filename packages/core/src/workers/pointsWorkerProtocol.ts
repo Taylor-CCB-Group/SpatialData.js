@@ -105,6 +105,10 @@ export type PointsWorkerRequest =
       featureCodeColumnName?: string;
       featureCodes: readonly number[];
       memoryCap: number;
+      /** Authoritative name→code map for dict-only elements (no *_codes column),
+       * so the scan resolves each row's feature_name to the same code space the
+       * selection was made in. Absent when a file-backed code column is present. */
+      featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
     }
   | {
       type: 'scanMortonRowGroupsInBounds';

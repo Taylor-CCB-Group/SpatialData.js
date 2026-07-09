@@ -6,6 +6,7 @@ import {
   extractGeometryColumnar,
   extractRowFeatureCodesFromTable,
   scanFeatureCatalogFromPayload,
+  scanTableByFeatureCodes,
 } from '../src/workers/pointsWorkerScan.js';
 
 const throwingReadParquet = (() => {
@@ -133,6 +134,67 @@ describe('extractRowFeatureCodesFromTable with featureCodeByName', () => {
       featureCodeByName
     );
     expect([...codes]).toEqual([0, 1, 0]);
+  });
+});
+
+describe('scanTableByFeatureCodes with featureCodeByName (dict-only)', () => {
+  it('matches rows by feature_name against the catalog map and retains authoritative codes', () => {
+    // Dict-only: no code column. Rows for gene_c (code 2) live among others; the
+    // scan must resolve names via the map and keep only the selected code's rows.
+    const table = tableFromArrays({
+      x: Float32Array.from([10, 11, 12, 13]),
+      y: Float32Array.from([20, 21, 22, 23]),
+      feature_name: ['gene_a', 'gene_c', 'gene_b', 'gene_c'],
+    });
+    const featureCodeByName = new Map([
+      ['gene_a', 0],
+      ['gene_b', 1],
+      ['gene_c', 2],
+    ]);
+    const xs: number[] = [];
+    const ys: number[] = [];
+    const codes: number[] = [];
+    const matched = scanTableByFeatureCodes({
+      table,
+      axisNames: ['x', 'y'],
+      featureKey: 'feature_name',
+      featureCodeColumnName: undefined,
+      featureCodes: [2],
+      memoryCap: 1_000,
+      matchedRows: 0,
+      xs,
+      ys,
+      zs: [],
+      codes,
+      featureCodeByName,
+    });
+    expect(matched).toBe(2);
+    expect(xs).toEqual([11, 13]); // the two gene_c rows
+    expect(ys).toEqual([21, 23]);
+    expect(codes).toEqual([2, 2]); // authoritative codes retained
+  });
+
+  it('matches nothing when no name→code map is supplied for dict-only data', () => {
+    const table = tableFromArrays({
+      x: Float32Array.from([10, 11]),
+      y: Float32Array.from([20, 21]),
+      feature_name: ['gene_a', 'gene_c'],
+    });
+    const xs: number[] = [];
+    const matched = scanTableByFeatureCodes({
+      table,
+      axisNames: ['x', 'y'],
+      featureKey: 'feature_name',
+      featureCodeColumnName: undefined,
+      featureCodes: [2],
+      memoryCap: 1_000,
+      matchedRows: 0,
+      xs,
+      ys: [],
+      zs: [],
+    });
+    expect(matched).toBe(0);
+    expect(xs).toEqual([]);
   });
 });
 
