@@ -1,14 +1,25 @@
 /**
- * JS mirror of the colour-by-feature shader in {@link ./pointsFeatureColorExtension.ts}.
+ * Colour-by-feature palette constants — the SINGLE SOURCE for both this JS mirror
+ * (feature-list swatches) and the GPU shader. The shader
+ * (`./pointsFeatureColorExtension.ts`) interpolates these same values into its
+ * GLSL so the two can't drift; the OKLab→sRGB matrices and gamma below also match
+ * `pfc_oklab2rgb`. A negative code (the "no colour" sentinel) returns grey.
  *
- * MUST stay in lockstep with `pfc_codeToColor` / `pfc_oklab2rgb` there so the
- * feature-list swatches match what the GPU draws: same golden-angle hue in
- * OKLCh at the same fixed lightness (0.72) and chroma (0.128), same OKLab→sRGB
- * matrices and gamma. A negative code (the "no colour" sentinel) returns grey.
+ * Chroma note: sRGB can only hold OKLCh chroma up to ~0.32 (hue-dependent), so at
+ * this fixed C most hues are out of gamut and get hard-clamped to the sRGB
+ * boundary here and in the shader — vivid, at the cost of some hue accuracy and
+ * of the perceptual evenness the boundary erases. Lower C (~0.2–0.3) trades
+ * vividness for more in-gamut, even hues; raising C past ~0.32 changes little
+ * (already clamped). Kept in lockstep so a tweak here re-colours points too.
+ *
+ * TODO (revisit): CSS supports `oklch()`/`oklab()` directly, so the swatch could
+ * skip this CPU RGB conversion — but only once the shader gamut-maps the same way
+ * the browser does (today both hard-clamp here / the browser reduces chroma), or
+ * swatches and points would diverge at high C. See the library-wide colour story.
  */
-const PFC_GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
-const PFC_LIGHTNESS = 0.72;
-const PFC_CHROMA = 0.128;
+export const PFC_GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
+export const PFC_LIGHTNESS = 0.72;
+export const PFC_CHROMA = 0.37;
 const TWO_PI = 6.28318530717958648;
 
 function fract(x: number): number {

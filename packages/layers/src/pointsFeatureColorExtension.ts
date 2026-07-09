@@ -1,5 +1,14 @@
 import { LayerExtension } from '@deck.gl/core';
 import type { Layer } from '@deck.gl/core';
+import { PFC_CHROMA, PFC_GOLDEN_RATIO_CONJUGATE, PFC_LIGHTNESS } from './pointsFeatureColor.js';
+
+/** Render a JS number as a GLSL float literal (always with a decimal point, so an
+ * integer-valued constant doesn't become an `int` in the shader). Lets the shader
+ * interpolate the SAME palette constants the JS swatch mirror uses. */
+function glslFloat(value: number): string {
+  const text = String(value);
+  return text.includes('.') || text.includes('e') ? text : `${text}.0`;
+}
 
 /**
  * Uniform block for the highlight. The stored value is `highlightCode + 1`, so
@@ -88,10 +97,16 @@ export class PointsFeatureColorExtension extends LayerExtension {
             return clamp(mix(high, low, step(rgb, vec3(0.0031308))), 0.0, 1.0);
           }
 
-          // Golden-angle hue in OKLCh at a fixed lightness/chroma.
+          // Golden-angle hue in OKLCh at a fixed lightness/chroma. The lightness,
+          // chroma and golden-ratio constants come from pointsFeatureColor.ts so
+          // the swatches and the GPU points share one source (tweak them there).
           vec3 pfc_codeToColor(float code) {
-            float h = fract(code * 0.6180339887498949) * 6.28318530717958648;
-            return pfc_oklab2rgb(vec3(0.72, 0.128 * cos(h), 0.128 * sin(h)));
+            float h = fract(code * ${glslFloat(PFC_GOLDEN_RATIO_CONJUGATE)}) * 6.28318530717958648;
+            return pfc_oklab2rgb(vec3(
+              ${glslFloat(PFC_LIGHTNESS)},
+              ${glslFloat(PFC_CHROMA)} * cos(h),
+              ${glslFloat(PFC_CHROMA)} * sin(h)
+            ));
           }
         `,
         'vs:#main-end': /* glsl */ `
