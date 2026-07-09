@@ -1,11 +1,21 @@
-/** Maximum rows allowed for full-table points preload (canonical scatter path). */
+/**
+ * Row count above which a dataset is treated as "large" for **catalog strategy**
+ * (route to the feature-column scan instead of a full-table decode). This is a
+ * fixed heuristic, deliberately separate from the configurable memory cap below.
+ */
 export const POINTS_PRELOAD_MAX_ROWS = 4_000_000;
 
-/** Default in-memory row cap for preloaded scatter (layer override via props panel). */
-export const DEFAULT_POINTS_MEMORY_CAP = POINTS_PRELOAD_MAX_ROWS;
+/**
+ * Default in-memory row cap for the preloaded scatter (per-layer override via the
+ * props panel — `PointsLayerConfig.pointsMemoryCap`). 8M keeps a comfortable
+ * margin under deck.gl's 24-bit picking ceiling (~16.7M objects/layer) and
+ * ~200MB/layer of attributes, while roughly doubling the resident window.
+ */
+export const DEFAULT_POINTS_MEMORY_CAP = 8_000_000;
 
-/** Default render row cap — points kept in memory may exceed this. */
-export const DEFAULT_POINTS_RENDER_CAP = POINTS_PRELOAD_MAX_ROWS;
+/** Default render row cap — points kept in memory may exceed this. Matches the
+ * memory cap so, by default, everything loaded is drawn. */
+export const DEFAULT_POINTS_RENDER_CAP = DEFAULT_POINTS_MEMORY_CAP;
 
 export interface PointsColumnarLike {
   shape: number[];

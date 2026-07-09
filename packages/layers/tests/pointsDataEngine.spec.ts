@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PointsDataEngine } from '../src/engine/PointsDataEngine.js';
-import type { PointsElement, PointsFeatureCatalog, PointsLoadResult } from '@spatialdata/core';
+import {
+  DEFAULT_POINTS_MEMORY_CAP,
+  type PointsElement,
+  type PointsFeatureCatalog,
+  type PointsLoadResult,
+} from '@spatialdata/core';
 
 function makeBatch(): PointsLoadResult {
   return {
@@ -70,6 +75,63 @@ describe('PointsDataEngine', () => {
       ['layer-a', 'loading'],
       ['layer-a', 'ready'],
     ]);
+  });
+
+  it('reloads at a new memory cap, passing it to loadPoints, and reports isLoadedWithCap', async () => {
+    const engine = new PointsDataEngine();
+    const loadPoints = vi.fn(async () => makeBatch());
+    const element = { key: 'pts:cap', loadPoints } as unknown as PointsElement;
+
+    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 4_000_000);
+    expect(engine.isLoadedWithCap('pts:cap', 4_000_000)).toBe(true);
+    expect(engine.isLoadedWithCap('pts:cap', 8_000_000)).toBe(false);
+    // Same cap again is a no-op.
+    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 4_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(1);
+    expect(loadPoints).toHaveBeenLastCalledWith({ includeFeatureCodes: true, memoryCap: 4_000_000 });
+
+    // A different cap reloads.
+    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 8_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(2);
+    expect(loadPoints).toHaveBeenLastCalledWith({ includeFeatureCodes: true, memoryCap: 8_000_000 });
+    expect(engine.isLoadedWithCap('pts:cap', 8_000_000)).toBe(true);
+    expect(engine.isLoadedWithCap('pts:cap', 4_000_000)).toBe(false);
+  });
+
+  it('defaults to DEFAULT_POINTS_MEMORY_CAP when no cap is given', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeElement('pts:defcap');
+    await engine.ensureLoaded({ key: 'pts:defcap', layerId: 'l', element });
+    expect(engine.isLoadedWithCap('pts:defcap', DEFAULT_POINTS_MEMORY_CAP)).toBe(true);
+  });
+
+  it('preserves the full-dataset catalog across a cap change (no re-scan)', async () => {
+    // A cap change reloads the resident geometry but must NOT drop the
+    // (cap-independent, expensive) full-dataset catalog.
+    const fullCatalog: PointsFeatureCatalog = {
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'GeneA', count: 10 },
+        { code: 1, name: 'GeneB', count: 5 },
+        { code: 2, name: 'GeneC', count: 1 },
+      ],
+    };
+    const listFeaturesWithCounts = vi.fn(async () => fullCatalog);
+    const element = {
+      key: 'pts:capcat',
+      loadPoints: vi.fn(async () => makeBatch()),
+      listFeaturesWithCounts,
+    } as unknown as PointsElement;
+    const engine = new PointsDataEngine();
+
+    await engine.ensureLoaded({ key: 'pts:capcat', layerId: 'l', element }, 4_000_000);
+    await engine.ensureFeatureCatalog({ key: 'pts:capcat', layerId: 'l', element });
+    expect(engine.getFeatureCatalog('pts:capcat')).toEqual(fullCatalog);
+
+    // Change the cap → geometry reloads, catalog stays (no second scan).
+    await engine.ensureLoaded({ key: 'pts:capcat', layerId: 'l', element }, 8_000_000);
+    expect(engine.getFeatureCatalog('pts:capcat')).toEqual(fullCatalog);
+    expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);
   });
 
   it('is idempotent: concurrent loads trigger a single loadPoints', async () => {
@@ -307,7 +369,10 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     // The preload requested the feature column: the preview catalog and the row
     // codes are resident with no separate file loads, and the preview shows
     // without a loading spinner.
-    expect(loadPoints).toHaveBeenCalledWith({ includeFeatureCodes: true });
+    expect(loadPoints).toHaveBeenCalledWith({
+      includeFeatureCodes: true,
+      memoryCap: DEFAULT_POINTS_MEMORY_CAP,
+    });
     expect(engine.getFeatureCatalog('pts:res')).toEqual(previewCatalog);
     expect(engine.hasRowFeatureCodes('pts:res')).toBe(true);
     expect(Array.from(engine.getRowFeatureCodes('pts:res')!)).toEqual([0, 1, 0]);

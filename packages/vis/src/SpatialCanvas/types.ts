@@ -97,6 +97,14 @@ export interface PointsLayerConfig extends BaseLayerConfig {
   type: 'points';
   // Points-specific settings
   pointSize?: number;
+  /**
+   * Max rows retained in memory for the preloaded scatter (the "resident
+   * window"). `undefined` uses `DEFAULT_POINTS_MEMORY_CAP`. Raising it draws
+   * more points at the cost of memory + decode time; the feature-index scan for
+   * a selection retains up to this many matched rows too. Serializable
+   * Stack-Entry state; changing it reloads the resident window.
+   */
+  pointsMemoryCap?: number;
   color?: [number, number, number, number];
   /**
    * Colour each point by its feature code (categorical, GPU-shaded) instead of

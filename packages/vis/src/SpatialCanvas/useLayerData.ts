@@ -39,6 +39,7 @@ import {
   loadAssociatedTableFeatureRows,
   loadLabelsTooltipMetadata,
   loadShapesTooltipMetadata,
+  resolvePointsMemoryCap,
   resolveTooltipItems,
   unionBoundsList,
 } from '@spatialdata/core';
@@ -686,7 +687,12 @@ export function useLayerData(
               loadLabels,
             });
           }
-        } else if (config.type === 'points' && !pointsEngine.hasData(elem.key)) {
+        } else if (
+          config.type === 'points' &&
+          // Reload when the resident window is missing OR was loaded at a
+          // different memory cap (the props-panel control changed it).
+          !pointsEngine.isLoadedWithCap(elem.key, resolvePointsMemoryCap(config.pointsMemoryCap))
+        ) {
           toLoad.push({
             layerId,
             element: elem,
@@ -862,12 +868,20 @@ export function useLayerData(
               }
             } else if (element.type === 'points' && loadPoints) {
               // The engine owns loading/caching/status; it reports status back
-              // through the onStatus callback wired at construction.
-              await pointsEngine.ensureLoaded({
-                key: element.key,
-                layerId,
-                element: element.element as PointsElement,
-              });
+              // through the onStatus callback wired at construction. The resident
+              // window size is the layer's configured memory cap (props panel).
+              const pointsConfig = layers[layerId];
+              const memoryCap = resolvePointsMemoryCap(
+                pointsConfig?.type === 'points' ? pointsConfig.pointsMemoryCap : undefined
+              );
+              await pointsEngine.ensureLoaded(
+                {
+                  key: element.key,
+                  layerId,
+                  element: element.element as PointsElement,
+                },
+                memoryCap
+              );
             } else if (element.type === 'image' && loadImage) {
               try {
                 setLayerResourceStatus(layerId, 'image', 'loading');
@@ -1443,7 +1457,11 @@ export function useLayerData(
         const canFeatureScan = pointsEngine.hasFeatureCodeColumn(elem.key);
         let matchingResource: PointsRenderResource | null = null;
         if (selectionActive && canFeatureScan) {
-          void pointsEngine.ensureMatchingFeaturesLoaded({ key: elem.key, layerId, element }, featureCodes);
+          void pointsEngine.ensureMatchingFeaturesLoaded(
+            { key: elem.key, layerId, element },
+            featureCodes,
+            resolvePointsMemoryCap(config.pointsMemoryCap)
+          );
           matchingResource = pointsEngine.getMatchingResource(element, elem.key);
         }
 

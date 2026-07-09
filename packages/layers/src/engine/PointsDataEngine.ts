@@ -52,6 +52,9 @@ export interface PointsDataEngineCallbacks {
 
 interface PointsEntry {
   data?: PointsLoadResult;
+  /** Memory cap (max resident rows) the current `data`/`loading` was requested
+   * with. A change means the resident window must reload — see `ensureLoaded`. */
+  memoryCap?: number;
   status: PointsLoadStatus;
   loading?: Promise<void>;
   resource?: { signature: string; resource: PointsRenderResource };
@@ -361,23 +364,58 @@ export class PointsDataEngine {
     return entry?.matchingLoading?.signature === PointsDataEngine.matchingSignature(featureCodes);
   }
 
+  /** Whether the resident batch is loaded at exactly this memory cap. Lets the
+   * host schedule a reload when the configured cap changes (the resident window
+   * size depends on it), while a same-cap call stays a no-op. */
+  isLoadedWithCap(key: string, memoryCap: number): boolean {
+    const entry = this.entries.get(key);
+    return entry?.data !== undefined && entry.memoryCap === memoryCap;
+  }
+
+  /** Reset the cap-dependent resident state (geometry, row codes, render
+   * resource, matched selection) so a new cap reloads it. The **full-dataset
+   * catalog is cap-independent and preserved** — it must not trigger a fresh
+   * (potentially ~30s) scan on a cap change. */
+  private resetCapDependentState(entry: PointsEntry): void {
+    entry.data = undefined;
+    entry.resource = undefined;
+    entry.rowCodes = undefined;
+    entry.rowCodesLoaded = false;
+    entry.rowCodesLoading = undefined;
+    entry.rowCodesCatalog = undefined;
+    entry.residentCodes = undefined;
+    entry.residentCodesSource = undefined;
+    entry.matching = undefined;
+    entry.matchingLoading = undefined;
+  }
+
   /**
-   * Idempotently preload an element's points. No-op if already loaded or a load
-   * is in flight; the returned promise resolves when the (possibly already
-   * running) load settles. Status transitions are reported via `onStatus`; the
-   * cache mutation notifies subscribers.
+   * Idempotently preload an element's points at a given memory cap. No-op if
+   * already loaded (or loading) at the SAME cap; when the cap changes it drops
+   * the cap-dependent state (keeping the catalog) and reloads. The returned
+   * promise resolves when the (possibly already running) load settles. Status
+   * transitions are reported via `onStatus`; the cache mutation notifies.
    */
-  ensureLoaded(target: PointsLoadTarget): Promise<void> {
+  ensureLoaded(
+    target: PointsLoadTarget,
+    memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
+  ): Promise<void> {
     const { key, layerId, element } = target;
     const existing = this.entries.get(key);
-    if (existing?.data !== undefined) {
+    if (existing?.data !== undefined && existing.memoryCap === memoryCap) {
       return Promise.resolve();
     }
-    if (existing?.loading) {
+    if (existing?.loading && existing.memoryCap === memoryCap) {
       return existing.loading;
     }
 
     const entry: PointsEntry = existing ?? { status: 'idle' };
+    // A cap change while data/a load exists: discard the stale resident state so
+    // the new (larger/smaller) window loads fresh. The catalog is preserved.
+    if (entry.data !== undefined || entry.loading) {
+      this.resetCapDependentState(entry);
+    }
+    entry.memoryCap = memoryCap;
     entry.status = 'loading';
     this.entries.set(key, entry);
     this.callbacks.onStatus?.(layerId, 'loading');
@@ -391,7 +429,11 @@ export class PointsDataEngine {
         // full-dataset `ensureFeatureCatalog` scan is still allowed to run and
         // supersede it (a feature-ordered file's first part holds only a slice of
         // the features). Row codes are complete for the resident batch.
-        const data = await element.loadPoints({ includeFeatureCodes: true });
+        const data = await element.loadPoints({ includeFeatureCodes: true, memoryCap });
+        // A newer cap may have superseded this load mid-flight; if so, drop it.
+        if (entry.memoryCap !== memoryCap) {
+          return;
+        }
         entry.data = data;
         entry.status = 'ready';
         entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
@@ -410,11 +452,18 @@ export class PointsDataEngine {
         }
         this.callbacks.onStatus?.(layerId, 'ready');
       } catch (error) {
+        if (entry.memoryCap !== memoryCap) {
+          return;
+        }
         entry.status = 'error';
         this.callbacks.onStatus?.(layerId, 'error');
         console.error(`Failed to load points for ${layerId}:`, error);
       } finally {
-        entry.loading = undefined;
+        // Only clear the in-flight marker if it is still ours (a superseding cap
+        // change installs its own `loading`).
+        if (entry.memoryCap === memoryCap) {
+          entry.loading = undefined;
+        }
         this.notify();
       }
     })();
