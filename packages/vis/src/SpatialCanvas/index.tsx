@@ -952,7 +952,11 @@ function SpatialCanvasInner({
                         Geometry: {selectedLayerLoadState.geometry}
                         {!hasRenderableLayerData(selectedConfig.id) &&
                         selectedLayerLoadState.geometry === 'loading'
-                          ? ' (blocking)'
+                          ? // Points decode on a worker (off the main thread); other
+                            // geometry decodes on the main thread and blocks first paint.
+                            selectedConfig.type === 'points'
+                            ? ' (worker)'
+                            : ' (blocking)'
                           : ''}
                       </div>
                     )}

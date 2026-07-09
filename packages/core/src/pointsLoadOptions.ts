@@ -27,6 +27,12 @@ export interface PointsLoadOptions {
    * (preloaded) rows — i.e. the features present in the points actually drawn.
    */
   includeFeatureCodes?: boolean;
+  /**
+   * Cancels a superseded load (e.g. the memory cap changed mid-load). Checked at
+   * the load boundaries — notably BEFORE the main-thread fallback decode — so an
+   * aborted load bails instead of running an expensive fallback to completion.
+   */
+  signal?: AbortSignal;
 }
 
 export interface PointsLoadResult {

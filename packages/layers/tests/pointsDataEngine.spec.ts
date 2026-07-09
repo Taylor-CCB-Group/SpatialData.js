@@ -88,14 +88,51 @@ describe('PointsDataEngine', () => {
     // Same cap again is a no-op.
     await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 4_000_000);
     expect(loadPoints).toHaveBeenCalledTimes(1);
-    expect(loadPoints).toHaveBeenLastCalledWith({ includeFeatureCodes: true, memoryCap: 4_000_000 });
+    expect(loadPoints).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeFeatureCodes: true, memoryCap: 4_000_000 })
+    );
 
     // A different cap reloads.
     await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 8_000_000);
     expect(loadPoints).toHaveBeenCalledTimes(2);
-    expect(loadPoints).toHaveBeenLastCalledWith({ includeFeatureCodes: true, memoryCap: 8_000_000 });
+    expect(loadPoints).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeFeatureCodes: true, memoryCap: 8_000_000 })
+    );
     expect(engine.isLoadedWithCap('pts:cap', 8_000_000)).toBe(true);
     expect(engine.isLoadedWithCap('pts:cap', 4_000_000)).toBe(false);
+  });
+
+  it('aborts the superseded preload when the memory cap changes', async () => {
+    const engine = new PointsDataEngine();
+    const signals: Array<AbortSignal | undefined> = [];
+    const resolvers: Array<(v: PointsLoadResult) => void> = [];
+    const loadPoints = vi.fn(
+      (opts: { signal?: AbortSignal }) =>
+        new Promise<PointsLoadResult>((resolve, reject) => {
+          signals.push(opts.signal);
+          resolvers.push(resolve);
+          opts.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          );
+        })
+    );
+    const element = { key: 'pts:abort', loadPoints } as unknown as PointsElement;
+
+    const p1 = engine.ensureLoaded({ key: 'pts:abort', layerId: 'l', element }, 4_000_000);
+    expect(signals[0]?.aborted).toBe(false);
+
+    // A cap change supersedes the in-flight 4M load → its signal aborts.
+    const p2 = engine.ensureLoaded({ key: 'pts:abort', layerId: 'l', element }, 8_000_000);
+    expect(signals[0]?.aborted).toBe(true);
+
+    // The aborted load rejects with AbortError; the engine swallows it (no error).
+    await p1;
+    expect(engine.getStatus('pts:abort')).not.toBe('error');
+
+    // The current 8M load settles normally.
+    resolvers[1](makeBatch());
+    await p2;
+    expect(engine.isLoadedWithCap('pts:abort', 8_000_000)).toBe(true);
   });
 
   it('defaults to DEFAULT_POINTS_MEMORY_CAP when no cap is given', async () => {
@@ -369,10 +406,12 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     // The preload requested the feature column: the preview catalog and the row
     // codes are resident with no separate file loads, and the preview shows
     // without a loading spinner.
-    expect(loadPoints).toHaveBeenCalledWith({
-      includeFeatureCodes: true,
-      memoryCap: DEFAULT_POINTS_MEMORY_CAP,
-    });
+    expect(loadPoints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeFeatureCodes: true,
+        memoryCap: DEFAULT_POINTS_MEMORY_CAP,
+      })
+    );
     expect(engine.getFeatureCatalog('pts:res')).toEqual(previewCatalog);
     expect(engine.hasRowFeatureCodes('pts:res')).toBe(true);
     expect(Array.from(engine.getRowFeatureCodes('pts:res')!)).toEqual([0, 1, 0]);

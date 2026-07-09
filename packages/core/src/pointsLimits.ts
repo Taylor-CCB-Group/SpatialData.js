@@ -7,11 +7,14 @@ export const POINTS_PRELOAD_MAX_ROWS = 4_000_000;
 
 /**
  * Default in-memory row cap for the preloaded scatter (per-layer override via the
- * props panel — `PointsLayerConfig.pointsMemoryCap`). 8M keeps a comfortable
- * margin under deck.gl's 24-bit picking ceiling (~16.7M objects/layer) and
- * ~200MB/layer of attributes, while roughly doubling the resident window.
+ * props panel — `PointsLayerConfig.pointsMemoryCap`). Kept at 4M: on an
+ * UNINDEXED (dictionary-only, multipart) dataset the preload fetches WHOLE parts
+ * and only stops after accumulating this many rows, so a larger default pulls ~2×
+ * the bytes into the worker decode — which OOMs/hangs and falls back to a
+ * main-thread decode that crashes the tab. Higher caps are safe on indexed
+ * (row-group range-read) datasets and remain selectable in the panel for those.
  */
-export const DEFAULT_POINTS_MEMORY_CAP = 8_000_000;
+export const DEFAULT_POINTS_MEMORY_CAP = 4_000_000;
 
 /** Default render row cap — points kept in memory may exceed this. Matches the
  * memory cap so, by default, everything loaded is drawn. */

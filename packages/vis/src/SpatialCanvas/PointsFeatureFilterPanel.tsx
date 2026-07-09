@@ -146,7 +146,8 @@ export function describeFeatureRowState({
       tone: 'resident',
       greyed: false,
       label: 'resident',
-      reason: 'In the preloaded window — drawn instantly, no scan needed.',
+      reason:
+        'In the preloaded window — shown by filtering the in-memory batch (no dataset scan; a large batch can still take a moment to re-filter).',
     };
   }
   if (rendered) {

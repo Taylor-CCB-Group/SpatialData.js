@@ -336,6 +336,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     elementPath: string,
     options: PointsLoadOptions = {}
   ): Promise<PointsLoadResult> {
+    checkAbort(options.signal);
     const memoryCap = resolvePointsMemoryCap(options.memoryCap);
     if (options.featureCodes !== undefined && options.fullDatasetFeatureScan === true) {
       return this.loadPointsMatchingFeatureCodes(elementPath, {
@@ -433,12 +434,21 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           }
         }
       } catch (error) {
+        // An abort is intentional — don't swallow it into the main-thread fallback.
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
         console.warn(
           `Worker points preload failed for ${elementPath}; falling back to main thread.`,
           error
         );
       }
     }
+
+    // Guard the expensive main-thread fallback: if the load was superseded (e.g.
+    // the memory cap changed), bail here rather than decode a whole capped table
+    // on the main thread — the case that crashed the tab on large datasets.
+    checkAbort(options.signal);
 
     const {
       table: arrowTable,

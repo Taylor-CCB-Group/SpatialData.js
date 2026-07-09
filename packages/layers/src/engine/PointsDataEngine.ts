@@ -55,6 +55,9 @@ interface PointsEntry {
   /** Memory cap (max resident rows) the current `data`/`loading` was requested
    * with. A change means the resident window must reload — see `ensureLoaded`. */
   memoryCap?: number;
+  /** Aborts the in-flight preload when it is superseded (a cap change), so a
+   * stale load doesn't run its expensive main-thread fallback to completion. */
+  loadAbort?: AbortController;
   status: PointsLoadStatus;
   loading?: Promise<void>;
   resource?: { signature: string; resource: PointsRenderResource };
@@ -422,6 +425,9 @@ export class PointsDataEngine {
    * catalog is cap-independent and preserved** — it must not trigger a fresh
    * (potentially ~30s) scan on a cap change. */
   private resetCapDependentState(entry: PointsEntry): void {
+    // Cancel the superseded in-flight preload (if any) before dropping its state.
+    entry.loadAbort?.abort();
+    entry.loadAbort = undefined;
     entry.data = undefined;
     entry.resource = undefined;
     entry.rowCodes = undefined;
@@ -461,6 +467,8 @@ export class PointsDataEngine {
       this.resetCapDependentState(entry);
     }
     entry.memoryCap = memoryCap;
+    const abort = new AbortController();
+    entry.loadAbort = abort;
     entry.status = 'loading';
     this.entries.set(key, entry);
     this.callbacks.onStatus?.(layerId, 'loading');
@@ -474,9 +482,13 @@ export class PointsDataEngine {
         // full-dataset `ensureFeatureCatalog` scan is still allowed to run and
         // supersede it (a feature-ordered file's first part holds only a slice of
         // the features). Row codes are complete for the resident batch.
-        const data = await element.loadPoints({ includeFeatureCodes: true, memoryCap });
+        const data = await element.loadPoints({
+          includeFeatureCodes: true,
+          memoryCap,
+          signal: abort.signal,
+        });
         // A newer cap may have superseded this load mid-flight; if so, drop it.
-        if (entry.memoryCap !== memoryCap) {
+        if (abort.signal.aborted || entry.memoryCap !== memoryCap) {
           return;
         }
         entry.data = data;
@@ -497,17 +509,19 @@ export class PointsDataEngine {
         }
         this.callbacks.onStatus?.(layerId, 'ready');
       } catch (error) {
-        if (entry.memoryCap !== memoryCap) {
+        // Aborted (cap changed) or superseded → not a real error; stay quiet.
+        if (abort.signal.aborted || entry.memoryCap !== memoryCap) {
           return;
         }
         entry.status = 'error';
         this.callbacks.onStatus?.(layerId, 'error');
         console.error(`Failed to load points for ${layerId}:`, error);
       } finally {
-        // Only clear the in-flight marker if it is still ours (a superseding cap
-        // change installs its own `loading`).
+        // Only clear the in-flight markers if they are still ours (a superseding
+        // cap change installs its own `loading`/`loadAbort`).
         if (entry.memoryCap === memoryCap) {
           entry.loading = undefined;
+          entry.loadAbort = undefined;
         }
         this.notify();
       }
