@@ -19,7 +19,7 @@
  */
 export const PFC_GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
 export const PFC_LIGHTNESS = 0.72;
-export const PFC_CHROMA = 0.37;
+export const PFC_CHROMA = 0.32;
 const TWO_PI = 6.28318530717958648;
 
 function fract(x: number): number {
