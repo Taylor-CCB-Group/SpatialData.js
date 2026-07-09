@@ -1466,8 +1466,15 @@ export function useLayerData(
         }
 
         if (matchingResource) {
-          // The matched batch is already filtered to the selection across the whole
-          // dataset — render it directly (no resident-mask filtering needed).
+          // The matched batch covers the selection (or a superset of it, when the
+          // selection just shrank). Pass the batch's per-row codes + the current
+          // selection so the layer filters IN MEMORY down to the selected codes —
+          // this is what makes removing a feature a free filter instead of a
+          // re-scan. When the selection equals what was scanned, skip the filter
+          // (render the batch whole); the batch's own codes still drive colour.
+          const matchedRowCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
+          const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
+          const filterMatched = featureCodes !== undefined && featureCodes.length < coveredSize;
           deckLayers.push(
             new PointsLayer({
               id: layerId,
@@ -1476,6 +1483,8 @@ export function useLayerData(
               opacity: config.opacity,
               visible: config.visible,
               pointSize: config.pointSize ?? 1,
+              ...(filterMatched ? { featureCodes } : {}),
+              ...(matchedRowCodes ? { preloadedFeatureCodes: matchedRowCodes } : {}),
               ...(config.color ? { color: config.color } : {}),
               ...(config.colorByFeature ? { colorByFeature: true } : {}),
             })

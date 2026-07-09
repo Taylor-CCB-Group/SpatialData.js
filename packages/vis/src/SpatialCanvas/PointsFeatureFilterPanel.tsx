@@ -82,6 +82,122 @@ function formatFeatureCount(count: number | undefined): string {
   return count.toLocaleString();
 }
 
+/** Why a feature row is (or isn't) greyed — drives both the dimming and the
+ * diagnostic tooltip so they can never disagree. */
+export type FeatureRowTone =
+  | 'resident'
+  | 'loaded'
+  | 'cached'
+  | 'loading'
+  | 'noIndex'
+  | 'notLoaded';
+
+export interface FeatureRowState {
+  tone: FeatureRowTone;
+  /** Whether the row is dimmed (its points are not on screen). */
+  greyed: boolean;
+  /** Short state label, e.g. "loaded", "loading", "not loaded". */
+  label: string;
+  /** One sentence explaining the state / why it is greyed. */
+  reason: string;
+}
+
+export interface FeatureRowStateInput {
+  /** In the preloaded (resident) window. */
+  resident: boolean;
+  /** On screen now via the last-completed feature-index scan. */
+  rendered: boolean;
+  /** In the current selection (checked). */
+  selected: boolean;
+  /** A feature-index scan for the current selection is in flight. */
+  scanning: boolean;
+  /** The element can fetch non-resident features on demand (has a feature index). */
+  supportsOnDemandLoad: boolean;
+  /** The resident set is known (false → we can't distinguish, treat as shown). */
+  residentKnown: boolean;
+}
+
+/**
+ * Classify a feature's render state from the signals the panel already has.
+ * Precedence matters: `resident`/`rendered` (its points are in memory) win over
+ * selection/scan state. `rendered` here means "in the loaded matched batch",
+ * i.e. in memory — a deselected-but-loaded feature is `cached`, not dropped,
+ * because removing a feature filters the in-memory batch rather than re-scanning
+ * (re-adding it is instant).
+ */
+export function describeFeatureRowState({
+  resident,
+  rendered,
+  selected,
+  scanning,
+  supportsOnDemandLoad,
+  residentKnown,
+}: FeatureRowStateInput): FeatureRowState {
+  if (!residentKnown) {
+    return {
+      tone: 'loaded',
+      greyed: false,
+      label: 'shown',
+      reason: 'The resident set is unknown for this element, so every feature is treated as shown.',
+    };
+  }
+  if (resident) {
+    return {
+      tone: 'resident',
+      greyed: false,
+      label: 'resident',
+      reason: 'In the preloaded window — drawn instantly, no scan needed.',
+    };
+  }
+  if (rendered) {
+    return selected
+      ? {
+          tone: 'loaded',
+          greyed: false,
+          label: 'loaded',
+          reason: 'On screen via the feature-index scan for the current selection.',
+        }
+      : {
+          tone: 'cached',
+          greyed: false,
+          label: 'in memory',
+          reason: 'Loaded in the matched batch but hidden (deselected); re-adding it is instant, no scan.',
+        };
+  }
+  if (selected && scanning) {
+    return {
+      tone: 'loading',
+      greyed: true,
+      label: 'loading',
+      reason: 'Selected — its feature-index scan is in progress.',
+    };
+  }
+  if (!supportsOnDemandLoad) {
+    return {
+      tone: 'noIndex',
+      greyed: true,
+      label: 'not in sample',
+      reason:
+        'Beyond the resident window, and this dataset has no feature index, so it can’t be fetched on demand. Raise the memory cap or rewrite the dataset with an index.',
+    };
+  }
+  return {
+    tone: 'notLoaded',
+    greyed: true,
+    label: 'not loaded',
+    reason: 'Beyond the resident window; select it to fetch its points via the feature-index scan.',
+  };
+}
+
+/** Opacity for a row given its state: crisp when its points are on screen,
+ * mid-dim while loading, fully dim when not loaded. */
+function featureRowOpacity(state: FeatureRowState): number {
+  if (!state.greyed) {
+    return 1;
+  }
+  return state.tone === 'loading' ? 0.6 : 0.4;
+}
+
 export interface PointsFeatureFilterPanelProps {
   layerId: string;
   config: PointsLayerConfig;
@@ -224,10 +340,23 @@ export function PointsFeatureFilterPanel({
   // rendered — not the current scan's settled state — keeps already-loaded
   // features un-greyed while a newly added feature's scan is still in flight.
   const residentKnown = residentCodes !== undefined;
-  const isLoaded = (code: number): boolean =>
-    !residentKnown || residentCodes.has(code) || (loadedMatchingCodes?.has(code) ?? false);
+  const scanning = matchingLoadState?.loading ?? false;
+  const rowInfo = (code: number) => {
+    const resident = residentKnown && (residentCodes?.has(code) ?? false);
+    const rendered = loadedMatchingCodes?.has(code) ?? false;
+    const selected = !noneSelected && (allSelected || selectedCodes.has(code));
+    const state = describeFeatureRowState({
+      resident,
+      rendered,
+      selected,
+      scanning,
+      supportsOnDemandLoad,
+      residentKnown,
+    });
+    return { resident, rendered, selected, state };
+  };
   const notLoadedCount = residentKnown
-    ? entries.reduce((total, entry) => total + (isLoaded(entry.code) ? 0 : 1), 0)
+    ? entries.reduce((total, entry) => total + (rowInfo(entry.code).state.greyed ? 1 : 0), 0)
     : 0;
 
   return (
@@ -255,7 +384,9 @@ export function PointsFeatureFilterPanel({
         <div style={matchingLoadState.loading ? loadingStatStyle : helperStyle}>
           {matchingLoadState.loading
             ? `Loading selected features… ${matchingLoadState.matchedRows.toLocaleString()} points so far`
-            : `${matchingLoadState.matchedRows.toLocaleString()} points loaded for this selection`}
+            : matchingLoadState.covered
+              ? `Selection served from ${matchingLoadState.matchedRows.toLocaleString()} points in memory (no re-scan)`
+              : `${matchingLoadState.matchedRows.toLocaleString()} points loaded for this selection`}
         </div>
       ) : null}
       <label style={checkboxLabelStyle}>
@@ -293,25 +424,25 @@ export function PointsFeatureFilterPanel({
       ) : null}
       <div style={listStyle}>
         {visibleEntries.map((entry) => {
-          const checked = !noneSelected && (allSelected || selectedCodes.has(entry.code));
-          const notLoaded = !isLoaded(entry.code);
+          const { resident, rendered, selected, state } = rowInfo(entry.code);
+          const countStr =
+            entry.count !== undefined ? ` · ${entry.count.toLocaleString()} pts` : '';
+          // Multi-line diagnostic: the human state + reason, then the raw signals
+          // that drove the decision (what made this row grey / not grey).
+          const title =
+            `${entry.name} · code ${entry.code}${countStr}\n` +
+            `${state.label}: ${state.reason}\n` +
+            `[resident=${resident ? 'y' : 'n'} rendered=${rendered ? 'y' : 'n'} ` +
+            `selected=${selected ? 'y' : 'n'} scan=${scanning ? 'running' : 'idle'}]`;
           return (
             <label
               key={entry.code}
-              style={notLoaded ? { ...checkboxLabelStyle, opacity: 0.45 } : checkboxLabelStyle}
-              title={
-                `code ${entry.code}` +
-                (entry.count !== undefined ? ` · ${entry.count.toLocaleString()} points` : '') +
-                (notLoaded
-                  ? supportsOnDemandLoad
-                    ? ' · not loaded (select to load its points)'
-                    : ' · not in the loaded sample'
-                  : '')
-              }
+              style={{ ...checkboxLabelStyle, opacity: featureRowOpacity(state) }}
+              title={title}
             >
               <input
                 type="checkbox"
-                checked={checked}
+                checked={selected}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
               />
               <span
@@ -320,7 +451,7 @@ export function PointsFeatureFilterPanel({
               />
               <span>
                 {entry.name}
-                {notLoaded ? ' ·' : ''}
+                {state.greyed ? ' ·' : ''}
               </span>
               {hasCounts ? <span style={countStyle}>{formatFeatureCount(entry.count)}</span> : null}
             </label>

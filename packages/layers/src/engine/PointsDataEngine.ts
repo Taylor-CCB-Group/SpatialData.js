@@ -113,6 +113,10 @@ export interface PointsMatchingLoadState {
   scannedRows: number;
   /** True once the scan for this selection has settled. */
   settled: boolean;
+  /** The selection is served by filtering a larger in-memory batch (a removal
+   * reused it — no scan ran). `matchedRows` is then the whole batch, not the
+   * drawn subset, so the panel words it as "served from memory". */
+  covered?: boolean;
 }
 
 export class PointsDataEngine {
@@ -193,11 +197,24 @@ export class PointsDataEngine {
     return [...featureCodes].sort((left, right) => left - right).join(',');
   }
 
+  /** Feature codes a matched batch/scan covers, parsed from its signature
+   * (sorted-codes-joined; `''` → the empty selection). */
+  private static coveredCodes(signature: string): Set<number> {
+    if (signature === '') {
+      return new Set();
+    }
+    return new Set(signature.split(',').map(Number));
+  }
+
   /**
-   * Idempotently load the whole-dataset points for the selected feature codes via
-   * the feature-index scan (footer stats skip non-matching row groups). Keyed by
-   * the selection signature, so it no-ops while the same selection is resident or
-   * in flight and reloads when the selection changes. Settles → `notify()`.
+   * Ensure the selected features' points are available for rendering. The scan
+   * loads the whole dataset for a selection (footer stats skip non-matching row
+   * groups) and retains the per-row codes, so the render can **filter that batch
+   * in the layer**. That makes a selection that is a SUBSET of an already-loaded
+   * batch a free in-memory filter — removing a feature never re-scans (its rows
+   * are already in memory), symmetric with resident filtering. A scan runs only
+   * when the selection needs codes no loaded/in-flight batch covers. Settles →
+   * `notify()`.
    */
   ensureMatchingFeaturesLoaded(
     target: PointsLoadTarget,
@@ -208,16 +225,20 @@ export class PointsDataEngine {
     const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
     this.entries.set(key, entry);
     const signature = PointsDataEngine.matchingSignature(featureCodes);
-    if (entry.matching?.signature === signature) {
-      // Already resident for this exact selection. Abandon any superseded scan
-      // still in flight (e.g. the user changed the selection and changed back) so
-      // its late completion can't overwrite this resident batch.
-      if (entry.matchingLoading && entry.matchingLoading.signature !== signature) {
-        entry.matchingLoading = undefined;
-      }
+    const isCoveredBy = (sig: string): boolean => {
+      const covered = PointsDataEngine.coveredCodes(sig);
+      return featureCodes.every((code) => covered.has(code));
+    };
+    // A completed batch already covers this selection → reuse it, the layer
+    // filters down to the current codes. No scan (this is the removal fast path).
+    if (entry.matching && isCoveredBy(entry.matching.signature)) {
+      // Any in-flight scan for a different (now-unneeded) selection is superseded.
+      entry.matchingLoading = undefined;
       return Promise.resolve();
     }
-    if (entry.matchingLoading?.signature === signature) {
+    // An in-flight scan will cover this selection once it settles (e.g. a feature
+    // was removed mid-scan) → wait for it rather than starting another.
+    if (entry.matchingLoading && isCoveredBy(entry.matchingLoading.signature)) {
       return entry.matchingLoading.promise;
     }
 
@@ -298,6 +319,23 @@ export class PointsDataEngine {
         settled: true,
       };
     }
+    // The selection is a subset of an already-loaded batch (a removal reused it).
+    // It is settled — the layer just filters the batch — so report it as loaded
+    // rather than letting the indicator vanish. `covered` lets the panel word it
+    // as "served from memory" since the count is the whole in-memory batch.
+    if (entry?.matching && PointsDataEngine.coveredCodes(entry.matching.signature).size > 0) {
+      const covered = PointsDataEngine.coveredCodes(entry.matching.signature);
+      if (featureCodes.length > 0 && featureCodes.every((code) => covered.has(code))) {
+        const result = entry.matching.result;
+        return {
+          loading: false,
+          matchedRows: result.shape[1] ?? 0,
+          scannedRows: result.scannedRowCount ?? 0,
+          settled: true,
+          covered: true,
+        };
+      }
+    }
     return undefined;
   }
 
@@ -316,10 +354,17 @@ export class PointsDataEngine {
     if (signature === undefined) {
       return undefined;
     }
-    if (signature === '') {
-      return new Set();
-    }
-    return new Set(signature.split(',').map(Number));
+    return PointsDataEngine.coveredCodes(signature);
+  }
+
+  /**
+   * Per-row feature codes of the last-completed matched batch, row-aligned with
+   * {@link getMatchingResource}'s geometry. The render passes these to the layer
+   * as `preloadedFeatureCodes` so it can filter the (possibly superset) matched
+   * batch down to the current selection in memory — no re-scan on a removal.
+   */
+  getMatchingRowFeatureCodes(key: string): ArrayLike<number> | undefined {
+    return this.entries.get(key)?.matching?.result.featureCodes;
   }
 
   /**

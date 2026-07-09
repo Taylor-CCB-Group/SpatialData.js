@@ -554,3 +554,61 @@ describe('PointsDataEngine — matching resource (empty-lock guard)', () => {
     expect(engine.getMatchingResource(element, 'pts:hit')).toBeTruthy();
   });
 });
+
+describe('PointsDataEngine — matched-selection subset reuse', () => {
+  function scanElement(key: string) {
+    const loadPointsMatchingFeatureCodes = vi.fn(async (opts: { featureCodes: readonly number[] }) => ({
+      shape: [2, opts.featureCodes.length],
+      data: [new Float32Array(opts.featureCodes.length), new Float32Array(opts.featureCodes.length)],
+      // Per-row codes the render uses to filter the batch in memory.
+      featureCodes: Int32Array.from(opts.featureCodes),
+    }));
+    const element = {
+      key,
+      loadPoints: vi.fn(async () => makeBatch()),
+      loadPointsMatchingFeatureCodes,
+    } as unknown as PointsElement;
+    return { element, loadPointsMatchingFeatureCodes };
+  }
+
+  it('reuses the batch (no re-scan) when a feature is removed — the removal fast path', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadPointsMatchingFeatureCodes } = scanElement('pts:sub');
+    const target = { key: 'pts:sub', layerId: 'l', element };
+
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2, 3]);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+    expect([...engine.getLoadedMatchingFeatureCodes('pts:sub')!].sort()).toEqual([1, 2, 3]);
+
+    // Remove a feature → {1,2} ⊆ {1,2,3}: reuse the loaded batch, NO new scan.
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2]);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+    // The covered set stays {1,2,3}, so the removed feature is still in memory
+    // (re-adding it is a free filter, and the panel keeps it un-greyed).
+    expect([...engine.getLoadedMatchingFeatureCodes('pts:sub')!].sort()).toEqual([1, 2, 3]);
+    // Per-row codes are exposed for the layer to filter the batch in memory.
+    expect(engine.getMatchingRowFeatureCodes('pts:sub')).toBeInstanceOf(Int32Array);
+    // The load-state reports the subset as settled+covered (served from memory),
+    // so the panel indicator doesn't vanish on a removal.
+    const state = engine.getMatchingLoadState('pts:sub', [1, 2]);
+    expect(state).toMatchObject({ loading: false, settled: true, covered: true });
+  });
+
+  it('re-scans when the selection adds a code no loaded batch covers', async () => {
+    const engine = new PointsDataEngine();
+    const { element, loadPointsMatchingFeatureCodes } = scanElement('pts:add');
+    const target = { key: 'pts:add', layerId: 'l', element };
+
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 2]);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+
+    // Removing back to {1} reuses (no scan)…
+    await engine.ensureMatchingFeaturesLoaded(target, [1]);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(1);
+
+    // …but adding {3} (not covered) scans.
+    await engine.ensureMatchingFeaturesLoaded(target, [1, 3]);
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(2);
+    expect([...engine.getLoadedMatchingFeatureCodes('pts:add')!].sort()).toEqual([1, 3]);
+  });
+});
