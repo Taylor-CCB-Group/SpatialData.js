@@ -77,29 +77,68 @@ describe('PointsDataEngine', () => {
     ]);
   });
 
-  it('reloads at a new memory cap, passing it to loadPoints, and reports isLoadedWithCap', async () => {
+  it('does not reload a COMPLETE resident batch when the cap changes', async () => {
     const engine = new PointsDataEngine();
+    // makeBatch() is complete (no preloadTruncated) → it holds the whole dataset.
     const loadPoints = vi.fn(async () => makeBatch());
     const element = { key: 'pts:cap', loadPoints } as unknown as PointsElement;
 
     await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 4_000_000);
-    expect(engine.isLoadedWithCap('pts:cap', 4_000_000)).toBe(true);
-    expect(engine.isLoadedWithCap('pts:cap', 8_000_000)).toBe(false);
-    // Same cap again is a no-op.
-    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 4_000_000);
-    expect(loadPoints).toHaveBeenCalledTimes(1);
     expect(loadPoints).toHaveBeenLastCalledWith(
       expect.objectContaining({ includeFeatureCodes: true, memoryCap: 4_000_000 })
     );
-
-    // A different cap reloads.
-    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 8_000_000);
-    expect(loadPoints).toHaveBeenCalledTimes(2);
-    expect(loadPoints).toHaveBeenLastCalledWith(
-      expect.objectContaining({ includeFeatureCodes: true, memoryCap: 8_000_000 })
-    );
+    // A complete batch satisfies ANY cap — no reload raising or lowering.
     expect(engine.isLoadedWithCap('pts:cap', 8_000_000)).toBe(true);
-    expect(engine.isLoadedWithCap('pts:cap', 4_000_000)).toBe(false);
+    expect(engine.isLoadedWithCap('pts:cap', 2_000_000)).toBe(true);
+    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 8_000_000);
+    await engine.ensureLoaded({ key: 'pts:cap', layerId: 'l', element }, 2_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads a TRUNCATED resident batch only when raised, keeping the old data meanwhile', async () => {
+    const engine = new PointsDataEngine();
+    // Truncated batch: filled to its cap; more rows exist (total 12M).
+    const truncatedAt = (cap: number): PointsLoadResult => ({
+      shape: [2, cap],
+      data: [new Float32Array(1), new Float32Array(1)],
+      preloadTruncated: true,
+      totalRowCount: 12_000_000,
+    });
+    let call = 0;
+    let resolveRaise: (v: PointsLoadResult) => void = () => {};
+    const loadPoints = vi.fn((opts: { memoryCap: number }) => {
+      call += 1;
+      if (call === 1) return Promise.resolve(truncatedAt(opts.memoryCap));
+      return new Promise<PointsLoadResult>((resolve) => {
+        resolveRaise = resolve;
+      });
+    });
+    const element = { key: 'pts:trunc', loadPoints } as unknown as PointsElement;
+    const target = { key: 'pts:trunc', layerId: 'l', element };
+
+    const first = await engine.ensureLoaded(target, 4_000_000).then(() => engine.getData('pts:trunc'));
+    expect(engine.getResidentTruncation('pts:trunc')).toMatchObject({
+      truncated: true,
+      loaded: 4_000_000,
+      total: 12_000_000,
+    });
+    // Lowering: the batch holds 4M ≥ 2M → no reload.
+    expect(engine.isLoadedWithCap('pts:trunc', 2_000_000)).toBe(true);
+    await engine.ensureLoaded(target, 2_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(1);
+
+    // Raising past the truncated batch → reload, but the old data stays visible
+    // while the larger batch is in flight (no blank).
+    expect(engine.isLoadedWithCap('pts:trunc', 8_000_000)).toBe(false);
+    const raise = engine.ensureLoaded(target, 8_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(2);
+    expect(engine.getData('pts:trunc')).toBe(first); // old batch still there
+
+    resolveRaise(truncatedAt(8_000_000));
+    await raise;
+    // Atomic swap to the larger batch.
+    expect(engine.getResidentTruncation('pts:trunc')).toMatchObject({ loaded: 8_000_000 });
+    expect(engine.isLoadedWithCap('pts:trunc', 8_000_000)).toBe(true);
   });
 
   it('aborts the superseded preload when the memory cap changes', async () => {
@@ -165,7 +204,7 @@ describe('PointsDataEngine', () => {
     await engine.ensureFeatureCatalog({ key: 'pts:capcat', layerId: 'l', element });
     expect(engine.getFeatureCatalog('pts:capcat')).toEqual(fullCatalog);
 
-    // Change the cap → geometry reloads, catalog stays (no second scan).
+    // Change the cap → catalog stays (never re-scans, cap-independent).
     await engine.ensureLoaded({ key: 'pts:capcat', layerId: 'l', element }, 8_000_000);
     expect(engine.getFeatureCatalog('pts:capcat')).toEqual(fullCatalog);
     expect(listFeaturesWithCounts).toHaveBeenCalledTimes(1);

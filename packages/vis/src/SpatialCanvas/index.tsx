@@ -455,6 +455,7 @@ function SpatialCanvasInner({
     getPointsMatchingLoadState,
     getPointsLoadedMatchingFeatureCodes,
     getPointsSupportsOnDemandLoad,
+    getPointsResidentTruncation,
     isBlocking,
     isLoading,
     vivLayerProps,
@@ -916,6 +917,24 @@ function SpatialCanvasInner({
                           Max rows kept in memory. Higher shows more points; picking is
                           limited to ~16.7M/layer.
                         </span>
+                        {(() => {
+                          const t = getPointsResidentTruncation(selectedConfig.id);
+                          if (!t) return null;
+                          return (
+                            <span
+                              style={{
+                                color: t.truncated ? '#d0a24c' : '#888',
+                                fontSize: '11px',
+                              }}
+                            >
+                              {t.truncated
+                                ? `Showing ${t.loaded.toLocaleString()}${
+                                    t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
+                                  } points — capped; raise the cap for more.`
+                                : `All ${t.loaded.toLocaleString()} points loaded (not capped).`}
+                            </span>
+                          );
+                        })()}
                       </label>
                     );
                   })()}

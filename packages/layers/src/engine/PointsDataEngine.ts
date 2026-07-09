@@ -210,16 +210,14 @@ export class PointsDataEngine {
   }
 
   /**
-   * Whether an already-loaded matched batch still satisfies a (possibly changed)
-   * memory cap. A COMPLETE batch (the scan found all matching rows before hitting
-   * the cap) always does. A TRUNCATED batch (it filled up to its cap) only does
-   * while the new cap doesn't ask for more rows than it already holds — so
-   * lowering the cap never rescans, and raising it past a truncated batch does.
+   * Whether an already-loaded batch (resident preload OR matched scan) still
+   * satisfies a (possibly changed) memory cap. A COMPLETE batch (it captured all
+   * rows before hitting the cap) always does. A TRUNCATED batch (it filled up to
+   * its cap, more rows exist) only does while the new cap doesn't ask for more
+   * rows than it already holds — so lowering the cap never reloads/rescans, and
+   * raising it past a truncated batch does, to fetch the extra rows.
    */
-  private static matchedBatchAdequateForCap(
-    result: PointsLoadResult,
-    memoryCap: number
-  ): boolean {
+  private static batchAdequateForCap(result: PointsLoadResult, memoryCap: number): boolean {
     if (!result.preloadTruncated) {
       return true;
     }
@@ -256,7 +254,7 @@ export class PointsDataEngine {
     if (
       entry.matching &&
       isCoveredBy(entry.matching.signature) &&
-      PointsDataEngine.matchedBatchAdequateForCap(entry.matching.result, memoryCap)
+      PointsDataEngine.batchAdequateForCap(entry.matching.result, memoryCap)
     ) {
       // Any in-flight scan for a different (now-unneeded) selection is superseded.
       entry.matchingLoading = undefined;
@@ -435,40 +433,43 @@ export class PointsDataEngine {
     return entry?.matchingLoading?.signature === PointsDataEngine.matchingSignature(featureCodes);
   }
 
-  /** Whether the resident batch is loaded at exactly this memory cap. Lets the
-   * host schedule a reload when the configured cap changes (the resident window
-   * size depends on it), while a same-cap call stays a no-op. */
+  /** Whether the resident batch already satisfies this memory cap — i.e. no
+   * reload is needed. True when data is present and it is complete, or already
+   * holds at least `memoryCap` rows. So the host only reloads when the cap is
+   * RAISED past a truncated batch; lowering or a raise that a complete batch
+   * already covers is a no-op. */
   isLoadedWithCap(key: string, memoryCap: number): boolean {
     const entry = this.entries.get(key);
-    return entry?.data !== undefined && entry.memoryCap === memoryCap;
-  }
-
-  /** Reset the RESIDENT cap-dependent state (geometry, row codes, render
-   * resource) so a new cap reloads it. The **full-dataset catalog** is
-   * cap-independent and preserved (must not trigger a fresh ~30s scan), and the
-   * **matched selection is preserved too** — whether it still satisfies the new
-   * cap is decided lazily in `ensureMatchingFeaturesLoaded`, so lowering the cap
-   * reuses the loaded matched batch instead of rescanning it. */
-  private resetCapDependentState(entry: PointsEntry): void {
-    // Cancel the superseded in-flight preload (if any) before dropping its state.
-    entry.loadAbort?.abort();
-    entry.loadAbort = undefined;
-    entry.data = undefined;
-    entry.resource = undefined;
-    entry.rowCodes = undefined;
-    entry.rowCodesLoaded = false;
-    entry.rowCodesLoading = undefined;
-    entry.rowCodesCatalog = undefined;
-    entry.residentCodes = undefined;
-    entry.residentCodesSource = undefined;
+    return entry?.data !== undefined && PointsDataEngine.batchAdequateForCap(entry.data, memoryCap);
   }
 
   /**
-   * Idempotently preload an element's points at a given memory cap. No-op if
-   * already loaded (or loading) at the SAME cap; when the cap changes it drops
-   * the cap-dependent state (keeping the catalog) and reloads. The returned
-   * promise resolves when the (possibly already running) load settles. Status
-   * transitions are reported via `onStatus`; the cache mutation notifies.
+   * Truncation state of the resident preload — is it the whole dataset or only a
+   * capped window, and how many rows of how many. `undefined` until data loads.
+   * Surfaced so the user can see when raising the cap would show more points.
+   */
+  getResidentTruncation(
+    key: string
+  ): { truncated: boolean; loaded: number; total?: number } | undefined {
+    const data = this.entries.get(key)?.data;
+    if (!data) {
+      return undefined;
+    }
+    return {
+      truncated: data.preloadTruncated === true,
+      loaded: data.shape[1] ?? 0,
+      ...(data.totalRowCount !== undefined ? { total: data.totalRowCount } : {}),
+    };
+  }
+
+  /**
+   * Idempotently preload an element's points at a given memory cap. A no-op when
+   * the resident data already satisfies the cap (see {@link isLoadedWithCap}) —
+   * so lowering the cap, or raising it when a complete batch already covers it,
+   * never reloads. Only RAISING the cap past a *truncated* batch reloads, and it
+   * keeps the previously-loaded data on screen until the larger batch settles
+   * (an atomic swap — no blank). The full-dataset catalog and the matched
+   * selection are preserved across the reload. Status via `onStatus`; notifies.
    */
   ensureLoaded(
     target: PointsLoadTarget,
@@ -476,19 +477,29 @@ export class PointsDataEngine {
   ): Promise<void> {
     const { key, layerId, element } = target;
     const existing = this.entries.get(key);
-    if (existing?.data !== undefined && existing.memoryCap === memoryCap) {
+    // (1) Existing data already satisfies this cap → accept the cap, no reload.
+    if (existing?.data !== undefined && PointsDataEngine.batchAdequateForCap(existing.data, memoryCap)) {
+      // Cancel a now-unneeded in-flight load (e.g. the cap was raised then
+      // lowered back to what we already hold).
+      if (existing.loading) {
+        existing.loadAbort?.abort();
+        existing.loading = undefined;
+        existing.loadAbort = undefined;
+      }
+      existing.memoryCap = memoryCap;
       return Promise.resolve();
     }
+    // (2) A load for this exact cap is already in flight → dedup.
     if (existing?.loading && existing.memoryCap === memoryCap) {
       return existing.loading;
     }
 
     const entry: PointsEntry = existing ?? { status: 'idle' };
-    // A cap change while data/a load exists: discard the stale resident state so
-    // the new (larger/smaller) window loads fresh. The catalog is preserved.
-    if (entry.data !== undefined || entry.loading) {
-      this.resetCapDependentState(entry);
-    }
+    // Reload needed (first load, or the cap was raised past a truncated batch).
+    // Abort any superseded in-flight load, but KEEP the old resident data /
+    // resource / row codes rendered — they are swapped atomically on completion,
+    // so the view keeps showing what it had while the larger batch loads.
+    entry.loadAbort?.abort();
     entry.memoryCap = memoryCap;
     const abort = new AbortController();
     entry.loadAbort = abort;
@@ -514,7 +525,12 @@ export class PointsDataEngine {
         if (abort.signal.aborted || entry.memoryCap !== memoryCap) {
           return;
         }
+        // Atomic swap: replace the (possibly still-rendered) old batch and drop
+        // the resource/resident-codes memos derived from it so they rebuild.
         entry.data = data;
+        entry.resource = undefined;
+        entry.residentCodes = undefined;
+        entry.residentCodesSource = undefined;
         entry.status = 'ready';
         entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
         if (data.featureCatalog !== undefined && !entry.catalogComplete) {

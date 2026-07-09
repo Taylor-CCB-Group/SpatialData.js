@@ -242,6 +242,11 @@ interface UseLayerDataResult {
    * (the feature-index scan). False for dictionary-only datasets, which can only
    * show features present in the resident preload window. */
   getPointsSupportsOnDemandLoad: (layerId: string) => boolean;
+  /** Resident preload truncation (loaded/total rows + whether it's capped), so
+   * the UI can show when raising the memory cap would load more points. */
+  getPointsResidentTruncation: (
+    layerId: string
+  ) => { truncated: boolean; loaded: number; total?: number } | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -1297,6 +1302,17 @@ export function useLayerData(
     return pointsEngine.hasFeatureCodeColumn(elem.key);
   };
 
+  // Resident preload truncation: whether the loaded points are the whole dataset
+  // or a capped window (and the counts), so the panel can tell the user when
+  // raising the memory cap would show more.
+  const getPointsResidentTruncation = (
+    layerId: string
+  ): { truncated: boolean; loaded: number; total?: number } | undefined => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (!elem || elem.type !== 'points') return undefined;
+    return pointsEngine.getResidentTruncation(elem.key);
+  };
+
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
       try {
@@ -1922,6 +1938,7 @@ export function useLayerData(
     getPointsMatchingLoadState,
     getPointsLoadedMatchingFeatureCodes,
     getPointsSupportsOnDemandLoad,
+    getPointsResidentTruncation,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,
