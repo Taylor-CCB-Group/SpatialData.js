@@ -2,6 +2,22 @@ import { LayerExtension } from '@deck.gl/core';
 import type { Layer } from '@deck.gl/core';
 
 /**
+ * Uniform block for the highlight. The stored value is `highlightCode + 1`, so
+ * the "no highlight" state is 0 — which is also what an unbound/zeroed UBO
+ * reads, making the default safe even if the binding ever fails (feature code 0
+ * would otherwise be a valid, and wrongly-highlighted, value).
+ */
+const PFC_HIGHLIGHT_MODULE = {
+  name: 'pfcHighlight',
+  vs: /* glsl */ `
+    layout(std140) uniform pfcHighlightUniforms {
+      float code;
+    } pfcHighlight;
+  `,
+  uniformTypes: { code: 'f32' as const },
+};
+
+/**
  * Colours scatter points by their per-point feature code, entirely on the GPU.
  *
  * The feature code rides along as an instance attribute (`featureCode`, supplied
@@ -36,33 +52,70 @@ export class PointsFeatureColorExtension extends LayerExtension {
 
   static defaultProps = {
     getFeatureCode: { type: 'accessor', value: -1 },
+    /** Emphasize one feature code: points of other codes are desaturated + dimmed
+     * while this is >= 0. -1 (default) highlights nothing. */
+    highlightFeatureCode: { type: 'number', value: -1 },
   };
 
   getShaders(this: Layer, extension: this) {
+    // The base returns null, and the module list may be absent — guard both.
+    const shaders = (super.getShaders(extension) ?? {}) as { modules?: unknown[] };
     return {
-      ...super.getShaders(extension),
+      ...shaders,
+      modules: [...(shaders.modules ?? []), PFC_HIGHLIGHT_MODULE],
       inject: {
         'vs:#decl': /* glsl */ `
           in float featureCode;
 
-          vec3 pfc_hsv2rgb(vec3 c) {
-            vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-            return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+          // OKLab → linear sRGB → gamma sRGB. OKLab spaces hues perceptually
+          // evenly, so a golden-angle sweep of its hue gives adjacent codes
+          // colours that look as distinct as they are numerically (unlike HSV,
+          // where big hue arcs — the greens — read as one colour). Out-of-gamut
+          // (L,C) combinations are clamped rather than gamut-mapped; fine for
+          // categorical swatches at a fixed moderate chroma.
+          vec3 pfc_oklab2rgb(vec3 lab) {
+            float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+            float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+            float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+            vec3 lms = vec3(l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
+            vec3 rgb = vec3(
+               4.0767416621 * lms.x - 3.3077115913 * lms.y + 0.2309699292 * lms.z,
+              -1.2684380046 * lms.x + 2.6097574011 * lms.y - 0.3413193965 * lms.z,
+              -0.0041960863 * lms.x - 0.7034186147 * lms.y + 1.7076147010 * lms.z
+            );
+            vec3 low = rgb * 12.92;
+            vec3 high = 1.055 * pow(max(rgb, 0.0), vec3(1.0 / 2.4)) - 0.055;
+            return clamp(mix(high, low, step(rgb, vec3(0.0031308))), 0.0, 1.0);
           }
 
-          // Golden-angle hue spreads adjacent codes to well-separated colours.
+          // Golden-angle hue in OKLCh at a fixed lightness/chroma.
           vec3 pfc_codeToColor(float code) {
-            float hue = fract(code * 0.6180339887498949);
-            return pfc_hsv2rgb(vec3(hue, 0.72, 0.96));
+            float h = fract(code * 0.6180339887498949) * 6.28318530717958648;
+            return pfc_oklab2rgb(vec3(0.72, 0.128 * cos(h), 0.128 * sin(h)));
           }
         `,
         'vs:#main-end': /* glsl */ `
           if (featureCode >= 0.0) {
-            vFillColor = vec4(pfc_codeToColor(featureCode), vFillColor.a);
+            vec3 pfcColor = pfc_codeToColor(featureCode);
+            // Highlight: uniform holds highlightCode + 1 (0 = off). Non-matching
+            // codes are desaturated toward their luminance and dimmed.
+            if (pfcHighlight.code > 0.5 && abs(featureCode - (pfcHighlight.code - 1.0)) > 0.5) {
+              float pfcLum = dot(pfcColor, vec3(0.2126, 0.7152, 0.0722));
+              pfcColor = mix(vec3(pfcLum), pfcColor, 0.2) * 0.55;
+            }
+            vFillColor = vec4(pfcColor, vFillColor.a);
           }
         `,
       },
     };
+  }
+
+  draw(this: Layer): void {
+    const highlight = (this.props as { highlightFeatureCode?: number }).highlightFeatureCode ?? -1;
+    // Store code + 1 so "no highlight" is 0 (safe default; see PFC_HIGHLIGHT_MODULE).
+    (this as unknown as { setShaderModuleProps(props: unknown): void }).setShaderModuleProps({
+      pfcHighlight: { code: highlight >= 0 ? highlight + 1 : 0 },
+    });
   }
 
   initializeState(this: Layer): void {

@@ -1,22 +1,44 @@
 /**
  * JS mirror of the colour-by-feature shader in {@link ./pointsFeatureColorExtension.ts}.
  *
- * MUST stay in lockstep with `pfc_codeToColor` / `pfc_hsv2rgb` there so the
- * feature-list swatches match what the GPU draws. Same golden-angle hue, same
- * HSV(0.72, 0.96). A negative code (the "no colour" sentinel) returns grey.
+ * MUST stay in lockstep with `pfc_codeToColor` / `pfc_oklab2rgb` there so the
+ * feature-list swatches match what the GPU draws: same golden-angle hue in
+ * OKLCh at the same fixed lightness (0.72) and chroma (0.128), same OKLab→sRGB
+ * matrices and gamma. A negative code (the "no colour" sentinel) returns grey.
  */
 const PFC_GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
-const PFC_SATURATION = 0.72;
-const PFC_VALUE = 0.96;
+const PFC_LIGHTNESS = 0.72;
+const PFC_CHROMA = 0.128;
+const TWO_PI = 6.28318530717958648;
 
 function fract(x: number): number {
   return x - Math.floor(x);
 }
 
-function hsvChannel(hue: number, offset: number, s: number, v: number): number {
-  const p = Math.abs(fract(hue + offset) * 6 - 3);
-  const mixed = 1 + (Math.max(0, Math.min(1, p - 1)) - 1) * s;
-  return Math.round(v * mixed * 255);
+function linearToSrgb(x: number): number {
+  return x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(Math.max(x, 0), 1 / 2.4) - 0.055;
+}
+
+function channel255(x: number): number {
+  return Math.round(Math.max(0, Math.min(1, x)) * 255);
+}
+
+/** OKLab (L, a, b) → sRGB `[r, g, b]` in 0–255 — matches `pfc_oklab2rgb`. */
+function oklabToRgb255(L: number, a: number, b: number): [number, number, number] {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ * l_ * l_;
+  const m = m_ * m_ * m_;
+  const s = s_ * s_ * s_;
+  const r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const bl = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
+  return [
+    channel255(linearToSrgb(r)),
+    channel255(linearToSrgb(g)),
+    channel255(linearToSrgb(bl)),
+  ];
 }
 
 /** Categorical colour for a feature code as `[r, g, b]` in 0–255. */
@@ -24,12 +46,8 @@ export function featureCodeToRgb(code: number): [number, number, number] {
   if (!(code >= 0)) {
     return [128, 128, 128];
   }
-  const hue = fract(code * PFC_GOLDEN_RATIO_CONJUGATE);
-  return [
-    hsvChannel(hue, 0, PFC_SATURATION, PFC_VALUE),
-    hsvChannel(hue, 2 / 3, PFC_SATURATION, PFC_VALUE),
-    hsvChannel(hue, 1 / 3, PFC_SATURATION, PFC_VALUE),
-  ];
+  const h = fract(code * PFC_GOLDEN_RATIO_CONJUGATE) * TWO_PI;
+  return oklabToRgb255(PFC_LIGHTNESS, PFC_CHROMA * Math.cos(h), PFC_CHROMA * Math.sin(h));
 }
 
 /** Same colour as a CSS `rgb(...)` string. */
