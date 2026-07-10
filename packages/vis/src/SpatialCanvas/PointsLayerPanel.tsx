@@ -1,8 +1,8 @@
-import { DEFAULT_POINTS_MEMORY_CAP } from "@spatialdata/core";
-import { useSpatialCanvasRendererFromLayerInputs } from "./SpatialCanvasViewer";
-import { PointsLayerConfig } from "./types";
-import { useSpatialCanvasActions } from "./context";
-import { PointsFeatureFilterPanel } from "./PointsFeatureFilterPanel";
+import { DEFAULT_POINTS_MEMORY_CAP } from '@spatialdata/core';
+import { useSpatialCanvasRendererFromLayerInputs } from './SpatialCanvasViewer';
+import { PointsLayerConfig } from './types';
+import { useSpatialCanvasActions } from './context';
+import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
 
 
 // we don't really want to make this be tied to the whole bundle of things from here
