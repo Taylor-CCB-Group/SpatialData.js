@@ -7,7 +7,7 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
-import { DEFAULT_POINTS_MEMORY_CAP, viewStateFromBounds } from '@spatialdata/core';
+import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLRef, Layer, PickingInfo } from 'deck.gl';
@@ -23,7 +23,6 @@ import {
 import { createPortal } from 'react-dom';
 import { ImageChannelPanelFromStore } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
-import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
 import { LayerOrderList } from './LayerOrderList';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
@@ -53,6 +52,7 @@ import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import { type ViewInteractionState, useViewInteractionGate } from './useViewInteractionGate';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
+import PointsLayerPanel from './PointsLayerPanel';
 
 // ============================================
 // Styles
@@ -434,6 +434,20 @@ function SpatialCanvasInner({
   const { interacting, onInteractionStateChange } = useViewInteractionGate();
   // Shapes are pickable unless tooltips are off or the camera is being moved.
   const pickingEnabled = tooltipMode !== 'off' && !interacting;
+  
+  // keeping a big bundle of these to pass into child components
+  // (may not be a good idea).
+  const rendererProps = useSpatialCanvasRendererFromLayerInputs({
+    spatialData,
+    coordinateSystem,
+    layerInputs: { layers, layerOrder },
+    // viewState and onViewStateChange are omitted: auto-fit and pan handling
+    // are managed entirely by ViewerSection so this hook never re-runs on pan.
+    width: vw,
+    height: vh,
+    pickingEnabled,
+  });
+  
   const {
     availableElements,
     deckLayers,
@@ -447,28 +461,10 @@ function SpatialCanvasInner({
     hasEnabledLayers,
     hasLayersDrawn,
     hasRenderableLayerData,
-    requestPointsFeatureCatalog,
-    getPointsFeatureCatalog,
-    isPointsFeatureCatalogLoading,
-    isPointsFeatureCatalogRefining,
-    getPointsResidentFeatureCodes,
-    getPointsMatchingLoadState,
-    getPointsLoadedMatchingFeatureCodes,
-    getPointsSupportsOnDemandLoad,
-    getPointsResidentTruncation,
     isBlocking,
     isLoading,
     vivLayerProps,
-  } = useSpatialCanvasRendererFromLayerInputs({
-    spatialData,
-    coordinateSystem,
-    layerInputs: { layers, layerOrder },
-    // viewState and onViewStateChange are omitted: auto-fit and pan handling
-    // are managed entirely by ViewerSection so this hook never re-runs on pan.
-    width: vw,
-    height: vh,
-    pickingEnabled,
-  });
+  } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
@@ -867,102 +863,7 @@ function SpatialCanvasInner({
                     />
                   </label>
                 )}
-                {selectedConfig.type === 'points' &&
-                  (() => {
-                    const currentCap = selectedConfig.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
-                    // Discrete options (one reload per choice, vs. a free number
-                    // input that would reload on every keystroke). Include the
-                    // current value so a saved config off the preset list still
-                    // shows correctly.
-                    const capOptions = Array.from(
-                      new Set([1, 2, 4, 8, 16].map((m) => m * 1_000_000).concat(currentCap))
-                    ).sort((a, b) => a - b);
-                    return (
-                      <label
-                        style={{
-                          color: '#ccc',
-                          fontSize: '12px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 4,
-                        }}
-                      >
-                        Memory cap
-                        <select
-                          value={currentCap}
-                          onChange={(e) =>
-                            actions.updateLayer(selectedConfig.id, {
-                              pointsMemoryCap: Number(e.target.value),
-                            })
-                          }
-                          style={{
-                            color: '#ccc',
-                            fontSize: '12px',
-                            padding: '4px 6px',
-                            borderRadius: 4,
-                            border: '1px solid #444',
-                            background: '#1a1a1a',
-                          }}
-                        >
-                          {capOptions.map((cap) => (
-                            <option key={cap} value={cap}>
-                              {`${(cap / 1_000_000).toLocaleString(undefined, {
-                                maximumFractionDigits: 1,
-                              })}M rows`}
-                              {cap === DEFAULT_POINTS_MEMORY_CAP ? ' (default)' : ''}
-                            </option>
-                          ))}
-                        </select>
-                        <span style={{ color: '#888', fontSize: '11px' }}>
-                          Max rows kept in memory. Higher shows more points; picking is
-                          limited to ~16.7M/layer.
-                        </span>
-                        {(() => {
-                          const t = getPointsResidentTruncation(
-                            selectedConfig.id,
-                            selectedConfig.featureCodes
-                          );
-                          if (!t) return null;
-                          const noun = t.filtered ? 'matching points' : 'points';
-                          const message = t.truncated
-                            ? `Showing ${t.loaded.toLocaleString()}${
-                                t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
-                              } ${noun} — capped; raise the cap for more.`
-                            : t.filtered
-                              ? `Loaded all ${t.loaded.toLocaleString()} ${noun}.`
-                              : `All ${t.loaded.toLocaleString()} ${noun} loaded (not capped).`;
-                          return (
-                            <span
-                              style={{
-                                color: t.truncated ? '#d0a24c' : '#888',
-                                fontSize: '11px',
-                              }}
-                            >
-                              {message}
-                            </span>
-                          );
-                        })()}
-                      </label>
-                    );
-                  })()}
-                {selectedConfig.type === 'points' && (
-                  <PointsFeatureFilterPanel
-                    layerId={selectedConfig.id}
-                    config={selectedConfig}
-                    catalog={getPointsFeatureCatalog(selectedConfig.id)}
-                    catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
-                    catalogRefining={isPointsFeatureCatalogRefining(selectedConfig.id)}
-                    residentCodes={getPointsResidentFeatureCodes(selectedConfig.id)}
-                    loadedMatchingCodes={getPointsLoadedMatchingFeatureCodes(selectedConfig.id)}
-                    supportsOnDemandLoad={getPointsSupportsOnDemandLoad(selectedConfig.id)}
-                    matchingLoadState={getPointsMatchingLoadState(
-                      selectedConfig.id,
-                      selectedConfig.featureCodes
-                    )}
-                    onRequestCatalog={requestPointsFeatureCatalog}
-                    updateLayer={actions.updateLayer}
-                  />
-                )}
+                {selectedConfig.type === 'points' && <PointsLayerPanel config={selectedConfig} rendererProps={rendererProps} />}
                 {selectedLayerLoadState && (
                   <div
                     style={{

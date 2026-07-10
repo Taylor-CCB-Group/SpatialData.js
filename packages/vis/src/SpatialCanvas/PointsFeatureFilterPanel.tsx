@@ -5,6 +5,7 @@ import type { PointsMatchingLoadState } from '@spatialdata/layers';
 import { featureCodeToCssColor } from '@spatialdata/layers';
 import type { PointsLayerConfig } from './types';
 
+// we need a pass on how we manage styles
 const swatchStyle: CSSProperties = {
   width: 10,
   height: 10,
@@ -124,6 +125,8 @@ export interface FeatureRowStateInput {
  * i.e. in memory — a deselected-but-loaded feature is `cached`, not dropped,
  * because removing a feature filters the in-memory batch rather than re-scanning
  * (re-adding it is instant).
+ * 
+ * This is up for review.
  */
 export function describeFeatureRowState({
   resident,
