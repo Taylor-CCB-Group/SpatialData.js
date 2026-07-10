@@ -1,8 +1,8 @@
+import { featureCodeToCssColor } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import type { PointsFeatureCatalog } from '@spatialdata/core';
-import type { PointsMatchingLoadState } from '@spatialdata/layers';
-import { featureCodeToCssColor } from '@spatialdata/layers';
+import { usePointsFeatureState } from './PointsFeatureState';
+import { useSpatialCanvasActions } from './context';
 import type { PointsLayerConfig } from './types';
 
 // we need a pass on how we manage styles
@@ -85,13 +85,7 @@ function formatFeatureCount(count: number | undefined): string {
 
 /** Why a feature row is (or isn't) greyed — drives both the dimming and the
  * diagnostic tooltip so they can never disagree. */
-export type FeatureRowTone =
-  | 'resident'
-  | 'loaded'
-  | 'cached'
-  | 'loading'
-  | 'noIndex'
-  | 'notLoaded';
+export type FeatureRowTone = 'resident' | 'loaded' | 'cached' | 'loading' | 'noIndex' | 'notLoaded';
 
 export interface FeatureRowState {
   tone: FeatureRowTone;
@@ -125,7 +119,7 @@ export interface FeatureRowStateInput {
  * i.e. in memory — a deselected-but-loaded feature is `cached`, not dropped,
  * because removing a feature filters the in-memory batch rather than re-scanning
  * (re-adding it is instant).
- * 
+ *
  * This is up for review.
  */
 export function describeFeatureRowState({
@@ -165,7 +159,8 @@ export function describeFeatureRowState({
           tone: 'cached',
           greyed: false,
           label: 'in memory',
-          reason: 'Loaded in the matched batch but hidden (deselected); re-adding it is instant, no scan.',
+          reason:
+            'Loaded in the matched batch but hidden (deselected); re-adding it is instant, no scan.',
         };
   }
   if (selected && scanning) {
@@ -203,53 +198,40 @@ function featureRowOpacity(state: FeatureRowState): number {
 }
 
 export interface PointsFeatureFilterPanelProps {
-  layerId: string;
   config: PointsLayerConfig;
-  catalog?: PointsFeatureCatalog | null;
-  catalogLoading?: boolean;
-  /** The full-dataset catalog scan is still refining the instant preview. */
-  catalogRefining?: boolean;
-  /** Feature codes present in the loaded (resident) batch. Features outside this
-   * set are in the catalog but not in the instant preview, so selecting them
-   * triggers an on-demand feature-index scan. `undefined` disables the
-   * distinction (treat every feature as resident). */
-  residentCodes?: ReadonlySet<number>;
-  /** Non-resident feature codes currently on screen (the last-completed matched
-   * selection). Features here are "loaded" regardless of whether a newer scan is
-   * still running, so adding a feature doesn't grey the already-loaded ones. */
-  loadedMatchingCodes?: ReadonlySet<number>;
-  /** Whether selecting a non-resident (greyed) feature fetches its points on
-   * demand via the feature-index scan. False for dictionary-only datasets, whose
-   * greyed features simply aren't in the loaded preview window and can't be shown
-   * until the cap is raised or the dataset is written with a feature index. */
-  supportsOnDemandLoad?: boolean;
-  /** Progressive load state of the feature-index scan for the current selection. */
-  matchingLoadState?: PointsMatchingLoadState;
-  onRequestCatalog: (layerId: string) => void;
-  updateLayer: (id: string, updates: Partial<PointsLayerConfig>) => void;
 }
 
-export function PointsFeatureFilterPanel({
-  layerId,
-  config,
-  catalog,
-  catalogLoading = false,
-  catalogRefining = false,
-  residentCodes,
-  loadedMatchingCodes,
-  supportsOnDemandLoad = true,
-  matchingLoadState,
-  onRequestCatalog,
-  updateLayer,
-}: PointsFeatureFilterPanelProps) {
+export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelProps) {
+  // Opt out of the React Compiler. The usePoints* hooks re-render this component
+  // on every engine `notify` (via useSyncExternalStore), but they read mutable
+  // engine state the compiler can't see as a dependency, so it would memoize the
+  // returned JSX and keep the pre-catalog "not loaded" branch on screen even
+  // after the component re-runs with the catalog present. Scoped to this leaf,
+  // this is far narrower than the old canvas-wide escape hatch.
+  'use no memo';
+  const layerId = config.id;
+  const { updateLayer } = useSpatialCanvasActions();
+  // Reactive points state, read straight from the engine via the surrounding
+  // <PointsFeatureStateProvider>.
+  const {
+    catalog,
+    catalogLoading,
+    catalogRefining,
+    residentCodes,
+    loadedMatchingCodes,
+    supportsOnDemandLoad,
+    matchingLoadState,
+    requestCatalog,
+  } = usePointsFeatureState(config.featureCodes);
+
   const [searchQuery, setSearchQuery] = useState('');
   // Request the full-dataset catalog whenever this panel is shown for a layer.
   // The engine dedupes (no-op once the full scan has settled), so this simply
   // upgrades the instant resident-subset preview to the complete list + counts.
   useEffect(() => {
-    onRequestCatalog(layerId);
-  }, [layerId, onRequestCatalog]);
-  const entries = catalog?.entries ?? [];
+    requestCatalog();
+  }, [requestCatalog]);
+  const entries = useMemo(() => catalog?.entries ?? [], [catalog?.entries]);
   const hasCounts = entries.some((entry) => entry.count !== undefined);
   const allSelected = config.featureCodes === undefined;
   const noneSelected = config.featureCodes !== undefined && config.featureCodes.length === 0;
@@ -317,7 +299,7 @@ export function PointsFeatureFilterPanel({
     return (
       <div style={panelStyle}>
         <div style={helperStyle}>Feature list not loaded.</div>
-        <button type="button" style={buttonStyle} onClick={() => onRequestCatalog(layerId)}>
+        <button type="button" style={buttonStyle} onClick={() => requestCatalog()}>
           Load feature list
         </button>
       </div>
@@ -373,9 +355,7 @@ export function PointsFeatureFilterPanel({
           {hasCounts ? ' · sorted by count' : ''}
         </span>
       </div>
-      {catalogRefining ? (
-        <div style={helperStyle}>Loading the full feature list…</div>
-      ) : null}
+      {catalogRefining ? <div style={helperStyle}>Loading the full feature list…</div> : null}
       {notLoadedCount > 0 ? (
         <div style={helperStyle}>
           {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'}{' '}

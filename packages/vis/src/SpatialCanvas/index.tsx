@@ -386,14 +386,11 @@ function SpatialCanvasInner({
   renderTooltip,
   hoverTooltipMode = 'simple',
 }: SpatialCanvasInnerProps) {
-  // Opt this component out of the React Compiler. It reads mutable engine state
-  // through getters (getPointsFeatureCatalog, getPointsMatchingLoadState, the
-  // deck layers) whose results change without a compiler-tracked dependency, so
-  // the compiler memoizes stale JSX and async engine-cache settles (feature
-  // catalog scan, feature-index render scan progress) never repaint. Until the
-  // points logic moves out of useLayerData behind a properly reactive snapshot,
-  // this escape hatch keeps engine-driven updates live.
-  'use no memo';
+  // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
+  // subscribes to the engine via useSyncExternalStore), so this component no
+  // longer reads mutable engine state through stable getters and doesn't need a
+  // React Compiler escape hatch. Deck-layer updates still flow through the
+  // renderer result (a fresh array on each rebuild — a tracked dependency).
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [tooltipMode, setTooltipMode] = useState<HoverTooltipMode>(hoverTooltipMode);
   const [measureRef, { width, height }] = useMeasure();
@@ -463,6 +460,8 @@ function SpatialCanvasInner({
     hasRenderableLayerData,
     isBlocking,
     isLoading,
+    pointsEngine,
+    resolvePointsTarget,
     vivLayerProps,
   } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
@@ -863,7 +862,13 @@ function SpatialCanvasInner({
                     />
                   </label>
                 )}
-                {selectedConfig.type === 'points' && <PointsLayerPanel config={selectedConfig} rendererProps={rendererProps} />}
+                {selectedConfig.type === 'points' && (
+                  <PointsLayerPanel
+                    config={selectedConfig}
+                    engine={pointsEngine}
+                    resolveTarget={resolvePointsTarget}
+                  />
+                )}
                 {selectedLayerLoadState && (
                   <div
                     style={{

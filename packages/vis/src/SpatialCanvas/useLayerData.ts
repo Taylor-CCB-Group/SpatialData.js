@@ -23,7 +23,6 @@ import {
   type LabelsElement,
   type LabelsTooltipMetadata,
   type PointsElement,
-  type PointsFeatureCatalog,
   type ShapesElement,
   type ShapesRenderData,
   type ShapesTooltipMetadata,
@@ -47,7 +46,7 @@ import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
-  type PointsMatchingLoadState,
+  type PointsLoadTarget,
   type PointsRenderResource,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
@@ -215,41 +214,15 @@ interface UseLayerDataResult {
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
-  /** Trigger the points feature-catalog build for a layer (idempotent). */
-  requestPointsFeatureCatalog: (layerId: string) => void;
-  /** The points feature catalog: `undefined` until requested/settled, `null`
-   * when the element has no `feature_key`, else the catalog. */
-  getPointsFeatureCatalog: (layerId: string) => PointsFeatureCatalog | null | undefined;
-  /** Whether the points feature catalog is currently being built. */
-  isPointsFeatureCatalogLoading: (layerId: string) => boolean;
-  /** Whether the full-dataset catalog scan is still refining an instant preview. */
-  isPointsFeatureCatalogRefining: (layerId: string) => boolean;
-  /** Distinct feature codes present in the resident batch (features outside this
-   * set are in the catalog but not loaded, so they render no points yet), or
-   * `undefined` until the row codes are resident. */
-  getPointsResidentFeatureCodes: (layerId: string) => ReadonlySet<number> | undefined;
-  /** Load state (progressive counts) of the feature-index scan for the given
-   * selection, or `undefined` when nothing is selected / it has not started. */
-  getPointsMatchingLoadState: (
-    layerId: string,
-    featureCodes: readonly number[] | undefined
-  ) => PointsMatchingLoadState | undefined;
-  /** Feature codes of the last-completed matched selection — the non-resident
-   * features currently on screen. Used to grey by what's rendered, so already
-   * loaded features stay un-greyed while a newly added feature's scan runs. */
-  getPointsLoadedMatchingFeatureCodes: (layerId: string) => ReadonlySet<number> | undefined;
-  /** Whether selecting a non-resident feature can fetch its points on demand
-   * (the feature-index scan). False for dictionary-only datasets, which can only
-   * show features present in the resident preload window. */
-  getPointsSupportsOnDemandLoad: (layerId: string) => boolean;
-  /** Truncation of what's on screen (loaded/total rows + whether it's capped), so
-   * the UI can show when raising the memory cap would load more points. Pass the
-   * active selection to report the matched (scanned) batch instead of the
-   * resident preload when a filter is applied. */
-  getPointsResidentTruncation: (
-    layerId: string,
-    featureCodes?: readonly number[]
-  ) => { truncated: boolean; loaded: number; total?: number; filtered?: boolean } | undefined;
+  /** The live points data engine (the render path's single owner). Exposed so
+   * the feature panel can subscribe to it directly for reactive catalog / scan
+   * state via `PointsFeatureStateProvider`, instead of prop-drilling getters. */
+  pointsEngine: PointsDataEngine;
+  /** Resolve a points layer to the engine's load target `{ key, layerId,
+   * element }`, or `undefined` when the layer isn't a resolvable points element.
+   * Reuses the same element resolution the load path uses, so panel hooks read
+   * the same cache keys the render writes. */
+  resolvePointsTarget: (layerId: string) => PointsLoadTarget | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -583,6 +556,7 @@ export function useLayerData(
     []
   );
 
+  //--- to be removed from here?
   // Points loading/caching/resolution engine (LayerDataEngine step 1b). This
   // framework-agnostic engine (in @spatialdata/layers) owns the points preload
   // cache, the stable render-resource memo, and the async load orchestration
@@ -1217,108 +1191,20 @@ export function useLayerData(
     return false;
   }, [pointsEngine]);
 
-  // --- Points feature catalog (filter panel) ---------------------------------
-  // Thin bindings over the engine's catalog cache. Reactivity is via the engine
-  // subscription wired at construction (notify -> notifyLoadedDataChanged ->
-  // re-render), so these read live engine state each render.
-
-  const requestPointsFeatureCatalog = useCallback(
-    (layerId: string): void => {
-      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'points') return;
-      void pointsEngine.ensureFeatureCatalog({
-        key: elem.key,
-        layerId,
-        element: elem.element as PointsElement,
-      });
-    },
-    [pointsEngine]
-  );
-
-  const getPointsFeatureCatalog = useCallback(
-    (layerId: string): PointsFeatureCatalog | null | undefined => {
+  // --- Points feature state (filter panel) -----------------------------------
+  // The panel no longer reads point state through prop-drilled getters. Instead
+  // it subscribes to `pointsEngine` directly (via `PointsFeatureStateProvider`
+  // + the `usePoints*` hooks), so its reactivity is self-contained and does not
+  // depend on this hook's re-render or a `'use no memo'` escape hatch. All this
+  // hook exposes is the engine and the element-key resolver the hooks need.
+  const resolvePointsTarget = useCallback(
+    (layerId: string): PointsLoadTarget | undefined => {
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem || elem.type !== 'points') return undefined;
-      return pointsEngine.getFeatureCatalog(elem.key);
+      return { key: elem.key, layerId, element: elem.element as PointsElement };
     },
-    [pointsEngine]
+    []
   );
-
-  const isPointsFeatureCatalogLoading = useCallback(
-    (layerId: string): boolean => {
-      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'points') return false;
-      return pointsEngine.isFeatureCatalogLoading(elem.key);
-    },
-    [pointsEngine]
-  );
-
-  const isPointsFeatureCatalogRefining = useCallback(
-    (layerId: string): boolean => {
-      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'points') return false;
-      return pointsEngine.isFeatureCatalogRefining(elem.key);
-    },
-    [pointsEngine]
-  );
-
-  const getPointsResidentFeatureCodes = useCallback(
-    (layerId: string): ReadonlySet<number> | undefined => {
-      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'points') return undefined;
-      return pointsEngine.getResidentFeatureCodes(elem.key);
-    },
-    [pointsEngine]
-  );
-
-  const getPointsMatchingLoadState = useCallback(
-    (layerId: string, featureCodes: readonly number[] | undefined): PointsMatchingLoadState | undefined => {
-      if (!featureCodes || featureCodes.length === 0) return undefined;
-      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'points') return undefined;
-      // Only a whole-dataset scan reports a load state; before a catalog loads a
-      // dict-only element can only filter the resident batch in memory (no scan),
-      // so there is nothing to show.
-      if (!pointsEngine.supportsFeatureScan(elem.key)) return undefined;
-      return pointsEngine.getMatchingLoadState(elem.key, featureCodes);
-    },
-    [pointsEngine]
-  );
-
-  // Plain functions (NOT useCallback): only ever called inline in the panel's
-  // render, so referential stability is irrelevant, and adding a hook to this
-  // compiler-processed god-hook perturbs its hook sequence (a Rules-of-Hooks
-  // violation once compiled). Keep them hook-free until useLayerData is refactored.
-  const getPointsLoadedMatchingFeatureCodes = (
-    layerId: string
-  ): ReadonlySet<number> | undefined => {
-    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (!elem || elem.type !== 'points') return undefined;
-    return pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
-  };
-
-  // Whether selecting a non-resident feature can fetch its points on demand (the
-  // whole-dataset scan). True for a real feature-code column and for dict-only
-  // elements once a catalog is loaded (the scan matches by feature_name); false
-  // only before any catalog exists, where we can show just the preload window.
-  const getPointsSupportsOnDemandLoad = (layerId: string): boolean => {
-    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (!elem || elem.type !== 'points') return false;
-    return pointsEngine.supportsFeatureScan(elem.key);
-  };
-
-  // Truncation of what's on screen: a capped window vs. the whole dataset (and
-  // counts), so the panel can tell the user when raising the memory cap shows
-  // more. Selection-aware — with a scanned selection active it reports the
-  // matched batch (what's drawn), not the resident preload.
-  const getPointsResidentTruncation = (
-    layerId: string,
-    featureCodes?: readonly number[]
-  ): { truncated: boolean; loaded: number; total?: number; filtered?: boolean } | undefined => {
-    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (!elem || elem.type !== 'points') return undefined;
-    return pointsEngine.getActiveTruncation(elem.key, featureCodes);
-  };
 
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
@@ -1938,15 +1824,8 @@ export function useLayerData(
     getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
-    requestPointsFeatureCatalog,
-    getPointsFeatureCatalog,
-    isPointsFeatureCatalogLoading,
-    isPointsFeatureCatalogRefining,
-    getPointsResidentFeatureCodes,
-    getPointsMatchingLoadState,
-    getPointsLoadedMatchingFeatureCodes,
-    getPointsSupportsOnDemandLoad,
-    getPointsResidentTruncation,
+    pointsEngine,
+    resolvePointsTarget,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,

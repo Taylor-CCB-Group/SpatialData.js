@@ -1,20 +1,21 @@
 import { DEFAULT_POINTS_MEMORY_CAP } from '@spatialdata/core';
-import { useSpatialCanvasRendererFromLayerInputs } from './SpatialCanvasViewer';
-import { PointsLayerConfig } from './types';
-import { useSpatialCanvasActions } from './context';
+import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
 import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
-
-
-// we don't really want to make this be tied to the whole bundle of things from here
-// we could Pick<> things we want, may want a more substantial design change.
-type RendererProps = ReturnType<typeof useSpatialCanvasRendererFromLayerInputs>;
+import { PointsFeatureStateProvider, usePointsFeatureState } from './PointsFeatureState';
+import { useSpatialCanvasActions } from './context';
+import type { PointsLayerConfig } from './types';
 
 export interface PointsLayerPanelProps {
   config: PointsLayerConfig;
-  rendererProps: RendererProps;
+  /** The live engine (render path's owner) — the panel subscribes to it for
+   * reactive catalog / scan state instead of reading prop-drilled getters. */
+  engine: PointsDataEngine;
+  /** Resolve a layer id to the engine's load target. Sourced from the renderer
+   * hook result so panel reads hit the same cache keys the render writes. */
+  resolveTarget: (layerId: string) => PointsLoadTarget | undefined;
 }
 
-function PointsMemoryCap({config}: PointsLayerPanelProps) {
+function PointsMemoryCap({ config }: { config: PointsLayerConfig }) {
   const actions = useSpatialCanvasActions();
   const currentCap = config.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
   // Discrete options (one reload per choice, vs. a free number
@@ -61,26 +62,27 @@ function PointsMemoryCap({config}: PointsLayerPanelProps) {
         ))}
       </select>
       <span style={{ color: '#888', fontSize: '11px' }}>
-        Max rows kept in memory. Higher shows more points; picking is
-        limited to ~16.7M/layer.
+        Max rows kept in memory. Higher shows more points; picking is limited to ~16.7M/layer.
       </span>
     </label>
-  )
+  );
 }
 
-function ShowMatchingPoints({config, rendererProps}: PointsLayerPanelProps) {
-  const { id, featureCodes } = config;
-  const {
-    getPointsResidentTruncation
-  } = rendererProps;
-  const t = getPointsResidentTruncation(id, featureCodes);
+function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
+  // Opt out of the React Compiler — see PointsFeatureFilterPanel. The truncation
+  // read is engine-backed and updates on notify; the compiler would otherwise
+  // memoize this line's JSX and never repaint it as the scan progresses.
+  'use no memo';
+  const { truncation: t } = usePointsFeatureState(config.featureCodes);
   if (!t) return null;
   const noun = t.filtered ? 'matching points' : 'points';
-  // t.loaded is not the number we're showing, this statement is almost always misleading.
-  // at least after separating from bloated parent we get proper HMR.
+  // NOTE: t.loaded is the covered-batch size, not the count matching the current
+  // selection, so this line is often misleading. Fixing the semantics is a
+  // separate follow-up (see the engine's getActiveTruncation filtered branch).
   const message = t.truncated
-    ? `Showing ${t.loaded.toLocaleString()}${t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
-    } ${noun} — capped; raise the cap for more.`
+    ? `Showing ${t.loaded.toLocaleString()}${
+        t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
+      } ${noun} — capped; raise the cap for more.`
     : t.filtered
       ? `Loaded all ${t.loaded.toLocaleString()} ${noun}.`
       : `All ${t.loaded.toLocaleString()} ${noun} loaded (not capped).`;
@@ -96,43 +98,12 @@ function ShowMatchingPoints({config, rendererProps}: PointsLayerPanelProps) {
   );
 }
 
-export default function PointsLayerPanel(props: PointsLayerPanelProps) {
-  const actions = useSpatialCanvasActions();
-  const {config, rendererProps} = props;
-  const selectedConfig = config;
-  const {
-    requestPointsFeatureCatalog,
-    getPointsFeatureCatalog,
-    isPointsFeatureCatalogLoading,
-    isPointsFeatureCatalogRefining,
-    getPointsResidentFeatureCodes,
-    getPointsMatchingLoadState,
-    getPointsLoadedMatchingFeatureCodes,
-    getPointsSupportsOnDemandLoad,
-  } = rendererProps;
+export default function PointsLayerPanel({ config, engine, resolveTarget }: PointsLayerPanelProps) {
   return (
-    <>
-    {/* spreading props like this may be bad, should have more focussed types to pass */}
-      <PointsMemoryCap {...props} />
-      <ShowMatchingPoints {...props} />
-      {/* this version has a lot more noise and ceremony, though */}
-      <PointsFeatureFilterPanel
-        layerId={selectedConfig.id} //can't it just get this from the config?
-        config={selectedConfig}
-        catalog={getPointsFeatureCatalog(selectedConfig.id)}
-        catalogLoading={isPointsFeatureCatalogLoading(selectedConfig.id)}
-        catalogRefining={isPointsFeatureCatalogRefining(selectedConfig.id)}
-        residentCodes={getPointsResidentFeatureCodes(selectedConfig.id)}
-        loadedMatchingCodes={getPointsLoadedMatchingFeatureCodes(selectedConfig.id)}
-        supportsOnDemandLoad={getPointsSupportsOnDemandLoad(selectedConfig.id)}
-        matchingLoadState={getPointsMatchingLoadState(
-          selectedConfig.id,
-          selectedConfig.featureCodes
-        )}
-        onRequestCatalog={requestPointsFeatureCatalog}
-        updateLayer={actions.updateLayer}
-      />
-
-    </>
-  )
+    <PointsFeatureStateProvider engine={engine} target={resolveTarget(config.id)}>
+      <PointsMemoryCap config={config} />
+      <ShowMatchingPoints config={config} />
+      <PointsFeatureFilterPanel config={config} />
+    </PointsFeatureStateProvider>
+  );
 }
