@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  describeFeatureRowState,
   type FeatureRowStateInput,
-} from '../src/SpatialCanvas/PointsFeatureFilterPanel';
+  describeFeatureRowState,
+} from '../src/SpatialCanvas/featureRowState';
 
 const base: FeatureRowStateInput = {
   resident: false,
