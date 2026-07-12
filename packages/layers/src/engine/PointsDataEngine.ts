@@ -4,6 +4,7 @@ import {
   remapRowFeatureCodes,
   type PointsElement,
   type PointsFeatureCatalog,
+  type PointsLoadProgress,
   type PointsLoadResult,
 } from '@spatialdata/core';
 import { pointsRenderResourceSignature, resolvePointsRenderResource } from '../resolvePointsRenderResource.js';
@@ -301,7 +302,8 @@ export class PointsDataEngine {
     // (not sure how important this is, may prefer to see more granular update)
     const PROGRESS_NOTIFY_STEP = 5_000;
     let lastNotifiedMatched = 0;
-    const onProgress = (progress: { matchedRows: number; scannedRows: number }): void => {
+    const onProgress = (progress: PointsLoadProgress): void => {
+      // I'm a bit iffy about this ambient stateful thing
       const loading = entry.matchingLoading;
       if (!loading || loading.signature !== signature) {
         return;
