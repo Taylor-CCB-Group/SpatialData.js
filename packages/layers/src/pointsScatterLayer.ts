@@ -84,7 +84,7 @@ export function renderColumnarScatterLayer(
 
   return new ScatterplotLayer({
     id,
-    coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
+    coordinateSystem: "cartesian",
     data: {
       length: attributes.length,
       attributes: {
