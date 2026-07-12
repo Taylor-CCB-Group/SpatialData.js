@@ -159,6 +159,54 @@ function concatColumnarPointChunks(chunks: ColumnarPointsChunk[]): ColumnarPoint
   }
   return { shape: [axisCount, totalRows], data, ...(featureCodes ? { featureCodes } : {}) };
 }
+
+/**
+ * Build the per-chunk streaming payload for a progressive points scan: the
+ * latest decoded chunk plus a `progress` whose `partialResult` is the GROWING
+ * buffer of everything matched so far (all `accumulatedChunks` concatenated), so
+ * a consumer can render points that accumulate rather than flash past.
+ *
+ * Shared by both scan branches (row-group / parts) here, and intended for reuse
+ * by other `VPointsSource` scans that want progressive display. The buffer is
+ * re-concatenated each chunk, so total copy work grows with the square of the
+ * *chunk count* — negligible in practice (a feature-indexed scan touches only a
+ * handful of row groups; the parts path is bounded by part count). Only worth
+ * replacing with a preallocated append buffer if a scan ever yields very many
+ * small chunks.
+ */
+function pointsScanChunkProgress(
+  accumulatedChunks: ColumnarPointsChunk[],
+  latest: ColumnarPointsChunk,
+  counts: {
+    scannedRows: number;
+    matchedRows: number;
+    totalRowCount: number;
+    memoryCap: number;
+    partIndex: number;
+    partCount: number;
+  }
+): { chunk: ColumnarPointsChunk; progress: PointsLoadProgress } {
+  const buffer = concatColumnarPointChunks(accumulatedChunks);
+  const partialResult: PointsLoadResult = {
+    shape: buffer.shape,
+    data: buffer.data,
+    ...(buffer.featureCodes ? { featureCodes: buffer.featureCodes } : {}),
+    totalRowCount: counts.totalRowCount,
+    scannedRowCount: counts.scannedRows,
+    filterActive: true,
+    preloadTruncated: counts.matchedRows >= counts.memoryCap,
+  };
+  return {
+    chunk: latest,
+    progress: {
+      scannedRows: counts.scannedRows,
+      matchedRows: counts.matchedRows,
+      partIndex: counts.partIndex,
+      partCount: counts.partCount,
+      partialResult,
+    },
+  };
+}
 import {
   MORTON_CODE_2D_COLUMN,
   type PointsInBoundsOptions,
@@ -517,25 +565,29 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return parts.length > 0 ? { parts } : null;
   }
 
-  async loadPointsMatchingFeatureCodes(
+  async* loadPointsMatchingFeatureCodesByChunk(
     elementPath: string,
     options: {
       memoryCap: number;
       featureCodes: readonly number[];
-      onProgress?: (progress: PointsLoadProgress) => void;
+      // no onProgress side-effect here, it's part of what we yield
+      // we *do* want an AbortSignal, though.
+      abort?: AbortSignal;
       /** Authoritative name→code map for dict-only elements (no `*_codes`
        * column), letting the scan resolve each row's `feature_name` to the same
        * code space the selection was made in. When absent for a dict-only
        * element the scan cannot match by name and returns nothing. */
       featureCodeByName?: ReadonlyMap<string, number>;
-    }
-  ): Promise<PointsLoadResult> {
+    }    
+  ) {
     ensurePointsWorker();
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    // if (options.abort?.aborted) return;
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
     const normAxes = normalizeAxes(axes);
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
+    const axisCount = axisNames.length;
     const featureKey = spatialDataAttrs?.feature_key;
     if (typeof featureKey !== 'string' || featureKey.length === 0) {
       throw new Error(`Points element "${elementPath}" is missing feature_key metadata.`);
@@ -543,7 +595,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     const totalRowCount = await this.resolveParquetRowCount(parquetPath);
     if (options.featureCodes.length === 0) {
-      return emptyFilteredPointsResult(axisNames, totalRowCount);
+      // Nothing selected: yield no chunks and return the summary. The collector
+      // turns "no chunks matched" into an empty result via emptyFilteredPointsResult.
+      return { totalRowCount, axisNames, scannedRows: 0, matchedRows: 0 };
     }
 
     if (!isPointsWorkerEnabled()) {
@@ -556,8 +610,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
     const fields = datasetMetadata?.schema?.fields
       ? datasetMetadata.schema.fields.flatMap((field) =>
-          typeof field.name === 'string' ? [field.name] : []
-        )
+        typeof field.name === 'string' ? [field.name] : []
+      )
       : arrowSchemaFieldNames(schemaTable);
     const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
 
@@ -577,9 +631,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
         : undefined;
 
-    const matchedChunks: ColumnarPointsChunk[] = [];
     let matchedRows = 0;
     let scannedRows = 0;
+    // Growing buffer of every matched chunk so far — `pointsScanChunkProgress`
+    // concatenates it into each `progress.partialResult` for progressive display.
+    const accumulatedChunks: ColumnarPointsChunk[] = [];
 
     // Row-group scanning only helps when a feature-code column lets footer stats
     // skip row groups (feature-ordered index). Dict-only elements have no stats to
@@ -601,10 +657,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       const rowGroupExtents =
         featureCodeColumnName && datasetMetadata
           ? rowGroupFeatureCodeExtents(
-              datasetMetadata.parts,
-              featureCodeColumnName,
-              datasetRowGroups
-            )
+            datasetMetadata.parts,
+            featureCodeColumnName,
+            datasetRowGroups
+          )
           : [];
       const canSkipRowGroups = rowGroupExtents.length === datasetRowGroups;
 
@@ -626,6 +682,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         if (!chunk) {
           continue;
         }
+        // the memoryCap could work by the consumer choosing not to exhaust the stream
+        // (although that wouldn't help to pass last worker invocation a smaller chunk size)
+        // we should be passing abort to worker
         const partial = await scanParquetByFeatureCodesInWorker({
           rowGroups: [chunk],
           axisNames,
@@ -640,15 +699,18 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
-          matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
           matchedRows += partial.matchedRows;
+          const chunk = toColumnarPointsChunk(partial.data, axisCount);
+          accumulatedChunks.push(chunk);
+          yield pointsScanChunkProgress(accumulatedChunks, chunk, {
+            scannedRows,
+            matchedRows,
+            totalRowCount,
+            memoryCap: options.memoryCap,
+            partIndex: rowGroupIndex,
+            partCount: datasetRowGroups,
+          });
         }
-        options.onProgress?.({
-          scannedRows,
-          matchedRows,
-          partIndex: rowGroupIndex,
-          partCount: datasetRowGroups,
-        });
       }
     } else {
       let partPaths: string[];
@@ -681,28 +743,58 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
-          matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
           matchedRows += partial.matchedRows;
+          const chunk = toColumnarPointsChunk(partial.data, axisCount);
+          accumulatedChunks.push(chunk);
+          yield pointsScanChunkProgress(accumulatedChunks, chunk, {
+            scannedRows,
+            matchedRows,
+            totalRowCount,
+            memoryCap: options.memoryCap,
+            partIndex,
+            partCount: partPaths.length,
+          });
         }
-        options.onProgress?.({
-          scannedRows,
-          matchedRows,
-          partIndex,
-          partCount: partPaths.length,
-        });
       }
     }
-
-    const data = concatColumnarPointChunks(matchedChunks);
-    return {
-      shape: data.shape,
-      data: data.data,
-      ...(data.featureCodes ? { featureCodes: data.featureCodes } : {}),
-      totalRowCount,
-      scannedRowCount: scannedRows,
-      filterActive: true,
-      preloadTruncated: matchedRows >= options.memoryCap,
-    };
+    return { totalRowCount, axisNames, scannedRows, matchedRows };
+  }
+  async loadPointsMatchingFeatureCodes(
+    elementPath: string,
+    options: {
+      memoryCap: number;
+      featureCodes: readonly number[];
+      onProgress?: (progress: PointsLoadProgress) => void;
+      /** Authoritative name→code map for dict-only elements (no `*_codes`
+       * column), letting the scan resolve each row's `feature_name` to the same
+       * code space the selection was made in. When absent for a dict-only
+       * element the scan cannot match by name and returns nothing. */
+      featureCodeByName?: ReadonlyMap<string, number>;
+    }
+  ): Promise<PointsLoadResult> {
+    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, options);
+    // Each `progress.partialResult` is already the full accumulated buffer, so the
+    // last one IS the whole matched batch — no need to re-accumulate/concat here.
+    // Final totals come from the generator's return value (authoritative: it also
+    // counts rows scanned after the last match, which the last partial can't see).
+    let latest: PointsLoadResult | undefined;
+    while (true) {
+      const next = await chunkGenerator.next();
+      if (next.done) {
+        const { totalRowCount, scannedRows, matchedRows, axisNames } = next.value;
+        if (!latest) {
+          return emptyFilteredPointsResult(axisNames, totalRowCount);
+        }
+        return {
+          ...latest,
+          totalRowCount,
+          scannedRowCount: scannedRows,
+          preloadTruncated: matchedRows >= options.memoryCap,
+        };
+      }
+      options.onProgress?.(next.value.progress);
+      latest = next.value.progress.partialResult;
+    }
   }
 
   private async resolveExplicitFeatureCodeColumn(elementPath: string): Promise<{

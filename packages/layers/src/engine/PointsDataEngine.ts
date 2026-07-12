@@ -104,6 +104,10 @@ interface PointsEntry {
     promise: Promise<void>;
     matchedRows: number;
     scannedRows: number;
+    partialResult?: PointsLoadResult;
+    /** SPIKE: render resource built from `partialResult`, cached on that chunk's
+     * identity so it only rebuilds when a new chunk arrives (not every pan). */
+    partialResource?: { source: PointsLoadResult; resource: PointsRenderResource };
   };
 }
 
@@ -294,7 +298,8 @@ export class PointsDataEngine {
 
     // Notify at most every `PROGRESS_NOTIFY_STEP` matched rows so the panel's
     // partial stats update live without a re-render per scanned row group.
-    const PROGRESS_NOTIFY_STEP = 25_000;
+    // (not sure how important this is, may prefer to see more granular update)
+    const PROGRESS_NOTIFY_STEP = 5_000;
     let lastNotifiedMatched = 0;
     const onProgress = (progress: { matchedRows: number; scannedRows: number }): void => {
       const loading = entry.matchingLoading;
@@ -303,6 +308,11 @@ export class PointsDataEngine {
       }
       loading.matchedRows = progress.matchedRows;
       loading.scannedRows = progress.scannedRows;
+      // we have a partialResult, which includes an accumulated buffer
+      // probably prefer to have AsyncGenerator throughout rather than this
+      // we're not doing the right thing yet, just seeing if we can push some data
+      // and render... at very least needs cleaning up resources, etc etc
+      loading.partialResult = progress.partialResult;
       if (progress.matchedRows - lastNotifiedMatched >= PROGRESS_NOTIFY_STEP) {
         lastNotifiedMatched = progress.matchedRows;
         this.notify(); // runs during the async scan, not render — safe to notify sync
@@ -431,9 +441,11 @@ export class PointsDataEngine {
    * if no selection has ever settled. Deliberately NOT keyed to the current
    * selection: while a new selection's scan is in flight, this keeps returning the
    * previous selection's batch so the render shows those points instead of
-   * blanking for the (potentially multi-second) scan. The resource is cached on
-   * the matched batch and only changes identity when the batch does, so panning
-   * doesn't reset the composite. Pair with `getMatchingLoadState` (exact-signature)
+   * blanking for the (potentially multi-second) scan. 
+   * 
+   * The resource is cached on the matched batch and only changes identity when the 
+   * batch does, so panning doesn't reset the composite. 
+   * Pair with `getMatchingLoadState` (exact-signature)
    * for the "is the current selection loaded" question.
    */
   getMatchingResource(element: PointsElement, key: string): PointsRenderResource | null {
@@ -458,6 +470,33 @@ export class PointsDataEngine {
     });
     if (resource) {
       entry.matching.resource = resource;
+    }
+    return resource;
+  }
+
+  /**
+   * Render resource for the in-flight scan's latest `partialResult`, which the
+   * producer builds as a GROWING buffer (every matched chunk accumulated so far),
+   * so points progressively fill in before the full scan settles. Cached on the
+   * partial's identity (rebuilds only when a new chunk grows the buffer, not per
+   * pan). `null` when no scan is in flight / nothing has decoded yet / empty.
+   */
+  getMatchingPartialResource(element: PointsElement, key: string): PointsRenderResource | null {
+    const loading = this.entries.get(key)?.matchingLoading;
+    const partial = loading?.partialResult;
+    if (!loading || !partial || (partial.shape[1] ?? 0) === 0) {
+      return null;
+    }
+    if (loading.partialResource?.source === partial) {
+      return loading.partialResource.resource;
+    }
+    const resource = resolvePointsRenderResource(
+      element,
+      { preloaded: partial, metadataKnown: false },
+      { experimentalOptimizations: 'off' as const }
+    );
+    if (resource) {
+      loading.partialResource = { source: partial, resource };
     }
     return resource;
   }

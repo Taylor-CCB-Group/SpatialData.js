@@ -5,6 +5,7 @@ export interface PointsLoadProgress {
   matchedRows: number;
   partIndex: number;
   partCount: number;
+  partialResult: PointsLoadResult;
 }
 
 export interface PointsLoadOptions {

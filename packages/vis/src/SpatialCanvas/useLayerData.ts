@@ -1366,6 +1366,7 @@ export function useLayerData(
         // against, so it falls through to resident in-memory filtering.
         const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
         let matchingResource: PointsRenderResource | null = null;
+        let partialResource: PointsRenderResource | null = null;
         if (selectionActive && canFeatureScan) {
           void pointsEngine.ensureMatchingFeaturesLoaded(
             { key: elem.key, layerId, element },
@@ -1373,6 +1374,10 @@ export function useLayerData(
             resolvePointsMemoryCap(config.pointsMemoryCap)
           );
           matchingResource = pointsEngine.getMatchingResource(element, elem.key);
+          // The in-flight scan's growing buffer (all matched chunks so far), drawn
+          // as an extra overlay sub-layer below so the base (resident preview /
+          // prior matched batch) stays visible while points progressively fill in.
+          partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
         }
 
         if (matchingResource) {
@@ -1435,6 +1440,24 @@ export function useLayerData(
               })
             );
           }
+        }
+
+        // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on
+        // top of whichever base layer was pushed above, so the base doesn't blank
+        // while points progressively fill in. Distinct id so deck keeps them as two
+        // layers. Colour rides the resource's own per-row codes.
+        if (partialResource) {
+          deckLayers.push(
+            new PointsLayer({
+              id: `${layerId}__partial`,
+              resource: partialResource,
+              modelMatrix: elem.transform,
+              opacity: config.opacity,
+              visible: config.visible,
+              pointSize: config.pointSize ?? 1,
+              ...(config.color ? { color: config.color } : {}),
+            })
+          );
         }
       } else if (config.type === 'labels') {
         const labelsData = loaded.labels.get(elem.key);
