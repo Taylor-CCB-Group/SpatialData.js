@@ -7,8 +7,8 @@
 
 import type { Matrix4 } from '@math.gl/core';
 import {
-  type OmeZarrMultiscalesSource,
   loadOmeZarrMultiscalesData,
+  type OmeZarrMultiscalesSource,
 } from '@spatialdata/avivatorish';
 import type { ImageElement, LabelsElement } from '@spatialdata/core';
 import type { Layer } from 'deck.gl';
@@ -42,7 +42,7 @@ export interface ImageLayerRenderConfig {
  * This function is kept for API consistency but returns null - layers are
  * created by calling view.getLayers() in the viewer component.
  */
-export function renderImageLayer(config: ImageLayerRenderConfig): Layer | null {
+export function renderImageLayer(_config: ImageLayerRenderConfig): Layer | null {
   // Image layers are handled via Viv's view.getLayers() system in the viewer
   // This function exists for API consistency but doesn't create layers directly
   return null;

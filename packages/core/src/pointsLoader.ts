@@ -1,10 +1,10 @@
 import type { PointsElement } from './models/index.js';
-import type { PointsLoadMode } from './types.js';
 import type {
   PointsInBoundsResponse,
   PointsTilingMetadata,
   SpatialBounds,
 } from './pointsTiling.js';
+import type { PointsLoadMode } from './types.js';
 
 export type PointsEncodingKind =
   | 'preloaded-columnar'

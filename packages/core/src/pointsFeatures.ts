@@ -1,5 +1,5 @@
-import { Type } from 'apache-arrow';
 import type { Table, Vector } from 'apache-arrow';
+import { Type } from 'apache-arrow';
 import {
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
@@ -259,7 +259,7 @@ function getDictionaryIndexAt(column: Vector, row: number): number | null {
   return null;
 }
 
-function dictionaryIndexArray(column: Vector, numRows: number): Int32Array | null {
+function _dictionaryIndexArray(column: Vector, numRows: number): Int32Array | null {
   if (!isDictionaryFeatureColumn(column)) {
     return null;
   }

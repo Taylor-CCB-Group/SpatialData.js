@@ -1,13 +1,7 @@
 import type { SpatialBounds } from '@spatialdata/core';
 import type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
 
-export type PointsTileStatus =
-  | 'pending'
-  | 'loading'
-  | 'loaded'
-  | 'empty'
-  | 'error'
-  | 'aborted';
+export type PointsTileStatus = 'pending' | 'loading' | 'loaded' | 'empty' | 'error' | 'aborted';
 
 export interface PointsTileLoadProgress {
   inFlight: number;
@@ -37,9 +31,7 @@ export interface PointsTileDebugPickObject {
   entry: PointsTileDebugEntry;
 }
 
-export function isPointsTileDebugPickObject(
-  value: unknown
-): value is PointsTileDebugPickObject {
+export function isPointsTileDebugPickObject(value: unknown): value is PointsTileDebugPickObject {
   if (!value || typeof value !== 'object') {
     return false;
   }
@@ -176,7 +168,10 @@ export function reduceTileDebugEntries(
         loadMode: existing?.loadMode ?? completed?.loadMode,
         errorMessage: existing?.errorMessage ?? completed?.errorMessage,
       };
-      if (completed && (status === 'loaded' || status === 'empty' || status === 'error' || status === 'aborted')) {
+      if (
+        completed &&
+        (status === 'loaded' || status === 'empty' || status === 'error' || status === 'aborted')
+      ) {
         entry = applyCompletedSnapshot(entry, completed);
       }
       next.set(tile.tileId, entry);

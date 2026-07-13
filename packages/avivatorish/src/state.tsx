@@ -1,5 +1,5 @@
-import { type PropsWithChildren, createContext, useContext } from 'react';
 import type { loadOmeTiff, loadOmeZarr } from '@hms-dbmi/viv';
+import { createContext, type PropsWithChildren, useContext } from 'react';
 import { createStore } from 'zustand';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { EqFn, Selector, ZustandStore } from './zustandTypes';
@@ -343,7 +343,7 @@ export const useMetadata = (): Metadata | undefined | null => {
     const image = useChannelsStore((store) => store.image);
     const metadata = useViewerStore((store) => store.metadata);
     return Array.isArray(metadata) ? metadata[image] : metadata;
-  } catch (e) {
+  } catch (_e) {
     // we now sometimes call this hook outside of a Viv context, so this is expected.
     // console.error("no metadata", e);
   }

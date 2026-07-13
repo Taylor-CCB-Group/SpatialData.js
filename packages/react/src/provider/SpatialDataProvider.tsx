@@ -1,10 +1,10 @@
-import { type PropsWithChildren, createContext, useContext, useMemo } from 'react';
 import {
-  readZarr,
   type ElementName,
+  readZarr,
   type SpatialData,
   type StoreReference,
 } from '@spatialdata/core';
+import { createContext, type PropsWithChildren, useContext, useMemo } from 'react';
 
 type SpatialDataContextValue = {
   spatialDataPromise: Promise<SpatialData> | null;

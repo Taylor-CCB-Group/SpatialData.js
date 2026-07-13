@@ -2,27 +2,16 @@
  * Store interface for reading SpatialData from zarr stores
  */
 
-import type * as zarr from 'zarrita';
-import { getTransformation } from '../transformations';
+import { type ConsolidatedStore, openExtraConsolidated, serializeZarrTree } from 'zarrextra';
 import {
-  type ConsolidatedStore,
-  openExtraConsolidated,
-  serializeZarrTree,
-} from 'zarrextra';
-import {
-  loadElements,
   type ElementInstanceMap,
+  loadElements,
   type SpatialElement,
   type TableElement,
 } from '../models';
-import type {
-  ElementName,
-  StoreLocation,
-  StoreReference,
-  BadFileHandler,
-  ZarrTree,
-} from '../types';
-import { SpatialElementNames, ElementNames } from '../types';
+import { getTransformation } from '../transformations';
+import type { BadFileHandler, ElementName, StoreLocation, StoreReference } from '../types';
+import { ElementNames, SpatialElementNames } from '../types';
 
 /**
  * Type alias for element collections - maps element keys to element instances
@@ -34,7 +23,7 @@ function elementPathCandidates(kind: Exclude<ElementName, 'tables'>, key: string
 }
 
 // Re-export SpatialElement from models
-export type { SpatialElement, AnyElement } from '../models';
+export type { AnyElement, SpatialElement } from '../models';
 
 function describeStoreSource(url?: StoreLocation): string {
   return url ?? '[store instance]';

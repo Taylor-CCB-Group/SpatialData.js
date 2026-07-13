@@ -182,7 +182,7 @@ export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
   }
 
   for (const key in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+    if (Object.hasOwn(obj, key)) {
       // @ts-expect-error - Indexing unknown object for serialization.
       const val = obj[key];
       if (typeof val === 'function') {
@@ -196,45 +196,44 @@ export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
   return result;
 }
 
-export type {
-  StoreReference,
-  ZarrTree,
-  ConsolidatedStore,
-  LazyZarrArray,
-  ZAttrsAny,
-} from './types';
-export { ATTRS_KEY, ZARRAY_KEY } from './types';
-export { createPrefixedStore } from './prefixedStore';
 export {
   createOpenJpegDecoder,
   createOpenJphDecoder,
   createWasmLocateFile,
-  registerJpeg2kCodec,
-  registerExperimentalHtj2kCodec,
   type ImageCodecDecoder,
   type OpenJpegFactory,
   type OpenJphDecode,
   type OpenJphDecodedImage,
   type OpenJphInitOptions,
   type RegisterImageCodecOptions,
+  registerExperimentalHtj2kCodec,
+  registerJpeg2kCodec,
 } from './codecs';
 export {
   createOpenJphEncoder,
   encodeHtj2kPlane,
-  loadOpenJphEncoder,
-  planeArrayForDtype,
   type Htj2kEncodeOptions,
   type Htj2kPlane,
   type Htj2kPlaneDtype,
+  loadOpenJphEncoder,
   type OpenJphEncode,
   type OpenJphEncodeInput,
   type OpenJphEncoder,
+  planeArrayForDtype,
 } from './htj2k-encode';
 export {
   loadOmeZarrMultiscalesFromStore,
-  type VivCompatiblePixelSource,
   type RasterSelection,
+  type VivCompatiblePixelSource,
 } from './omeZarr';
-
+export { createPrefixedStore } from './prefixedStore';
 export type { Result } from './result';
-export { Ok, Err, isOk, isErr, unwrap, unwrapOr } from './result';
+export { Err, isErr, isOk, Ok, unwrap, unwrapOr } from './result';
+export type {
+  ConsolidatedStore,
+  LazyZarrArray,
+  StoreReference,
+  ZAttrsAny,
+  ZarrTree,
+} from './types';
+export { ATTRS_KEY, ZARRAY_KEY } from './types';

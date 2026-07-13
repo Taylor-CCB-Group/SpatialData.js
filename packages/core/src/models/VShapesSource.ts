@@ -18,6 +18,7 @@
 
 import WKB from 'ol/format/WKB.js';
 import { basename } from '../Vutils';
+
 // import { log } from '@vitessce/globals';
 const log = console;
 

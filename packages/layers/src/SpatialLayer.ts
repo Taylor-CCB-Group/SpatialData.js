@@ -1,4 +1,4 @@
-import { CompositeLayer, type LayersList, type Layer } from 'deck.gl';
+import { CompositeLayer, type Layer, type LayersList } from 'deck.gl';
 import {
   createShapesDeckLayer,
   type ShapesLayerPickEvent,

@@ -9,9 +9,7 @@ export type VivImageLayerContext = {
   channels: ChannelConfig;
 };
 
-export type VivImageExtensionResolver = (
-  ctx: VivImageLayerContext
-) => unknown[] | undefined;
+export type VivImageExtensionResolver = (ctx: VivImageLayerContext) => unknown[] | undefined;
 
 export type VivImagePropsResolver = (
   ctx: VivImageLayerContext

@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { selectionStatsKey } from './channelStats';
 import type { LayerChannelSelection } from './layerChannelState';
 import type { SelectionRaster } from './utils';
 import { getSingleSelectionStats } from './utils';
-import { selectionStatsKey } from './channelStats';
 
 export type ChannelSelectionEntry = {
   domain: [number, number];

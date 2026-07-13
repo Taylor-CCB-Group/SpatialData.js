@@ -1,12 +1,12 @@
 import { tableFromIPC, tableToIPC } from 'apache-arrow';
-import {
-  buildFeatureCatalogFromColumns,
-} from '../pointsFeatures.js';
-import {
-  filterColumnarByFeatureCodes,
-} from '../pointsTiling.js';
 import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
-import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
+import { buildFeatureCatalogFromColumns } from '../pointsFeatures.js';
+import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
+import type {
+  PointsWorkerMessage,
+  PointsWorkerRequest,
+  PointsWorkerResponse,
+} from './pointsWorkerProtocol.js';
 import {
   countFeatureCodesFromArray,
   decodeGeometryWithFeaturesFromPayload,
@@ -35,7 +35,9 @@ function toInt32Array(values: ArrayLike<number>): Int32Array {
   return Int32Array.from(values);
 }
 
-function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'filterColumnarByFeatureCodes' }>) {
+function handleFilterColumnar(
+  request: Extract<PointsWorkerRequest, { type: 'filterColumnarByFeatureCodes' }>
+) {
   const filtered = filterColumnarByFeatureCodes(
     {
       shape: request.zs ? [3, request.xs.length] : [2, request.xs.length],
@@ -216,12 +218,11 @@ async function scanTablesForFeatureCounts(
   if (request.rowGroups?.length && parquetModule.readParquetRowGroup) {
     for (const chunk of request.rowGroups) {
       const table = tableFromIPC(
-        parquetModule.readParquetRowGroup(
-          chunk.schemaBytes,
-          chunk.rowGroupBytes,
-          chunk.rowGroupIndex,
-          { columns }
-        ).intoIPCStream()
+        parquetModule
+          .readParquetRowGroup(chunk.schemaBytes, chunk.rowGroupBytes, chunk.rowGroupIndex, {
+            columns,
+          })
+          .intoIPCStream()
       );
       scanTableFeatureCounts(table, request.featureKey, request.featureCodeColumnName, counts);
     }
@@ -263,7 +264,7 @@ async function scanPayloadByFeatureCodes(
     scannedRows: number;
   }
 ): Promise<{ matchedRows: number; scannedRows: number }> {
-  const hasZ = request.axisNames.includes('z');
+  const _hasZ = request.axisNames.includes('z');
   const columns = [
     ...request.axisNames,
     request.featureKey,
@@ -279,12 +280,11 @@ async function scanPayloadByFeatureCodes(
         break;
       }
       const table = tableFromIPC(
-        parquetModule.readParquetRowGroup(
-          chunk.schemaBytes,
-          chunk.rowGroupBytes,
-          chunk.rowGroupIndex,
-          { columns }
-        ).intoIPCStream()
+        parquetModule
+          .readParquetRowGroup(chunk.schemaBytes, chunk.rowGroupBytes, chunk.rowGroupIndex, {
+            columns,
+          })
+          .intoIPCStream()
       );
       input.scannedRows += table.numRows;
       input.matchedRows = scanTableByFeatureCodes({
@@ -386,12 +386,11 @@ async function handleScanMortonRowGroupsInBounds(
   const zs: number[] = [];
   for (const chunk of request.rowGroups) {
     const table = tableFromIPC(
-      parquetModule.readParquetRowGroup(
-        chunk.schemaBytes,
-        chunk.rowGroupBytes,
-        chunk.rowGroupIndex,
-        { columns }
-      ).intoIPCStream()
+      parquetModule
+        .readParquetRowGroup(chunk.schemaBytes, chunk.rowGroupBytes, chunk.rowGroupIndex, {
+          columns,
+        })
+        .intoIPCStream()
     );
     scanMortonTableInBounds({
       table,
@@ -524,5 +523,3 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
       self.postMessage(reply);
     });
 };
-
-export {};

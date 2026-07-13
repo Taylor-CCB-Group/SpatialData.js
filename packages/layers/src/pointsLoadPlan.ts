@@ -1,4 +1,4 @@
-import { resolvePointsMemoryCap, type PointsTilingMetadata } from '@spatialdata/core';
+import { type PointsTilingMetadata, resolvePointsMemoryCap } from '@spatialdata/core';
 
 export interface PointsPreloadCacheKeyInput {
   pointsMemoryCap?: number;

@@ -323,10 +323,9 @@ export type NgffImage = z.infer<typeof imageSchema>;
  *   and does NOT control OME-NGFF format detection (which is determined by structure).
  * - For shapes/points: `version` is the spatialdata format version (e.g., '0.1', '0.2') and IS used for format detection.
  */
-export const spatialDataAttrsSchema = z
-  .looseObject({
-    version: z.string(),
-  }); // allow extra fields we don't validate yet
+export const spatialDataAttrsSchema = z.looseObject({
+  version: z.string(),
+}); // allow extra fields we don't validate yet
 
 export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
 
@@ -334,8 +333,34 @@ export type SpatialDataAttrs = z.infer<typeof spatialDataAttrsSchema>;
  * Schema for raster element attrs in spatialdata 0.5.0 format
  * Uses OME-NGFF 0.4 format with multiscales at the top level
  */
-const rasterAttrs_OME_04_Schema = z
-  .looseObject({
+const rasterAttrs_OME_04_Schema = z.looseObject({
+  multiscales: z
+    .array(
+      z.object({
+        name: z.string().optional(),
+        datasets: z
+          .array(
+            z.object({
+              path: z.string(),
+              coordinateTransformations: coordinateTransformationSchema.optional(),
+            })
+          )
+          .min(1),
+        axes: axesSchema,
+        coordinateTransformations: coordinateTransformationSchema.optional(),
+      })
+    )
+    .min(1),
+  omero: omeroSchema.optional(),
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+});
+
+/**
+ * Schema for raster element attrs in spatialdata 0.6.1+ format
+ * Uses OME-NGFF 0.5 format with multiscales nested under 'ome' key
+ */
+const rasterAttrs_OME_05_Schema = z.looseObject({
+  ome: z.looseObject({
     multiscales: z
       .array(
         z.object({
@@ -354,38 +379,9 @@ const rasterAttrs_OME_04_Schema = z
       )
       .min(1),
     omero: omeroSchema.optional(),
-    spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  });
-
-/**
- * Schema for raster element attrs in spatialdata 0.6.1+ format
- * Uses OME-NGFF 0.5 format with multiscales nested under 'ome' key
- */
-const rasterAttrs_OME_05_Schema = z
-  .looseObject({
-    ome: z
-      .looseObject({
-        multiscales: z
-          .array(
-            z.object({
-              name: z.string().optional(),
-              datasets: z
-                .array(
-                  z.object({
-                    path: z.string(),
-                    coordinateTransformations: coordinateTransformationSchema.optional(),
-                  })
-                )
-                .min(1),
-              axes: axesSchema,
-              coordinateTransformations: coordinateTransformationSchema.optional(),
-            })
-          )
-          .min(1),
-        omero: omeroSchema.optional(),
-      }),
-    spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  });
+  }),
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+});
 
 /**
  * Schema for raster element attrs (images & labels)
@@ -446,13 +442,12 @@ export type RasterAttrs = {
  * Schema for shapes element attrs.
  * Transformations are at the top level with input/output coordinate system references.
  */
-export const shapesAttrsSchema = z
-  .looseObject({
-    'encoding-type': z.string().optional(), // e.g., 'ngff:shapes'
-    axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
-    coordinateTransformations: coordinateTransformationSchema.optional(),
-    spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  });
+export const shapesAttrsSchema = z.looseObject({
+  'encoding-type': z.string().optional(), // e.g., 'ngff:shapes'
+  axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
+  coordinateTransformations: coordinateTransformationSchema.optional(),
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+});
 
 export type ShapesAttrs = z.infer<typeof shapesAttrsSchema>;
 
@@ -460,26 +455,27 @@ export type ShapesAttrs = z.infer<typeof shapesAttrsSchema>;
  * Schema for points element attrs.
  * Transformations are at the top level with input/output coordinate system references.
  */
-export const pointsAttrsSchema = z
-  .looseObject({
-    'encoding-type': z.string().optional(), // e.g., 'ngff:points'
-    axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
-    coordinateTransformations: coordinateTransformationSchema.optional(),
-    spatialdata_attrs: spatialDataAttrsSchema.optional(),
-  });
+export const pointsAttrsSchema = z.looseObject({
+  'encoding-type': z.string().optional(), // e.g., 'ngff:points'
+  axes: z.array(z.string()).optional(), // e.g., ['x', 'y']
+  coordinateTransformations: coordinateTransformationSchema.optional(),
+  spatialdata_attrs: spatialDataAttrsSchema.optional(),
+});
 
 export type PointsAttrs = z.infer<typeof pointsAttrsSchema>;
 
 /**
  * Schema for anndata table metadata
  */
-export const tableAttrsSchema = z
-  .looseObject({
-    instance_key: z.string().optional().nullable(),
-    region: z.union([z.string(), z.array(z.string())]).optional().nullable(),
-    region_key: z.string().optional().nullable(),
-    'spatialdata-encoding-type': z.literal('ngff:regions_table'),
-  });
+export const tableAttrsSchema = z.looseObject({
+  instance_key: z.string().optional().nullable(),
+  region: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .nullable(),
+  region_key: z.string().optional().nullable(),
+  'spatialdata-encoding-type': z.literal('ngff:regions_table'),
+});
 
 export type TableAttrs = z.infer<typeof tableAttrsSchema>;
 

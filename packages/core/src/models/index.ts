@@ -1,18 +1,19 @@
 import * as ad from 'anndata.js';
 import { createPrefixedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
+import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
+import type { PointsFeatureCatalog } from '../pointsTiling.js';
 import {
   type CoordinateTransformation,
   type PointsAttrs,
-  type RasterAttrs,
-  type ShapesAttrs,
-  type TableAttrs,
   pointsAttrsSchema,
+  type RasterAttrs,
   rasterAttrsSchema,
+  type ShapesAttrs,
   shapesAttrsSchema,
+  type TableAttrs,
   tableAttrsSchema,
 } from '../schemas';
-import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
 import type { ShapesRenderData } from '../shapes';
 import { isSpatialData, loadFeatureRowIndexByFeatureIndex } from '../tableAssociations';
 import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
@@ -26,12 +27,10 @@ import type {
   ZAttrsAny,
   ZarrTree,
 } from '../types';
-import { ATTRS_KEY } from '../types';
-import { Err, Ok } from '../types';
+import { ATTRS_KEY, Err, Ok } from '../types';
 import SpatialDataPointsSource from './VPointsSource';
 import SpatialDataShapesSource from './VShapesSource';
 import SpatialDataTableSource from './VTableSource';
-import type { PointsFeatureCatalog } from '../pointsTiling.js';
 
 /**
  * Parameters for creating element instances.
@@ -682,4 +681,4 @@ export function loadElements<T extends ElementName>(
 }
 
 // Re-export types that may be useful externally
-export type { RasterAttrs, ShapesAttrs, PointsAttrs, CoordinateTransformation };
+export type { CoordinateTransformation, PointsAttrs, RasterAttrs, ShapesAttrs };

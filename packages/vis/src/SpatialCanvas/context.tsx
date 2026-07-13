@@ -2,7 +2,7 @@
  * React bindings for SpatialCanvas stores
  */
 
-import { createContext, useContext, useMemo, type PropsWithChildren } from 'react';
+import { createContext, type PropsWithChildren, useContext, useMemo } from 'react';
 import { useStore } from 'zustand';
 import { createSpatialCanvasStore, type SpatialCanvasStoreApi } from './stores';
 import type { SpatialCanvasStore } from './types';

@@ -5,6 +5,6 @@
  * ready to be composed into the final view.
  */
 
-export { renderImageLayer, type ImageLayerRenderConfig } from './imageRenderer';
+export { type ImageLayerRenderConfig, renderImageLayer } from './imageRenderer';
+export { type LabelsLayerRenderConfig, renderLabelsLayer } from './labelsRenderer';
 export { renderShapesLayer, type ShapesLayerRenderConfig } from './shapesRenderer';
-export { renderLabelsLayer, type LabelsLayerRenderConfig } from './labelsRenderer';

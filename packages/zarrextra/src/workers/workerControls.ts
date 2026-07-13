@@ -1,5 +1,5 @@
+import { type ChunkCache, type GetWorkerOptions, getWorker } from '@fideus-labs/fizarrita';
 import { WorkerPool } from '@fideus-labs/worker-pool';
-import { getWorker, type ChunkCache, type GetWorkerOptions } from '@fideus-labs/fizarrita';
 import { setChunkDecodeBackend, setFizarritaGetWorker } from '../chunkDecode';
 
 export type { ChunkCache } from '@fideus-labs/fizarrita';

@@ -1,10 +1,10 @@
 import type { LabelsElement, ShapesElement } from './models';
 import type { SpatialData } from './store';
-import type { TableColumnData } from './types';
 import {
   loadAssociatedTableFeatureRows,
   loadFeatureRowIndexByFeatureIndex,
 } from './tableAssociations';
+import type { TableColumnData } from './types';
 
 export type SpatialFeatureTooltipItem = {
   label: string;
@@ -233,7 +233,11 @@ export async function loadShapesTooltipMetadata(
       associated.rowIds.every((rowId, index) => rowId === featureIds[index]);
 
     if (!isDirectlyAligned) {
-      tooltipRowIndices = await loadShapesRowIndexByFeatureIndex(spatialData, element.key, featureIds);
+      tooltipRowIndices = await loadShapesRowIndexByFeatureIndex(
+        spatialData,
+        element.key,
+        featureIds
+      );
     }
   }
 

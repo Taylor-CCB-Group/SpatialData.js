@@ -72,12 +72,14 @@ export function LayerOrderList({
         const layer = layers[id];
         if (!layer) return null;
         return (
+          // biome-ignore lint/a11y/noStaticElementInteractions: drag-reorder drop target; keyboard a11y not yet implemented for this dev panel.
           <div
             key={id}
             style={rowStyle(selectedLayerId === id)}
             onDragOver={onDragOver}
             onDrop={(e) => onDrop(e, id)}
           >
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: drag handle; keyboard a11y not yet implemented for this dev panel. */}
             <span
               draggable
               onDragStart={(e) => onDragStart(e, id)}

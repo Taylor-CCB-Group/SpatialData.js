@@ -2,7 +2,7 @@
  * Hooks for SpatialCanvas functionality
  */
 
-import { useState, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { ViewState } from './types';
 
 /**

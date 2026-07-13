@@ -3,12 +3,7 @@ import { z } from 'zod';
 /** Current serialized render-stack version; bump for breaking saved-stack changes. */
 export const RENDER_STACK_SCHEMA_VERSION = 1 as const;
 
-export const renderStackSpatialElementTypeSchema = z.enum([
-  'image',
-  'shapes',
-  'points',
-  'labels',
-]);
+export const renderStackSpatialElementTypeSchema = z.enum(['image', 'shapes', 'points', 'labels']);
 
 const jsonishRecordSchema = z.record(z.string(), z.unknown()).default({});
 

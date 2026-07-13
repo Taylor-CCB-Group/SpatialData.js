@@ -1,6 +1,6 @@
 import { tableFromIPC } from 'apache-arrow';
-import type { PointsColumnarData } from '../spatialViewFit.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
+import type { PointsColumnarData } from '../spatialViewFit.js';
 import {
   columnarDataFromWorkerResult,
   type ParquetRowGroupBytesChunk,
@@ -84,7 +84,10 @@ function ensureWorkerListener() {
   };
 }
 
-function postRequest<T>(request: PointsWorkerRequest, transferables: Transferable[] = []): Promise<T> {
+function postRequest<T>(
+  request: PointsWorkerRequest,
+  transferables: Transferable[] = []
+): Promise<T> {
   const activeWorker = worker;
   if (!activeWorker) {
     return Promise.reject(new Error('Points worker is not enabled'));
@@ -164,10 +167,9 @@ export function enablePointsWorker(options: { workerUrl?: string | URL } = {}) {
   } else {
     // Inline URL so Vite dev apps can bundle the worker; @vite-ignore keeps lib build
     // emitting a runtime relative URL to dist/points-worker.js (not /assets/...).
-    worker = new Worker(
-      new URL(/* @vite-ignore */ './points-worker.js', import.meta.url),
-      { type: 'module' }
-    );
+    worker = new Worker(new URL(/* @vite-ignore */ './points-worker.js', import.meta.url), {
+      type: 'module',
+    });
   }
   ensureWorkerListener();
   enabled = true;
@@ -205,12 +207,14 @@ export async function filterColumnarByFeatureCodesInWorker(
     return filterColumnarByFeatureCodes(data, featureCodes, sourceFeatureCodes);
   }
 
-  const xs = data.data[0] instanceof Float32Array
-    ? data.data[0]
-    : Float32Array.from(data.data[0] as ArrayLike<number>);
-  const ys = data.data[1] instanceof Float32Array
-    ? data.data[1]
-    : Float32Array.from(data.data[1] as ArrayLike<number>);
+  const xs =
+    data.data[0] instanceof Float32Array
+      ? data.data[0]
+      : Float32Array.from(data.data[0] as ArrayLike<number>);
+  const ys =
+    data.data[1] instanceof Float32Array
+      ? data.data[1]
+      : Float32Array.from(data.data[1] as ArrayLike<number>);
   const zs = data.data[2]
     ? data.data[2] instanceof Float32Array
       ? data.data[2]

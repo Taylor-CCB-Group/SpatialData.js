@@ -1,5 +1,5 @@
-import JsonView from '@uiw/react-json-view';
 import { useSpatialData } from '@spatialdata/react';
+import JsonView from '@uiw/react-json-view';
 // todo theme should adapt automatically - default light theme was illegible in dark site
 import { darkTheme } from '@uiw/react-json-view/dark';
 

@@ -3,11 +3,15 @@ import {
   type PointsElement,
   type PointsTilingMetadata,
 } from '@spatialdata/core';
-import { createPointsRenderResource } from './pointsLoaderAdapter.js';
 import type { PointsRenderResource } from './pointsLoader.js';
+import { createPointsRenderResource } from './pointsLoaderAdapter.js';
 
 export interface ResolvePointsRenderResourceCache {
-  preloaded?: { shape: number[]; data: ArrayLike<number>[]; featureCodes?: ArrayLike<number> } | null;
+  preloaded?: {
+    shape: number[];
+    data: ArrayLike<number>[];
+    featureCodes?: ArrayLike<number>;
+  } | null;
   tilingMetadata?: PointsTilingMetadata | null;
   metadataKnown?: boolean;
 }
@@ -49,7 +53,7 @@ export function pointsRenderResourceSignature(
   const rowCount =
     cache.preloaded && cache.preloaded.shape.length >= 2
       ? cache.preloaded.shape[1]
-      : cache.preloaded?.data[0]?.length ?? 0;
+      : (cache.preloaded?.data[0]?.length ?? 0);
   return [
     element.key,
     options.preloadCacheKey ?? '',

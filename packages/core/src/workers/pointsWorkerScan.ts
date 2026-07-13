@@ -1,4 +1,4 @@
-import { tableFromIPC, type Table } from 'apache-arrow';
+import { type Table, tableFromIPC } from 'apache-arrow';
 import {
   accumulateFeatureCatalogFromTable,
   buildFeatureCatalogFromColumns,
@@ -122,12 +122,7 @@ export async function decodeParquetPayloadToTable(
     if (!readParquetRowGroup) {
       throw new Error('readParquetRowGroup is unavailable');
     }
-    return decodeParquetRowGroupsToTable(
-      readParquetRowGroup,
-      payload.rowGroups,
-      columns,
-      maxRows
-    );
+    return decodeParquetRowGroupsToTable(readParquetRowGroup, payload.rowGroups, columns, maxRows);
   }
   if (payload.parts?.length) {
     return decodeParquetPartsToTable(readParquet, payload.parts, columns, maxRows);

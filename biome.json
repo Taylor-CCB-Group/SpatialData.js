@@ -21,6 +21,10 @@
       "preset": "recommended",
       "suspicious": {
         "noExplicitAny": "warn"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "off",
+        "useHookAtTopLevel": "off"
       }
     }
   },

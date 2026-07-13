@@ -20,9 +20,9 @@ export type {
   PointsBatch,
   PointsBatchFormat,
   PointsEncodingKind,
-  PointsLoadInBoundsOptions,
   PointsLoader,
   PointsLoaderCapabilities,
+  PointsLoadInBoundsOptions,
   PointsRenderResource,
 } from './pointsLoader.js';
 

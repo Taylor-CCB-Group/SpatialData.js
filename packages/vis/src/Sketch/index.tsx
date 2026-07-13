@@ -1,13 +1,11 @@
-import { useEffect, useState, type CSSProperties } from 'react';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
-import SpatialDataTree from '../Tree';
-import Table from '../Table';
-import ImageView from '../ImageView';
-import Transforms from '../Transforms';
+import { type CSSProperties, useEffect, useState } from 'react';
 import SpatialCanvas from '../SpatialCanvas';
+import Transforms from '../Transforms';
+import SpatialDataTree from '../Tree';
 import {
-  DEFAULT_DEMO_SPATIALDATA_URL,
   buildDemoPageHref,
+  DEFAULT_DEMO_SPATIALDATA_URL,
   getSpatialDataUrlFromSearchParams,
 } from './demoUrl';
 
@@ -70,6 +68,7 @@ function DataSource({ children }: React.PropsWithChildren) {
   );
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: dev-only debug view, toggled via the commented <Repr /> usage below.
 function Repr() {
   const { spatialData } = useSpatialData();
   return <pre style={{ maxWidth: '90vw' }}>{spatialData?.toString()}</pre>;

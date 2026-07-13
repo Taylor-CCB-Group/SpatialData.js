@@ -13,29 +13,28 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { ensureCodecWorkers } from '../codecWorkers';
+import {
+  getDeckFromDeckGlRef,
+  type HoverPointerEvent,
+  isHoverDuringDrag,
+  resolveHoverFeatureTooltip,
+} from './featureTooltipHover';
 import { ImageLayerContextProvider } from './ImageLayerContext';
+import {
+  type RenderStackHostLayerResolver,
+  type RenderStackLayerInputs,
+  renderStackOrder,
+  renderStackToLayerInputs,
+  resolveRenderStackHostLayers,
+  sortLayersByRenderStackOrder,
+  type UnknownRenderStackHostLayerHandler,
+} from './renderStackAdapters';
 import {
   type SpatialCanvasTooltipRenderProps,
   SpatialFeatureTooltip,
   type SpatialFeatureTooltipData,
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
-import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
-import {
-  type HoverPointerEvent,
-  getDeckFromDeckGlRef,
-  isHoverDuringDrag,
-  resolveHoverFeatureTooltip,
-} from './featureTooltipHover';
-import {
-  type RenderStackHostLayerResolver,
-  type RenderStackLayerInputs,
-  type UnknownRenderStackHostLayerHandler,
-  renderStackOrder,
-  renderStackToLayerInputs,
-  resolveRenderStackHostLayers,
-  sortLayersByRenderStackOrder,
-} from './renderStackAdapters';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import {
   type LabelFeaturePickEventData,
@@ -44,6 +43,7 @@ import {
 } from './useLayerData';
 import { useViewInteractionGate } from './useViewInteractionGate';
 import { getAvailableElements } from './utils';
+import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import type {
   VivImageExtensionResolver,
   VivImagePassthroughOptions,

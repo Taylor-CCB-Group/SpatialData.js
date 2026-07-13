@@ -1,7 +1,6 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
 import { type Table as ArrowTable, tableFromIPC } from 'apache-arrow';
-import type { DataSourceParams } from '../Vutils';
 import {
   getParquetModule,
   type ParquetModule,
@@ -9,6 +8,7 @@ import {
   type ParquetWasmMetadata,
 } from '../parquetWasmLoader.js';
 import type { TableColumnData } from '../types';
+import type { DataSourceParams } from '../Vutils';
 import AnnDataSource from './VAnnDataSource';
 
 export type { ParquetRowGroupReadOptions };
@@ -435,7 +435,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   protected async resolveParquetRowCount(parquetPath: string): Promise<number> {
-    // may be better to cache this? we get e.g. a lot of 404 requests for `points.parquet/points.4.parquet` 
+    // may be better to cache this? we get e.g. a lot of 404 requests for `points.parquet/points.4.parquet`
     const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
     if (datasetMetadata?.totalNumRows) {
       return datasetMetadata.totalNumRows;
@@ -654,9 +654,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     const rowGroups = canUseRowGroups
       ? await this.readParquetRowGroupsBytesCapped(parquetPath, options.maxRows)
       : [];
-    const partsMaxRows = options.fullPartsForFallback
-      ? Number.POSITIVE_INFINITY
-      : options.maxRows;
+    const partsMaxRows = options.fullPartsForFallback ? Number.POSITIVE_INFINITY : options.maxRows;
     const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, partsMaxRows);
     return { rowGroups, parts };
   }
@@ -700,11 +698,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
       return null;
     }
     const columnOptions: ParquetRowGroupReadOptions = { columns: [columnName] };
-    const minTable = await this.loadParquetRowGroupByGroupIndex(
-      parquetPath,
-      rowGroupIndex,
-      { ...columnOptions, limit: 1 }
-    );
+    const minTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
+      ...columnOptions,
+      limit: 1,
+    });
     const minColumn = minTable?.getChild(columnName);
     if (!minColumn || minColumn.length === 0) {
       return null;
@@ -891,11 +888,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
     if (options.useRowGroupReads === true && (await this.canLoadParquetRowGroups())) {
       try {
-        const table = await this._loadParquetTableRowGroupsCapped(
-          parquetPath,
-          columns,
-          targetRows
-        );
+        const table = await this._loadParquetTableRowGroupsCapped(parquetPath, columns, targetRows);
         return { table, totalRows, truncated };
       } catch (error) {
         console.warn(
@@ -1075,11 +1068,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
     let resolvedColumns = columns;
     if (columns?.length) {
-      resolvedColumns = await this.resolveParquetTableColumns(
-        parquetPath,
-        columns,
-        readSchema
-      );
+      resolvedColumns = await this.resolveParquetTableColumns(parquetPath, columns, readSchema);
       const wasmSchema = readSchema(normalizedBytes);
       const arrowTableForSchema = await tableFromIPC(wasmSchema.intoIPCStream());
       const indexColumnName = tableToIndexColumnName(arrowTableForSchema);
@@ -1138,13 +1127,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
     if (dataset && dataset.parts.length > 1) {
-      return this.loadMultipartParquetTable(
-        parquetPath,
-        columns,
-        dataset,
-        readParquet,
-        readSchema
-      );
+      return this.loadMultipartParquetTable(parquetPath, columns, dataset, readParquet, readSchema);
     }
 
     const partPaths = await this.discoverMultipartPartPaths(parquetPath);
@@ -1158,7 +1141,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
       );
     }
 
-    let parquetBytes = await this.loadParquetBytes(parquetPath);
+    const parquetBytes = await this.loadParquetBytes(parquetPath);
     if (!parquetBytes) {
       throw new Error('Failed to load parquet data from store.');
     }

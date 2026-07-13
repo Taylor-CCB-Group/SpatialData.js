@@ -1,8 +1,8 @@
 import {
-  type OmeZarrMultiscalesSource,
   loadOmeZarrMultiscalesData,
+  type OmeZarrMultiscalesSource,
 } from '@spatialdata/avivatorish';
-import { type PropsWithChildren, createContext, useContext, useMemo } from 'react';
+import { createContext, type PropsWithChildren, useContext, useMemo } from 'react';
 
 export type VivLoaderRegistryValue = {
   /** Multiscales pixel sources for an OME-Zarr store or URL (SpatialCanvas image path). */

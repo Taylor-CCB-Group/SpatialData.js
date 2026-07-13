@@ -1,6 +1,6 @@
-import * as zarr from 'zarrita';
+import type { GetWorkerOptions } from '@fideus-labs/fizarrita';
 import type { WorkerPool } from '@fideus-labs/worker-pool';
-import type { ChunkCache, GetWorkerOptions } from '@fideus-labs/fizarrita';
+import * as zarr from 'zarrita';
 
 export type ZarrGetOptions = {
   signal?: AbortSignal;

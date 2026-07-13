@@ -330,7 +330,10 @@ export function parseParquetFileMetaData(fileMetaDataBytes: Uint8Array): Parquet
 }
 
 /** Decode a `Statistics` min/max value for an integer physical type (little-endian). */
-export function decodeIntStat(bytes: Uint8Array | undefined, physicalType: number | null): number | null {
+export function decodeIntStat(
+  bytes: Uint8Array | undefined,
+  physicalType: number | null
+): number | null {
   if (!bytes || bytes.length === 0) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (physicalType === ParquetPhysicalType.INT32) {

@@ -1,8 +1,8 @@
 import { DEFAULT_POINTS_MEMORY_CAP } from '@spatialdata/core';
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
+import { useSpatialCanvasActions } from './context';
 import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
 import { PointsFeatureStateProvider, usePointsFeatureState } from './PointsFeatureState';
-import { useSpatialCanvasActions } from './context';
 import type { PointsLayerConfig } from './types';
 
 export interface PointsLayerPanelProps {

@@ -6,13 +6,7 @@
  */
 
 import { createStore } from 'zustand/vanilla';
-import type {
-  SpatialCanvasState,
-  SpatialCanvasActions,
-  SpatialCanvasStore,
-  LayerConfig,
-  ViewState,
-} from './types';
+import type { LayerConfig, SpatialCanvasState, SpatialCanvasStore } from './types';
 
 const initialState: SpatialCanvasState = {
   coordinateSystem: null,

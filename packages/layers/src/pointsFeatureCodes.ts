@@ -22,7 +22,10 @@ export function featureCodesSignature(featureCodes: readonly number[] | undefine
   if (featureCodes.length === 0) {
     return 'none';
   }
-  return featureCodes.slice().sort((left, right) => left - right).join(',');
+  return featureCodes
+    .slice()
+    .sort((left, right) => left - right)
+    .join(',');
 }
 
 export function preloadedFeatureCodesSignature(

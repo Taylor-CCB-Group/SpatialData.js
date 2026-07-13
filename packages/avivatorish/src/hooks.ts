@@ -1,29 +1,28 @@
 import { useEffect } from 'react';
-// import { useDropzone as useReactDropzone } from 'react-dropzone';
-import { shallow } from 'zustand/shallow';
 // eslint-disable-next-line camelcase
 import { unstable_batchedUpdates } from 'react-dom';
-
+// import { useDropzone as useReactDropzone } from 'react-dropzone';
+import { shallow } from 'zustand/shallow';
+import { COLOR_PALLETE, FILL_PIXEL_VALUE } from './constants';
 import {
+  useChannelsStoreApi,
   useImageSettingsStore,
+  useImageSettingsStoreApi,
   useLoader,
   useMetadata,
   useViewerStore,
   useViewerStoreApi,
-  useChannelsStoreApi,
-  useImageSettingsStoreApi,
   // type PixelSource,
 } from './state';
 import {
   buildDefaultSelection,
-  guessRgb,
-  getMultiSelectionStats,
+  createLoader,
   getBoundingCube,
+  getMultiSelectionStats,
+  guessRgb,
   isInterleaved,
   resolveRasterSource,
 } from './utils';
-import { COLOR_PALLETE, FILL_PIXEL_VALUE } from './constants';
-import { createLoader } from './utils';
 
 export const useImage = (source?: { description: string; urlOrFile: string }, history?: any) => {
   const [use3d, toggleUse3d, toggleIsOffsetsSnackbarOn] = useViewerStore(
@@ -54,9 +53,9 @@ export const useImage = (source?: { description: string; urlOrFile: string }, hi
           loaderErrorSnackbar: { on: true, message },
         })
       );
-      //@ts-ignore flagging so we can get back to this
+      // TODO: flagging so we can get back to this
       let nextMeta: any;
-      //@ts-ignore flagging so we can get back to this
+      // TODO: flagging so we can get back to this
       let nextLoader: any; //PixelSource | PixelSource[] | null = null;
       if (Array.isArray(newLoader)) {
         const arr = newLoader as Array<{ metadata?: unknown; data?: unknown }>;

@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
-    "lib": ["ES2020"],
+    "lib": ["ES2022"],
     // zarrextra's own source uses only universal Web-standard globals (AbortSignal,
     // DOMException, TextDecoder, URL, and a guarded `navigator`), all present in Node
     // 18+ as well as browsers/workers — so we type against Node's globals rather than

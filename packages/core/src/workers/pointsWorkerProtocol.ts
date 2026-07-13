@@ -1,5 +1,5 @@
-import type { PointsColumnarData } from '../spatialViewFit.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
+import type { PointsColumnarData } from '../spatialViewFit.js';
 
 export type ParquetRowGroupBytesChunk = {
   schemaBytes: Uint8Array;

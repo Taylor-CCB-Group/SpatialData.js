@@ -1,7 +1,7 @@
 import type { GetPickingInfoParams, PickingInfo } from '@deck.gl/core';
-import { project32, picking } from '@deck.gl/core';
-import { Matrix4 } from '@math.gl/core';
+import { picking, project32 } from '@deck.gl/core';
 import { XRLayer } from '@hms-dbmi/viv';
+import { Matrix4 } from '@math.gl/core';
 import { fs, labelsBitmaskUniforms, vs } from './labelsBitmaskLayerShaders';
 
 function getNormalizedColor(color?: readonly number[]): [number, number, number] {
@@ -60,18 +60,6 @@ function getLabelAtPixel(
   return { labelId: labelValue, selection: selections?.[0] };
 }
 
-type LabelsBitmaskTileLayerProps = {
-  channelColors?: Array<[number, number, number]>;
-  channelsFilled?: boolean[];
-  channelOpacities?: number[];
-  channelOutlineOpacities?: number[];
-  channelsVisible?: boolean[];
-  channelStrokeWidths?: number[];
-  maxZoom?: number;
-  opacity?: number;
-  zoom?: number;
-};
-
 const UntypedXRLayer = XRLayer as any;
 
 export class LabelsBitmaskTileLayer extends UntypedXRLayer {
@@ -86,6 +74,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     channelStrokeWidths: { type: 'array', value: [1.5], compare: true },
   };
 
+  // biome-ignore lint/complexity/noUselessConstructor: widens the base UntypedXRLayer constructor so `new LabelsBitmaskTileLayer(props)` typechecks.
   constructor(...args: any[]) {
     super(...args);
   }
