@@ -75,17 +75,17 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   'use no memo';
   const { truncation: t } = usePointsFeatureState(config.featureCodes);
   if (!t) return null;
-  const noun = t.filtered ? 'matching points' : 'points';
-  // NOTE: t.loaded is the covered-batch size, not the count matching the current
-  // selection, so this line is often misleading. Fixing the semantics is a
-  // separate follow-up (see the engine's getActiveTruncation filtered branch).
+  // Report the batch held in memory (always true), NOT a per-selection matched
+  // count: t.loaded is the covered-batch size, which overstates the selection
+  // when it filters that batch in memory. A precise selection count needs the
+  // engine to track it — deferred to the redesign (punch-list F3/D4).
   const message = t.truncated
-    ? `Showing ${t.loaded.toLocaleString()}${
+    ? `${t.loaded.toLocaleString()}${
         t.total !== undefined ? ` of ${t.total.toLocaleString()}` : ''
-      } ${noun} — capped; raise the cap for more.`
+      } points in memory — capped; raise the cap for more.`
     : t.filtered
-      ? `Loaded all ${t.loaded.toLocaleString()} ${noun}.`
-      : `All ${t.loaded.toLocaleString()} ${noun} loaded (not capped).`;
+      ? `${t.loaded.toLocaleString()} points in memory; view filtered to selection.`
+      : `All ${t.loaded.toLocaleString()} points loaded (not capped).`;
   return (
     <span
       style={{
