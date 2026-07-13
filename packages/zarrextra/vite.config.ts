@@ -1,25 +1,13 @@
 import { resolve } from 'node:path';
-import dts from 'vite-plugin-dts';
 import { defineConfig } from 'vitest/config';
 
 const pkgExternals = ['zarrita', '@fideus-labs/fizarrita', '@fideus-labs/worker-pool'];
 
+// .d.ts files are emitted via `tsc --emitDeclarationOnly` in the build script.
 export default defineConfig(({ mode }) => {
   const isCodecWorkerBuild = mode === 'codec-worker';
 
   return {
-    plugins: [
-      !isCodecWorkerBuild &&
-        dts({
-          outDir: 'dist',
-          include: ['src'],
-          exclude: [
-            '**/*.test.ts',
-            'src/workers/codec-worker.ts',
-            'src/workers/codec-worker-init.ts',
-          ],
-        }),
-    ],
     build: {
       emptyOutDir: !isCodecWorkerBuild,
       lib: {

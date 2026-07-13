@@ -3,6 +3,14 @@
     "target": "ES2020",
     "module": "ESNext",
     "lib": ["ES2020"],
+    // zarrextra's own source uses only universal Web-standard globals (AbortSignal,
+    // DOMException, TextDecoder, URL, and a guarded `navigator`), all present in Node
+    // 18+ as well as browsers/workers — so we type against Node's globals rather than
+    // pulling in DOM/WebWorker. That keeps the package's core Node-safe by construction.
+    // NOTE: the worker chunk-decode path IS browser/worker-only at runtime, but its
+    // mechanics are delegated to @fideus-labs/fizarrita (which owns those worker types),
+    // so no worker-scope lib is needed here.
+    "types": ["node"],
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
@@ -20,5 +28,14 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  // The codec-worker entry files are bundled directly by vite (the `./codec-worker`
+  // export ships no types) and pull in untyped @cornerstonejs codecs, so they are
+  // excluded from declaration emit — matching the previous vite-plugin-dts config.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "src/workers/codec-worker.ts",
+    "src/workers/codec-worker-init.ts"
+  ]
 }

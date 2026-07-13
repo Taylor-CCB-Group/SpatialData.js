@@ -4,7 +4,6 @@
     "module": "ESNext",
     "lib": ["ES2020", "WebWorker", "DOM"],
     "moduleResolution": "bundler",
-    "baseUrl": ".",
     "paths": {
       "zarrextra": ["../zarrextra/dist/index.d.ts"]
     },

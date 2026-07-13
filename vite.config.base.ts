@@ -2,7 +2,6 @@ import path from 'node:path';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
-import dts from 'vite-plugin-dts';
 
 export type WorkspaceAlias = {
   find: string | RegExp;
@@ -59,27 +58,12 @@ export function defineViteConfig(options: DefineConfigOptions) {
 
   return defineConfig({
     root: pkgRoot,
+    // Declaration files (.d.ts) are emitted separately via `tsc --emitDeclarationOnly`
+    // in each package's build script — see packages/*/package.json. TypeScript 7's
+    // native compiler no longer exposes the JS API that vite-plugin-dts relies on.
     plugins: [
       react(),
       ...(reactCompiler ? [babel({ presets: [reactCompilerPreset()] })] : []),
-      dts({
-        root: pkgRoot,
-        tsconfigPath: path.resolve(pkgRoot, 'tsconfig.json'),
-        outDir: path.resolve(pkgRoot, 'dist'),
-        entryRoot: 'src',
-        insertTypesEntry: true,
-        strictOutput: true,
-        pathsToAliases: false,
-        include: ['src'],
-        exclude: [
-          'dist/**',
-          'vite.config.ts',
-          'vite.config.*.ts',
-          '**/*.test.*',
-          '**/*.spec.*',
-          '**/*.stories.*',
-        ],
-      }),
     ],
     build: {
       outDir: path.resolve(pkgRoot, 'dist'),

@@ -1,22 +1,9 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
-import dts from 'vite-plugin-dts';
 
+// .d.ts files are emitted via `tsc --emitDeclarationOnly` in the build script.
 export default defineConfig({
   root: resolve(__dirname),
-  plugins: [
-    dts({
-      root: resolve(__dirname),
-      tsconfigPath: resolve(__dirname, 'tsconfig.json'),
-      outDir: resolve(__dirname, 'dist'),
-      entryRoot: 'src',
-      insertTypesEntry: true,
-      strictOutput: true,
-      pathsToAliases: false,
-      include: ['src'],
-      exclude: ['dist/**', 'vite.config.ts', '**/*.spec.ts'],
-    }),
-  ],
   build: {
     outDir: resolve(__dirname, 'dist'),
     lib: {
