@@ -48,8 +48,8 @@ Each notes *why* it's coupled to the state-model / decode rework.
 
 - **D1 — Mutable `PointsEntry` state model → Effect / TanStack Query.** The root
   above. In-code smells already flagged: `PointsDataEngine.ts` `// I'm a bit iffy
-  about this ambient stateful thing` (onProgress), `// given what a shit-show
-  agent debugging has been… inclined to more purity. Might consider using
+  about this ambient stateful thing` (onProgress), `// given ongoing problems with
+  agent debugging, inclined to more purity. Might consider using
   Effect?`, `// there will be various mutating side-effects on entry…`.
 - **D2 — Break up `useLayerData`.** The monolith the engine threads through; also
   the reason for the `'use no memo'` hatches (`PointsFeatureFilterPanel`,
