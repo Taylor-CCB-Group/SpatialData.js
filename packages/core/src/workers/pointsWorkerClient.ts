@@ -15,8 +15,39 @@ let worker: Worker | undefined;
 let nextRequestId = 0;
 const pending = new Map<
   number,
-  { resolve: (value: unknown) => void; reject: (error: Error) => void }
+  {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timeout?: ReturnType<typeof setTimeout>;
+  }
 >();
+
+// Safety net: if the worker was enabled but is not functionally wired (e.g. a
+// host points enablePointsWorker() at a URL that loads but whose module never
+// posts a response), a request would otherwise await forever. After this budget
+// with no reply we reject the request so the caller falls back to the main
+// thread (every *InWorker helper is wrapped in a try/catch fallback). Generous
+// by default because a working worker legitimately spends many seconds decoding
+// large parquet; the timeout is meant to catch a *silent* worker, not a slow one.
+let requestTimeoutMs = 30_000;
+
+/** Override the per-request worker timeout (ms). Set to 0/Infinity to disable. */
+export function setPointsWorkerRequestTimeout(ms: number) {
+  requestTimeoutMs = ms;
+}
+
+/** Remove a pending request, clearing its timeout, and return its callbacks. */
+function settlePending(id: number) {
+  const entry = pending.get(id);
+  if (!entry) {
+    return undefined;
+  }
+  if (entry.timeout !== undefined) {
+    clearTimeout(entry.timeout);
+  }
+  pending.delete(id);
+  return entry;
+}
 
 let enabled = false;
 // Points worker is opt-in: hosts call enablePointsWorker() (or
@@ -36,11 +67,10 @@ function ensureWorkerListener() {
     if (message.direction !== 'response') {
       return;
     }
-    const entry = pending.get(message.id);
+    const entry = settlePending(message.id);
     if (!entry) {
       return;
     }
-    pending.delete(message.id);
     if (message.response.ok) {
       entry.resolve(message.response.result);
     } else {
@@ -48,10 +78,9 @@ function ensureWorkerListener() {
     }
   };
   worker.onerror = (event) => {
-    for (const [, entry] of pending) {
-      entry.reject(new Error(event.message || 'Points worker error'));
+    for (const [id] of [...pending]) {
+      settlePending(id)?.reject(new Error(event.message || 'Points worker error'));
     }
-    pending.clear();
   };
 }
 
@@ -62,7 +91,21 @@ function postRequest<T>(request: PointsWorkerRequest, transferables: Transferabl
   }
   const id = ++nextRequestId;
   return new Promise<T>((resolve, reject) => {
-    pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+    const entry: {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timeout?: ReturnType<typeof setTimeout>;
+    } = { resolve: resolve as (value: unknown) => void, reject };
+    if (requestTimeoutMs > 0 && Number.isFinite(requestTimeoutMs)) {
+      entry.timeout = setTimeout(() => {
+        settlePending(id)?.reject(
+          new Error(
+            `Points worker did not respond within ${requestTimeoutMs}ms; falling back to the main thread`
+          )
+        );
+      }, requestTimeoutMs);
+    }
+    pending.set(id, entry);
     const message: PointsWorkerMessage = { id, direction: 'request', request };
     if (transferables.length > 0) {
       activeWorker.postMessage(message, transferables);
@@ -95,6 +138,7 @@ function transferablesForRequest(request: PointsWorkerRequest): Transferable[] {
     case 'decodeParquetRowFeatureCodes':
     case 'scanParquetFeatureCounts':
     case 'decodeParquetGeometryCapped':
+    case 'decodeGeometryWithFeatures':
     case 'scanParquetByFeatureCodes':
     case 'scanParquetFeatureCatalog':
       return transferablesForParquetPayload(request.parts, request.rowGroups);
@@ -135,10 +179,9 @@ export function disablePointsWorker() {
     worker.terminate();
     worker = undefined;
   }
-  for (const [, entry] of pending) {
-    entry.reject(new Error('Points worker disabled'));
+  for (const [id] of [...pending]) {
+    settlePending(id)?.reject(new Error('Points worker disabled'));
   }
-  pending.clear();
 }
 
 export function setPointsWorkerDefaultEnabled(value: boolean) {
@@ -301,6 +344,59 @@ export async function decodeParquetGeometryCappedInWorker(
   };
 }
 
+export type DecodeGeometryWithFeaturesInput = ParquetWorkerPayload & {
+  axisNames: string[];
+  columns: string[];
+  maxRows?: number;
+  featureKey: string;
+  featureCodeColumnName?: string;
+};
+
+/**
+ * Off-thread codes-with-geometry preload: decode geometry + per-row feature
+ * codes + the feature catalog from one projected decode in the worker. The
+ * caller fetches whole row-group (or part) bytes via async range reads, so the
+ * CPU-heavy decode never blocks the main thread. Returns null when the worker is
+ * disabled or the payload is empty (caller falls back to the main-thread decode).
+ */
+export async function decodeGeometryWithFeaturesInWorker(
+  input: DecodeGeometryWithFeaturesInput
+): Promise<{
+  shape: number[];
+  data: ArrayLike<number>[];
+  featureCodes?: Int32Array;
+  featureCatalog?: PointsFeatureCatalog;
+} | null> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled()) {
+    return null;
+  }
+  if (!input.parts?.length && !input.rowGroups?.length) {
+    return null;
+  }
+  if (input.parts?.length && input.rowGroups?.length) {
+    throw new Error('decodeGeometryWithFeaturesInWorker requires parts or rowGroups, not both');
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'decodeGeometryWithFeatures' }> = {
+    type: 'decodeGeometryWithFeatures',
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
+  if (result.kind !== 'geometryWithFeatures') {
+    throw new Error('Unexpected points worker response for decodeGeometryWithFeatures');
+  }
+  const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
+  return {
+    shape: result.shape,
+    data,
+    ...(result.featureCodes ? { featureCodes: result.featureCodes } : {}),
+    ...(result.featureCatalog ? { featureCatalog: result.featureCatalog } : {}),
+  };
+}
+
 export async function countFeatureCodesInWorker(
   sourceFeatureCodes: ArrayLike<number>
 ): Promise<Map<number, number>> {
@@ -366,6 +462,8 @@ export type ScanParquetByFeatureCodesInput = ParquetWorkerPayload & {
   featureCodeColumnName?: string;
   featureCodes: readonly number[];
   memoryCap: number;
+  /** Authoritative name→code entries for dict-only elements (no code column). */
+  featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
 };
 
 export async function scanParquetByFeatureCodesInWorker(

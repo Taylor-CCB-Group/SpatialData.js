@@ -9,6 +9,7 @@ import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
 import type { PointsWorkerMessage, PointsWorkerRequest, PointsWorkerResponse } from './pointsWorkerProtocol.js';
 import {
   countFeatureCodesFromArray,
+  decodeGeometryWithFeaturesFromPayload,
   decodeParquetPartsToTable,
   decodeParquetPayloadToTable,
   extractGeometryColumnar,
@@ -27,6 +28,13 @@ function toFloat32Array(values: ArrayLike<number>): Float32Array {
   return Float32Array.from(values);
 }
 
+function toInt32Array(values: ArrayLike<number>): Int32Array {
+  if (values instanceof Int32Array) {
+    return values;
+  }
+  return Int32Array.from(values);
+}
+
 function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'filterColumnarByFeatureCodes' }>) {
   const filtered = filterColumnarByFeatureCodes(
     {
@@ -39,6 +47,7 @@ function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'fil
   const xs = toFloat32Array(filtered.data[0]);
   const ys = toFloat32Array(filtered.data[1]);
   const zs = filtered.data[2] ? toFloat32Array(filtered.data[2]) : undefined;
+  const featureCodes = filtered.featureCodes ? toInt32Array(filtered.featureCodes) : undefined;
   const shape: number[] =
     filtered.shape && filtered.shape.length > 0
       ? filtered.shape
@@ -53,6 +62,7 @@ function handleFilterColumnar(request: Extract<PointsWorkerRequest, { type: 'fil
       xs,
       ys,
       ...(zs ? { zs } : {}),
+      ...(featureCodes ? { featureCodes } : {}),
     },
   };
 }
@@ -155,6 +165,30 @@ async function handleDecodeParquetGeometryCapped(
   };
 }
 
+async function handleDecodeGeometryWithFeatures(
+  request: Extract<PointsWorkerRequest, { type: 'decodeGeometryWithFeatures' }>
+): Promise<PointsWorkerResponse> {
+  const parquetModule = await getParquetModule();
+  const result = await decodeGeometryWithFeaturesFromPayload(
+    parquetModule.readParquet,
+    parquetModule.readParquetRowGroup,
+    request
+  );
+  const [xs, ys, zs] = result.data;
+  return {
+    ok: true,
+    result: {
+      kind: 'geometryWithFeatures',
+      shape: result.shape,
+      xs,
+      ys,
+      ...(zs ? { zs } : {}),
+      ...(result.featureCodes ? { featureCodes: result.featureCodes } : {}),
+      ...(result.featureCatalog ? { featureCatalog: result.featureCatalog } : {}),
+    },
+  };
+}
+
 function handleCountFeatureCodes(
   request: Extract<PointsWorkerRequest, { type: 'countFeatureCodes' }>
 ): PointsWorkerResponse {
@@ -225,6 +259,7 @@ async function scanPayloadByFeatureCodes(
     xs: number[];
     ys: number[];
     zs: number[];
+    codes: number[];
     scannedRows: number;
   }
 ): Promise<{ matchedRows: number; scannedRows: number }> {
@@ -234,6 +269,9 @@ async function scanPayloadByFeatureCodes(
     request.featureKey,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
   ];
+  const featureCodeByName = request.featureCodeEntries
+    ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
+    : undefined;
 
   if (request.rowGroups?.length && parquetModule.readParquetRowGroup) {
     for (const chunk of request.rowGroups) {
@@ -260,6 +298,8 @@ async function scanPayloadByFeatureCodes(
         xs: input.xs,
         ys: input.ys,
         zs: input.zs,
+        codes: input.codes,
+        featureCodeByName,
       });
     }
     return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
@@ -282,6 +322,8 @@ async function scanPayloadByFeatureCodes(
       xs: input.xs,
       ys: input.ys,
       zs: input.zs,
+      codes: input.codes,
+      featureCodeByName,
     });
   }
   return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
@@ -295,16 +337,19 @@ async function handleScanParquetByFeatureCodes(
   const xs: number[] = [];
   const ys: number[] = [];
   const zs: number[] = [];
+  const codes: number[] = [];
   const { matchedRows, scannedRows } = await scanPayloadByFeatureCodes(parquetModule, request, {
     matchedRows: 0,
     xs,
     ys,
     zs,
+    codes,
     scannedRows: 0,
   });
   const outX = Float32Array.from(xs);
   const outY = Float32Array.from(ys);
   const outZ = hasZ ? Float32Array.from(zs) : undefined;
+  const outCodes = codes.length > 0 ? Int32Array.from(codes) : undefined;
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,
@@ -314,6 +359,7 @@ async function handleScanParquetByFeatureCodes(
       xs: outX,
       ys: outY,
       ...(outZ ? { zs: outZ } : {}),
+      ...(outCodes ? { featureCodes: outCodes } : {}),
       matchedRows,
       scannedRows,
     },
@@ -413,6 +459,8 @@ async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorker
       return handleScanParquetFeatureCatalog(request);
     case 'decodeParquetGeometryCapped':
       return handleDecodeParquetGeometryCapped(request);
+    case 'decodeGeometryWithFeatures':
+      return handleDecodeGeometryWithFeatures(request);
     case 'countFeatureCodes':
       return handleCountFeatureCodes(request);
     case 'scanParquetFeatureCounts':
@@ -443,7 +491,15 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
           if (response.result.zs) {
             transferables.push(response.result.zs.buffer);
           }
-          if (response.result.kind === 'columnar' && response.result.featureCodes) {
+          if (response.result.featureCodes) {
+            transferables.push(response.result.featureCodes.buffer);
+          }
+        } else if (response.result.kind === 'geometryWithFeatures') {
+          transferables.push(response.result.xs.buffer, response.result.ys.buffer);
+          if (response.result.zs) {
+            transferables.push(response.result.zs.buffer);
+          }
+          if (response.result.featureCodes) {
             transferables.push(response.result.featureCodes.buffer);
           }
         } else if (response.result.kind === 'parquetTable') {

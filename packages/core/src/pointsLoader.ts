@@ -29,6 +29,14 @@ export interface ColumnarNdarrayPointsBatch {
   bounds?: SpatialBounds;
   loadMode?: PointsLoadMode;
   pointCount?: number;
+  /**
+   * Per-point feature code, aligned row-for-row with the geometry columns in
+   * {@link data}. Present when the source resolved a feature key; consumed by the
+   * render path to build a GPU `featureCode` attribute (colour-by-feature and
+   * per-code visibility). Any transform that reorders or truncates {@link data}
+   * (feature filter, render cap) must permute this in lockstep.
+   */
+  featureCodes?: ArrayLike<number>;
 }
 
 export type PointsBatch = ColumnarNdarrayPointsBatch;
@@ -48,6 +56,8 @@ export interface CorePointsLoader {
 export interface PreloadedColumnarInput {
   shape: number[];
   data: ArrayLike<number>[];
+  /** Optional per-point feature codes, carried onto the batch for colouring. */
+  featureCodes?: ArrayLike<number>;
 }
 
 export function resolvePointsEncoding(
@@ -82,6 +92,7 @@ function toColumnarBatch(
   const shape = result.shape ?? [];
   const data = result.data;
   const pointCount = columnarPointCount(shape, data);
+  const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;
   return {
     format: 'columnar-ndarray',
     data,
@@ -89,6 +100,7 @@ function toColumnarBatch(
     bounds: 'bounds' in result ? result.bounds : overrides?.bounds,
     loadMode: 'loadMode' in result ? result.loadMode : overrides?.loadMode,
     pointCount,
+    ...(featureCodes ? { featureCodes } : {}),
     ...overrides,
   };
 }

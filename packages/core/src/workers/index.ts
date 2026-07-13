@@ -1,6 +1,7 @@
 export {
   buildFeatureCatalogInWorker,
   countFeatureCodesInWorker,
+  decodeGeometryWithFeaturesInWorker,
   decodeParquetGeometryCappedInWorker,
   decodeParquetPartsInWorker,
   decodeParquetRowFeatureCodesInWorker,
@@ -14,6 +15,7 @@ export {
   scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
   setPointsWorkerDefaultEnabled,
+  setPointsWorkerRequestTimeout,
   transferablesForParquetPayload,
 } from './pointsWorkerClient.js';
 

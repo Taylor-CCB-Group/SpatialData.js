@@ -193,6 +193,22 @@ PY`,
     expect(featureCodes?.length).toBe(5);
   });
 
+  it('includeFeatureCodes: derives row codes + catalog from the geometry preload', async () => {
+    const points = await source.loadPoints('points/transcripts', { includeFeatureCodes: true });
+    // geometry is still x/y for the 5 resident rows
+    expect(points.shape).toEqual([2, 5]);
+    // row-aligned codes and the catalog come from the one decode, no extra load
+    expect(points.featureCodes && Array.from(points.featureCodes)).toEqual([0, 1, 0, 2, 1]);
+    expect(points.featureCatalog).toEqual({
+      featureKey: 'feature_name',
+      entries: [
+        { code: 0, name: 'gene_a' },
+        { code: 1, name: 'gene_b' },
+        { code: 2, name: 'gene_c' },
+      ],
+    });
+  });
+
   it('uses explicit feature code columns instead of dictionary indices', async () => {
     const elementDir = join(fixtureRoot, 'points', 'dict_with_codes');
     await mkdir(elementDir, { recursive: true });

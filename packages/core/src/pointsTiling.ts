@@ -265,13 +265,15 @@ export function filterColumnarByFeatureCodes(
 ): PointsColumnarData {
   const allowedFeatureCodes = featureCodeAllowSet(featureCodes);
   if (allowedFeatureCodes === null || !sourceFeatureCodes) {
-    return data;
+    // No filtering applied. Surface the aligned per-row codes when the source
+    // provided them, so callers can build a `featureCode` render attribute.
+    return sourceFeatureCodes ? { ...data, featureCodes: sourceFeatureCodes } : data;
   }
   if (allowedFeatureCodes.size === 0) {
     const axisCount = data.shape?.[0] ?? data.data.length;
     const empty = new Float32Array(0);
     const emptyData = axisCount >= 3 && data.data[2] ? [empty, empty, empty] : [empty, empty];
-    return { shape: [axisCount, 0], data: emptyData };
+    return { shape: [axisCount, 0], data: emptyData, featureCodes: new Int32Array(0) };
   }
 
   const xs = data.data[0];
@@ -287,12 +289,13 @@ export function filterColumnarByFeatureCodes(
   }
 
   if (keep.length === n) {
-    return data;
+    return { ...data, featureCodes: sourceFeatureCodes };
   }
 
   const outX = new Float32Array(keep.length);
   const outY = new Float32Array(keep.length);
   const outZ = zs ? new Float32Array(keep.length) : undefined;
+  const outCodes = new Int32Array(keep.length);
   for (let index = 0; index < keep.length; index += 1) {
     const sourceIndex = keep[index];
     outX[index] = xs[sourceIndex];
@@ -300,11 +303,13 @@ export function filterColumnarByFeatureCodes(
     if (outZ) {
       outZ[index] = zs[sourceIndex] ?? 0;
     }
+    outCodes[index] = sourceFeatureCodes[sourceIndex];
   }
 
   return {
     shape: [outZ ? 3 : 2, keep.length],
     data: outZ ? [outX, outY, outZ] : [outX, outY],
+    featureCodes: outCodes,
   };
 }
 

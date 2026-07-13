@@ -7,7 +7,7 @@ import { createPointsRenderResource } from './pointsLoaderAdapter.js';
 import type { PointsRenderResource } from './pointsLoader.js';
 
 export interface ResolvePointsRenderResourceCache {
-  preloaded?: { shape: number[]; data: ArrayLike<number>[] } | null;
+  preloaded?: { shape: number[]; data: ArrayLike<number>[]; featureCodes?: ArrayLike<number> } | null;
   tilingMetadata?: PointsTilingMetadata | null;
   metadataKnown?: boolean;
 }

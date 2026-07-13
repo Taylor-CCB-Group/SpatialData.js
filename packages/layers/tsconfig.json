@@ -10,7 +10,12 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "lib": ["ES2020", "DOM"]
+    "lib": ["ES2020", "DOM"],
+    "baseUrl": ".",
+    "paths": {
+      "@spatialdata/core": ["../core/src/index.ts"],
+      "@spatialdata/core/*": ["../core/src/*"]
+    }
   },
   "include": ["src", "vite.config.ts", "tests"],
   "exclude": ["dist", "node_modules"]

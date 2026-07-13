@@ -86,6 +86,17 @@ export type PointsWorkerRequest =
       featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
     }
   | {
+      type: 'decodeGeometryWithFeatures';
+      parts?: Uint8Array[];
+      rowGroups?: ParquetRowGroupBytesChunk[];
+      axisNames: string[];
+      /** Projected columns: axes + feature key (+ code column when present). */
+      columns: string[];
+      maxRows?: number;
+      featureKey: string;
+      featureCodeColumnName?: string;
+    }
+  | {
       type: 'scanParquetByFeatureCodes';
       parts?: Uint8Array[];
       rowGroups?: ParquetRowGroupBytesChunk[];
@@ -94,6 +105,10 @@ export type PointsWorkerRequest =
       featureCodeColumnName?: string;
       featureCodes: readonly number[];
       memoryCap: number;
+      /** Authoritative name→code map for dict-only elements (no *_codes column),
+       * so the scan resolves each row's feature_name to the same code space the
+       * selection was made in. Absent when a file-backed code column is present. */
+      featureCodeEntries?: ReadonlyArray<{ name: string; code: number }>;
     }
   | {
       type: 'scanMortonRowGroupsInBounds';
@@ -114,7 +129,7 @@ export type PointsWorkerColumnarResult = {
   featureCodes?: Int32Array;
 };
 
-export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind' | 'featureCodes'> & {
+export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind'> & {
   kind: 'columnarScan';
   matchedRows: number;
   scannedRows: number;
@@ -126,6 +141,15 @@ export type PointsWorkerResponse =
       result:
         | PointsWorkerColumnarResult
         | PointsWorkerScanResult
+        | {
+            kind: 'geometryWithFeatures';
+            shape: number[];
+            xs: Float32Array;
+            ys: Float32Array;
+            zs?: Float32Array;
+            featureCodes?: Int32Array;
+            featureCatalog?: PointsFeatureCatalog;
+          }
         | { kind: 'parquetTable'; tableIpc: Uint8Array }
         | { kind: 'catalog'; catalog: PointsFeatureCatalog }
         | { kind: 'rowFeatureCodes'; codes: Int32Array; numRows: number }
@@ -144,5 +168,6 @@ export function columnarDataFromWorkerResult(
   result: PointsWorkerColumnarResult | PointsWorkerScanResult
 ): PointsColumnarData {
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
-  return { shape: result.shape, data };
+  const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;
+  return { shape: result.shape, data, ...(featureCodes ? { featureCodes } : {}) };
 }

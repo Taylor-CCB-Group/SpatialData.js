@@ -38,6 +38,7 @@ import {
   loadAssociatedTableFeatureRows,
   loadLabelsTooltipMetadata,
   loadShapesTooltipMetadata,
+  resolvePointsMemoryCap,
   resolveTooltipItems,
   unionBoundsList,
 } from '@spatialdata/core';
@@ -45,6 +46,8 @@ import {
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
+  type PointsLoadTarget,
+  type PointsRenderResource,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
@@ -211,6 +214,15 @@ interface UseLayerDataResult {
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
+  /** The live points data engine (the render path's single owner). Exposed so
+   * the feature panel can subscribe to it directly for reactive catalog / scan
+   * state via `PointsFeatureStateProvider`, instead of prop-drilling getters. */
+  pointsEngine: PointsDataEngine;
+  /** Resolve a points layer to the engine's load target `{ key, layerId,
+   * element }`, or `undefined` when the layer isn't a resolvable points element.
+   * Reuses the same element resolution the load path uses, so panel hooks read
+   * the same cache keys the render writes. */
+  resolvePointsTarget: (layerId: string) => PointsLoadTarget | undefined;
   /** Resolve a feature tooltip lazily from the picked row index. */
   getFeatureTooltip: (
     layerId: string,
@@ -544,6 +556,7 @@ export function useLayerData(
     []
   );
 
+  //--- to be removed from here?
   // Points loading/caching/resolution engine (LayerDataEngine step 1b). This
   // framework-agnostic engine (in @spatialdata/layers) owns the points preload
   // cache, the stable render-resource memo, and the async load orchestration
@@ -562,10 +575,15 @@ export function useLayerData(
       })
   );
 
-  useEffect(() => {
-    const unsubscribe = pointsEngine.subscribe(notifyLoadedDataChanged);
-    return unsubscribe;
-  }, [pointsEngine, notifyLoadedDataChanged]);
+  // Re-render on every points-engine cache mutation (async loads/scans settling).
+  // NOTE: the consuming component (SpatialCanvasInner) must opt out of the React
+  // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from
+  // these engine getters and never repaints on a late async settle, since the
+  // getters read mutable engine state with no compiler-tracked dependency.
+  useEffect(
+    () => pointsEngine.subscribe(notifyLoadedDataChanged),
+    [pointsEngine, notifyLoadedDataChanged]
+  );
 
   // Load data for enabled layers that don't have data yet
   useEffect(() => {
@@ -651,7 +669,12 @@ export function useLayerData(
               loadLabels,
             });
           }
-        } else if (config.type === 'points' && !pointsEngine.hasData(elem.key)) {
+        } else if (
+          config.type === 'points' &&
+          // Reload when the resident window is missing OR was loaded at a
+          // different memory cap (the props-panel control changed it).
+          !pointsEngine.isLoadedWithCap(elem.key, resolvePointsMemoryCap(config.pointsMemoryCap))
+        ) {
           toLoad.push({
             layerId,
             element: elem,
@@ -827,12 +850,20 @@ export function useLayerData(
               }
             } else if (element.type === 'points' && loadPoints) {
               // The engine owns loading/caching/status; it reports status back
-              // through the onStatus callback wired at construction.
-              await pointsEngine.ensureLoaded({
-                key: element.key,
-                layerId,
-                element: element.element as PointsElement,
-              });
+              // through the onStatus callback wired at construction. The resident
+              // window size is the layer's configured memory cap (props panel).
+              const pointsConfig = layers[layerId];
+              const memoryCap = resolvePointsMemoryCap(
+                pointsConfig?.type === 'points' ? pointsConfig.pointsMemoryCap : undefined
+              );
+              await pointsEngine.ensureLoaded(
+                {
+                  key: element.key,
+                  layerId,
+                  element: element.element as PointsElement,
+                },
+                memoryCap
+              );
             } else if (element.type === 'image' && loadImage) {
               try {
                 setLayerResourceStatus(layerId, 'image', 'loading');
@@ -1160,6 +1191,21 @@ export function useLayerData(
     return false;
   }, [pointsEngine]);
 
+  // --- Points feature state (filter panel) -----------------------------------
+  // The panel no longer reads point state through prop-drilled getters. Instead
+  // it subscribes to `pointsEngine` directly (via `PointsFeatureStateProvider`
+  // + the `usePoints*` hooks), so its reactivity is self-contained and does not
+  // depend on this hook's re-render or a `'use no memo'` escape hatch. All this
+  // hook exposes is the engine and the element-key resolver the hooks need.
+  const resolvePointsTarget = useCallback(
+    (layerId: string): PointsLoadTarget | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem || elem.type !== 'points') return undefined;
+      return { key: elem.key, layerId, element: elem.element as PointsElement };
+    },
+    []
+  );
+
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
       try {
@@ -1298,22 +1344,124 @@ export function useLayerData(
           if (layer) deckLayers.push(layer);
         }
       } else if (config.type === 'points') {
-        // The engine returns a STABLE render resource (memoized by signature),
-        // so re-running getLayers every pan/zoom frame reuses the same loader
-        // identity and the composite does not reset its batch (no flashing).
-        const resource = pointsEngine.getResource(elem.element as PointsElement, elem.key);
-        if (resource) {
+        const element = elem.element as PointsElement;
+        const featureCodes = config.featureCodes;
+        const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
+
+        // Feature-index render scan: when a selection is active, load the WHOLE
+        // dataset's matching points (footer stats skip the row groups a selected
+        // feature can't live in), so features outside the resident preload window
+        // still render. The scan is idempotent per selection; kicking it here is a
+        // no-op once resident/in-flight. On settle it notifies → re-render → the
+        // matched resource appears below. `getMatchingResource` returns the LAST
+        // completed matched batch, so a selection change keeps showing the prior
+        // selection's points until the new scan settles (no blank mid-scan).
+        //
+        // Gated on scan capability: an authoritative code column (footer stats
+        // skip row groups) OR a dictionary-only element with a catalog loaded —
+        // there the scan reads the whole file and matches each row's feature_name
+        // against the catalog's code space, so a selected gene's points render
+        // even when they fall outside the resident preload window. Before any
+        // catalog loads (no shared code space) there is nothing to match names
+        // against, so it falls through to resident in-memory filtering.
+        const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
+        let matchingResource: PointsRenderResource | null = null;
+        let partialResource: PointsRenderResource | null = null;
+        if (selectionActive && canFeatureScan) {
+          void pointsEngine.ensureMatchingFeaturesLoaded(
+            { key: elem.key, layerId, element },
+            featureCodes,
+            resolvePointsMemoryCap(config.pointsMemoryCap)
+          );
+          matchingResource = pointsEngine.getMatchingResource(element, elem.key);
+          // The in-flight scan's growing buffer (all matched chunks so far), drawn
+          // as an extra overlay sub-layer below so the base (resident preview /
+          // prior matched batch) stays visible while points progressively fill in.
+          partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
+        }
+
+        if (matchingResource) {
+          // The matched batch covers the selection (or a superset of it, when the
+          // selection just shrank). Pass the batch's per-row codes + the current
+          // selection so the layer filters IN MEMORY down to the selected codes —
+          // this is what makes removing a feature a free filter instead of a
+          // re-scan. When the selection equals what was scanned, skip the filter
+          // (render the batch whole); the batch's own codes still drive colour.
+          const matchedRowCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
+          const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
+          const filterMatched = featureCodes !== undefined && featureCodes.length < coveredSize;
           deckLayers.push(
             new PointsLayer({
               id: layerId,
-              resource,
+              resource: matchingResource,
               modelMatrix: elem.transform,
               opacity: config.opacity,
               visible: config.visible,
-              // Legacy renderPointsLayer defaulted radius to 1px; preserve that
-              // for parity (the composite's own default is smaller).
               pointSize: config.pointSize ?? 1,
+              ...(filterMatched ? { featureCodes } : {}),
+              ...(matchedRowCodes ? { preloadedFeatureCodes: matchedRowCodes } : {}),
               ...(config.color ? { color: config.color } : {}),
+              ...(config.colorByFeature ? { colorByFeature: true } : {}),
+            })
+          );
+        } else {
+          // Resident batch: the default view (no selection), and an instant preview
+          // of the resident subset while the feature-index scan is still running.
+          // The engine returns a STABLE render resource (memoized by signature), so
+          // re-running getLayers every pan/zoom frame reuses the same loader
+          // identity and the composite does not reset its batch (no flashing).
+          const resource = pointsEngine.getResource(element, elem.key);
+          if (resource) {
+            const filterActive = featureCodes !== undefined;
+            // Row codes are needed to filter by feature AND to colour by feature.
+            // Colour-by-feature applies even with no filter ("all features"), so
+            // load/pass the codes whenever either is on — not just when filtering.
+            const needsRowCodes = filterActive || config.colorByFeature === true;
+            if (needsRowCodes && !pointsEngine.hasRowFeatureCodes(elem.key)) {
+              void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
+            }
+            const preloadedFeatureCodes = needsRowCodes
+              ? pointsEngine.getRowFeatureCodes(elem.key)
+              : undefined;
+            deckLayers.push(
+              new PointsLayer({
+                id: layerId,
+                resource,
+                modelMatrix: elem.transform,
+                opacity: config.opacity,
+                visible: config.visible,
+                // Legacy renderPointsLayer defaulted radius to 1px; preserve that
+                // for parity (the composite's own default is smaller).
+                pointSize: config.pointSize ?? 1,
+                ...(config.color ? { color: config.color } : {}),
+                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                ...(featureCodes ? { featureCodes } : {}),
+                ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
+              })
+            );
+          }
+        }
+
+        // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on
+        // top of whichever base layer was pushed above, so the base doesn't blank
+        // while points progressively fill in. Distinct id so deck keeps them as two
+        // layers. Filter it to the CURRENT selection with the partial's own per-row
+        // codes — mirroring the settled matched layer — so a feature deselected
+        // mid-scan stops rendering immediately instead of lingering until settle.
+        if (partialResource) {
+          const partialRowCodes = pointsEngine.getMatchingPartialRowFeatureCodes(elem.key);
+          deckLayers.push(
+            new PointsLayer({
+              id: `${layerId}__partial`,
+              resource: partialResource,
+              modelMatrix: elem.transform,
+              opacity: config.opacity,
+              visible: config.visible,
+              pointSize: config.pointSize ?? 1,
+              ...(featureCodes ? { featureCodes } : {}),
+              ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
+              ...(config.color ? { color: config.color } : {}),
+              ...(config.colorByFeature ? { colorByFeature: true } : {}),
             })
           );
         }
@@ -1705,6 +1853,8 @@ export function useLayerData(
     getLabelsLayerLoadedData,
     getLayerLoadState,
     hasRenderableLayerData,
+    pointsEngine,
+    resolvePointsTarget,
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,

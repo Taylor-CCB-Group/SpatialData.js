@@ -52,6 +52,7 @@ import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import { type ViewInteractionState, useViewInteractionGate } from './useViewInteractionGate';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
+import PointsLayerPanel from './PointsLayerPanel';
 
 // ============================================
 // Styles
@@ -385,6 +386,11 @@ function SpatialCanvasInner({
   renderTooltip,
   hoverTooltipMode = 'simple',
 }: SpatialCanvasInnerProps) {
+  // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
+  // subscribes to the engine via useSyncExternalStore), so this component no
+  // longer reads mutable engine state through stable getters and doesn't need a
+  // React Compiler escape hatch. Deck-layer updates still flow through the
+  // renderer result (a fresh array on each rebuild — a tracked dependency).
   const { spatialData, loading: sdLoading } = useSpatialData();
   const [tooltipMode, setTooltipMode] = useState<HoverTooltipMode>(hoverTooltipMode);
   const [measureRef, { width, height }] = useMeasure();
@@ -425,6 +431,20 @@ function SpatialCanvasInner({
   const { interacting, onInteractionStateChange } = useViewInteractionGate();
   // Shapes are pickable unless tooltips are off or the camera is being moved.
   const pickingEnabled = tooltipMode !== 'off' && !interacting;
+  
+  // keeping a big bundle of these to pass into child components
+  // (may not be a good idea).
+  const rendererProps = useSpatialCanvasRendererFromLayerInputs({
+    spatialData,
+    coordinateSystem,
+    layerInputs: { layers, layerOrder },
+    // viewState and onViewStateChange are omitted: auto-fit and pan handling
+    // are managed entirely by ViewerSection so this hook never re-runs on pan.
+    width: vw,
+    height: vh,
+    pickingEnabled,
+  });
+  
   const {
     availableElements,
     deckLayers,
@@ -440,17 +460,10 @@ function SpatialCanvasInner({
     hasRenderableLayerData,
     isBlocking,
     isLoading,
+    pointsEngine,
+    resolvePointsTarget,
     vivLayerProps,
-  } = useSpatialCanvasRendererFromLayerInputs({
-    spatialData,
-    coordinateSystem,
-    layerInputs: { layers, layerOrder },
-    // viewState and onViewStateChange are omitted: auto-fit and pan handling
-    // are managed entirely by ViewerSection so this hook never re-runs on pan.
-    width: vw,
-    height: vh,
-    pickingEnabled,
-  });
+  } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
   useEffect(() => {
@@ -849,6 +862,13 @@ function SpatialCanvasInner({
                     />
                   </label>
                 )}
+                {selectedConfig.type === 'points' && (
+                  <PointsLayerPanel
+                    config={selectedConfig}
+                    engine={pointsEngine}
+                    resolveTarget={resolvePointsTarget}
+                  />
+                )}
                 {selectedLayerLoadState && (
                   <div
                     style={{
@@ -864,7 +884,11 @@ function SpatialCanvasInner({
                         Geometry: {selectedLayerLoadState.geometry}
                         {!hasRenderableLayerData(selectedConfig.id) &&
                         selectedLayerLoadState.geometry === 'loading'
-                          ? ' (blocking)'
+                          ? // Points decode on a worker (off the main thread); other
+                            // geometry decodes on the main thread and blocks first paint.
+                            selectedConfig.type === 'points'
+                            ? ' (worker)'
+                            : ' (blocking)'
                           : ''}
                       </div>
                     )}

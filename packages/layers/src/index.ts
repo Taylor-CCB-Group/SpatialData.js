@@ -96,6 +96,10 @@ export {
   POINT_SIZE_ZOOM_REFERENCE,
   zoomScaledPointSize,
 } from './pointsScatterLayer.js';
+export { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
+export { featureCodeToRgb, featureCodeToCssColor } from './pointsFeatureColor.js';
+export { buildPointsAttributes } from './pointsRenderAttributes.js';
+export type { PointsRenderAttributes } from './pointsRenderAttributes.js';
 export type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
 export {
   createTileDebugStore,
@@ -130,4 +134,5 @@ export {
   type PointsDataEngineCallbacks,
   type PointsLoadStatus,
   type PointsLoadTarget,
+  type PointsMatchingLoadState,
 } from './engine/PointsDataEngine.js';

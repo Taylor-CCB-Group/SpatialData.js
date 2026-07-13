@@ -134,6 +134,8 @@ describe('points tiling helpers', () => {
     );
     expect(Array.from(filtered.data[0])).toEqual([0, 2]);
     expect(filtered.shape).toEqual([2, 2]);
+    // Codes for the kept rows come back aligned with the filtered geometry.
+    expect(Array.from(filtered.featureCodes ?? [])).toEqual([0, 0]);
   });
 
   it('returns no rows when feature filter is an empty selection', () => {
@@ -147,5 +149,21 @@ describe('points tiling helpers', () => {
     );
     expect(filtered.data[0].length).toBe(0);
     expect(filtered.shape).toEqual([2, 0]);
+    expect(filtered.featureCodes?.length).toBe(0);
+  });
+
+  it('surfaces aligned per-row codes when no filter is applied', () => {
+    const xs = new Float32Array([0, 1, 2]);
+    const ys = new Float32Array([0, 1, 2]);
+    const sourceFeatureCodes = new Int32Array([7, 3, 7]);
+    // `featureCodes: undefined` = "all features"; geometry is untouched but the
+    // aligned codes are surfaced so the render path can colour by feature.
+    const filtered = filterColumnarByFeatureCodes(
+      { data: [xs, ys], shape: [2, 3] },
+      undefined,
+      sourceFeatureCodes
+    );
+    expect(filtered.data[0]).toBe(xs);
+    expect(filtered.featureCodes).toBe(sourceFeatureCodes);
   });
 });

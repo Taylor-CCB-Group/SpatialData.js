@@ -96,10 +96,29 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
 export interface PointsLayerConfig extends BaseLayerConfig {
   type: 'points';
   // Points-specific settings
-  // TODO: these should be accessors for getColor etc based on e.g. transcript type
-  // should be able to filter etc. Some kind of LOD...
   pointSize?: number;
+  /**
+   * Max rows retained in memory for the preloaded scatter (the "resident
+   * window"). `undefined` uses `DEFAULT_POINTS_MEMORY_CAP`. Raising it draws
+   * more points at the cost of memory + decode time; the feature-index scan for
+   * a selection retains up to this many matched rows too. Serializable
+   * Stack-Entry state; changing it reloads the resident window.
+   */
+  pointsMemoryCap?: number;
   color?: [number, number, number, number];
+  /**
+   * Colour each point by its feature code (categorical, GPU-shaded) instead of
+   * the flat {@link color}. Serializable Stack-Entry state. The runtime-only
+   * Feature Highlight (grey non-selected) is layered on top of this later.
+   */
+  colorByFeature?: boolean;
+  /**
+   * Feature-filter selection by Feature Code. `undefined` means "all features
+   * shown" (no filter); an array restricts the drawn points to those codes. This
+   * is serializable Stack-Entry state (persists in a saved config), distinct from
+   * the runtime-only Feature Highlight added in MVP step 3.
+   */
+  featureCodes?: number[];
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

@@ -6,6 +6,7 @@ import {
   resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
 import {
+  decodeGeometryWithFeaturesInWorker,
   decodeParquetGeometryCappedInWorker,
   decodeParquetRowFeatureCodesInWorker,
   ensurePointsWorker,
@@ -16,6 +17,10 @@ import {
   scanParquetFeatureCountsInWorker,
 } from '../workers/pointsWorkerClient.js';
 import { exceedsPointsPreloadLimit, resolvePointsMemoryCap } from '../pointsLimits.js';
+import {
+  decodeIntStat,
+  parseParquetFileMetaData,
+} from '../parquetFooterStats.js';
 import type {
   PointsLoadOptions,
   PointsLoadProgress,
@@ -25,6 +30,69 @@ import type {
 interface ColumnarPointsChunk {
   shape: number[];
   data: ArrayLike<number>[];
+  featureCodes?: ArrayLike<number>;
+}
+
+/** Inclusive `[min, max]` code range a row group's feature-code column spans. */
+interface FeatureCodeExtent {
+  min: number;
+  max: number;
+}
+
+/**
+ * Per-row-group `[min, max]` for the feature-code column, parsed from each part's
+ * footer statistics and flattened into global row-group order. Powers the
+ * feature-primary index: a row group whose range can't contain any selected code
+ * is skipped without fetching it. Returns `[]` to signal "stats unavailable —
+ * scan everything" (footer parse failed, a column had no statistics, or the
+ * flattened count didn't match the dataset's row-group count). An entry is `null`
+ * when that specific row group lacks usable stats, so it is scanned rather than
+ * wrongly skipped.
+ */
+function rowGroupFeatureCodeExtents(
+  parts: readonly { schemaBytes: Uint8Array }[],
+  featureCodeColumnName: string,
+  expectedRowGroupCount: number
+): Array<FeatureCodeExtent | null> {
+  const extents: Array<FeatureCodeExtent | null> = [];
+  for (const part of parts) {
+    // `schemaBytes` is the parquet footer: FileMetaData thrift + trailing 4-byte
+    // length + "PAR1". Strip the trailing 8 to get the FileMetaData for the parser.
+    if (part.schemaBytes.length <= 8) {
+      return [];
+    }
+    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
+    let footer;
+    try {
+      footer = parseParquetFileMetaData(metaBytes);
+    } catch {
+      return [];
+    }
+    for (const rowGroup of footer.rowGroups) {
+      const column = rowGroup.columns.find((col) => col.path === featureCodeColumnName);
+      if (!column) {
+        extents.push(null);
+        continue;
+      }
+      const min = decodeIntStat(column.minValue, column.physicalType);
+      const max = decodeIntStat(column.maxValue, column.physicalType);
+      extents.push(min !== null && max !== null ? { min, max } : null);
+    }
+  }
+  return extents.length === expectedRowGroupCount ? extents : [];
+}
+
+/** Whether a row group's code range can contain any selected code. `null` extent
+ * (missing stats) is treated as "might match" so it is scanned, not skipped. */
+function extentMayContainSelectedCodes(
+  extent: FeatureCodeExtent | null,
+  selectedMin: number,
+  selectedMax: number
+): boolean {
+  if (!extent) {
+    return true;
+  }
+  return extent.max >= selectedMin && extent.min <= selectedMax;
 }
 
 function emptyFilteredPointsResult(axisNames: string[], totalRowCount: number): PointsLoadResult {
@@ -41,13 +109,14 @@ function emptyFilteredPointsResult(axisNames: string[], totalRowCount: number): 
 }
 
 function toColumnarPointsChunk(
-  data: { shape?: number[]; data: ArrayLike<number>[] },
+  data: { shape?: number[]; data: ArrayLike<number>[]; featureCodes?: ArrayLike<number> },
   axisCount: number
 ): ColumnarPointsChunk {
   const rowCount = data.shape?.[1] ?? data.data[0]?.length ?? 0;
   return {
     shape: data.shape ?? [axisCount, rowCount],
     data: data.data,
+    ...(data.featureCodes ? { featureCodes: data.featureCodes } : {}),
   };
 }
 
@@ -75,7 +144,68 @@ function concatColumnarPointChunks(chunks: ColumnarPointsChunk[]): ColumnarPoint
     }
     return merged;
   });
-  return { shape: [axisCount, totalRows], data };
+  // Concatenate per-point feature codes in lockstep when every chunk carries
+  // them (they do when the source resolved a feature key).
+  let featureCodes: Int32Array | undefined;
+  if (chunks.every((chunk) => chunk.featureCodes)) {
+    featureCodes = new Int32Array(totalRows);
+    let offset = 0;
+    for (const chunk of chunks) {
+      const codes = chunk.featureCodes as ArrayLike<number>;
+      const values = codes instanceof Int32Array ? codes : Int32Array.from(codes);
+      featureCodes.set(values, offset);
+      offset += values.length;
+    }
+  }
+  return { shape: [axisCount, totalRows], data, ...(featureCodes ? { featureCodes } : {}) };
+}
+
+/**
+ * Build the per-chunk streaming payload for a progressive points scan: the
+ * latest decoded chunk plus a `progress` whose `partialResult` is the GROWING
+ * buffer of everything matched so far (all `accumulatedChunks` concatenated), so
+ * a consumer can render points that accumulate rather than flash past.
+ *
+ * Shared by both scan branches (row-group / parts) here, and intended for reuse
+ * by other `VPointsSource` scans that want progressive display. The buffer is
+ * re-concatenated each chunk, so total copy work grows with the square of the
+ * *chunk count* — negligible in practice (a feature-indexed scan touches only a
+ * handful of row groups; the parts path is bounded by part count). Only worth
+ * replacing with a preallocated append buffer if a scan ever yields very many
+ * small chunks.
+ */
+function pointsScanChunkProgress(
+  accumulatedChunks: ColumnarPointsChunk[],
+  latest: ColumnarPointsChunk,
+  counts: {
+    scannedRows: number;
+    matchedRows: number;
+    totalRowCount: number;
+    memoryCap: number;
+    partIndex: number;
+    partCount: number;
+  }
+): { chunk: ColumnarPointsChunk; progress: PointsLoadProgress } {
+  const buffer = concatColumnarPointChunks(accumulatedChunks);
+  const partialResult: PointsLoadResult = {
+    shape: buffer.shape,
+    data: buffer.data,
+    ...(buffer.featureCodes ? { featureCodes: buffer.featureCodes } : {}),
+    totalRowCount: counts.totalRowCount,
+    scannedRowCount: counts.scannedRows,
+    filterActive: true,
+    preloadTruncated: counts.matchedRows >= counts.memoryCap,
+  };
+  return {
+    chunk: latest,
+    progress: {
+      scannedRows: counts.scannedRows,
+      matchedRows: counts.matchedRows,
+      partIndex: counts.partIndex,
+      partCount: counts.partCount,
+      partialResult,
+    },
+  };
 }
 import {
   MORTON_CODE_2D_COLUMN,
@@ -254,6 +384,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     elementPath: string,
     options: PointsLoadOptions = {}
   ): Promise<PointsLoadResult> {
+    checkAbort(options.signal);
     const memoryCap = resolvePointsMemoryCap(options.memoryCap);
     if (options.featureCodes !== undefined && options.fullDatasetFeatureScan === true) {
       return this.loadPointsMatchingFeatureCodes(elementPath, {
@@ -273,33 +404,99 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const maxRows = truncatePreload ? memoryCap : rowCount;
     const columnNames = [...axisNames];
 
+    // Optionally read the feature column(s) in the same projected, capped preload
+    // so the filter's catalog + per-row codes come from one decode — no separate
+    // blocking load at filter time (PointsLoadOptions.includeFeatureCodes).
+    const configuredFeatureKey = zattrs.spatialdata_attrs?.feature_key;
+    const wantFeatures =
+      options.includeFeatureCodes === true &&
+      typeof configuredFeatureKey === 'string' &&
+      configuredFeatureKey.length > 0;
+    const featureKey = wantFeatures ? (configuredFeatureKey as string) : undefined;
+    let featureCodeColumnName: string | undefined;
+    if (featureKey) {
+      const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+      const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
+      const fields = datasetMetadata?.schema?.fields
+        ? datasetMetadata.schema.fields.flatMap((field) =>
+            typeof field.name === 'string' ? [field.name] : []
+          )
+        : arrowSchemaFieldNames(schemaTable);
+      featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
+      columnNames.push(featureKey);
+      if (featureCodeColumnName) {
+        columnNames.push(featureCodeColumnName);
+      }
+    }
+
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
       try {
-        const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
-        const workerGeometry = await decodeParquetGeometryCappedInWorker(
-          {
+        if (featureKey) {
+          // Off-thread the codes-with-geometry decode: fetch whole row-group (or
+          // part) bytes via async range reads, then decode geometry + per-row
+          // codes + catalog in the worker so the CPU-heavy decode never blocks the
+          // main thread. parquet-wasm cannot fetch individual column chunks, so we
+          // still fetch all columns' bytes — see docs/parquet-wasm-limitations.md.
+          const payload = await this.fetchParquetPayloadCapped(parquetPath, maxRows);
+          const workerResult = payload
+            ? await decodeGeometryWithFeaturesInWorker({
+                ...payload,
+                axisNames,
+                columns: columnNames,
+                maxRows,
+                featureKey,
+                featureCodeColumnName,
+              })
+            : null;
+          if (workerResult) {
+            return {
+              shape: workerResult.shape as [number, number],
+              data: workerResult.data,
+              totalRowCount: rowCount,
+              preloadTruncated: truncatePreload,
+              hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+              ...(workerResult.featureCodes ? { featureCodes: workerResult.featureCodes } : {}),
+              ...(workerResult.featureCatalog
+                ? { featureCatalog: workerResult.featureCatalog }
+                : {}),
+            };
+          }
+        } else {
+          const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
+          const workerGeometry = await decodeParquetGeometryCappedInWorker({
             parts: payload.parts,
             axisNames,
             columns: columnNames,
             maxRows,
+          });
+          if (workerGeometry) {
+            return {
+              shape: workerGeometry.shape as [number, number],
+              data: workerGeometry.data,
+              totalRowCount: rowCount,
+              preloadTruncated: truncatePreload,
+              // No feature key requested/available on this branch → no code column.
+              hasFeatureCodeColumn: false,
+            };
           }
-        );
-        if (workerGeometry) {
-          return {
-            shape: workerGeometry.shape as [number, number],
-            data: workerGeometry.data,
-            totalRowCount: rowCount,
-            preloadTruncated: truncatePreload,
-          };
         }
       } catch (error) {
+        // An abort is intentional — don't swallow it into the main-thread fallback.
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
         console.warn(
-          `Worker geometry preload failed for ${elementPath}; falling back to main thread.`,
+          `Worker points preload failed for ${elementPath}; falling back to main thread.`,
           error
         );
       }
     }
+
+    // Guard the expensive main-thread fallback: if the load was superseded (e.g.
+    // the memory cap changed), bail here rather than decode a whole capped table
+    // on the main thread — the case that crashed the tab on large datasets.
+    checkAbort(options.signal);
 
     const {
       table: arrowTable,
@@ -315,28 +512,82 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return column.toArray();
     });
 
+    let featureCodes: ArrayLike<number> | undefined;
+    let featureCatalog: PointsFeatureCatalog | undefined;
+    if (featureKey) {
+      const nameColumn = arrowTable.getChild(featureKey);
+      if (nameColumn) {
+        const codeColumn = featureCodeColumnName ? arrowTable.getChild(featureCodeColumnName) : null;
+        featureCatalog = buildFeatureCatalogFromColumns(
+          featureKey,
+          nameColumn,
+          codeColumn ?? null,
+          null,
+          arrowTable.numRows
+        );
+        const featureCodeByName = featureCodeColumnName
+          ? undefined
+          : featureCodeMapFromCatalog(featureCatalog);
+        featureCodes = resolveRowFeatureCodesFromTable(
+          arrowTable,
+          featureKey,
+          featureCodeColumnName,
+          featureCodeByName
+        );
+      }
+    }
+
     return {
       shape: [axisColumnArrs.length, arrowTable.numRows],
       data: axisColumnArrs,
       totalRowCount: totalRows,
       preloadTruncated: truncated,
+      hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+      ...(featureCodes ? { featureCodes } : {}),
+      ...(featureCatalog ? { featureCatalog } : {}),
     };
   }
 
-  private async loadPointsMatchingFeatureCodes(
+  /**
+   * Fetch enough parquet bytes (via async range reads) to cover `maxRows` for a
+   * worker decode. Uses whole-part reads (decoded with `readParquet`) rather than
+   * per-row-group reads: `readParquetRowGroup` mis-decodes dictionary-encoded
+   * columns (e.g. `feature_name`) — the same reason `scanFeatureCatalogFromPayload`
+   * falls back to parts — which would corrupt the catalog + codes. The fetch is
+   * async I/O only; the CPU-heavy decode happens in the worker. Returns `null` if
+   * no bytes are available.
+   */
+  private async fetchParquetPayloadCapped(
+    parquetPath: string,
+    maxRows: number
+  ): Promise<{ parts: Uint8Array[] } | null> {
+    const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, maxRows);
+    return parts.length > 0 ? { parts } : null;
+  }
+
+  async* loadPointsMatchingFeatureCodesByChunk(
     elementPath: string,
     options: {
       memoryCap: number;
       featureCodes: readonly number[];
-      onProgress?: (progress: PointsLoadProgress) => void;
-    }
-  ): Promise<PointsLoadResult> {
+      // no onProgress side-effect here, it's part of what we yield
+      // we *do* want an AbortSignal, though.
+      abort?: AbortSignal;
+      /** Authoritative name→code map for dict-only elements (no `*_codes`
+       * column), letting the scan resolve each row's `feature_name` to the same
+       * code space the selection was made in. When absent for a dict-only
+       * element the scan cannot match by name and returns nothing. */
+      featureCodeByName?: ReadonlyMap<string, number>;
+    }    
+  ) {
     ensurePointsWorker();
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
+    // if (options.abort?.aborted) return;
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
     const normAxes = normalizeAxes(axes);
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
+    const axisCount = axisNames.length;
     const featureKey = spatialDataAttrs?.feature_key;
     if (typeof featureKey !== 'string' || featureKey.length === 0) {
       throw new Error(`Points element "${elementPath}" is missing feature_key metadata.`);
@@ -344,7 +595,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     const totalRowCount = await this.resolveParquetRowCount(parquetPath);
     if (options.featureCodes.length === 0) {
-      return emptyFilteredPointsResult(axisNames, totalRowCount);
+      // Nothing selected: yield no chunks and return the summary. The collector
+      // turns "no chunks matched" into an empty result via emptyFilteredPointsResult.
+      return { totalRowCount, axisNames, scannedRows: 0, matchedRows: 0 };
     }
 
     if (!isPointsWorkerEnabled()) {
@@ -357,8 +610,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
     const fields = datasetMetadata?.schema?.fields
       ? datasetMetadata.schema.fields.flatMap((field) =>
-          typeof field.name === 'string' ? [field.name] : []
-        )
+        typeof field.name === 'string' ? [field.name] : []
+      )
       : arrowSchemaFieldNames(schemaTable);
     const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
 
@@ -369,22 +622,69 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       columnNames.push(featureKey);
     }
 
-    const matchedChunks: ColumnarPointsChunk[] = [];
+    // Dict-only elements have no file-backed code column, so the worker resolves
+    // each row's `feature_name` against this authoritative map (from the caller's
+    // catalog) into the same code space the selection uses. A no-op for indexed
+    // elements (they match on `featureCodeColumnName`).
+    const featureCodeEntries =
+      !featureCodeColumnName && options.featureCodeByName
+        ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
+        : undefined;
+
     let matchedRows = 0;
     let scannedRows = 0;
+    // Growing buffer of every matched chunk so far — `pointsScanChunkProgress`
+    // concatenates it into each `progress.partialResult` for progressive display.
+    const accumulatedChunks: ColumnarPointsChunk[] = [];
 
-    const canUseRowGroups = await this.canLoadParquetRowGroups();
+    // Row-group scanning only helps when a feature-code column lets footer stats
+    // skip row groups (feature-ordered index). Dict-only elements have no stats to
+    // skip on, so the row-group path would scan every group anyway — and its
+    // projected decode of the *dictionary* feature_name column is unreliable for
+    // multipart stores. Route dict-only scans through the parts path, which the
+    // catalog build already uses successfully.
+    const canUseRowGroups =
+      featureCodeColumnName !== undefined && (await this.canLoadParquetRowGroups());
     const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
 
     if (canUseRowGroups && datasetRowGroups > 0) {
+      // Feature-primary index: skip row groups whose feature-code range cannot
+      // contain any selected code. For a feature-ordered file this leaves only
+      // the few row groups a gene actually lives in, so we fetch/decode almost
+      // nothing; unsorted files get `[]` (no stats) and fall back to a full scan.
+      const selectedMin = Math.min(...options.featureCodes);
+      const selectedMax = Math.max(...options.featureCodes);
+      const rowGroupExtents =
+        featureCodeColumnName && datasetMetadata
+          ? rowGroupFeatureCodeExtents(
+            datasetMetadata.parts,
+            featureCodeColumnName,
+            datasetRowGroups
+          )
+          : [];
+      const canSkipRowGroups = rowGroupExtents.length === datasetRowGroups;
+
       for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
         if (matchedRows >= options.memoryCap) {
           break;
+        }
+        if (
+          canSkipRowGroups &&
+          !extentMayContainSelectedCodes(
+            rowGroupExtents[rowGroupIndex],
+            selectedMin,
+            selectedMax
+          )
+        ) {
+          continue;
         }
         const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
         if (!chunk) {
           continue;
         }
+        // the memoryCap could work by the consumer choosing not to exhaust the stream
+        // (although that wouldn't help to pass last worker invocation a smaller chunk size)
+        // we should be passing abort to worker
         const partial = await scanParquetByFeatureCodesInWorker({
           rowGroups: [chunk],
           axisNames,
@@ -392,21 +692,25 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           featureCodeColumnName,
           featureCodes: options.featureCodes,
           memoryCap: options.memoryCap - matchedRows,
+          ...(featureCodeEntries ? { featureCodeEntries } : {}),
         });
         if (!partial) {
           throw new Error('Feature-filtered points loading requires the points worker.');
         }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
-          matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
           matchedRows += partial.matchedRows;
+          const chunk = toColumnarPointsChunk(partial.data, axisCount);
+          accumulatedChunks.push(chunk);
+          yield pointsScanChunkProgress(accumulatedChunks, chunk, {
+            scannedRows,
+            matchedRows,
+            totalRowCount,
+            memoryCap: options.memoryCap,
+            partIndex: rowGroupIndex,
+            partCount: datasetRowGroups,
+          });
         }
-        options.onProgress?.({
-          scannedRows,
-          matchedRows,
-          partIndex: rowGroupIndex,
-          partCount: datasetRowGroups,
-        });
       }
     } else {
       let partPaths: string[];
@@ -432,33 +736,65 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           featureCodeColumnName,
           featureCodes: options.featureCodes,
           memoryCap: options.memoryCap - matchedRows,
+          ...(featureCodeEntries ? { featureCodeEntries } : {}),
         });
         if (!partial) {
           throw new Error('Feature-filtered points loading requires the points worker.');
         }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
-          matchedChunks.push(toColumnarPointsChunk(partial.data, axisNames.length));
           matchedRows += partial.matchedRows;
+          const chunk = toColumnarPointsChunk(partial.data, axisCount);
+          accumulatedChunks.push(chunk);
+          yield pointsScanChunkProgress(accumulatedChunks, chunk, {
+            scannedRows,
+            matchedRows,
+            totalRowCount,
+            memoryCap: options.memoryCap,
+            partIndex,
+            partCount: partPaths.length,
+          });
         }
-        options.onProgress?.({
-          scannedRows,
-          matchedRows,
-          partIndex,
-          partCount: partPaths.length,
-        });
       }
     }
-
-    const data = concatColumnarPointChunks(matchedChunks);
-    return {
-      shape: data.shape,
-      data: data.data,
-      totalRowCount,
-      scannedRowCount: scannedRows,
-      filterActive: true,
-      preloadTruncated: matchedRows >= options.memoryCap,
-    };
+    return { totalRowCount, axisNames, scannedRows, matchedRows };
+  }
+  async loadPointsMatchingFeatureCodes(
+    elementPath: string,
+    options: {
+      memoryCap: number;
+      featureCodes: readonly number[];
+      onProgress?: (progress: PointsLoadProgress) => void;
+      /** Authoritative name→code map for dict-only elements (no `*_codes`
+       * column), letting the scan resolve each row's `feature_name` to the same
+       * code space the selection was made in. When absent for a dict-only
+       * element the scan cannot match by name and returns nothing. */
+      featureCodeByName?: ReadonlyMap<string, number>;
+    }
+  ): Promise<PointsLoadResult> {
+    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, options);
+    // Each `progress.partialResult` is already the full accumulated buffer, so the
+    // last one IS the whole matched batch — no need to re-accumulate/concat here.
+    // Final totals come from the generator's return value (authoritative: it also
+    // counts rows scanned after the last match, which the last partial can't see).
+    let latest: PointsLoadResult | undefined;
+    while (true) {
+      const next = await chunkGenerator.next();
+      if (next.done) {
+        const { totalRowCount, scannedRows, matchedRows, axisNames } = next.value;
+        if (!latest) {
+          return emptyFilteredPointsResult(axisNames, totalRowCount);
+        }
+        return {
+          ...latest,
+          totalRowCount,
+          scannedRowCount: scannedRows,
+          preloadTruncated: matchedRows >= options.memoryCap,
+        };
+      }
+      options.onProgress?.(next.value.progress);
+      latest = next.value.progress.partialResult;
+    }
   }
 
   private async resolveExplicitFeatureCodeColumn(elementPath: string): Promise<{

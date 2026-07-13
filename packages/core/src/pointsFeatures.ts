@@ -102,6 +102,43 @@ export function featureCodeMapFromCatalog(
   return new Map(catalog.entries.map((entry) => [entry.name, entry.code]));
 }
 
+/**
+ * Translate per-row feature codes from one catalog's code space into another,
+ * matching by feature name (`fromCode → name → toCode`). Rows whose code has no
+ * name in `fromCatalog`, or whose name is absent from `toCatalog`, become `-1`.
+ *
+ * For dictionary-only feature columns there is no file-backed code: each catalog
+ * build assigns codes by first-seen order, so the resident-preview catalog and
+ * the full-dataset catalog can give the same gene different codes. Re-deriving
+ * row codes against the authoritative (full) catalog with this helper keeps the
+ * render's per-row codes in the same space as the panel's selection and swatches.
+ * When both catalogs already agree (a real code column), every code maps to
+ * itself — a harmless identity pass.
+ */
+export function remapRowFeatureCodes(
+  rowCodes: ArrayLike<number>,
+  fromCatalog: PointsFeatureCatalog,
+  toCatalog: PointsFeatureCatalog
+): Int32Array {
+  const fromCodeToName = new Map<number, string>(
+    fromCatalog.entries.map((entry) => [entry.code, entry.name])
+  );
+  const toNameToCode = new Map<string, number>(
+    toCatalog.entries.map((entry) => [entry.name, entry.code])
+  );
+  // Translation is per distinct source code (a few hundred–thousand features),
+  // not per row: build the small code→code map once, then map the rows.
+  const codeRemap = new Map<number, number>();
+  for (const [fromCode, name] of fromCodeToName) {
+    codeRemap.set(fromCode, toNameToCode.get(name) ?? -1);
+  }
+  const out = new Int32Array(rowCodes.length);
+  for (let index = 0; index < rowCodes.length; index += 1) {
+    out[index] = codeRemap.get(rowCodes[index]) ?? -1;
+  }
+  return out;
+}
+
 function accumulateFeatureCatalogFromVectors(
   codeToName: Map<number, string>,
   nameToCode: Map<string, number>,

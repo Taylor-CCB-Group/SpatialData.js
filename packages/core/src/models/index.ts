@@ -12,7 +12,7 @@ import {
   shapesAttrsSchema,
   tableAttrsSchema,
 } from '../schemas';
-import type { PointsLoadOptions } from '../pointsLoadOptions.js';
+import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
 import type { ShapesRenderData } from '../shapes';
 import { isSpatialData, loadFeatureRowIndexByFeatureIndex } from '../tableAssociations';
 import { type BaseTransformation, Identity, parseTransforms } from '../transformations';
@@ -543,6 +543,22 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     featureCatalog?: PointsFeatureCatalog | null;
   }) {
     return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`, options);
+  }
+
+  /**
+   * Load only the points whose feature code is in `featureCodes`, scanning the
+   * whole dataset. For a feature-ordered file the footer-stats index skips every
+   * row group that can't match, so this touches only the few row groups the
+   * selected features live in; unsorted files fall back to a full scan.
+   */
+  async loadPointsMatchingFeatureCodes(options: {
+    memoryCap: number;
+    featureCodes: readonly number[];
+    onProgress?: (progress: PointsLoadProgress) => void;
+    featureCodeByName?: ReadonlyMap<string, number>;
+  }) {
+    //todo generator version of this.
+    return this.vPoints.loadPointsMatchingFeatureCodes(`points/${this.key}`, options);
   }
 
   async loadFeatureCounts() {

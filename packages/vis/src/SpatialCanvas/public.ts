@@ -68,3 +68,9 @@ export type {
   ImageLoaderData,
   LayerLoadState,
 } from './useLayerData';
+// Reactive points feature state. Headless (panel-less) consumers read
+// `pointsEngine` + `resolvePointsTarget` off the renderer-hook result, wrap a
+// subtree in <PointsFeatureStateProvider>, and consume the usePoints* hooks.
+export { PointsFeatureStateProvider, usePointsFeatureState } from './PointsFeatureState';
+export type { PointsFeatureState, PointsFeatureStateProviderProps } from './PointsFeatureState';
+export type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';

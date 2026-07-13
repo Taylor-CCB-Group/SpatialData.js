@@ -435,6 +435,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   protected async resolveParquetRowCount(parquetPath: string): Promise<number> {
+    // may be better to cache this? we get e.g. a lot of 404 requests for `points.parquet/points.4.parquet` 
     const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
     if (datasetMetadata?.totalNumRows) {
       return datasetMetadata.totalNumRows;

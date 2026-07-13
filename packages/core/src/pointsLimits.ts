@@ -1,16 +1,31 @@
-/** Maximum rows allowed for full-table points preload (canonical scatter path). */
+/**
+ * Row count above which a dataset is treated as "large" for **catalog strategy**
+ * (route to the feature-column scan instead of a full-table decode). This is a
+ * fixed heuristic, deliberately separate from the configurable memory cap below.
+ */
 export const POINTS_PRELOAD_MAX_ROWS = 4_000_000;
 
-/** Default in-memory row cap for preloaded scatter (layer override via props panel). */
-export const DEFAULT_POINTS_MEMORY_CAP = POINTS_PRELOAD_MAX_ROWS;
+/**
+ * Default in-memory row cap for the preloaded scatter (per-layer override via the
+ * props panel — `PointsLayerConfig.pointsMemoryCap`). Kept at 4M: on an
+ * UNINDEXED (dictionary-only, multipart) dataset the preload fetches WHOLE parts
+ * and only stops after accumulating this many rows, so a larger default pulls ~2×
+ * the bytes into the worker decode — which OOMs/hangs and falls back to a
+ * main-thread decode that crashes the tab. Higher caps are safe on indexed
+ * (row-group range-read) datasets and remain selectable in the panel for those.
+ */
+export const DEFAULT_POINTS_MEMORY_CAP = 4_000_000;
 
-/** Default render row cap — points kept in memory may exceed this. */
-export const DEFAULT_POINTS_RENDER_CAP = POINTS_PRELOAD_MAX_ROWS;
+/** Default render row cap — points kept in memory may exceed this. Matches the
+ * memory cap so, by default, everything loaded is drawn. */
+export const DEFAULT_POINTS_RENDER_CAP = DEFAULT_POINTS_MEMORY_CAP;
 
 export interface PointsColumnarLike {
   shape: number[];
   data: ArrayLike<number>[];
   pointCount?: number;
+  /** Per-point feature code, aligned with {@link data}; truncated alongside it. */
+  featureCodes?: ArrayLike<number>;
 }
 
 export function resolvePointsMemoryCap(configured?: number): number {
@@ -37,6 +52,24 @@ export function columnarPointCount(shape: number[], data: ArrayLike<number>[]): 
   return data[0]?.length ?? shape[0] ?? 0;
 }
 
+/** Truncate a per-point feature-code array to `count`, preserving its element
+ * type via `subarray` for typed arrays (zero-copy) and `slice` otherwise. */
+function capFeatureCodes(
+  featureCodes: ArrayLike<number> | undefined,
+  count: number
+): ArrayLike<number> | undefined {
+  if (!featureCodes || featureCodes.length <= count) {
+    return featureCodes;
+  }
+  if (ArrayBuffer.isView(featureCodes) && 'subarray' in featureCodes) {
+    return (featureCodes as { subarray(begin: number, end: number): ArrayLike<number> }).subarray(
+      0,
+      count
+    );
+  }
+  return Array.prototype.slice.call(featureCodes, 0, count) as ArrayLike<number>;
+}
+
 export function applyRenderCapToColumnar<T extends PointsColumnarLike>(
   batch: T,
   renderCap: number | undefined
@@ -55,11 +88,13 @@ export function applyRenderCapToColumnar<T extends PointsColumnarLike>(
     }
     return Float32Array.from(column as ArrayLike<number>).subarray(0, renderCap);
   });
+  const nextFeatureCodes = capFeatureCodes(batch.featureCodes, renderCap);
   return {
     ...batch,
     data: nextData,
     shape: [axisCount, renderCap],
     pointCount: renderCap,
+    ...(nextFeatureCodes ? { featureCodes: nextFeatureCodes } : {}),
   };
 }
 
