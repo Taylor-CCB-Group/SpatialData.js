@@ -69,17 +69,21 @@ jobs:
       - name: Build packages
         run: pnpm build
 
-      - name: Cache uv environments
+      # Fixtures rarely change, so cache the generated output and only regenerate
+      # when the generation code or its pinned deps change. The key hashes the
+      # orchestrator plus each version's script + pyproject.toml + uv.lock; an
+      # exact-match key (no restore-keys) means any of those changes forces a
+      # full regeneration rather than restoring stale fixtures. (uv's own cache is
+      # handled by astral-sh/setup-uv, not here.)
+      - name: Cache generated test fixtures
+        id: cache-fixtures
         uses: actions/cache@v5
         with:
-          path: ~/.cache/uv
-          # could be overkill always running all versions in CI, may review in future.
-          key: ${{ runner.os }}-uv-${{ hashFiles('python/v0.5.0/pyproject.toml', 'python/v0.6.1/pyproject.toml', 'python/v0.7.2/pyproject.toml') }}
-
-      # Note: Version-specific environments are set up automatically by the fixture generation script
-      # No need to manually sync here unless you want to pre-warm the cache
+          path: test-fixtures
+          key: ${{ runner.os }}-test-fixtures-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.5.0/**', 'python/v0.6.1/**', 'python/v0.7.2/**') }}
 
       - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.2)
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
         run: pnpm test:fixtures:generate
 
       - name: Run spatialdata-codec-writer tests
