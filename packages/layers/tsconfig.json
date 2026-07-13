@@ -5,18 +5,17 @@
     "moduleResolution": "Bundler",
     "declaration": true,
     "declarationMap": true,
+    "emitDeclarationOnly": true,
     "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "lib": ["ES2020", "DOM"],
-    "baseUrl": ".",
-    "paths": {
-      "@spatialdata/core": ["../core/src/index.ts"],
-      "@spatialdata/core/*": ["../core/src/*"]
-    }
+    "lib": ["ES2020", "DOM"]
+    // Cross-package types resolve via node_modules to each package's built dist/*.d.ts
+    // (topological build order guarantees deps are built first). Matches core's pattern.
   },
-  "include": ["src", "vite.config.ts", "tests"],
+  "include": ["src"],
   "exclude": ["dist", "node_modules"]
 }

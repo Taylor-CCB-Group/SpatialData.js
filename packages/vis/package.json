@@ -18,7 +18,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "vite build && tsc --noEmit",
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node ../../scripts/dev-stop.mjs",
     "dev:demo": "vite --config vite.config.demo.ts",
@@ -62,9 +62,9 @@
     "@vitejs/plugin-react": "catalog:",
     "babel-plugin-react-compiler": "catalog:",
     "jsdom": "catalog:",
+    "@typescript/native": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vite-plugin-dts": "catalog:",
     "vitest": "catalog:"
   },
   "license": "MIT",

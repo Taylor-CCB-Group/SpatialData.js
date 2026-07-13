@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git"
   },
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.12.0",
   "scripts": {
     "clean": "rm -rf packages/*/dist packages/vis/demo/dist packages/zarrextra/src/*.d.ts packages/zarrextra/src/*.d.ts.map",
     "build": "pnpm -r --filter='!docs' run build",
@@ -52,15 +52,14 @@
     "@zarrita/storage": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vite-plugin-dts": "catalog:",
     "vitest": "catalog:"
   },
   "engines": {
     "node": ">=20.19",
-    "pnpm": ">=10"
+    "pnpm": ">=11"
   },
   "volta": {
     "node": "24.14.1",
-    "pnpm": "10.33.0"
+    "pnpm": "11.12.0"
   }
 }

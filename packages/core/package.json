@@ -47,10 +47,10 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
     "typescript": "catalog:",
     "unzipit": "^1.4.3",
     "vite": "catalog:",
-    "vite-plugin-dts": "catalog:",
     "vitest": "catalog:"
   },
   "license": "MIT",

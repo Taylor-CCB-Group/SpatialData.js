@@ -2,6 +2,12 @@ packages:
   - packages/*
   - docs
 
+allowBuilds:
+  '@biomejs/biome': false
+  '@vaadin/vaadin-usage-statistics': false
+  core-js: false
+  core-js-pure: false
+
 catalog:
   '@zarrita/storage': ^0.2.0
   '@rolldown/plugin-babel': ^0.2.3
@@ -37,9 +43,12 @@ catalog:
   deck.gl: ~9.3.5
   react: ^19.2.1
   react-dom: ^19.2.1
-  typescript: ^5.7.3
-  vite: ^8.0.8
-  vite-plugin-dts: ^4.5.0
+  # TypeScript 7.0 (the native port) ships no JS API, so tools that use the compiler
+  # API (typescript-eslint) resolve the literal `typescript` to the TS 6 compat package,
+  # while `@typescript/native` provides the TS 7 `tsc` used by the build scripts.
+  typescript: 'npm:@typescript/typescript6@^6.0.2'
+  '@typescript/native': 'npm:typescript@^7.0.2'
+  vite: ^8.0.16
   vitest: ^4.1.4
   zarrita: ^0.7.1
   zod: ^4.1.13

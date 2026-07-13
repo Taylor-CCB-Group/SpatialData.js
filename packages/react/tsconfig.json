@@ -6,21 +6,18 @@
     "jsx": "react-jsx",
     "declaration": true,
     "declarationMap": true,
+    "emitDeclarationOnly": true,
     "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "baseUrl": ".",
-    "paths": {
-      "@spatialdata/core": ["../core/src/index.ts"],
-      "@spatialdata/core/*": ["../core/src/*"],
-      "zarrextra": ["../zarrextra/src/index.ts"],
-      "zarrextra/*": ["../zarrextra/src/*"]
-    },
+    // Cross-package types resolve via node_modules to each package's built dist/*.d.ts
+    // (topological build order guarantees deps are built first). Matches core's pattern.
     "types": ["react", "react-dom"]
   },
-  "include": ["src", "vite.config.ts"],
+  "include": ["src"],
   "exclude": ["dist", "node_modules"]
 }
