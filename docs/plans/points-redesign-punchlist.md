@@ -76,6 +76,16 @@ Each notes *why* it's coupled to the state-model / decode rework.
 - **D9 — Remove `'use no memo'` hatches (stable-snapshot option).** Give the
   engine stable-identity snapshot accessors so `useSyncExternalStore` tracks the
   value directly and the compiler stops needing an opt-out. Part of D1/D2.
+- **D10 — Progressive-overlay visibility logic + flashing.** F1 fixed the
+  deselected-feature-lingering slice, but *which* points show during a partial
+  load still has logic problems, and it **flashes badly**: every notify rebuilds
+  the partial buffer into a fresh `PointsRenderResource` (new identity each
+  chunk), so deck tears down and recreates the `__partial` layer per step instead
+  of updating it in place. The real fix is a stable growing GPU buffer (preallocate
+  to cap, append, bump a draw count via `updateTriggers`) rather than a
+  rebuilt-per-chunk resource — which is the same append-buffer work noted for D3
+  and the `pointsScanChunkProgress` O(chunks²) concat. Owned by the engine +
+  render redesign; the current overlay is a spike, not the destination.
 
 ---
 
