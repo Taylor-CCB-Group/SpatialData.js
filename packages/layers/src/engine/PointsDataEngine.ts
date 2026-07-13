@@ -271,6 +271,13 @@ export class PointsDataEngine {
     memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
   ): Promise<void> {
     const { key, element } = target;
+    // there will be various mutating side-effects on entry as we progress...
+    // so maybe that could include gradual accumulation of points,
+    // pending a less side-effect/mutation-ridden approach.
+    // we've been hitting a lot of general issues debugging this in general,
+    // (not necessarily this particular point in the code) and the behaviour is not right.
+    // I think I'm inclined to more purity. Might consider using Effect?
+    // would be a much bigger future change.
     const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
     this.entries.set(key, entry);
     const signature = PointsDataEngine.matchingSignature(featureCodes);
@@ -331,6 +338,7 @@ export class PointsDataEngine {
           entry.featureCodeColumn === true
             ? undefined
             : featureCodeMapFromCatalog(entry.catalog);
+        //todo streamy version
         const result = await element.loadPointsMatchingFeatureCodes({
           featureCodes,
           memoryCap,
@@ -501,6 +509,16 @@ export class PointsDataEngine {
       loading.partialResource = { source: partial, resource };
     }
     return resource;
+  }
+
+  /** Per-row feature codes of the in-flight scan's partial buffer, row-aligned
+   * with {@link getMatchingPartialResource}. The render passes these as
+   * `preloadedFeatureCodes` so the partial overlay can filter to the *current*
+   * selection — otherwise a feature deselected mid-scan (whose scan is still
+   * running because the smaller selection is covered) keeps rendering until the
+   * scan settles. */
+  getMatchingPartialRowFeatureCodes(key: string): ArrayLike<number> | undefined {
+    return this.entries.get(key)?.matchingLoading?.partialResult?.featureCodes;
   }
 
   /** Whether the feature-index scan for this exact selection is in flight. */

@@ -1445,8 +1445,11 @@ export function useLayerData(
         // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on
         // top of whichever base layer was pushed above, so the base doesn't blank
         // while points progressively fill in. Distinct id so deck keeps them as two
-        // layers. Colour rides the resource's own per-row codes.
+        // layers. Filter it to the CURRENT selection with the partial's own per-row
+        // codes — mirroring the settled matched layer — so a feature deselected
+        // mid-scan stops rendering immediately instead of lingering until settle.
         if (partialResource) {
+          const partialRowCodes = pointsEngine.getMatchingPartialRowFeatureCodes(elem.key);
           deckLayers.push(
             new PointsLayer({
               id: `${layerId}__partial`,
@@ -1455,7 +1458,10 @@ export function useLayerData(
               opacity: config.opacity,
               visible: config.visible,
               pointSize: config.pointSize ?? 1,
+              ...(featureCodes ? { featureCodes } : {}),
+              ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
               ...(config.color ? { color: config.color } : {}),
+              ...(config.colorByFeature ? { colorByFeature: true } : {}),
             })
           );
         }
