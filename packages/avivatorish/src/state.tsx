@@ -340,7 +340,9 @@ export type Metadata = OME_TIFF['metadata'] | OME_METADATA;
 //export type Metadata = TiffPreviewProps["metadata"];
 export const useMetadata = (): Metadata | undefined | null => {
   try {
+    // biome-ignore lint/correctness/useHookAtTopLevel: intentionally called outside a Viv context; the try/catch is the guard (see catch note).
     const image = useChannelsStore((store) => store.image);
+    // biome-ignore lint/correctness/useHookAtTopLevel: intentionally called outside a Viv context; the try/catch is the guard (see catch note).
     const metadata = useViewerStore((store) => store.metadata);
     return Array.isArray(metadata) ? metadata[image] : metadata;
   } catch (_e) {

@@ -206,6 +206,7 @@ export function useLayerChannelState({
   const selectionAxisSizes = defaults?.selectionAxisSizes;
   const lastEmittedRef = useRef<LayerChannelConfig | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hydrate effect handles config/defaults updates; only layerId should re-seed the store.
   const mergedInitial = useMemo(
     () => mergeLayerChannelState(config, defaults, layerId),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate effect handles config updates

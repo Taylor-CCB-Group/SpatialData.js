@@ -259,6 +259,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
     ]);
     return sortDeckLayers ? sortLayersByRenderStackOrder(composed, resolvedLayerOrder) : composed;
   }, [externalDeckLayers, generatedDeckLayers, hostDeckLayers, resolvedLayerOrder, sortDeckLayers]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally depends on stable members of layerData (getter + memoized flags), not the freshly-created object; see note and eslint-disable below.
   const vivLayerProps = useMemo(
     () => layerData.getVivLayerProps(),
     // useLayerData returns a fresh object every render, so we intentionally depend
