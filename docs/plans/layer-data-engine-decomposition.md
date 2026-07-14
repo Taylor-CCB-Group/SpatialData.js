@@ -1,7 +1,23 @@
 # LayerDataEngine decomposition — moving orchestration out of the vis god-hook
 
-**Status:** proposed (not started)
-**Related:** [ADR 0002](../adr/0002-spatially-aware-vector-loading.md), [ADR 0003](../adr/0003-points-render-resource.md), [points preload & feature filter status](points-preload-feature-filter-status.md)
+> **Status: SUPERSEDED (2026-07-14).** The diagnosis in this document stands and is
+> still worth reading — the god-hook, the mis-placed orchestration layer, the
+> unreachable-headless problem. **Its target home is wrong.**
+>
+> This plan proposes a `LayerDataEngine` in `@spatialdata/layers`. That is one
+> package too high: the orchestration layer is the **Resource Resolver**, it is
+> renderer-agnostic, and it belongs in `@spatialdata/core`. A second Resource
+> Resolver already exists in `tgpu-htj2k` precisely because `core` did not offer
+> one and `layers` is behind deck.gl.
+>
+> It also leaves open question 2 ("one engine, or per-type sub-engines?"), which is
+> now answered: **per-kind**.
+>
+> Superseded by **[ADR 0004 — Resource Resolver Owned By Core](../adr/0004-resource-resolver-owned-by-core.md)**
+> and **[Resource Resolver — implementation handoff](resource-resolver-handoff.md)**.
+
+**Status:** superseded — see banner above
+**Related:** [ADR 0002](../adr/0002-spatially-aware-vector-loading.md), [ADR 0003](../adr/0003-points-render-resource.md), [ADR 0004](../adr/0004-resource-resolver-owned-by-core.md), [points preload & feature filter status](points-preload-feature-filter-status.md)
 
 This plan addresses a structural problem surfaced while trying to rebase the
 oversized points-loading branch onto current `main`: **substantial data-loading,
