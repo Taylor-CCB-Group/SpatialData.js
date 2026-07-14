@@ -71,7 +71,19 @@ async function initializeParquetModule(module: unknown) {
 
   // Vitest/Node load the vendored browser ESM glue; initialize WASM from disk
   // because undici cannot fetch file:// URLs.
-  if (import.meta.url.startsWith('file:') && typeof initSync === 'function') {
+  //
+  // Detect Node from the runtime itself, NOT from `import.meta.url`. Bundlers
+  // rewrite `import.meta.url` to a file:// URL inside a *browser* bundle
+  // (webpack does this for the docs site), so a `startsWith('file:')` check is
+  // true in the browser too. That sent us into this branch with node:fs/node:url/
+  // node:path replaced by empty browser stubs, so `fileURLToPath` was undefined:
+  //   TypeError: t is not a function
+  const isNodeRuntime =
+    typeof process !== 'undefined' &&
+    process.versions?.node != null &&
+    typeof window === 'undefined';
+
+  if (isNodeRuntime && typeof initSync === 'function') {
     const [{ readFileSync }, { fileURLToPath }, { dirname, join }] = await Promise.all([
       import('node:fs'),
       import('node:url'),

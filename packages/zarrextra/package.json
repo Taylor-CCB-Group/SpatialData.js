@@ -8,14 +8,14 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./workers": {
       "types": "./dist/workers/index.d.ts",
-      "import": "./dist/workers.js"
+      "default": "./dist/workers.js"
     },
     "./codec-worker": {
-      "import": "./dist/codec-worker.js"
+      "default": "./dist/codec-worker.js"
     }
   },
   "files": [

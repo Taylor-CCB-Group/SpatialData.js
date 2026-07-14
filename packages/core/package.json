@@ -8,14 +8,15 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./workers": {
       "types": "./dist/workers/index.d.ts",
-      "import": "./dist/workers/index.js"
+      "default": "./dist/workers.js"
     },
     "./points-worker": {
-      "import": "./dist/points-worker.js"
+      "default": "./dist/points-worker.js"
     }
   },
   "files": [
