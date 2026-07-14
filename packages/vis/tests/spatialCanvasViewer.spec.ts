@@ -1,17 +1,17 @@
+import { renderStackSchema } from '@spatialdata/layers';
 import { ScatterplotLayer } from 'deck.gl';
 import { describe, expect, it } from 'vitest';
-import {
-  composeSpatialDeckLayers,
-  shouldAutoFitSpatialView,
-  shouldRenderInternalTooltip,
-} from '../src/SpatialCanvas/SpatialCanvasViewer.js';
 import {
   renderStackOrder,
   renderStackToLayerInputs,
   resolveRenderStackHostLayers,
   sortLayersByRenderStackOrder,
 } from '../src/SpatialCanvas/renderStackAdapters.js';
-import { renderStackSchema } from '@spatialdata/layers';
+import {
+  composeSpatialDeckLayers,
+  shouldAutoFitSpatialView,
+  shouldRenderInternalTooltip,
+} from '../src/SpatialCanvas/SpatialCanvasViewer.js';
 
 describe('composeSpatialDeckLayers', () => {
   it('places caller-provided deck layers after generated SpatialData layers', () => {

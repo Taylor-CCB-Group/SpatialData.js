@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  type FeatureRowStateInput,
   describeFeatureRowState,
+  type FeatureRowStateInput,
 } from '../src/SpatialCanvas/featureRowState';
 
 const base: FeatureRowStateInput = {
