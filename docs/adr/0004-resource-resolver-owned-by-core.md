@@ -70,9 +70,13 @@ concept.
 ## Decision
 
 1. **The Resource Resolver lives in `@spatialdata/core`.** Framework-free: no
-   React, no deck.gl, no Viv. It owns the cache, request supersession,
-   cancellation, streaming partials, eviction, entry resolution
-   (element + transform to the active coordinate system), and world bounds.
+   React, no deck.gl, no Viv. It owns **element-level** resource lifecycle —
+   preload, feature catalog, row codes, geometry, tooltip metadata, fill colour —
+   including their cache, request supersession, cancellation, streaming partials,
+   and eviction. It also owns entry resolution (element + transform to the active
+   coordinate system) and world bounds.
+
+   **It does not own tile-level lifecycle.** See §"Lifecycle split" below.
 
 2. **Per-kind resolvers behind one interface** — points, shapes, images, labels —
    not one monolithic engine. A single engine would move the four-way kind-switch
@@ -98,6 +102,13 @@ concept.
    persistence schemas that `vis` re-exports verbatim because MDV consumes them
    as a *data contract*, and `core` already owns `schemas/` and depends on zod.
 
+   **Migration contract:** `@spatialdata/core` becomes canonical.
+   `@spatialdata/layers` and `@spatialdata/vis` **retain their existing re-exports
+   as compatibility shims** — `RenderStack`, the render-stack schemas,
+   `SpatialLayerProps`, and `migrateSpatialLayerProps` keep their current import
+   paths. No consumer import moves. Removing the shims is a separate, deliberate
+   deprecation, coordinated with MDV; it is not part of this work.
+
 6. **The image loader is a port.** `createImageLoader` closes over the React
    `VivLoaderRegistry` context. `core` defines the port; `vis` supplies the
    adapter. This is the one genuine ports-and-adapters dependency; everything
@@ -108,6 +119,57 @@ concept.
    `tgpu-htj2k` as well as `layers`, and that repo's engine core is deliberately
    dependency-free. A library may be used *inside* a resolver's implementation
    (see the `RequestSlot` spike) but must not appear in `core`'s interface.
+
+## Lifecycle split — who reconciles what
+
+The Resolver is **not** the universal request-lifecycle owner. Tile scheduling
+stays with the renderer, deliberately.
+
+| Concern | Owner | Why |
+|---|---|---|
+| **Element-level** resource lifecycle — preload, catalog, row codes, geometry, tooltip metadata, fill colour | **Resource Resolver** (`core`) | Identical for every renderer. Duplicating it is what `tgpu-htj2k` was forced to do. |
+| **Tile-level** lifecycle — which tiles, at what LOD, when to abort on pan | **Renderer Adapter** | Genuinely renderer-specific. deck's `TileLayer` and `tgpu-htj2k`'s `Select` + `loadScheduler` (Nyquist + frustum + nearest-first) implement *different, correct* policies for *different* viewports and budgets. |
+| The **loader** facet — `capabilities`, `loadInBounds()` | **`core`**, shared | Already ADR 0003's decision. This is the seam both tile schedulers call. |
+| The **byte-level chunk/table cache** | **`core`**, shared ([ADR 0005](0005-memory-accounting-before-management.md)) | Registered downward at the store layer, so it is shared regardless of who schedules. |
+
+A renderer-neutral tile scheduler would be a lowest-common-denominator abstraction
+serving neither deck nor WebGPU well. **That** is the reinvention risk, and this
+ADR declines it. The Renderer Adapter supplies viewport state and drives its own
+tile requests through the shared loader; `core` owns everything above the tile.
+
+If a future kind genuinely needs resolver-level viewport reconcile, the Resolver's
+input grows an optional `viewport?` field that existing resolvers ignore.
+
+## Non-goals
+
+**A renderer-neutral render abstraction is not a goal.** Deck-agnostic *Resource
+Resolver* does not mean deck-agnostic *render path*. The point of the Renderer
+Adapter seam is that the deck adapter can lean **all the way into** deck's
+ecosystem — `@geoarrow/deck.gl-geoarrow`'s `GeoArrowScatterplotLayer` /
+`GeoArrowPolygonLayer`, Viv's `MultiscaleImageLayer` / `XRLayer`. Quarantining deck
+behind an adapter means *not leaking deck into `core`*; it is the opposite of
+*reimplementing deck*. (ADR 0003 already says as much: *"Layers owns
+deck.gl-geoarrow integration … Core must not import deck.gl."*)
+
+**Batch representation is decided per encoding, not by policy.** Delegate to an
+existing deck layer wherever one can consume the encoding directly; hand-roll flat
+typed arrays wherever it cannot. Both are expected, and ADR 0003's strategy
+registry — dispatching on `loader.capabilities.kind` — is already the mechanism.
+Concretely: wild-type shapes are **WKB in parquet** with geopandas `geo` metadata,
+*not* GeoArrow, so a decode is unavoidable; and points are x/y **columns**, not
+encoded geometry, so `GeoArrowScatterplotLayer` buys nothing over the existing
+columnar `ScatterplotLayer` path. The only real requirement on any batch is that it
+be **transferable across the worker seam** and **not allocate one JS object per
+vertex**.
+
+**This ADR does not decide Viv-vs-own-renderer for images.** That is a Renderer
+Adapter question. The images resolver is thin (loader construction, omero channel
+defaults, multi-selection stats); the heavy lifting — multiscale pyramid, tile
+fetch, codec — is in `zarrextra`, whose `VivCompatiblePixelSource` **already serves
+both Viv and `tgpu-htj2k` today**. The shared seam for images therefore already
+exists and sits *below* the Resolver. A renderer-agnostic Resolver buys the 3D
+option without spending it: go all-in on WebGPU for 3D and the Resolver does not
+change; stay on Viv for 2D and it does not change either.
 
 ## What ADR 0001 retains
 
@@ -151,12 +213,11 @@ it.
   seam is what makes that approachable later. **Nothing in this ADR builds it,
   and no framebuffer hook is added in anticipation of it.**
 
-- **Viewport-driven loading needs no resolver change.** Points already do it and
-  the resolver never sees a viewport — it lives behind `PointsLoader.loadInBounds()`
-  inside deck's `TileLayer`, exactly as ADRs 0002/0003 decided. Shapes get it the
-  same way. If a future kind genuinely needs engine-level viewport reconcile, the
-  resolver's input grows an optional `viewport?` field that existing resolvers
-  ignore.
+- **Viewport-driven loading needs no resolver change.** Tile scheduling is
+  renderer-owned by design — see §"Lifecycle split". Points already work this way:
+  deck's `TileLayer` drives tile requests through `PointsLoader.loadInBounds()`,
+  exactly as ADRs 0002/0003 decided, and the Resolver never sees a viewport. Shapes
+  get it the same way.
 
 - **ADR 0003's "FBO-based render caching"** remains deferred, on its own terms.
 

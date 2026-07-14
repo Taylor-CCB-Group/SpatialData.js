@@ -175,10 +175,21 @@ authorities themselves.
   requests for the same chunk both fetch and both decode. Key pending promises
   yourself — `parquetTableCache` is the in-repo precedent, and also the cautionary
   tale (see the rejection-poisoning bug above).
-- **`Resolution.stale` needs a drop policy.** A `failed` resolution holding
-  `stale: PointsLoadResult` pins roughly 48 MB indefinitely. Today's code leaks the
-  same memory implicitly; the type makes it a *named, typed, easy-to-keep-forever*
-  field. Drop `stale` on evict, and on a non-retryable failure.
+- **`Resolution.stale` needs a drop policy, and it bounds the `Resolution`
+  contract.** A `failed` resolution holding `stale: PointsLoadResult` pins roughly
+  48 MB indefinitely. Today's code leaks the same memory implicitly; the type makes
+  it a *named, typed, easy-to-keep-forever* field.
+
+  **Policy:** drop `stale` on eviction, and on a **non-retryable** failure (the
+  value can never be superseded, so retaining it only helps the current frame).
+  Retain it across a **retryable** failure and across an in-flight refine.
+
+  This is a deliberate qualification of the `Resolution` contract, and `CONTEXT.md`
+  states it the same way: **`stale` is a retention, not a guarantee.** "A failed
+  refine does not blank the view" holds *while `stale` is retained*. Once released,
+  the resource is not renderable and the UI shows the **Spatial Entry Error**
+  instead. Consumers must handle the no-stale case; they may not assume a
+  previously-ready resource stays drawable.
 - **Fill-value chunks are cached too.** fizarrita caches a full zero-filled typed
   array per *absent* chunk — a memory trap for sparse arrays.
 

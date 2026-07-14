@@ -11,7 +11,7 @@ Read the two ADRs first. This document is sequencing, not rationale.
 
 ## The shape
 
-```
+```text
 core     Resource Resolver    reconcile · cache · supersede · stream · evict · bounds
                               per-kind: Points / Shapes / Images / Labels
                               Resolution<T> · SpatialEntryError · EntryNotice
@@ -44,10 +44,10 @@ defence in `PointsDataEngine` disappears with it.
 
 ## Sequence
 
-### Step 0 — types only (shared; land first, land alone)
+### Step 0 — shared contracts (land first, land alone)
 
-`packages/core/src/engine/{resolution,errors}.ts`. Pure types, no behaviour, no
-imports beyond `core`'s own.
+`packages/core/src/engine/{resolution,errors}.ts`. The types, plus the two small
+functions that are inseparable from them. No imports beyond `core`'s own.
 
 - `Resolution<T>` — `idle | loading{partial?, stale?, progress?} | ready{value} | failed{error, stale?}`
 - `SpatialEntryError` — discriminated union; every case carries `message` +
@@ -152,13 +152,31 @@ loading requires no resolver change — it lives behind `loadInBounds()` inside 
 2. **The batch representation.** `ShapePolygon = Array<Array<[number, number]>>` — one
    JS array object per vertex — is neither transferable nor cheap, which is *why*
    `VShapesSource` contains zero references to the worker while `VPointsSource`
-   imports the whole worker client. Move to flat typed arrays (`positions:
-   Float32Array`, `polygonIndices: Int32Array`) or GeoArrow, so the WKB decode can run
-   in the worker and be transferred.
+   imports the whole worker client.
 
-   This also unblocks ADR 0005 rung 4 on the parquet path, and shrinks the picking
-   buffer — which is the same problem as "keep hover live with no settle delay", not
-   a separate one.
+   **The requirement is only this:** the batch must be **transferable across the
+   worker seam** and must **not allocate one JS object per vertex**. Nothing more is
+   mandated.
+
+   **Delegate where you can; hand-roll where you can't** (ADR 0004, Non-goals). The
+   encoding decides, and ADR 0003's strategy registry — dispatching on
+   `loader.capabilities.kind` — is already the mechanism:
+
+   - Wild-type shapes are **WKB in parquet** with geopandas `geo` metadata, *not*
+     GeoArrow. A decode is unavoidable. Whether you decode into GeoArrow buffers
+     (and hand them to `GeoArrowPolygonLayer`) or into flat `positions` /
+     `polygonIndices` typed arrays (and hand them to a binary `PolygonLayer`) is an
+     open call — the decode cost is the same, and GeoArrow's layout *is* flat typed
+     arrays with a schema. Prefer delegation if `deck.gl-geoarrow` can carry our
+     feature-state, filtering and picking needs; **hand-rolled flat arrays are a
+     sanctioned outcome if it cannot.** Establish this before building the batch.
+   - **Points stay columnar.** They are x/y *columns*, not encoded geometry, so
+     `GeoArrowScatterplotLayer` buys nothing over the existing `ScatterplotLayer`
+     path. Do not convert them. (`geoarrow-binary` remains a stub for a reason.)
+
+   This work also unblocks ADR 0005 rung 4 on the parquet path, and shrinks the
+   picking buffer — which is the same problem as "keep hover live with no settle
+   delay", not a separate one.
 
 3. **Close the tooltip ping-pong.** Shapes tooltip data is cached by *element key* but
    requested per *layer config*, so two layers over one element with different

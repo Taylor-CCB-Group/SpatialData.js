@@ -61,8 +61,10 @@ Transient, interactive emphasis of *all* points belonging to one chosen **Points
 _Avoid_: persisting highlight into the Stack Entry; conflating with per-object `autoHighlight`; reloading geometry on highlight change
 
 **Resolution**:
-The state of one loaded resource of a **Spatial Entry**, as a value: `idle | loading | ready | failed`. `loading` carries `partial` (what *this* load has produced so far — the streaming scan's growing buffer) and `stale` (the last good value from the *previous* load, still safe to draw). `failed` also carries `stale`, so a failed refine never blanks a working view. Resolutions are **per-resource, not per-entry** — a shapes entry with a broken tooltip column must still draw its geometry.
-_Avoid_: a status enum beside a value field; a tri-state (`undefined | null | T`) plus a `loaded` boolean; a per-entry `Result`
+The state of one loaded resource of a **Spatial Entry**, as a value: `idle | loading | ready | failed`. `loading` carries `partial` (what *this* load has produced so far — the streaming scan's growing buffer) and `stale` (the last good value from the *previous* load). `failed` may also carry `stale`. Resolutions are **per-resource, not per-entry** — a shapes entry with a broken tooltip column must still draw its geometry.
+
+`stale` is a **retention, not a guarantee**: *while it is retained*, a failed or in-flight refine keeps drawing rather than blanking. It is released on eviction and on non-retryable failure (see **Resource Ceiling**), after which the resource is simply not renderable and the UI shows the **Spatial Entry Error** instead. Callers must handle the no-stale case; they may not assume a previously-ready resource stays drawable.
+_Avoid_: a status enum beside a value field; a tri-state (`undefined | null | T`) plus a `loaded` boolean; a per-entry `Result`; treating `stale` as a permanent fallback
 
 **Spatial Entry Error**:
 A structured, typed **domain failure** of a resource — not an exception, not a missing layer, not a `console.error`. Every case carries what the UI needs to explain itself (`coordinate-system-not-found` carries `availableCoordinateSystems`; `points-preload-too-large` carries `rowCount` and `maxRows`) plus a `retryable` flag that gates a Retry affordance. `retryable` — not the union — is what prevents a failed scan settling permanently.
