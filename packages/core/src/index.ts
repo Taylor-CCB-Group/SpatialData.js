@@ -4,6 +4,8 @@
  * Core library for interfacing with SpatialData stores in TypeScript/JavaScript
  */
 
+// Resource Resolver contracts (ADR 0004).
+export * from './engine/index.js';
 export * from './models/index.js';
 export {
   type GeopandasGeoParquetMetadata,
