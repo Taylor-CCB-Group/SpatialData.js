@@ -1,8 +1,8 @@
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialElement, CoordinateSystemNotFoundError } from '../models';
-import type { BaseTransformation } from './transformations';
+import type { CoordinateSystemNotFoundError, SpatialElement } from '../models';
 import type { Result } from '../types';
 import { unwrap } from '../types';
+import type { BaseTransformation } from './transformations';
 
 export type MappingToCoordinateSystem_t = Map<string, BaseTransformation>;
 

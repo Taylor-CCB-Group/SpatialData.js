@@ -12,7 +12,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "lib": ["ES2020", "DOM"]
+    "lib": ["ES2022", "DOM"]
     // Cross-package types resolve via node_modules to each package's built dist/*.d.ts
     // (topological build order guarantees deps are built first). Matches core's pattern.
   },

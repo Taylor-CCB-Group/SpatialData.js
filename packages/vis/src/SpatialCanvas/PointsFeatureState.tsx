@@ -24,8 +24,8 @@
  */
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
 import {
-  type ReactNode,
   createContext,
+  type ReactNode,
   useCallback,
   useContext,
   useMemo,

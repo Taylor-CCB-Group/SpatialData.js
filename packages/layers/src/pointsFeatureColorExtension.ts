@@ -1,5 +1,5 @@
-import { LayerExtension } from '@deck.gl/core';
 import type { Layer } from '@deck.gl/core';
+import { LayerExtension } from '@deck.gl/core';
 import { PFC_CHROMA, PFC_GOLDEN_RATIO_CONJUGATE, PFC_LIGHTNESS } from './pointsFeatureColor.js';
 
 /** Render a JS number as a GLSL float literal (always with a decimal point, so an

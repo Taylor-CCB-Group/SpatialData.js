@@ -76,7 +76,10 @@ export function resolveRenderStackHostLayers(
   return layers;
 }
 
-export function renderStackOrder(renderStack: RenderStack | undefined, fallback: string[]): string[] {
+export function renderStackOrder(
+  renderStack: RenderStack | undefined,
+  fallback: string[]
+): string[] {
   if (!renderStack) return fallback;
   return renderStack.entries.flatMap((entry) => {
     if (entry.kind === 'spatial' || entry.kind === 'host') {

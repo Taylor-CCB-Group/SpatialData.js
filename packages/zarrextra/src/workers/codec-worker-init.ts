@@ -1,7 +1,7 @@
-import { decode as openJphDecode } from 'openjph-wasm';
-import openJphWasmUrl from 'openjph-wasm/wasm/libopenjph.wasm?url';
 import OpenJPEGJS from '@cornerstonejs/codec-openjpeg/decode';
 import openJpegWasmUrl from '@cornerstonejs/codec-openjpeg/decodewasm?url';
+import { decode as openJphDecode } from 'openjph-wasm';
+import openJphWasmUrl from 'openjph-wasm/wasm/libopenjph.wasm?url';
 import {
   createOpenJpegDecoder,
   createOpenJphDecoder,

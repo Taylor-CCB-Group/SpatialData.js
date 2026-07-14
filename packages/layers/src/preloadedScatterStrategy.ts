@@ -1,13 +1,10 @@
 import { applyRenderCapToColumnar } from '@spatialdata/core';
 import type { Layer, LayersList } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
-import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
 import { featureFilterAwaitingRowCodes, filterBatchSignature } from './pointsFeatureCodes.js';
-import {
-  DEFAULT_POINT_SIZE,
-  renderColumnarScatterLayer,
-} from './pointsScatterLayer.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
+import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
+import { DEFAULT_POINT_SIZE, renderColumnarScatterLayer } from './pointsScatterLayer.js';
 
 function resolveScatterBatch(layer: PointsLayer): ColumnarNdarrayPointsBatch | undefined {
   const { featureCodes, preloadedFeatureCodes, renderCap } = layer.props;
@@ -64,7 +61,6 @@ function resolveScatterBatch(layer: PointsLayer): ColumnarNdarrayPointsBatch | u
 export const preloadedScatterStrategy: PointsRenderStrategy = {
   renderLayers(layer): Layer | null | LayersList {
     const {
-      resource,
       opacity = 1,
       visible = true,
       pointSize = DEFAULT_POINT_SIZE,

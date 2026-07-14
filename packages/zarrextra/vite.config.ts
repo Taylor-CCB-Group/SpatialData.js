@@ -9,7 +9,12 @@ export default defineConfig(({ mode }) => {
 
   return {
     build: {
-      emptyOutDir: !isCodecWorkerBuild,
+      // Never empty dist here. `codec-worker.js` is emitted by a separate pass
+      // (--mode codec-worker), so a default pass that empties dist would delete it
+      // and leave `workers.js`'s `new URL('./codec-worker.js', ...)` dangling —
+      // which is exactly what `dev` (vite build --watch) used to do. The `build`
+      // script does an explicit `rm -rf dist` instead.
+      emptyOutDir: false,
       lib: {
         entry: isCodecWorkerBuild
           ? resolve(__dirname, 'src/workers/codec-worker.ts')

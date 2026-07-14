@@ -20,9 +20,9 @@ export {
 } from './pointsWorkerClient.js';
 
 export type {
+  ParquetRowGroupBytesChunk,
+  ParquetWorkerPayload,
   PointsWorkerMessage,
   PointsWorkerRequest,
   PointsWorkerResponse,
-  ParquetRowGroupBytesChunk,
-  ParquetWorkerPayload,
 } from './pointsWorkerProtocol.js';

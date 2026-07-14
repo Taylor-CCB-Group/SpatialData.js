@@ -1,2 +1,2 @@
-export * from './provider/SpatialDataProvider';
 export * from './hooks/useSpatialData';
+export * from './provider/SpatialDataProvider';

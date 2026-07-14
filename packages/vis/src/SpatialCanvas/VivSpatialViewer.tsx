@@ -12,9 +12,8 @@
  * Structured to allow gradual refactoring to hooks in the future.
  */
 
-import { ScaleBarLayer, getDefaultInitialViewState } from '@hms-dbmi/viv';
+import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
 import { DetailView, ScaleBarView } from '@vivjs/views';
-import { DeckGL } from 'deck.gl';
 import type {
   DeckGLProps,
   DeckGLRef,
@@ -24,6 +23,7 @@ import type {
   OrthographicViewState,
   PickingInfo,
 } from 'deck.gl';
+import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
 import type { ViewState } from './types';
@@ -363,7 +363,10 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   _onViewStateChange({
     viewId,
     viewState,
-  }: { viewId: string; viewState: VivViewState }): VivViewState {
+  }: {
+    viewId: string;
+    viewState: VivViewState;
+  }): VivViewState {
     const { onViewStateChange } = this.props;
 
     // Update internal state

@@ -1,5 +1,4 @@
-import type { Deck } from '@deck.gl/core';
-import { type SpatialFeatureTooltipData, mergeSpatialFeatureTooltips } from '@spatialdata/core';
+import { mergeSpatialFeatureTooltips, type SpatialFeatureTooltipData } from '@spatialdata/core';
 import type { DeckGLRef, PickingInfo } from 'deck.gl';
 
 const DEFAULT_PICK_RADIUS = 4;

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { createStore } from 'zustand';
-import { useStore } from 'zustand';
-import { clampVivSelectionsToAxes } from './utils';
+import { createStore, useStore } from 'zustand';
 import { COLOR_PALLETE, MAX_CHANNELS } from './constants';
+import { clampVivSelectionsToAxes } from './utils';
 
 export type LayerChannelSelection = Partial<{ z: number; c: number; t: number }>;
 
@@ -44,8 +43,7 @@ type AxisSizes = Partial<Record<'z' | 'c' | 't', number>>;
  * replacement for `JSON.stringify`-based `channelConfigKey` in the host).
  */
 export function serializeChannelConfig(config: LayerChannelConfig): string {
-  const selections =
-    config.selections?.map((s) => [s.z ?? null, s.c ?? null, s.t ?? null]) ?? null;
+  const selections = config.selections?.map((s) => [s.z ?? null, s.c ?? null, s.t ?? null]) ?? null;
   return JSON.stringify({
     channelIds: config.channelIds ?? null,
     colors: config.colors ?? null,
@@ -208,6 +206,7 @@ export function useLayerChannelState({
   const selectionAxisSizes = defaults?.selectionAxisSizes;
   const lastEmittedRef = useRef<LayerChannelConfig | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hydrate effect handles config/defaults updates; only layerId should re-seed the store.
   const mergedInitial = useMemo(
     () => mergeLayerChannelState(config, defaults, layerId),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate effect handles config updates
@@ -269,11 +268,7 @@ export function useLayerChannelState({
       channelsVisible: [...current.channelsVisible, true],
       selections: [
         ...current.selections,
-        mergeSelectionRow(
-          undefined,
-          current.selections[0] ?? fillSel,
-          selectionAxisSizes
-        ),
+        mergeSelectionRow(undefined, current.selections[0] ?? fillSel, selectionAxisSizes),
       ],
     };
     storeRef.current.setState(nextMerged);
@@ -285,7 +280,7 @@ export function useLayerChannelState({
       const current = storeRef.current.getState();
       if (current.channelCount <= 1 || index < 0 || index >= current.channelCount) return;
 
-      const splice = <T,>(arr: T[]) => arr.filter((_, i) => i !== index);
+      const splice = <T>(arr: T[]) => arr.filter((_, i) => i !== index);
       const nextMerged: MergedLayerChannelState = {
         channelCount: current.channelCount - 1,
         channelIds: splice(current.channelIds),

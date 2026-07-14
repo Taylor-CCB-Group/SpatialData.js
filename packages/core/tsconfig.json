@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
-    "lib": ["ES2020", "WebWorker", "DOM"],
+    "lib": ["ES2022", "WebWorker", "DOM"],
     "moduleResolution": "bundler",
     "paths": {
       "zarrextra": ["../zarrextra/dist/index.d.ts"]

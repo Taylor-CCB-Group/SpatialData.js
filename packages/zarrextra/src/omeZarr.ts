@@ -253,11 +253,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
   async getRaster({ selection, signal }: { selection: RasterSelection; signal?: AbortSignal }) {
     const sel = this.chunkIndex(selection, { x: null, y: null });
     const result = await this.getRaw(sel, signal);
-    const [height, width] = spatialDimensionsFromChunk(
-      result.shape,
-      this.data.shape,
-      this.labels
-    );
+    const [height, width] = spatialDimensionsFromChunk(result.shape, this.data.shape, this.labels);
     return { data: result.data, width, height };
   }
 
@@ -275,11 +271,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     const [xSlice, ySlice] = this.getSlices(x, y);
     const sel = this.chunkIndex(selection, { x: xSlice, y: ySlice });
     const result = await this.getRaw(sel, signal);
-    const [height, width] = spatialDimensionsFromChunk(
-      result.shape,
-      this.data.shape,
-      this.labels
-    );
+    const [height, width] = spatialDimensionsFromChunk(result.shape, this.data.shape, this.labels);
     return { data: result.data, width, height };
   }
 

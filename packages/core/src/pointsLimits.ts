@@ -137,8 +137,6 @@ export function pointsFilteredMemoryCapMessage(
   scannedRows?: number
 ): string {
   const scanned =
-    scannedRows !== undefined
-      ? ` after scanning ${scannedRows.toLocaleString()} rows`
-      : '';
+    scannedRows !== undefined ? ` after scanning ${scannedRows.toLocaleString()} rows` : '';
   return `Showing ${loadedCount.toLocaleString()} matching points (memory cap ${memoryCap.toLocaleString()}${scanned})`;
 }

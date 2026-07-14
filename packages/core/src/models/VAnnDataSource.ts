@@ -1,8 +1,8 @@
-import { open as zarrOpen, get as zarrGet } from 'zarrita';
+import { get as zarrGet, open as zarrOpen } from 'zarrita';
+import type { TableColumnData } from '../types';
+import type { DataSourceParams } from '../Vutils';
 import { dirname } from '../Vutils';
 import ZarrDataSource from './VZarrDataSource';
-import type { DataSourceParams } from '../Vutils';
-import type { TableColumnData } from '../types';
 
 function prependSlash(path: string) {
   if (typeof path === 'string' && path.length >= 1) {
@@ -183,7 +183,7 @@ export default class AnnDataSource extends ZarrDataSource {
    * @returns {Promise<string[]>} An promise for a zarr array
    * containing the indices.
    */
-  loadObsIndex(path?: string) {
+  loadObsIndex(_path?: string) {
     if (this.obsIndex) {
       return this.obsIndex;
     }
@@ -216,7 +216,7 @@ export default class AnnDataSource extends ZarrDataSource {
    */
   loadVarIndex(
     // eslint-disable-next-line no-unused-vars
-    path = undefined
+    _path = undefined
   ) {
     if (this.varIndex) {
       return this.varIndex;
@@ -233,7 +233,7 @@ export default class AnnDataSource extends ZarrDataSource {
    * @param {string|undefined} matrixPath
    * @returns {Promise<string[]>} An promise for a zarr array containing the aliased names.
    */
-  async loadVarAlias(varPath: string, matrixPath?: string) {
+  async loadVarAlias(varPath: string, _matrixPath?: string) {
     if (this.varAlias) {
       return this.varAlias;
     }
@@ -348,7 +348,7 @@ export default class AnnDataSource extends ZarrDataSource {
           keys.map(async (key) => {
             try {
               result[key] = await this._loadElement(`${path}/${key}`);
-            } catch (e) {
+            } catch (_e) {
               console.error(`Error in _loadDict: could not load ${key}`);
               result[key] = undefined; //not sure how useful this is
             }

@@ -1,21 +1,20 @@
-import { useState, useEffect } from 'react';
-import { fromBlob, fromUrl } from 'geotiff';
-import { Matrix4 } from '@math.gl/core';
-
 import {
-  loadOmeZarr,
-  getChannelStats,
-  RENDERING_MODES,
-  ColorPalette3DExtensions,
   AdditiveColormap3DExtensions,
+  ColorPalette3DExtensions,
+  getChannelStats,
+  loadOmeZarr,
+  RENDERING_MODES,
 } from '@hms-dbmi/viv';
+import { Matrix4 } from '@math.gl/core';
+import { fromBlob, fromUrl } from 'geotiff';
+import { useEffect, useState } from 'react';
 
 import { GLOBAL_SLIDER_DIMENSION_FIELDS } from './constants';
 import type { OME_TIFF, PixelSource } from './state';
 
-const MAX_CHANNELS_FOR_SNACKBAR_WARNING = 40;
+const _MAX_CHANNELS_FOR_SNACKBAR_WARNING = 40;
 
-function isArray(value: unknown): value is unknown[] {
+function _isArray(value: unknown): value is unknown[] {
   return Array.isArray(value) as boolean;
 }
 
@@ -23,7 +22,7 @@ function isArray(value: unknown): value is unknown[] {
  * Guesses whether string URL or File is for an OME-TIFF image.
  * @param {string | File} urlOrFile
  */
-function isOmeTiff(urlOrFile: string | File) {
+function _isOmeTiff(urlOrFile: string | File) {
   if (Array.isArray(urlOrFile)) return false; // local Zarr is array of File Objects
   const name = typeof urlOrFile === 'string' ? urlOrFile : urlOrFile.name;
   return name.includes('ome.tiff') || name.includes('ome.tif') || name.includes('.companion.ome');
@@ -46,7 +45,7 @@ function getMultiTiffFilenames(urlOrFiles: UrlOrFiles) {
 /**
  * Guesses whether string URL or File is one or multiple standard TIFF images.
  */
-function isMultiTiff(urlOrFiles: UrlOrFiles) {
+function _isMultiTiff(urlOrFiles: UrlOrFiles) {
   const filenames = getMultiTiffFilenames(urlOrFiles);
   for (const filename of filenames) {
     const lowerCaseName = filename.toLowerCase();
@@ -84,7 +83,7 @@ export type VivSelection = { c: number; z: number; t: number };
 /**
  * Guesses whether string URL or File is one or multiple standard TIFF images.
  */
-async function generateMultiTiffSources(urlOrFiles: UrlOrFiles) {
+async function _generateMultiTiffSources(urlOrFiles: UrlOrFiles) {
   const multiTiffFiles = await generateMultiTiffFileArray(urlOrFiles);
   const sources: [VivSelection[], any][] = [];
   let c = 0;
@@ -108,7 +107,7 @@ class UnsupportedBrowserError extends Error {
 }
 /** todo - clarify types / zarr... */
 type OmeTiffImage = OME_TIFF;
-async function getTotalImageCount(sources: OmeTiffImage[]) {
+async function _getTotalImageCount(sources: OmeTiffImage[]) {
   const firstOmeTiffImage = sources[0];
   const firstPixelSource = firstOmeTiffImage.data[0];
   //@ts-expect-error - firstPixelSource._indexer is a private method
@@ -136,11 +135,11 @@ async function getTotalImageCount(sources: OmeTiffImage[]) {
   return numImagesPerResolution * levels;
 }
 
-function isZodError(e: unknown): e is Error & { issues: unknown } {
+function _isZodError(e: unknown): e is Error & { issues: unknown } {
   return e instanceof Error && 'issues' in e;
 }
 
-async function fetchSingleFileOmeTiffOffsets(url: string) {
+async function _fetchSingleFileOmeTiffOffsets(url: string) {
   // No offsets for multifile OME-TIFFs
   if (url.includes('companion.ome')) {
     return undefined;
@@ -160,7 +159,7 @@ async function fetchSingleFileOmeTiffOffsets(url: string) {
  */
 export async function createLoader(
   urlOrFile: UrlOrFiles,
-  handleOffsetsNotFound: (arg0: boolean) => void,
+  _handleOffsetsNotFound: (arg0: boolean) => void,
   handleLoaderError: (msg: string | null) => void
 ) {
   // If the loader fails to load, handle the error (show an error snackbar).
@@ -253,7 +252,10 @@ function zip<A, B>(a: A[], b: B[]): [A, B][] {
 export function buildDefaultSelection({
   labels,
   shape,
-}: { labels: string[]; shape: number[] }): VivSelection[] {
+}: {
+  labels: string[];
+  shape: number[];
+}): VivSelection[] {
   const selection: VivSelection[] = [];
 
   const dimensions = zip(labels, shape).map(([name, size]) => ({
@@ -400,7 +402,10 @@ function narrowStats(stats: { domain: number[]; contrastLimits: number[] }): sta
 } {
   return narrowLimits(stats.domain) && narrowLimits(stats.contrastLimits);
 }
-function clampVivSelectionToSource(selection: VivSelection, source: RasterSourceLike): VivSelection {
+function clampVivSelectionToSource(
+  selection: VivSelection,
+  source: RasterSourceLike
+): VivSelection {
   return (clampVivSelectionsToAxes(
     [selection],
     getVivSelectionAxisSizes(source.labels, source.shape)
@@ -525,7 +530,10 @@ export async function getSingleSelectionStats2D({
 export async function getSingleSelectionStats3D({
   loader,
   selection,
-}: { loader: LOADER; selection: VivSelection }) {
+}: {
+  loader: LOADER;
+  selection: VivSelection;
+}) {
   const lowResSource = getRasterSource(loader);
   const { shape, labels } = lowResSource;
   const sizeZ = getVivSelectionAxisSizes(labels, shape).z;
@@ -620,7 +628,7 @@ export function isMobileOrTablet() {
       /(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino|android|ipad|playbook|silk/i.test(
         a
       ) ||
-      /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(
+      /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw-(n|u)|c55\/|capi|ccwa|cdm-|cell|chtm|cldc|cmd-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc-s|devi|dica|dmob|do(c|p)o|ds(12|-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(-|_)|g1 u|g560|gene|gf-5|g-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd-(m|p|t)|hei-|hi(pt|ta)|hp( i|ip)|hs-c|ht(c(-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i-(20|go|ma)|i230|iac( |-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|-[a-w])|libw|lynx|m1-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|-([1-8]|c))|phil|pire|pl(ay|uc)|pn-2|po(ck|rt|se)|prox|psio|pt-g|qa-a|qc(07|12|21|32|60|-[2-7]|i-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h-|oo|p-)|sdk\/|se(c(-|0|1)|47|mc|nd|ri)|sgh-|shar|sie(-|m)|sk-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h-|v-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl-|tdg-|tel(i|m)|tim-|t-mo|to(pl|sh)|ts(70|m-|m3|m5)|tx-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas-|your|zeto|zte-/i.test(
         a.substr(0, 4)
       )
     )
@@ -666,16 +674,25 @@ export function getPhysicalSizeScalingMatrix(loader: PixelSource | any) {
 
 function getAxisSize(shape: number[], labels: string[], axis: 'x' | 'y' | 'z') {
   const index = labels.findIndex((label) => label.toLowerCase() === axis);
-  return index >= 0 ? shape[index] ?? 0 : 0;
+  return index >= 0 ? (shape[index] ?? 0) : 0;
 }
 
 export function getBoundingCube(loader: PixelSource | RasterSourceLike) {
   const source = getRasterSource(loader);
   const { shape, labels } = source;
   const physicalSizeScalingMatrix = getPhysicalSizeScalingMatrix(loader);
-  const xSlice: [number, number] = [0, physicalSizeScalingMatrix[0] * getAxisSize(shape, labels, 'x')];
-  const ySlice: [number, number] = [0, physicalSizeScalingMatrix[5] * getAxisSize(shape, labels, 'y')];
-  const zSlice: [number, number] = [0, physicalSizeScalingMatrix[10] * getAxisSize(shape, labels, 'z')];
+  const xSlice: [number, number] = [
+    0,
+    physicalSizeScalingMatrix[0] * getAxisSize(shape, labels, 'x'),
+  ];
+  const ySlice: [number, number] = [
+    0,
+    physicalSizeScalingMatrix[5] * getAxisSize(shape, labels, 'y'),
+  ];
+  const zSlice: [number, number] = [
+    0,
+    physicalSizeScalingMatrix[10] * getAxisSize(shape, labels, 'z'),
+  ];
   return [xSlice, ySlice, zSlice];
 }
 

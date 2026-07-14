@@ -1,9 +1,9 @@
 import { featureCodeToCssColor } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { usePointsFeatureState } from './PointsFeatureState';
 import { useSpatialCanvasActions } from './context';
 import { describeFeatureRowState, featureRowOpacity } from './featureRowState';
+import { usePointsFeatureState } from './PointsFeatureState';
 import type { PointsLayerConfig } from './types';
 
 // we need a pass on how we manage styles

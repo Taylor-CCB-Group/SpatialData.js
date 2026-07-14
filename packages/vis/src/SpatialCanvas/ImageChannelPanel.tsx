@@ -1,9 +1,9 @@
-import type { CSSProperties } from 'react';
 import {
   clampVivSelectionsToAxes,
   MAX_CHANNELS,
   mergeLayerChannelState,
 } from '@spatialdata/avivatorish';
+import type { CSSProperties } from 'react';
 import type { ChannelConfig } from './types';
 import type { ImageLoaderData } from './useLayerData';
 

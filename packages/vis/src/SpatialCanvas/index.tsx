@@ -21,9 +21,18 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
+import {
+  getDeckFromDeckGlRef,
+  type HoverPointerEvent,
+  isHoverDuringDrag,
+  resolveHoverFeatureTooltip,
+} from './featureTooltipHover';
 import { ImageChannelPanelFromStore } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
+import { layerConfig } from './layerConfig';
+import PointsLayerPanel from './PointsLayerPanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
   type HoverTooltipMode,
@@ -37,22 +46,13 @@ import {
   type SpatialFeatureTooltipData,
 } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
-import { TooltipFieldsPanel } from './TooltipFieldsPanel';
-import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
-import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
-import {
-  type HoverPointerEvent,
-  getDeckFromDeckGlRef,
-  isHoverDuringDrag,
-  resolveHoverFeatureTooltip,
-} from './featureTooltipHover';
-import { layerConfig } from './layerConfig';
 import type { SpatialCanvasStoreApi } from './stores';
+import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
-import { type ViewInteractionState, useViewInteractionGate } from './useViewInteractionGate';
+import { useViewInteractionGate, type ViewInteractionState } from './useViewInteractionGate';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
-import PointsLayerPanel from './PointsLayerPanel';
+import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 
 // ============================================
 // Styles
@@ -431,7 +431,7 @@ function SpatialCanvasInner({
   const { interacting, onInteractionStateChange } = useViewInteractionGate();
   // Shapes are pickable unless tooltips are off or the camera is being moved.
   const pickingEnabled = tooltipMode !== 'off' && !interacting;
-  
+
   // keeping a big bundle of these to pass into child components
   // (may not be a good idea).
   const rendererProps = useSpatialCanvasRendererFromLayerInputs({
@@ -444,7 +444,7 @@ function SpatialCanvasInner({
     height: vh,
     pickingEnabled,
   });
-  
+
   const {
     availableElements,
     deckLayers,

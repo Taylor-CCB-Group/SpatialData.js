@@ -1,16 +1,16 @@
-import { VivViewer, getDefaultInitialViewState } from '@hms-dbmi/viv';
+import { getDefaultInitialViewState, VivViewer } from '@hms-dbmi/viv';
 import {
-  DEFAULT_CHANNEL_STATE,
-  VivProvider,
   createVivStores,
+  DEFAULT_CHANNEL_STATE,
   resolveRasterSource,
   useChannelsStore,
   useChannelsStoreApi,
+  useImage,
   useLoader,
   useViewerStore,
   useViewerStoreApi,
+  VivProvider,
 } from '@spatialdata/avivatorish';
-import { useImage } from '@spatialdata/avivatorish';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
 import { DetailView, ScaleBarView } from '@vivjs/views';

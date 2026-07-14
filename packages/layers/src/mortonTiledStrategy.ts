@@ -1,6 +1,6 @@
 import { COORDINATE_SYSTEM } from '@deck.gl/core';
-import { PolygonLayer, TileLayer } from 'deck.gl';
 import type { Layer, LayersList } from 'deck.gl';
+import { PolygonLayer, TileLayer } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
 import {
   boundsFromTileBbox,
@@ -9,22 +9,17 @@ import {
   scatterBoundsFromTileBbox,
   tileHandleFromDeckTile,
 } from './pointsBbox.js';
-import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
-import {
-  DEFAULT_POINT_RADIUS_MAX_PIXELS,
-  DEFAULT_POINT_RADIUS_MIN_PIXELS,
-  DEFAULT_POINT_SIZE,
-  renderColumnarScatterLayer,
-} from './pointsScatterLayer.js';
-import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
 import { featureCodesSignature } from './pointsFeatureCodes.js';
-import { createTiledPointsDebugHooks } from './pointsTiledDebugHooks.js';
+import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
+import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
+import { DEFAULT_POINT_SIZE, renderColumnarScatterLayer } from './pointsScatterLayer.js';
 import {
   POINTS_TILE_DEBUG_PICK_KIND,
   pointsTileDebugPolygonData,
   tileDebugStatusFillColor,
   tileDebugStatusLineColor,
 } from './pointsTileDebug.js';
+import { createTiledPointsDebugHooks } from './pointsTiledDebugHooks.js';
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError';

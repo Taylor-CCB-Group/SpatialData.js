@@ -1,10 +1,17 @@
-import { basename } from '../Vutils';
+import { decodeIntStat, parseParquetFileMetaData } from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
   featureCodeMapFromCatalog,
   mergeFeatureCountsIntoCatalog,
   resolveRowFeatureCodesFromTable,
 } from '../pointsFeatures.js';
+import { exceedsPointsPreloadLimit, resolvePointsMemoryCap } from '../pointsLimits.js';
+import type {
+  PointsLoadOptions,
+  PointsLoadProgress,
+  PointsLoadResult,
+} from '../pointsLoadOptions.js';
+import { basename } from '../Vutils';
 import {
   decodeGeometryWithFeaturesInWorker,
   decodeParquetGeometryCappedInWorker,
@@ -16,16 +23,6 @@ import {
   scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
 } from '../workers/pointsWorkerClient.js';
-import { exceedsPointsPreloadLimit, resolvePointsMemoryCap } from '../pointsLimits.js';
-import {
-  decodeIntStat,
-  parseParquetFileMetaData,
-} from '../parquetFooterStats.js';
-import type {
-  PointsLoadOptions,
-  PointsLoadProgress,
-  PointsLoadResult,
-} from '../pointsLoadOptions.js';
 
 interface ColumnarPointsChunk {
   shape: number[];
@@ -62,7 +59,7 @@ function rowGroupFeatureCodeExtents(
       return [];
     }
     const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
-    let footer;
+    let footer: ReturnType<typeof parseParquetFileMetaData>;
     try {
       footer = parseParquetFileMetaData(metaBytes);
     } catch {
@@ -207,16 +204,17 @@ function pointsScanChunkProgress(
     },
   };
 }
+
 import {
-  MORTON_CODE_2D_COLUMN,
-  type PointsInBoundsOptions,
-  type PointsInBoundsResponse,
-  type PointsFeatureCatalog,
-  type PointsTilingMetadata,
   extractSentinelBoundingBox,
   featureCodeAllowSet,
   filterPointsToBounds,
+  MORTON_CODE_2D_COLUMN,
   mortonIntervalsForBounds,
+  type PointsFeatureCatalog,
+  type PointsInBoundsOptions,
+  type PointsInBoundsResponse,
+  type PointsTilingMetadata,
 } from '../pointsTiling.js';
 import type { Axis } from '../schemas';
 // import { normalizeAxes } from '@vitessce/spatial-utils';
@@ -517,7 +515,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     if (featureKey) {
       const nameColumn = arrowTable.getChild(featureKey);
       if (nameColumn) {
-        const codeColumn = featureCodeColumnName ? arrowTable.getChild(featureCodeColumnName) : null;
+        const codeColumn = featureCodeColumnName
+          ? arrowTable.getChild(featureCodeColumnName)
+          : null;
         featureCatalog = buildFeatureCatalogFromColumns(
           featureKey,
           nameColumn,
@@ -565,7 +565,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return parts.length > 0 ? { parts } : null;
   }
 
-  async* loadPointsMatchingFeatureCodesByChunk(
+  async *loadPointsMatchingFeatureCodesByChunk(
     elementPath: string,
     options: {
       memoryCap: number;
@@ -578,7 +578,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
        * code space the selection was made in. When absent for a dict-only
        * element the scan cannot match by name and returns nothing. */
       featureCodeByName?: ReadonlyMap<string, number>;
-    }    
+    }
   ) {
     ensurePointsWorker();
     const parquetPath = getParquetPath(elementPath);
@@ -610,8 +610,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const schemaTable = datasetMetadata ? null : await this.loadParquetSchemaTable(parquetPath);
     const fields = datasetMetadata?.schema?.fields
       ? datasetMetadata.schema.fields.flatMap((field) =>
-        typeof field.name === 'string' ? [field.name] : []
-      )
+          typeof field.name === 'string' ? [field.name] : []
+        )
       : arrowSchemaFieldNames(schemaTable);
     const featureCodeColumnName = selectFeatureCodeColumn(fields, featureKey);
 
@@ -657,10 +657,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       const rowGroupExtents =
         featureCodeColumnName && datasetMetadata
           ? rowGroupFeatureCodeExtents(
-            datasetMetadata.parts,
-            featureCodeColumnName,
-            datasetRowGroups
-          )
+              datasetMetadata.parts,
+              featureCodeColumnName,
+              datasetRowGroups
+            )
           : [];
       const canSkipRowGroups = rowGroupExtents.length === datasetRowGroups;
 
@@ -670,11 +670,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         }
         if (
           canSkipRowGroups &&
-          !extentMayContainSelectedCodes(
-            rowGroupExtents[rowGroupIndex],
-            selectedMin,
-            selectedMax
-          )
+          !extentMayContainSelectedCodes(rowGroupExtents[rowGroupIndex], selectedMin, selectedMax)
         ) {
           continue;
         }
@@ -1100,9 +1096,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         });
         const catalog = await scanParquetFeatureCatalogInWorker({
           rowGroups:
-            featureCodeColumnName && payload.rowGroups.length > 0
-              ? payload.rowGroups
-              : undefined,
+            featureCodeColumnName && payload.rowGroups.length > 0 ? payload.rowGroups : undefined,
           parts: payload.parts,
           columns: columnNames,
           featureKey,
@@ -1120,8 +1114,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
 
-    const { accumulateFeatureCatalogFromTable, featureCatalogFromCodeMap, featureCatalogNeedsParquetFallback } =
-      await import('../pointsFeatures.js');
+    const {
+      accumulateFeatureCatalogFromTable,
+      featureCatalogFromCodeMap,
+      featureCatalogNeedsParquetFallback,
+    } = await import('../pointsFeatures.js');
     const codeToName = new Map<number, string>();
     const nameToCode = new Map<string, number>();
     const canUseRowGroups = await this.canLoadParquetRowGroups();
@@ -1179,7 +1176,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     if (this.pointTilingMetadataCache.has(elementPath)) {
       return this.pointTilingMetadataCache.get(elementPath) ?? null;
     }
-    const promise = this.loadPointsTilingMetadataUncached(elementPath).catch(error => {
+    const promise = this.loadPointsTilingMetadataUncached(elementPath).catch((error) => {
       this.pointTilingMetadataCache.delete(elementPath);
       throw error;
     });

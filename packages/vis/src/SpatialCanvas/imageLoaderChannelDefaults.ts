@@ -3,7 +3,7 @@
  * channel setup fails partway through. Kept separate from useLayerData so the hook stays focused.
  */
 
-import { getVivSelectionAxisSizes, COLOR_PALLETE } from '@spatialdata/avivatorish';
+import { COLOR_PALLETE, getVivSelectionAxisSizes } from '@spatialdata/avivatorish';
 
 /** Loader fields used for channel count and contrast range heuristics. */
 export type VivLoaderMetadata = {

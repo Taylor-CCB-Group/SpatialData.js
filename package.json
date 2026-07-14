@@ -27,6 +27,7 @@
     "test:proxy": "node scripts/cors-proxy.js",
     "validate:datasets:js": "node scripts/validate-datasets-js.js",
     "lint": "biome check .",
+    "lint:biome": "biome ci packages/*/src",
     "lint:react": "eslint \"packages/react/src/**/*.{ts,tsx}\" \"packages/vis/src/**/*.{ts,tsx}\"",
     "format": "biome format --write .",
     "format:check": "biome format .",

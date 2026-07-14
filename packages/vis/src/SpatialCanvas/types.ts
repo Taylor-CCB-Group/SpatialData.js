@@ -3,7 +3,7 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import type { AnyElement, SpatialElement } from '@spatialdata/core';
+import type { SpatialElement } from '@spatialdata/core';
 import type {
   ShapeFillColorMode,
   ShapeStrokeWidthUnits,

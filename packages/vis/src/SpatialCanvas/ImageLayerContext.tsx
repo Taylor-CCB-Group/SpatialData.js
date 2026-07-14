@@ -1,4 +1,4 @@
-import { createContext, useContext, type PropsWithChildren } from 'react';
+import { createContext, type PropsWithChildren, useContext } from 'react';
 import type { ImageLoaderData, LayerLoadState } from './useLayerData';
 
 export type ImageLayerContextRegistry = {

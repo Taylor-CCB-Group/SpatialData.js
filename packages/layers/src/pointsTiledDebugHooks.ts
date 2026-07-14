@@ -1,11 +1,11 @@
-import type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
 import {
   completedSnapshotFromLoadResult,
-  reduceTileDebugEntries,
-  tileDebugEntriesSignature,
   type PointsTileCompletedSnapshot,
   type PointsTileDebugEntry,
+  reduceTileDebugEntries,
+  tileDebugEntriesSignature,
 } from './pointsTileDebug.js';
+import type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
 
 export interface TiledPointsDebugState {
   tileDebugEntries: PointsTileDebugEntry[];

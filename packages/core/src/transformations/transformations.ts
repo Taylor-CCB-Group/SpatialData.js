@@ -1,5 +1,5 @@
 import { Matrix4 } from '@math.gl/core';
-import type { CoordinateTransformation, Axis } from '../schemas';
+import type { Axis, CoordinateTransformation } from '../schemas';
 
 /**
  * Coordinate system reference from NGFF transformations.
@@ -172,7 +172,7 @@ function composeMatricesInApplicationOrder(matrices: Matrix4[]): Matrix4 {
   // Matrix products apply right-to-left to points, so we multiply in reverse
   // to preserve the listed/application order of transformations.
   for (let i = matrices.length - 1; i >= 0; i--) {
-    matrix.multiplyRight(matrices[i]!);
+    matrix.multiplyRight(matrices[i]);
   }
   return matrix;
 }

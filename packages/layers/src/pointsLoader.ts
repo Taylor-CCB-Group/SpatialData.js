@@ -1,4 +1,4 @@
-import type { SpatialBounds, PointsElement, PointsLoadMode } from '@spatialdata/core';
+import type { PointsElement, PointsLoadMode, SpatialBounds } from '@spatialdata/core';
 
 export type PointsEncodingKind =
   | 'preloaded-columnar'

@@ -41,6 +41,36 @@ jobs:
       - name: Lint React packages (react-hooks / react-compiler rules)
         run: pnpm lint:react
 
+  biome-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Biome lint/format gate over the library source (packages/*/src). The error
+    # backlog there has been cleared, so `biome ci` fails on any new error.
+    # noExplicitAny is configured as a non-blocking warning. Demo, scripts, and
+    # tests are intentionally out of scope (still carry findings), so this gate is
+    # narrower than `pnpm lint` (biome check .).
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.14.1'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Biome lint/format (packages/*/src)
+        run: pnpm lint:biome
+
   test:
     runs-on: ubuntu-latest
     steps:

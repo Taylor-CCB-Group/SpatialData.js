@@ -1,10 +1,10 @@
-import type { CSSProperties } from 'react';
 import type {
   SpatialFeatureTooltipData,
   SpatialFeatureTooltipItem,
   SpatialFeatureTooltipSection,
 } from '@spatialdata/core';
 import { formatSpatialElementLabel } from '@spatialdata/core';
+import type { CSSProperties } from 'react';
 
 export type {
   SpatialFeatureTooltipData,

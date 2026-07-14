@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { selectionStatsKey } from './channelStats';
 import type { LayerChannelSelection } from './layerChannelState';
 import type { SelectionRaster } from './utils';
 import { getSingleSelectionStats } from './utils';
-import { selectionStatsKey } from './channelStats';
 
 export type ChannelSelectionEntry = {
   domain: [number, number];
@@ -68,6 +68,7 @@ export function useChannelSelectionStats({
   // Sync projection of the cache into result state, with fallback for unloaded
   // channels. Runs before paint so consumers never see a flash of stale data
   // when inputs change and cache has a hit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are intentional stable-key strings (channelIdsKey/selectionsKey/...); see eslint-disable at the deps array.
   useLayoutEffect(() => {
     const cache = statsCacheRef.current;
     const statsByChannelId = new Map<string, ChannelSelectionEntry>();
@@ -93,6 +94,7 @@ export function useChannelSelectionStats({
   }, [channelIdsKey, selectionsKey, fallbackDomainsKey, loader]);
 
   // Async fetch loop for selection keys that differ from the last completed set.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are intentional stable-key strings (channelIdsKey/selectionsKey/...); see eslint-disable at the deps array.
   useEffect(() => {
     if (!loader) return;
 

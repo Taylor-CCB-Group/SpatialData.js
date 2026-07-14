@@ -1,9 +1,8 @@
 import type { Matrix4 } from '@math.gl/core';
-import { COORDINATE_SYSTEM } from '@deck.gl/core';
 import { ScatterplotLayer } from 'deck.gl';
+import { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import { buildPointsAttributes } from './pointsRenderAttributes.js';
-import { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
 
 /** Orthographic zoom at which configured pointSize applies at full scale. */
 export const POINT_SIZE_ZOOM_REFERENCE = 0;
@@ -84,7 +83,7 @@ export function renderColumnarScatterLayer(
 
   return new ScatterplotLayer({
     id,
-    coordinateSystem: "cartesian",
+    coordinateSystem: 'cartesian',
     data: {
       length: attributes.length,
       attributes: {

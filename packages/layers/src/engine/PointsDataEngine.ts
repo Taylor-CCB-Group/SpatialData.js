@@ -1,14 +1,17 @@
 import {
   DEFAULT_POINTS_MEMORY_CAP,
   featureCodeMapFromCatalog,
-  remapRowFeatureCodes,
   type PointsElement,
   type PointsFeatureCatalog,
   type PointsLoadProgress,
   type PointsLoadResult,
+  remapRowFeatureCodes,
 } from '@spatialdata/core';
-import { pointsRenderResourceSignature, resolvePointsRenderResource } from '../resolvePointsRenderResource.js';
 import type { PointsRenderResource } from '../pointsLoader.js';
+import {
+  pointsRenderResourceSignature,
+  resolvePointsRenderResource,
+} from '../resolvePointsRenderResource.js';
 
 /**
  * Framework-agnostic points loading/caching/resolution engine.
@@ -335,9 +338,7 @@ export class PointsDataEngine {
         // was made in. Pass that map; the core call ignores it for indexed
         // elements (which match on their code column instead).
         const featureCodeByName =
-          entry.featureCodeColumn === true
-            ? undefined
-            : featureCodeMapFromCatalog(entry.catalog);
+          entry.featureCodeColumn === true ? undefined : featureCodeMapFromCatalog(entry.catalog);
         //todo streamy version
         const result = await element.loadPointsMatchingFeatureCodes({
           featureCodes,
@@ -451,10 +452,10 @@ export class PointsDataEngine {
    * if no selection has ever settled. Deliberately NOT keyed to the current
    * selection: while a new selection's scan is in flight, this keeps returning the
    * previous selection's batch so the render shows those points instead of
-   * blanking for the (potentially multi-second) scan. 
-   * 
-   * The resource is cached on the matched batch and only changes identity when the 
-   * batch does, so panning doesn't reset the composite. 
+   * blanking for the (potentially multi-second) scan.
+   *
+   * The resource is cached on the matched batch and only changes identity when the
+   * batch does, so panning doesn't reset the composite.
    * Pair with `getMatchingLoadState` (exact-signature)
    * for the "is the current selection loaded" question.
    */
@@ -609,7 +610,10 @@ export class PointsDataEngine {
     const existing = this.entries.get(key);
     // (1) Existing data covers this cap without a reload (it is complete, or a
     // truncated batch the lowered cap doesn't outgrow).
-    if (existing?.data !== undefined && PointsDataEngine.batchAdequateForCap(existing.data, memoryCap)) {
+    if (
+      existing?.data !== undefined &&
+      PointsDataEngine.batchAdequateForCap(existing.data, memoryCap)
+    ) {
       // Cancel a now-unneeded in-flight load (e.g. the cap was raised then
       // lowered back to what we already hold).
       if (existing.loading) {

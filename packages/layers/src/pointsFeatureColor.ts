@@ -20,14 +20,14 @@
 export const PFC_GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
 export const PFC_LIGHTNESS = 0.72;
 export const PFC_CHROMA = 0.32;
-const TWO_PI = 6.28318530717958648;
+const TWO_PI = 6.283185307179586;
 
 function fract(x: number): number {
   return x - Math.floor(x);
 }
 
 function linearToSrgb(x: number): number {
-  return x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(Math.max(x, 0), 1 / 2.4) - 0.055;
+  return x <= 0.0031308 ? x * 12.92 : 1.055 * Math.max(x, 0) ** (1 / 2.4) - 0.055;
 }
 
 function channel255(x: number): number {
@@ -45,11 +45,7 @@ function oklabToRgb255(L: number, a: number, b: number): [number, number, number
   const r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
   const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
   const bl = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
-  return [
-    channel255(linearToSrgb(r)),
-    channel255(linearToSrgb(g)),
-    channel255(linearToSrgb(bl)),
-  ];
+  return [channel255(linearToSrgb(r)), channel255(linearToSrgb(g)), channel255(linearToSrgb(bl))];
 }
 
 /** Categorical colour for a feature code as `[r, g, b]` in 0–255. */

@@ -21,10 +21,7 @@ export function isPointTileBbox(value: unknown): value is PointTileBbox {
   );
 }
 
-export function intersectBounds(
-  query: SpatialBounds,
-  clip: SpatialBounds
-): SpatialBounds | null {
+export function intersectBounds(query: SpatialBounds, clip: SpatialBounds): SpatialBounds | null {
   const minX = Math.max(query.minX, clip.minX);
   const maxX = Math.min(query.maxX, clip.maxX);
   const minY = Math.max(query.minY, clip.minY);
@@ -44,9 +41,7 @@ export function boundsFromTileBbox(bbox: PointTileBbox): SpatialBounds {
   };
 }
 
-export function scatterBoundsFromTileBbox(
-  bbox: PointTileBbox
-): [number, number, number, number] {
+export function scatterBoundsFromTileBbox(bbox: PointTileBbox): [number, number, number, number] {
   return [bbox.left, bbox.top, bbox.right, bbox.bottom];
 }
 

@@ -136,7 +136,7 @@ function recordToRgbaMap(
   }
   const map = new Map<string, [number, number, number, number]>();
   for (const key in record) {
-    if (Object.prototype.hasOwnProperty.call(record, key)) {
+    if (Object.hasOwn(record, key)) {
       map.set(key, record[key]);
     }
   }

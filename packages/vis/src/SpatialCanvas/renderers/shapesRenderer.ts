@@ -9,14 +9,14 @@
 import type { Matrix4 } from '@math.gl/core';
 import type { ShapesElement, ShapesRenderData, SpatialFeatureTooltipData } from '@spatialdata/core';
 import {
+  createShapesDeckLayer,
   DEFAULT_SHAPE_STROKE_WIDTH,
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
-  type ShapeStrokeWidthUnits,
   type ShapeFeatureStateRuntime,
+  type ShapeStrokeWidthUnits,
   type ShapesPrebuiltData,
-  createShapesDeckLayer,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 

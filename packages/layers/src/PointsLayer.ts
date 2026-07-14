@@ -1,19 +1,21 @@
-import type { Matrix4 } from '@math.gl/core';
 import type { UpdateParameters } from '@deck.gl/core';
-import { filterColumnarByFeatureCodesInWorker } from '@spatialdata/core';
-import { CompositeLayer } from 'deck.gl';
+import type { Matrix4 } from '@math.gl/core';
+import { applyRenderCapToColumnar, filterColumnarByFeatureCodesInWorker } from '@spatialdata/core';
 import type { Layer, LayersList } from 'deck.gl';
-import type { PointsRenderResource } from './pointsLoader.js';
-import type { TileDebugStore } from './pointsTiledDebugHooks.js';
-import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
-import { filterBatchSignature, featureFilterAwaitingRowCodes, hasPreloadedRowFeatureCodes } from './pointsFeatureCodes.js';
+import { CompositeLayer } from 'deck.gl';
+import {
+  featureFilterAwaitingRowCodes,
+  filterBatchSignature,
+  hasPreloadedRowFeatureCodes,
+} from './pointsFeatureCodes.js';
+import type { ColumnarNdarrayPointsBatch, PointsRenderResource } from './pointsLoader.js';
 import { resolvePointsRenderStrategy } from './pointsRenderStrategies.js';
-import { applyRenderCapToColumnar } from '@spatialdata/core';
 import {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
   DEFAULT_POINT_RADIUS_MIN_PIXELS,
   DEFAULT_POINT_SIZE,
 } from './pointsScatterLayer.js';
+import type { TileDebugStore } from './pointsTiledDebugHooks.js';
 
 export interface PointsLayerProps {
   id: string;
@@ -147,9 +149,7 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     if (
       preloadedBatch &&
       canFilter &&
-      (rowCodesBecameReady ||
-        signature !== state.filteredBatchSignature ||
-        !state.filteredBatch)
+      (rowCodesBecameReady || signature !== state.filteredBatchSignature || !state.filteredBatch)
     ) {
       void this.ensureFilteredBatch(preloadedBatch, signature);
     }
@@ -218,5 +218,5 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
   }
 }
 
-export { filterPreloadedBatch };
 export { featureCodesSignature, filterBatchSignature } from './pointsFeatureCodes.js';
+export { filterPreloadedBatch };

@@ -6,8 +6,8 @@
  * channel instead of showing the raw integer values as grayscale.
  */
 
-import { LabelsLayer } from '@spatialdata/layers';
 import type { Matrix4 } from '@math.gl/core';
+import { LabelsLayer } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 
 export interface LabelsLayerRenderConfig {

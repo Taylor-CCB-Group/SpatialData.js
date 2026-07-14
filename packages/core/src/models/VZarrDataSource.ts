@@ -1,6 +1,7 @@
 // import { zarrOpenRoot } from '@vitessce/zarr-utils';
-import { open as zarrOpen, root as zarrRoot } from 'zarrita';
+
 import type { Group, Location, Readable } from 'zarrita';
+import { open as zarrOpen, root as zarrRoot } from 'zarrita';
 import type { DataSourceParams } from '../Vutils';
 
 /**
@@ -12,13 +13,7 @@ export default class ZarrDataSource {
   /**
    * @param params The parameters object.
    */
-  constructor({
-    url,
-    requestInit,
-    refSpecUrl,
-    store,
-    fileType,
-  }: DataSourceParams & { refSpecUrl?: string }) {
+  constructor({ url, store }: DataSourceParams & { refSpecUrl?: string }) {
     console.info(
       'Using a Zarr-based data source. 403 and 404 HTTP responses for Zarr metadata files (.zattrs, .zarray, .zgroup, zarr.json) are to be expected and do not necessarily indicate errors.'
     );

@@ -8,8 +8,8 @@
 import { getImageSize } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
 import {
-  COLOR_PALLETE,
   buildDefaultSelection,
+  COLOR_PALLETE,
   clampVivSelectionsToAxes,
   getMultiSelectionStats,
   getVivSelectionAxisSizes,
@@ -19,15 +19,6 @@ import {
 } from '@spatialdata/avivatorish';
 import {
   type AxisAlignedBounds,
-  type ImageElement,
-  type LabelsElement,
-  type LabelsTooltipMetadata,
-  type PointsElement,
-  type ShapesElement,
-  type ShapesRenderData,
-  type ShapesTooltipMetadata,
-  type SpatialData,
-  type SpatialFeatureTooltipData,
   attachTooltipElementContext,
   boundsFromCircles,
   boundsFromImagePixelExtents,
@@ -35,36 +26,44 @@ import {
   boundsFromPolygons,
   getPhysicalSizeScalingMatrixFromMeta,
   getTooltipSignature,
+  type ImageElement,
+  type LabelsElement,
+  type LabelsTooltipMetadata,
   loadAssociatedTableFeatureRows,
   loadLabelsTooltipMetadata,
   loadShapesTooltipMetadata,
+  type PointsElement,
   resolvePointsMemoryCap,
   resolveTooltipItems,
+  type ShapesElement,
+  type ShapesRenderData,
+  type ShapesTooltipMetadata,
+  type SpatialData,
+  type SpatialFeatureTooltipData,
   unionBoundsList,
 } from '@spatialdata/core';
 import {
+  buildShapeFeatureStateRuntime,
+  buildShapeFillColorByFeatureId,
+  buildShapesPrebuiltData,
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
   type PointsRenderResource,
+  resolveShapeFeatureFromPick,
+  resolveShapeTooltipFromPickInfo,
+  resolveShapeTooltipRowIndex,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
   type ShapesPrebuiltData,
-  buildShapeFeatureStateRuntime,
-  buildShapeFillColorByFeatureId,
-  buildShapesPrebuiltData,
-  resolveShapeFeatureFromPick,
-  resolveShapeTooltipFromPickInfo,
-  resolveShapeTooltipRowIndex,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useVivLoaderRegistry } from './VivLoaderRegistry';
 import {
-  type VivLoaderMetadata,
   applyPerChannelFallbackWithoutOmero,
+  type VivLoaderMetadata,
 } from './imageLoaderChannelDefaults';
 import { createImageLoader } from './renderers/imageRenderer';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
@@ -76,9 +75,10 @@ import type {
   LayerConfig,
   ShapesLayerConfig,
 } from './types';
+import { useVivLoaderRegistry } from './VivLoaderRegistry';
 import {
-  type VivImagePassthroughOptions,
   mergeVivImagePassthroughProps,
+  type VivImagePassthroughOptions,
 } from './vivImagePassthrough';
 
 export interface ImageLoaderData {
@@ -268,7 +268,7 @@ function getShapeFillColorAlpha(config: ShapesLayerConfig): number {
 }
 
 function getShapeFillColorSignature(config: LayerConfig | undefined): string {
-  if (!config || config.type !== 'shapes' || !config.fillColorByColumn?.columnName) {
+  if (config?.type !== 'shapes' || !config.fillColorByColumn?.columnName) {
     return '';
   }
   const mode: ShapeFillColorMode = config.fillColorByColumn.mode;
@@ -476,7 +476,7 @@ export function useLayerData(
   layers: Record<string, LayerConfig>,
   layerOrder: string[],
   availableElements: ElementsByType,
-  coordinateSystem: string | null,
+  _coordinateSystem: string | null,
   spatialData?: SpatialData,
   vivPassthrough?: VivImagePassthroughOptions
 ): UseLayerDataResult {
@@ -1137,30 +1137,33 @@ export function useLayerData(
     pointsEngine,
   ]);
 
-  const reloadElement = useCallback((type: string, key: string) => {
-    const loaded = loadedDataRef.current;
-    if (type === 'shapes') {
-      loaded.shapes.delete(key);
-      loaded.worldBounds.delete(`shapes:${key}`);
-      // Clear prebuilt data for every layer that maps to this element key.
-      for (const [layerId, config] of Object.entries(layersRef.current)) {
-        if (config.type === 'shapes' && config.elementKey === key) {
-          loaded.shapePrebuiltData.delete(layerId);
-          loaded.shapeFillColorData.delete(layerId);
+  const reloadElement = useCallback(
+    (type: string, key: string) => {
+      const loaded = loadedDataRef.current;
+      if (type === 'shapes') {
+        loaded.shapes.delete(key);
+        loaded.worldBounds.delete(`shapes:${key}`);
+        // Clear prebuilt data for every layer that maps to this element key.
+        for (const [layerId, config] of Object.entries(layersRef.current)) {
+          if (config.type === 'shapes' && config.elementKey === key) {
+            loaded.shapePrebuiltData.delete(layerId);
+            loaded.shapeFillColorData.delete(layerId);
+          }
         }
+      } else if (type === 'points') {
+        pointsEngine.evict(key);
+        loaded.worldBounds.delete(`points:${key}`);
+      } else if (type === 'image') {
+        loaded.images.delete(key);
+        loaded.worldBounds.delete(`image:${key}`);
+      } else if (type === 'labels') {
+        loaded.labels.delete(key);
+        loaded.worldBounds.delete(`labels:${key}`);
       }
-    } else if (type === 'points') {
-      pointsEngine.evict(key);
-      loaded.worldBounds.delete(`points:${key}`);
-    } else if (type === 'image') {
-      loaded.images.delete(key);
-      loaded.worldBounds.delete(`image:${key}`);
-    } else if (type === 'labels') {
-      loaded.labels.delete(key);
-      loaded.worldBounds.delete(`labels:${key}`);
-    }
-    // The useEffect will pick up the missing data and reload
-  }, [pointsEngine]);
+      // The useEffect will pick up the missing data and reload
+    },
+    [pointsEngine]
+  );
 
   const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
     const signature = serializeRasterSelections(selections);
@@ -1173,23 +1176,26 @@ export function useLayerData(
     return value;
   }, []);
 
-  const hasRenderableLayerData = useCallback((layerId: string): boolean => {
-    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (!elem) return false;
-    if (elem.type === 'shapes') {
-      return loadedDataRef.current.shapes.has(elem.key);
-    }
-    if (elem.type === 'points') {
-      return pointsEngine.hasData(elem.key);
-    }
-    if (elem.type === 'image') {
-      return loadedDataRef.current.images.has(elem.key);
-    }
-    if (elem.type === 'labels') {
-      return loadedDataRef.current.labels.has(elem.key);
-    }
-    return false;
-  }, [pointsEngine]);
+  const hasRenderableLayerData = useCallback(
+    (layerId: string): boolean => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (!elem) return false;
+      if (elem.type === 'shapes') {
+        return loadedDataRef.current.shapes.has(elem.key);
+      }
+      if (elem.type === 'points') {
+        return pointsEngine.hasData(elem.key);
+      }
+      if (elem.type === 'image') {
+        return loadedDataRef.current.images.has(elem.key);
+      }
+      if (elem.type === 'labels') {
+        return loadedDataRef.current.labels.has(elem.key);
+      }
+      return false;
+    },
+    [pointsEngine]
+  );
 
   // --- Points feature state (filter panel) -----------------------------------
   // The panel no longer reads point state through prop-drilled getters. Instead
@@ -1197,14 +1203,11 @@ export function useLayerData(
   // + the `usePoints*` hooks), so its reactivity is self-contained and does not
   // depend on this hook's re-render or a `'use no memo'` escape hatch. All this
   // hook exposes is the engine and the element-key resolver the hooks need.
-  const resolvePointsTarget = useCallback(
-    (layerId: string): PointsLoadTarget | undefined => {
-      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'points') return undefined;
-      return { key: elem.key, layerId, element: elem.element as PointsElement };
-    },
-    []
-  );
+  const resolvePointsTarget = useCallback((layerId: string): PointsLoadTarget | undefined => {
+    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+    if (elem?.type !== 'points') return undefined;
+    return { key: elem.key, layerId, element: elem.element as PointsElement };
+  }, []);
 
   const getWorldBoundsForLayer = useCallback(
     (layerId: string): AxisAlignedBounds | null => {
@@ -1301,223 +1304,226 @@ export function useLayerData(
     return unionBoundsList(list);
   }, [layerOrder, layers, getWorldBoundsForLayer]);
 
-  const getLayers = useCallback((options?: { pickingEnabled?: boolean }): Layer[] => {
-    // When the camera is moving we disable shape picking (autoHighlight + hover)
-    // to avoid deck re-rendering the full shape geometry into the picking buffer
-    // on every pointer move. Defaults to enabled.
-    const pickingEnabled = options?.pickingEnabled ?? true;
-    const deckLayers: Layer[] = [];
-    const loaded = loadedDataRef.current;
+  const getLayers = useCallback(
+    (options?: { pickingEnabled?: boolean }): Layer[] => {
+      // When the camera is moving we disable shape picking (autoHighlight + hover)
+      // to avoid deck re-rendering the full shape geometry into the picking buffer
+      // on every pointer move. Defaults to enabled.
+      const pickingEnabled = options?.pickingEnabled ?? true;
+      const deckLayers: Layer[] = [];
+      const loaded = loadedDataRef.current;
 
-    for (const layerId of layerOrder) {
-      const config = layers[layerId];
-      if (!config?.visible) continue;
+      for (const layerId of layerOrder) {
+        const config = layers[layerId];
+        if (!config?.visible) continue;
 
-      const elem = resolveLayerElement(layerId, config, elementMap.current);
-      if (!elem) continue;
+        const elem = resolveLayerElement(layerId, config, elementMap.current);
+        if (!elem) continue;
 
-      if (config.type === 'shapes') {
-        const shapeData = loaded.shapes.get(elem.key);
-        if (shapeData) {
-          const layer = renderShapesLayer({
-            element: elem.element as ShapesElement,
-            id: layerId,
-            modelMatrix: elem.transform,
-            opacity: config.opacity,
-            visible: config.visible,
-            fillColor: config.fillColor,
-            strokeColor: config.strokeColor,
-            strokeWidth: config.strokeWidth,
-            strokeWidthUnits: config.strokeWidthUnits,
-            strokeWidthMinPixels: config.strokeWidthMinPixels,
-            strokeWidthMaxPixels: config.strokeWidthMaxPixels,
-            featureStateRuntime: getStableShapeFeatureStateRuntime(
-              layerId,
-              config,
-              loaded.shapeFillColorData.get(layerId),
-              stableShapeFeatureStateRef.current
-            ),
-            renderData: shapeData.renderData,
-            prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
-            pickingEnabled,
-          });
-          if (layer) deckLayers.push(layer);
-        }
-      } else if (config.type === 'points') {
-        const element = elem.element as PointsElement;
-        const featureCodes = config.featureCodes;
-        const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
-
-        // Feature-index render scan: when a selection is active, load the WHOLE
-        // dataset's matching points (footer stats skip the row groups a selected
-        // feature can't live in), so features outside the resident preload window
-        // still render. The scan is idempotent per selection; kicking it here is a
-        // no-op once resident/in-flight. On settle it notifies → re-render → the
-        // matched resource appears below. `getMatchingResource` returns the LAST
-        // completed matched batch, so a selection change keeps showing the prior
-        // selection's points until the new scan settles (no blank mid-scan).
-        //
-        // Gated on scan capability: an authoritative code column (footer stats
-        // skip row groups) OR a dictionary-only element with a catalog loaded —
-        // there the scan reads the whole file and matches each row's feature_name
-        // against the catalog's code space, so a selected gene's points render
-        // even when they fall outside the resident preload window. Before any
-        // catalog loads (no shared code space) there is nothing to match names
-        // against, so it falls through to resident in-memory filtering.
-        const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
-        let matchingResource: PointsRenderResource | null = null;
-        let partialResource: PointsRenderResource | null = null;
-        if (selectionActive && canFeatureScan) {
-          void pointsEngine.ensureMatchingFeaturesLoaded(
-            { key: elem.key, layerId, element },
-            featureCodes,
-            resolvePointsMemoryCap(config.pointsMemoryCap)
-          );
-          matchingResource = pointsEngine.getMatchingResource(element, elem.key);
-          // The in-flight scan's growing buffer (all matched chunks so far), drawn
-          // as an extra overlay sub-layer below so the base (resident preview /
-          // prior matched batch) stays visible while points progressively fill in.
-          partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
-        }
-
-        if (matchingResource) {
-          // The matched batch covers the selection (or a superset of it, when the
-          // selection just shrank). Pass the batch's per-row codes + the current
-          // selection so the layer filters IN MEMORY down to the selected codes —
-          // this is what makes removing a feature a free filter instead of a
-          // re-scan. When the selection equals what was scanned, skip the filter
-          // (render the batch whole); the batch's own codes still drive colour.
-          const matchedRowCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
-          const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
-          const filterMatched = featureCodes !== undefined && featureCodes.length < coveredSize;
-          deckLayers.push(
-            new PointsLayer({
+        if (config.type === 'shapes') {
+          const shapeData = loaded.shapes.get(elem.key);
+          if (shapeData) {
+            const layer = renderShapesLayer({
+              element: elem.element as ShapesElement,
               id: layerId,
-              resource: matchingResource,
               modelMatrix: elem.transform,
               opacity: config.opacity,
               visible: config.visible,
-              pointSize: config.pointSize ?? 1,
-              ...(filterMatched ? { featureCodes } : {}),
-              ...(matchedRowCodes ? { preloadedFeatureCodes: matchedRowCodes } : {}),
-              ...(config.color ? { color: config.color } : {}),
-              ...(config.colorByFeature ? { colorByFeature: true } : {}),
-            })
-          );
-        } else {
-          // Resident batch: the default view (no selection), and an instant preview
-          // of the resident subset while the feature-index scan is still running.
-          // The engine returns a STABLE render resource (memoized by signature), so
-          // re-running getLayers every pan/zoom frame reuses the same loader
-          // identity and the composite does not reset its batch (no flashing).
-          const resource = pointsEngine.getResource(element, elem.key);
-          if (resource) {
-            const filterActive = featureCodes !== undefined;
-            // Row codes are needed to filter by feature AND to colour by feature.
-            // Colour-by-feature applies even with no filter ("all features"), so
-            // load/pass the codes whenever either is on — not just when filtering.
-            const needsRowCodes = filterActive || config.colorByFeature === true;
-            if (needsRowCodes && !pointsEngine.hasRowFeatureCodes(elem.key)) {
-              void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
-            }
-            const preloadedFeatureCodes = needsRowCodes
-              ? pointsEngine.getRowFeatureCodes(elem.key)
-              : undefined;
+              fillColor: config.fillColor,
+              strokeColor: config.strokeColor,
+              strokeWidth: config.strokeWidth,
+              strokeWidthUnits: config.strokeWidthUnits,
+              strokeWidthMinPixels: config.strokeWidthMinPixels,
+              strokeWidthMaxPixels: config.strokeWidthMaxPixels,
+              featureStateRuntime: getStableShapeFeatureStateRuntime(
+                layerId,
+                config,
+                loaded.shapeFillColorData.get(layerId),
+                stableShapeFeatureStateRef.current
+              ),
+              renderData: shapeData.renderData,
+              prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
+              pickingEnabled,
+            });
+            if (layer) deckLayers.push(layer);
+          }
+        } else if (config.type === 'points') {
+          const element = elem.element as PointsElement;
+          const featureCodes = config.featureCodes;
+          const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
+
+          // Feature-index render scan: when a selection is active, load the WHOLE
+          // dataset's matching points (footer stats skip the row groups a selected
+          // feature can't live in), so features outside the resident preload window
+          // still render. The scan is idempotent per selection; kicking it here is a
+          // no-op once resident/in-flight. On settle it notifies → re-render → the
+          // matched resource appears below. `getMatchingResource` returns the LAST
+          // completed matched batch, so a selection change keeps showing the prior
+          // selection's points until the new scan settles (no blank mid-scan).
+          //
+          // Gated on scan capability: an authoritative code column (footer stats
+          // skip row groups) OR a dictionary-only element with a catalog loaded —
+          // there the scan reads the whole file and matches each row's feature_name
+          // against the catalog's code space, so a selected gene's points render
+          // even when they fall outside the resident preload window. Before any
+          // catalog loads (no shared code space) there is nothing to match names
+          // against, so it falls through to resident in-memory filtering.
+          const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
+          let matchingResource: PointsRenderResource | null = null;
+          let partialResource: PointsRenderResource | null = null;
+          if (selectionActive && canFeatureScan) {
+            void pointsEngine.ensureMatchingFeaturesLoaded(
+              { key: elem.key, layerId, element },
+              featureCodes,
+              resolvePointsMemoryCap(config.pointsMemoryCap)
+            );
+            matchingResource = pointsEngine.getMatchingResource(element, elem.key);
+            // The in-flight scan's growing buffer (all matched chunks so far), drawn
+            // as an extra overlay sub-layer below so the base (resident preview /
+            // prior matched batch) stays visible while points progressively fill in.
+            partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
+          }
+
+          if (matchingResource) {
+            // The matched batch covers the selection (or a superset of it, when the
+            // selection just shrank). Pass the batch's per-row codes + the current
+            // selection so the layer filters IN MEMORY down to the selected codes —
+            // this is what makes removing a feature a free filter instead of a
+            // re-scan. When the selection equals what was scanned, skip the filter
+            // (render the batch whole); the batch's own codes still drive colour.
+            const matchedRowCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
+            const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
+            const filterMatched = featureCodes !== undefined && featureCodes.length < coveredSize;
             deckLayers.push(
               new PointsLayer({
                 id: layerId,
-                resource,
+                resource: matchingResource,
                 modelMatrix: elem.transform,
                 opacity: config.opacity,
                 visible: config.visible,
-                // Legacy renderPointsLayer defaulted radius to 1px; preserve that
-                // for parity (the composite's own default is smaller).
                 pointSize: config.pointSize ?? 1,
+                ...(filterMatched ? { featureCodes } : {}),
+                ...(matchedRowCodes ? { preloadedFeatureCodes: matchedRowCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
+              })
+            );
+          } else {
+            // Resident batch: the default view (no selection), and an instant preview
+            // of the resident subset while the feature-index scan is still running.
+            // The engine returns a STABLE render resource (memoized by signature), so
+            // re-running getLayers every pan/zoom frame reuses the same loader
+            // identity and the composite does not reset its batch (no flashing).
+            const resource = pointsEngine.getResource(element, elem.key);
+            if (resource) {
+              const filterActive = featureCodes !== undefined;
+              // Row codes are needed to filter by feature AND to colour by feature.
+              // Colour-by-feature applies even with no filter ("all features"), so
+              // load/pass the codes whenever either is on — not just when filtering.
+              const needsRowCodes = filterActive || config.colorByFeature === true;
+              if (needsRowCodes && !pointsEngine.hasRowFeatureCodes(elem.key)) {
+                void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
+              }
+              const preloadedFeatureCodes = needsRowCodes
+                ? pointsEngine.getRowFeatureCodes(elem.key)
+                : undefined;
+              deckLayers.push(
+                new PointsLayer({
+                  id: layerId,
+                  resource,
+                  modelMatrix: elem.transform,
+                  opacity: config.opacity,
+                  visible: config.visible,
+                  // Legacy renderPointsLayer defaulted radius to 1px; preserve that
+                  // for parity (the composite's own default is smaller).
+                  pointSize: config.pointSize ?? 1,
+                  ...(config.color ? { color: config.color } : {}),
+                  ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                  ...(featureCodes ? { featureCodes } : {}),
+                  ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
+                })
+              );
+            }
+          }
+
+          // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on
+          // top of whichever base layer was pushed above, so the base doesn't blank
+          // while points progressively fill in. Distinct id so deck keeps them as two
+          // layers. Filter it to the CURRENT selection with the partial's own per-row
+          // codes — mirroring the settled matched layer — so a feature deselected
+          // mid-scan stops rendering immediately instead of lingering until settle.
+          if (partialResource) {
+            const partialRowCodes = pointsEngine.getMatchingPartialRowFeatureCodes(elem.key);
+            deckLayers.push(
+              new PointsLayer({
+                id: `${layerId}__partial`,
+                resource: partialResource,
+                modelMatrix: elem.transform,
+                opacity: config.opacity,
+                visible: config.visible,
+                pointSize: config.pointSize ?? 1,
                 ...(featureCodes ? { featureCodes } : {}),
-                ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
+                ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
+                ...(config.color ? { color: config.color } : {}),
+                ...(config.colorByFeature ? { colorByFeature: true } : {}),
               })
             );
           }
-        }
+        } else if (config.type === 'labels') {
+          const labelsData = loaded.labels.get(elem.key);
+          if (labelsData) {
+            const ch = config.channels;
+            const rawSelections =
+              ch?.selections && ch.selections.length > 0 ? ch.selections : labelsData.selections;
+            const selections =
+              labelsData.selectionAxisSizes !== undefined
+                ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
+                : rawSelections;
+            const stableSelections = getStableSelections(`labels:${layerId}`, selections);
 
-        // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on
-        // top of whichever base layer was pushed above, so the base doesn't blank
-        // while points progressively fill in. Distinct id so deck keeps them as two
-        // layers. Filter it to the CURRENT selection with the partial's own per-row
-        // codes — mirroring the settled matched layer — so a feature deselected
-        // mid-scan stops rendering immediately instead of lingering until settle.
-        if (partialResource) {
-          const partialRowCodes = pointsEngine.getMatchingPartialRowFeatureCodes(elem.key);
-          deckLayers.push(
-            new PointsLayer({
-              id: `${layerId}__partial`,
-              resource: partialResource,
+            const layer = renderLabelsLayer({
+              id: layerId,
+              loader: labelsData.loader,
               modelMatrix: elem.transform,
               opacity: config.opacity,
               visible: config.visible,
-              pointSize: config.pointSize ?? 1,
-              ...(featureCodes ? { featureCodes } : {}),
-              ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
-              ...(config.color ? { color: config.color } : {}),
-              ...(config.colorByFeature ? { colorByFeature: true } : {}),
-            })
-          );
+              channelColors: ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
+              channelsVisible:
+                ch?.channelsVisible && ch.channelsVisible.length > 0
+                  ? ch.channelsVisible
+                  : labelsData.channelsVisible,
+              channelOpacities:
+                ch?.channelOpacities && ch.channelOpacities.length > 0
+                  ? ch.channelOpacities
+                  : labelsData.channelOpacities,
+              channelOutlineOpacities:
+                ch?.channelOutlineOpacities && ch.channelOutlineOpacities.length > 0
+                  ? ch.channelOutlineOpacities
+                  : labelsData.channelOutlineOpacities,
+              channelsFilled:
+                ch?.channelsFilled && ch.channelsFilled.length > 0
+                  ? ch.channelsFilled
+                  : labelsData.channelsFilled,
+              channelStrokeWidths:
+                ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
+                  ? ch.channelStrokeWidths
+                  : labelsData.channelStrokeWidths,
+              selections: stableSelections,
+            });
+            if (layer) deckLayers.push(layer);
+          }
         }
-      } else if (config.type === 'labels') {
-        const labelsData = loaded.labels.get(elem.key);
-        if (labelsData) {
-          const ch = config.channels;
-          const rawSelections =
-            ch?.selections && ch.selections.length > 0 ? ch.selections : labelsData.selections;
-          const selections =
-            labelsData.selectionAxisSizes !== undefined
-              ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
-              : rawSelections;
-          const stableSelections = getStableSelections(`labels:${layerId}`, selections);
-
-          const layer = renderLabelsLayer({
-            id: layerId,
-            loader: labelsData.loader,
-            modelMatrix: elem.transform,
-            opacity: config.opacity,
-            visible: config.visible,
-            channelColors: ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
-            channelsVisible:
-              ch?.channelsVisible && ch.channelsVisible.length > 0
-                ? ch.channelsVisible
-                : labelsData.channelsVisible,
-            channelOpacities:
-              ch?.channelOpacities && ch.channelOpacities.length > 0
-                ? ch.channelOpacities
-                : labelsData.channelOpacities,
-            channelOutlineOpacities:
-              ch?.channelOutlineOpacities && ch.channelOutlineOpacities.length > 0
-                ? ch.channelOutlineOpacities
-                : labelsData.channelOutlineOpacities,
-            channelsFilled:
-              ch?.channelsFilled && ch.channelsFilled.length > 0
-                ? ch.channelsFilled
-                : labelsData.channelsFilled,
-            channelStrokeWidths:
-              ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
-                ? ch.channelStrokeWidths
-                : labelsData.channelStrokeWidths,
-            selections: stableSelections,
-          });
-          if (layer) deckLayers.push(layer);
-        }
+        // Image layers are handled separately via getVivLayerProps()
       }
-      // Image layers are handled separately via getVivLayerProps()
-    }
 
-    return deckLayers;
-  }, [layers, layerOrder, getStableSelections, pointsEngine]);
+      return deckLayers;
+    },
+    [layers, layerOrder, getStableSelections, pointsEngine]
+  );
 
   const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (!elem || elem.type !== 'image') return undefined;
+    if (elem?.type !== 'image') return undefined;
     return loadedDataRef.current.images.get(elem.key);
   }, []);
 
@@ -1530,7 +1536,7 @@ export function useLayerData(
 
   const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
     const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (!elem || elem.type !== 'labels') return undefined;
+    if (elem?.type !== 'labels') return undefined;
     return loadedDataRef.current.labels.get(elem.key);
   }, []);
 
@@ -1646,7 +1652,7 @@ export function useLayerData(
   const getShapePickEvent = useCallback(
     (layerId: string, pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>) => {
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-      if (!elem || elem.type !== 'shapes') {
+      if (elem?.type !== 'shapes') {
         return undefined;
       }
       const feature = resolveShapeFeatureFromPick(
@@ -1739,7 +1745,7 @@ export function useLayerData(
       if (!config?.visible || config.type !== 'image') continue;
 
       const elem = resolveLayerElement(layerId, config, elementMap.current);
-      if (!elem || elem.type !== 'image') continue;
+      if (elem?.type !== 'image') continue;
 
       const imageData = loaded.images.get(elem.key);
       if (!imageData) continue; // Skip if loader not ready yet
