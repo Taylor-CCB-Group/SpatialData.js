@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   decodeIntStat,
-  parseParquetFileMetaData,
   ParquetPhysicalType,
+  parseParquetFileMetaData,
 } from '../src/parquetFooterStats.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

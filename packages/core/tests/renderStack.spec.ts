@@ -7,7 +7,7 @@ import {
   renderStackHostEntrySchema,
   renderStackSchema,
   renderStackSpatialEntrySchema,
-} from '../src/renderStack';
+} from '../src/renderStack.js';
 
 describe('renderStackSchema', () => {
   it('parses current render stacks', () => {
@@ -150,7 +150,11 @@ describe('render-stack entry schemas', () => {
       ],
     });
 
-    expect(getRenderStackEntryIds(stack)).toEqual(['deck:scatter', 'labels-cells', 'deck:selection']);
+    expect(getRenderStackEntryIds(stack)).toEqual([
+      'deck:scatter',
+      'labels-cells',
+      'deck:selection',
+    ]);
     expect(getRenderStackHostLayerIds(stack)).toEqual(['deck:scatter', 'deck:selection']);
   });
 });

@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-
+import type { PointsLayer } from '../src/PointsLayer.js';
 import { resolvePointsRenderStrategy } from '../src/pointsRenderStrategies.js';
 import { preloadedScatterStrategy } from '../src/preloadedScatterStrategy.js';
-import type { PointsLayer } from '../src/PointsLayer.js';
 
 describe('resolvePointsRenderStrategy', () => {
   it('selects morton and preloaded strategies by encoding kind', () => {

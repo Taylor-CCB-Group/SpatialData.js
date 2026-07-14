@@ -1,10 +1,10 @@
 import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_ZOOM_BACK_OFF,
-  boundsFromPoints,
   boundsFromCircles,
+  boundsFromPoints,
   boundsFromPolygons,
+  DEFAULT_ZOOM_BACK_OFF,
   unionBounds,
   unionBoundsList,
   viewStateFromBounds,

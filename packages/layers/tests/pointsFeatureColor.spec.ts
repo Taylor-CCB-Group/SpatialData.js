@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { featureCodeToRgb, featureCodeToCssColor } from '../src/pointsFeatureColor.js';
+import { featureCodeToCssColor, featureCodeToRgb } from '../src/pointsFeatureColor.js';
 
 describe('featureCodeToRgb', () => {
   it('returns grey for the negative "no colour" sentinel', () => {

@@ -1,11 +1,11 @@
+import type { SpatialLayerProps } from '@spatialdata/core';
+import { spatialLayerPropsSchema } from '@spatialdata/core';
 import { CompositeLayer, type Layer, type LayersList } from 'deck.gl';
 import {
   createShapesDeckLayer,
   type ShapesLayerPickEvent,
   type ShapesRenderDataLike,
 } from './shapesLayer';
-import type { SpatialLayerProps } from './spatialLayerProps';
-import { spatialLayerPropsSchema } from './spatialLayerProps';
 
 export type { SpatialLayerProps };
 

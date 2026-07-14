@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ATTRS_KEY } from 'zarrextra';
 import type { ConsolidatedStore } from 'zarrextra';
+import { ATTRS_KEY } from 'zarrextra';
 import type * as zarr from 'zarrita';
 import { SpatialData } from '../src/store/index.js';
 
@@ -40,10 +40,7 @@ describe('SpatialData bad-file handling', () => {
 
       expect(sdata.images).toEqual({});
       expect(onBadFiles).toHaveBeenCalledTimes(1);
-      expect(onBadFiles).toHaveBeenCalledWith(
-        'images/broken_image',
-        expect.any(Error)
-      );
+      expect(onBadFiles).toHaveBeenCalledWith('images/broken_image', expect.any(Error));
       expect(consoleErrorSpy).not.toHaveBeenCalled();
     } finally {
       consoleErrorSpy.mockRestore();

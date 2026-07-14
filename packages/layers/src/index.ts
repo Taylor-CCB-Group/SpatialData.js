@@ -1,4 +1,35 @@
 // Framework-agnostic points loading/caching engine (LayerDataEngine step 1b).
+
+// Compatibility shim (ADR 0004 §5). The Render Stack and SpatialLayerProps schemas
+// are canonical in `@spatialdata/core`; these re-exports keep their existing import
+// paths so no consumer — MDV especially — has to move. Removing the shim is a
+// separate, deliberate deprecation, and is not part of the resolver work.
+// Guarded by tests/renderStackShim.spec.ts, which asserts re-export by identity.
+export type {
+  RenderStack,
+  RenderStackEntry,
+  RenderStackGroupEntry,
+  RenderStackHostEntry,
+  RenderStackSpatialElementType,
+  RenderStackSpatialEntry,
+  SpatialLayerProps,
+  SpatialShapesSublayer,
+} from '@spatialdata/core';
+export {
+  getRenderStackEntryIds,
+  getRenderStackHostLayerIds,
+  migrateSpatialLayerProps,
+  RENDER_STACK_SCHEMA_VERSION,
+  renderStackEntrySchema,
+  renderStackGroupEntrySchema,
+  renderStackHostEntrySchema,
+  renderStackSchema,
+  renderStackSpatialElementTypeSchema,
+  renderStackSpatialEntrySchema,
+  SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
+  spatialLayerPropsSchema,
+  spatialSublayerSchema,
+} from '@spatialdata/core';
 export {
   PointsDataEngine,
   type PointsDataEngineCallbacks,
@@ -65,25 +96,6 @@ export {
   type TiledPointsDebugState,
 } from './pointsTiledDebugHooks.js';
 export type { PointsTileHandle, PointsTileLoadResult } from './pointsTileLoadCallbacks.js';
-export type {
-  RenderStack,
-  RenderStackEntry,
-  RenderStackGroupEntry,
-  RenderStackHostEntry,
-  RenderStackSpatialElementType,
-  RenderStackSpatialEntry,
-} from './renderStack';
-export {
-  getRenderStackEntryIds,
-  getRenderStackHostLayerIds,
-  RENDER_STACK_SCHEMA_VERSION,
-  renderStackEntrySchema,
-  renderStackGroupEntrySchema,
-  renderStackHostEntrySchema,
-  renderStackSchema,
-  renderStackSpatialElementTypeSchema,
-  renderStackSpatialEntrySchema,
-} from './renderStack';
 export * from './resolvePointsRenderResource.js';
 export type { SpatialLayerRuntimeProps } from './SpatialLayer';
 export { SpatialLayer } from './SpatialLayer';
@@ -127,10 +139,3 @@ export {
   type ShapeTooltipRuntimeData,
   type SpatialShapesRuntimeSublayer,
 } from './shapesLayer';
-export type { SpatialLayerProps, SpatialShapesSublayer } from './spatialLayerProps';
-export {
-  migrateSpatialLayerProps,
-  SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
-  spatialLayerPropsSchema,
-  spatialSublayerSchema,
-} from './spatialLayerProps';

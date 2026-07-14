@@ -1,12 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import { PointsDataEngine } from '../src/engine/PointsDataEngine.js';
 import {
   DEFAULT_POINTS_MEMORY_CAP,
   type PointsElement,
   type PointsFeatureCatalog,
   type PointsLoadResult,
 } from '@spatialdata/core';
+import { describe, expect, it, vi } from 'vitest';
+import { PointsDataEngine } from '../src/engine/PointsDataEngine.js';
 
 function makeBatch(): PointsLoadResult {
   return {
@@ -424,10 +423,7 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     const previewCatalog = sampleCatalog;
     const fullCatalog = {
       ...sampleCatalog,
-      entries: [
-        ...sampleCatalog.entries,
-        { code: 99, name: 'LATE_PART_GENE', count: 7 },
-      ],
+      entries: [...sampleCatalog.entries, { code: 99, name: 'LATE_PART_GENE', count: 7 }],
     };
     const loadPoints = vi.fn(async () => ({
       ...makeBatch(),
@@ -575,7 +571,11 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     expect(engine.isFeatureCatalogLoading('pts:inflight')).toBe(true);
     expect(engine.getFeatureCatalog('pts:inflight')).toBeUndefined();
 
-    resolveLoad({ ...makeBatch(), featureCatalog: sampleCatalog, featureCodes: new Int32Array([0]) });
+    resolveLoad({
+      ...makeBatch(),
+      featureCatalog: sampleCatalog,
+      featureCodes: new Int32Array([0]),
+    });
     await p;
     expect(engine.isFeatureCatalogLoading('pts:inflight')).toBe(false);
     expect(engine.getFeatureCatalog('pts:inflight')).toEqual(sampleCatalog);
@@ -639,12 +639,17 @@ describe('PointsDataEngine — matching resource (empty-lock guard)', () => {
 
 describe('PointsDataEngine — matched-selection subset reuse', () => {
   function scanElement(key: string) {
-    const loadPointsMatchingFeatureCodes = vi.fn(async (opts: { featureCodes: readonly number[] }) => ({
-      shape: [2, opts.featureCodes.length],
-      data: [new Float32Array(opts.featureCodes.length), new Float32Array(opts.featureCodes.length)],
-      // Per-row codes the render uses to filter the batch in memory.
-      featureCodes: Int32Array.from(opts.featureCodes),
-    }));
+    const loadPointsMatchingFeatureCodes = vi.fn(
+      async (opts: { featureCodes: readonly number[] }) => ({
+        shape: [2, opts.featureCodes.length],
+        data: [
+          new Float32Array(opts.featureCodes.length),
+          new Float32Array(opts.featureCodes.length),
+        ],
+        // Per-row codes the render uses to filter the batch in memory.
+        featureCodes: Int32Array.from(opts.featureCodes),
+      })
+    );
     const element = {
       key,
       loadPoints: vi.fn(async () => makeBatch()),
@@ -697,12 +702,14 @@ describe('PointsDataEngine — matched-selection subset reuse', () => {
   it('does not rescan when the cap is lowered and the loaded selection already fits', async () => {
     const engine = new PointsDataEngine();
     // A COMPLETE batch: the scan found all matching rows before the cap.
-    const loadPointsMatchingFeatureCodes = vi.fn(async (opts: { featureCodes: readonly number[] }) => ({
-      shape: [2, 500],
-      data: [new Float32Array(500), new Float32Array(500)],
-      featureCodes: Int32Array.from({ length: 500 }, () => opts.featureCodes[0]),
-      preloadTruncated: false,
-    }));
+    const loadPointsMatchingFeatureCodes = vi.fn(
+      async (opts: { featureCodes: readonly number[] }) => ({
+        shape: [2, 500],
+        data: [new Float32Array(500), new Float32Array(500)],
+        featureCodes: Int32Array.from({ length: 500 }, () => opts.featureCodes[0]),
+        preloadTruncated: false,
+      })
+    );
     const element = {
       key: 'pts:caplow',
       loadPoints: vi.fn(async () => makeBatch()),
@@ -767,7 +774,10 @@ describe('PointsDataEngine — dict-only feature scan', () => {
     const loadPointsMatchingFeatureCodes = vi.fn(
       async (opts: { featureCodes: readonly number[] }) => ({
         shape: [2, opts.featureCodes.length],
-        data: [new Float32Array(opts.featureCodes.length), new Float32Array(opts.featureCodes.length)],
+        data: [
+          new Float32Array(opts.featureCodes.length),
+          new Float32Array(opts.featureCodes.length),
+        ],
         featureCodes: Int32Array.from(opts.featureCodes),
       })
     );

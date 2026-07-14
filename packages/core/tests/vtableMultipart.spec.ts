@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import SpatialDataTableSource from '../src/models/VTableSource.js';
@@ -56,7 +56,10 @@ function createFilesystemStore(root: string) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
       return readStoreBytes(relativePath);
     },
-    async getRange(path: string, range: { offset?: number; length?: number; suffixLength?: number }) {
+    async getRange(
+      path: string,
+      range: { offset?: number; length?: number; suffixLength?: number }
+    ) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
       const bytes = await readStoreBytes(relativePath);
       if (!bytes) {

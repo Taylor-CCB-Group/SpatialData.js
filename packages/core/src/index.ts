@@ -51,7 +51,13 @@ export type {
   PointsLoadResult,
 } from './pointsLoadOptions.js';
 export * from './pointsTiling.js';
+// Render Stack schemas. Canonical here (ADR 0004 §5, amending ADR 0001): the
+// Resource Resolver takes a Render Stack as input, so dependency direction forces
+// the move. `layers` and `vis` retain their re-exports as compatibility shims —
+// MDV consumes these as a data contract and no consumer import moves.
+export * from './renderStack.js';
 export * from './shapes.js';
+export * from './spatialLayerProps.js';
 export * from './spatialViewFit.js';
 export * from './store/index.js';
 export * from './tableAssociations.js';

@@ -1,10 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
 import { tableFromArrays } from 'apache-arrow';
+import { describe, expect, it, vi } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
-import {
-  POINTS_PRELOAD_MAX_ROWS,
-  preloadedColumnarPointCount,
-} from '../src/pointsLimits.js';
+import { POINTS_PRELOAD_MAX_ROWS, preloadedColumnarPointCount } from '../src/pointsLimits.js';
 
 describe('points preload cap', () => {
   it('loads a capped subset when parquet row count exceeds the cap', async () => {
