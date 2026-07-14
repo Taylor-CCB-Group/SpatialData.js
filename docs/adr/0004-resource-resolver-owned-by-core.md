@@ -109,16 +109,85 @@ concept.
    paths. No consumer import moves. Removing the shims is a separate, deliberate
    deprecation, coordinated with MDV; it is not part of this work.
 
-6. **The image loader is a port.** `createImageLoader` closes over the React
-   `VivLoaderRegistry` context. `core` defines the port; `vis` supplies the
-   adapter. This is the one genuine ports-and-adapters dependency; everything
-   else is local-substitutable (tests stub elements as plain object literals).
+6. **Resolver *placement* is per-kind, driven by dependency.** `core` defines the
+   `ResourceResolver` **interface**. An implementation lives in the package its
+   dependencies already live in:
+
+   - `PointsResolver`, `ShapesResolver` → **`core`**. Every type they touch
+     (`PointsLoadResult`, `PointsFeatureCatalog`, `ShapesRenderData`,
+     `ShapesTooltipMetadata`) is already a `core` type, and both are what
+     `tgpu-htj2k` was forced to hand-roll.
+   - `ImagesResolver`, `LabelsResolver` → **`vis`**, for now. See below.
+
+   **`core` defines no image port.** *(Amended 2026-07-14; see "Amendment —
+   the image port" below for what this paragraph used to claim and why it was
+   wrong.)*
 
 7. **No runtime dependency enters `core`.** No Effect, no `neverthrow`, no
    TanStack in a public signature. `core` is the dependency root for
    `tgpu-htj2k` as well as `layers`, and that repo's engine core is deliberately
    dependency-free. A library may be used *inside* a resolver's implementation
    (see the `RequestSlot` spike) but must not appear in `core`'s interface.
+
+   This is a **current position resting on another repo's position**, not a law.
+   It is revisable if `tgpu-htj2k`'s dependency-free stance is renegotiated —
+   which is exactly the kind of cross-repo conversation §"Cross-repo consequence"
+   already flags as *owed*. Read it as *not now*, not as *never*. Nothing in the
+   Step 0 / Step 1 work turns on the answer either way, and the `RequestSlot`
+   seam is deliberately shaped so that revisiting it later is a decision rather
+   than a rewrite.
+
+## Amendment — the image port (2026-07-14)
+
+Decision 6 originally read:
+
+> **The image loader is a port.** `createImageLoader` closes over the React
+> `VivLoaderRegistry` context. `core` defines the port; `vis` supplies the
+> adapter. This is the one genuine ports-and-adapters dependency; everything else
+> is local-substitutable.
+
+**It closes over nothing.** `createImageLoader`
+(`packages/vis/src/SpatialCanvas/renderers/imageRenderer.ts`) already takes
+`fetchMultiscales` as an injected parameter, defaulting to
+`loadOmeZarrMultiscalesData`. The React context is merely the DI *container* at
+the call site — `useLayerData` reads `useVivLoaderRegistry()` and passes the
+value in. The injection already exists as a plain function parameter. **There is
+no closure to break, and therefore no port to invent.** The original text
+described an assumed constraint, not a real one, and it was not checked against
+the code before it was committed.
+
+Three things follow, and together they keep images out of `core` for now:
+
+- **`avivatorish` is a deliberate holding pen, not a stable dependency.** Its own
+  README: *"SpatialData.js, MDV, and other apps should depend on this package
+  instead of vendoring near-duplicates"*, and *"the long-term shape of serialized
+  image state is still **evolving**."* It is a de-vendored fork of code that also
+  lives upstream in Viv and in MDV. A port designed against it today would encode
+  a guess about an unsettled model — into the interface `tgpu-htj2k` depends on.
+- **The second consumer does not need it.** Per §Non-goals below, `zarrextra`'s
+  `VivCompatiblePixelSource` **already serves both Viv and `tgpu-htj2k` today**;
+  the shared seam for images already exists and sits *below* the Resolver. Images
+  is the one kind of the four where the duplication argument — the entire reason
+  for this ADR — **does not apply**. `tgpu-htj2k` needs `PointsResolver` and
+  `ShapesResolver` from `core`; it does not need an images resolver from anyone.
+- So an image port in `core` would pay a real cost to solve a problem that is not
+  there.
+
+**Consequence.** `ImagesResolver` and `LabelsResolver` implement `core`'s
+`ResourceResolver` interface but live in `@spatialdata/vis`, alongside the Viv and
+`avivatorish` dependencies they already have. `createImageLoader` keeps its
+injected `fetchMultiscales`; the channel-defaults ladder moves phase (out of the
+god-hook, into `load()`) without moving package; world bounds are computed by the
+resolver itself via viv's `getImageSize`, so `core` never needs raster extents.
+
+The interface is still one interface, and the store still holds only
+`ResourceResolver` — it must not know which package an implementation came from.
+If a `vis`-resident resolver ever needs something the interface does not offer,
+that is a signal about the *interface*, not a licence to special-case images.
+
+**Still open, and deliberately so:** whether `avivatorish` should converge on
+upstream Viv, be absorbed by MDV, or stabilise as its own contract. When that
+settles, revisit whether an image resolver — and a port — belongs in `core`.
 
 ## Lifecycle split — who reconciles what
 

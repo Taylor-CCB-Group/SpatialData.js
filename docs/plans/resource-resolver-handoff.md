@@ -26,14 +26,23 @@ core     Resource Resolver    reconcile · cache · supersede · stream · evict
    └──► headless     no renderer
 ```
 
-**Phase separation inside a resolver** — this is the load-bearing part:
+**Phase separation** — this is the load-bearing part:
 
-| Phase | Purity | When | May start I/O? |
-|---|---|---|---|
-| `plan(ctx)` | pure, sync | commit only | no — *returns* task descriptors |
-| `load(task, ctx)` | async | commit only | **yes — the only place** |
-| `project(ctx)` | pure, sync | end of reconcile | no |
-| `render(state, opts)` | pure, sync | **during React render** | no — *is handed no engine handle* |
+| Phase | Owner | Purity | When | May start I/O? |
+|---|---|---|---|---|
+| `plan(ctx)` | **Resolver** | pure, sync | commit only | no — *returns* task descriptors |
+| `load(task, ctx)` | **Resolver** | async | commit only | **yes — the only place** |
+| `project(entry, config)` | **Renderer Adapter** | pure, sync | end of reconcile | no |
+| `render(projected, opts)` | **Renderer Adapter** | pure, sync | **during React render** | no — *is handed no engine handle* |
+
+> **Correction (2026-07-14).** An earlier revision of this table was headed
+> *"phase separation inside a resolver"*, implying all four phases live on the
+> resolver. They do not. ADR 0004 §4 puts `project()` and `render()` on the
+> **Renderer Adapter** in `layers`: *"identity-stable memoisation is a **deck
+> requirement** … so it belongs on the renderer side."* This document is
+> sequencing, not rationale — where they disagree, **the ADR wins**. The
+> consequence is concrete: `PointsDataEngine`'s lazy render-resource memos move
+> to `layers`, not to `core`.
 
 `render()` receives a frozen resolved state and nothing that can start work. That
 makes today's `void engine.ensureMatchingFeaturesLoaded(...)` inside `getLayers()`
@@ -69,6 +78,20 @@ Extract the interface **from the shape `PointsDataEngine` already has**, general
 Write `Shapes` / `Images` / `Labels` resolvers as **thin adapters holding today's
 Maps and calling today's functions**. Behaviour-identical. No load changes, no
 race fixes, no memory work.
+
+> **Correction (2026-07-14) — placement is per-kind, not "all four in `core`".**
+> ADR 0004 §6 has been amended. `core` defines the **interface**;
+> `PointsResolver` and `ShapesResolver` live in `core` (every type they touch is
+> already a `core` type). `ImagesResolver` and `LabelsResolver` implement the same
+> interface but live in **`vis`**, because `createImageLoader` already takes an
+> injected `fetchMultiscales` — there is no React closure to break and **no image
+> port to invent** — and because `avivatorish` is a de-vendoring holding pen for
+> code that also lives upstream in Viv and MDV, with an image-state model its own
+> README calls *"still evolving"*. `zarrextra`'s `VivCompatiblePixelSource`
+> already serves both Viv and `tgpu-htj2k`, so the images seam already exists
+> *below* the resolver: images is the one kind where the duplication argument does
+> not apply. **Add no image port to `core`.** See ADR 0004 §"Amendment — the image
+> port".
 
 `useLayerData` becomes a loop over resolvers instead of a switch over kinds. Keep
 its 17-member public surface intact behind a compat shim — MDV consumes it.
