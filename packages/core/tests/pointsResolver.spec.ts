@@ -1,3 +1,4 @@
+import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type PointsResolveConfig,
@@ -56,6 +57,7 @@ const ctx = (
   kind: 'points',
   element: el,
   config,
+  transform: new Matrix4(),
 });
 
 describe('plan() — pure, synchronous, starts nothing', () => {

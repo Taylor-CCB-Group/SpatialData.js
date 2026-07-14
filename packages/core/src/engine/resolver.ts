@@ -41,11 +41,10 @@
  * images.
  */
 
+import type { Matrix4 } from '@math.gl/core';
+import type { AxisAlignedBounds } from '../spatialViewFit.js';
 import type { EntryNotice, SpatialEntryKind } from './errors.js';
 import type { Resolution } from './resolution.js';
-
-/** World-space axis-aligned bounds: `[minX, minY, maxX, maxY]`. */
-export type ResolvedBounds = [number, number, number, number];
 
 /**
  * Everything a resolver needs to reason about one Spatial Entry, this commit.
@@ -63,6 +62,12 @@ export interface ResolveContext<TConfig = unknown, TElement = unknown> {
   readonly element: TElement;
   /** Serialisable renderer props. Never a Runtime Attachment — no callbacks. */
   readonly config: TConfig;
+  /**
+   * Element → active coordinate system. The resolver owns entry resolution and
+   * world bounds (ADR 0004 §1), and bounds are meaningless in element space, so
+   * the transform has to be here rather than being a renderer's business.
+   */
+  readonly transform: Matrix4;
 }
 
 /**
@@ -109,7 +114,7 @@ export interface EntryResources {
   readonly notices: readonly EntryNotice[];
   /** World bounds, once anything is loaded. Computed by the resolver — a
    * `vis`-resident one may reach for viv's `getImageSize`; `core` never needs to. */
-  readonly bounds: ResolvedBounds | null;
+  readonly bounds: AxisAlignedBounds | null;
   /** Bumps iff anything above changed identity. Lets an adapter skip `project()`. */
   readonly revision: number;
 }

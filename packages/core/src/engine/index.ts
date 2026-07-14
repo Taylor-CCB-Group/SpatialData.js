@@ -27,9 +27,10 @@ export { fromResult, Resolution } from './resolution.js';
 export type {
   EntryResources,
   ResolveContext,
-  ResolvedBounds,
   ResolveTask,
   ResourceResolver,
 } from './resolver.js';
+export type { ShapesResolveConfig, ShapesResolverCallbacks } from './ShapesResolver.js';
+export { ShapesResolver } from './ShapesResolver.js';
 export type { AnyResolveContext, ResolverRegistry } from './SpatialEntryStore.js';
 export { SpatialEntryStore } from './SpatialEntryStore.js';
