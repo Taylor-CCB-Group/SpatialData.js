@@ -12,5 +12,6 @@
     "${workspaceFolder}/python",
     "${workspaceFolder}/python/spatialdata-codec-writer/scripts"
   ],
-  "typescript.tsdk": "node_modules/typescript/lib"
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "js/ts.experimental.useTsgo": false
 }
