@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LabelsLayer } from '../src/LabelsLayer';
 import type { LabelsLayerProps } from '../src/LabelsLayer';
+import { LabelsLayer } from '../src/LabelsLayer';
 
 type TileLayerLike = {
   props: {
@@ -32,24 +32,14 @@ function makeLabelsLoader() {
   const makeScale = (resolution: number) => ({
     shape: [512, 512],
     tileSize: 256,
-    getTile: vi.fn(
-      async ({
-        x,
-        y,
-        selection,
-      }: {
-        x: number;
-        y: number;
-        selection: unknown;
-      }) => {
-        onGetTile({ resolution, x, y, selection });
-        return {
-          data: new Float32Array([0, 1, 2, 0]),
-          width: 2,
-          height: 2,
-        };
-      }
-    ),
+    getTile: vi.fn(async ({ x, y, selection }: { x: number; y: number; selection: unknown }) => {
+      onGetTile({ resolution, x, y, selection });
+      return {
+        data: new Float32Array([0, 1, 2, 0]),
+        width: 2,
+        height: 2,
+      };
+    }),
   });
   return {
     loader: [makeScale(0), makeScale(1)],

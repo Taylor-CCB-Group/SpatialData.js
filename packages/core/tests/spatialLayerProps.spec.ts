@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
   migrateSpatialLayerProps,
+  SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
   spatialLayerPropsSchema,
   spatialShapesSublayerSchema,
-} from '../src/spatialLayerProps';
+} from '../src/spatialLayerProps.js';
 
 describe('migrateSpatialLayerProps', () => {
   it('parses current version unchanged', () => {
@@ -50,9 +50,7 @@ describe('migrateSpatialLayerProps', () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.message.includes('must be <='))).toBe(
-        true
-      );
+      expect(result.error.issues.some((issue) => issue.message.includes('must be <='))).toBe(true);
     }
   });
 

@@ -88,8 +88,22 @@ describe('SpatialDataShapesSource', () => {
     vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
       shape: [2, null],
       data: [
-        [[[0, 0], [1, 0], [1, 1], [0, 0]]],
-        [[[2, 2], [3, 2], [3, 3], [2, 2]]],
+        [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 0],
+          ],
+        ],
+        [
+          [
+            [2, 2],
+            [3, 2],
+            [3, 3],
+            [2, 2],
+          ],
+        ],
       ],
     });
 
@@ -183,9 +197,7 @@ describe('SpatialDataShapesSource', () => {
 
     const invalidTable = {
       schema: {
-        metadata: new Map([
-          ['geo', JSON.stringify({ primary_column: 123, columns: {} })],
-        ]),
+        metadata: new Map([['geo', JSON.stringify({ primary_column: 123, columns: {} })]]),
       },
     } as any;
 
@@ -289,8 +301,22 @@ describe('SpatialDataShapesSource', () => {
     vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
       shape: [2, null],
       data: [
-        [[[0, 0], [1, 0], [1, 1], [0, 0]]],
-        [[[2, 2], [3, 2], [3, 3], [2, 2]]],
+        [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 0],
+          ],
+        ],
+        [
+          [
+            [2, 2],
+            [3, 2],
+            [3, 3],
+            [2, 2],
+          ],
+        ],
       ],
     });
 

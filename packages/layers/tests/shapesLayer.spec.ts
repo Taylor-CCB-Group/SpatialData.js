@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SpatialLayer } from '../src/SpatialLayer';
 import {
+  buildShapeFeatureStateRuntime,
+  buildShapesPrebuiltData,
+  createShapesDeckLayer,
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
   type GeoarrowTableLike,
-  type ShapesRenderDataLike,
-  buildShapeFeatureStateRuntime,
-  buildShapesPrebuiltData,
-  createShapesDeckLayer,
   isShapeFeatureStateRuntime,
   normalizeShapeFeatureState,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
+  type ShapesRenderDataLike,
 } from '../src/shapesLayer';
 
 const renderData: ShapesRenderDataLike = {
@@ -103,9 +103,7 @@ describe('shape feature state runtime', () => {
     const featureState = {
       fillColorByFeatureId: { 'cell-1': [1, 2, 3, 255] as [number, number, number, number] },
     };
-    expect(normalizeShapeFeatureState(featureState)).toBe(
-      normalizeShapeFeatureState(featureState)
-    );
+    expect(normalizeShapeFeatureState(featureState)).toBe(normalizeShapeFeatureState(featureState));
   });
 });
 
@@ -420,7 +418,12 @@ describe('createShapesDeckLayer', () => {
   it('prefers feature-index alignment over instance-key map when both are present', () => {
     expect(
       resolveShapeTooltipRowIndex(
-        { featureId: '23816', featureIndex: 23816, rowIndex: 23816, polygon: renderData.polygons![0] },
+        {
+          featureId: '23816',
+          featureIndex: 23816,
+          rowIndex: 23816,
+          polygon: renderData.polygons![0],
+        },
         {
           tooltipRowIndexByFeatureId: new Map([['23816', 22271]]),
           rowIndexByFeatureIndex: new Int32Array(49750).fill(-1),

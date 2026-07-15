@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildPointsAttributes } from '../src/pointsRenderAttributes.js';
 import type { ColumnarNdarrayPointsBatch } from '../src/pointsLoader.js';
+import { buildPointsAttributes } from '../src/pointsRenderAttributes.js';
 
 function batch(overrides: Partial<ColumnarNdarrayPointsBatch>): ColumnarNdarrayPointsBatch {
   return {

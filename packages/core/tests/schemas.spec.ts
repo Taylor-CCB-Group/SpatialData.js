@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  rasterAttrsSchema,
   coordinateTransformationSchema,
-  shapesAttrsSchema,
   pointsAttrsSchema,
-  tableAttrsSchema,
+  rasterAttrsSchema,
+  shapesAttrsSchema,
   spatialDataSchema,
+  tableAttrsSchema,
 } from '../src/schemas/index.js';
 
 describe('Schema Transformations', () => {

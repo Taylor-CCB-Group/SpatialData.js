@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, mkdir, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';

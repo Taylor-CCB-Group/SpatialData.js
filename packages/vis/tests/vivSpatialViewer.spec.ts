@@ -1,7 +1,7 @@
 import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it, vi } from 'vitest';
-import { VivSpatialViewer } from '../src/SpatialCanvas/VivSpatialViewer.js';
 import type { ImageLayerConfig } from '../src/SpatialCanvas/useLayerData.js';
+import { VivSpatialViewer } from '../src/SpatialCanvas/VivSpatialViewer.js';
 
 describe('VivSpatialViewer passthrough', () => {
   it('forwards vivProps into detailView.getLayers props', () => {

@@ -1,6 +1,6 @@
-import { ATTRS_KEY } from 'zarrextra';
-import type { ConsolidatedStore } from 'zarrextra';
 import { describe, expect, it } from 'vitest';
+import type { ConsolidatedStore } from 'zarrextra';
+import { ATTRS_KEY } from 'zarrextra';
 import { SpatialData } from '../src/store/index.js';
 import {
   createFeatureTableAlignment,

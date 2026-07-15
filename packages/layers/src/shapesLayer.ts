@@ -1,6 +1,6 @@
 import type { Matrix4 } from '@math.gl/core';
+import type { SpatialShapesSublayer } from '@spatialdata/core';
 import { type Layer, type PickingInfo, PolygonLayer, ScatterplotLayer } from 'deck.gl';
-import type { SpatialShapesSublayer } from './spatialLayerProps';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
 

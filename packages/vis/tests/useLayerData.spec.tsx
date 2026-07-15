@@ -1,0 +1,242 @@
+import { Matrix4 } from '@math.gl/core';
+import type { PointsElement, ShapesElement } from '@spatialdata/core';
+import { renderHook, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import type { AvailableElement, ElementsByType, LayerConfig } from '../src/SpatialCanvas/types.js';
+import { useLayerData } from '../src/SpatialCanvas/useLayerData.js';
+
+/**
+ * The first test that actually RENDERS `useLayerData`.
+ *
+ * Until this file, nothing did. Two specs import from the module — one takes a
+ * type, one takes two module-scope helpers — but the 1,873-line hook itself was
+ * never invoked by any test in the repo. Its entire public surface, seventeen
+ * members that reach MDV through a `...layerData` spread, was unguarded.
+ *
+ * That is untenable for the Resource Resolver work, which dissolves six of the
+ * hook's seven kind-switch ladders and re-points all seventeen members at a
+ * resolver snapshot. This file is the net. It is written against the CURRENT
+ * hook — it must be green before the refactor and stay green through it.
+ *
+ * It deliberately asserts the CONTRACT (the surface, the load lifecycle, resource
+ * identity), not the implementation. Nothing here should need to change when the
+ * internals are replaced; if something does, that is the signal to look hard at
+ * whether the shim is honest.
+ */
+
+/** The seventeen members MDV consumes. This list IS the compat contract. */
+const PUBLIC_SURFACE = [
+  'getLayers',
+  'getVivLayerProps',
+  'getImageLayerLoadedData',
+  'getImageLoadedDataByElementKey',
+  'getLabelsLayerLoadedData',
+  'getLayerLoadState',
+  'hasRenderableLayerData',
+  'pointsEngine',
+  'resolvePointsTarget',
+  'getFeatureTooltip',
+  'getFeaturePickEvent',
+  'getShapePickEvent',
+  'isLoading',
+  'isBlocking',
+  'reloadElement',
+  'getWorldBoundsForLayer',
+  'getWorldBoundsForVisibleLayers',
+] as const;
+
+const EMPTY_ELEMENTS: ElementsByType = { images: [], shapes: [], points: [], labels: [] };
+
+function pointsElement(key: string): AvailableElement {
+  const element = {
+    key,
+    loadPoints: vi.fn(async () => ({
+      shape: [2, 3],
+      data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
+      featureCodes: new Int32Array([0, 1, 0]),
+    })),
+    listFeaturesWithCounts: vi.fn(async () => null),
+  } as unknown as PointsElement;
+  return { key, type: 'points', element, transform: new Matrix4() };
+}
+
+function shapesElement(key: string): AvailableElement {
+  // Xenium-style cell circles: columnar centres + radii, which is what
+  // `ShapeCircleColumnar` actually is — NOT an array of {x, y, radius} objects.
+  const element = {
+    key,
+    loadRenderData: vi.fn(async () => ({
+      kind: 'js-polygons' as const,
+      geometryKind: 'circle' as const,
+      elementKey: key,
+      featureIds: ['c1', 'c2'],
+      circles: {
+        positions: [new Float32Array([0, 5]), new Float32Array([0, 5])] as [
+          Float32Array,
+          Float32Array,
+        ],
+        radii: new Float32Array([1, 1]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+    })),
+  } as unknown as ShapesElement;
+  return { key, type: 'shapes', element, transform: new Matrix4() };
+}
+
+const pointsConfig = (id: string, elementKey: string): LayerConfig => ({
+  id,
+  type: 'points',
+  elementKey,
+  visible: true,
+  opacity: 1,
+});
+
+const shapesConfig = (id: string, elementKey: string): LayerConfig => ({
+  id,
+  type: 'shapes',
+  elementKey,
+  visible: true,
+  opacity: 1,
+});
+
+const render = (layers: Record<string, LayerConfig>, elements: ElementsByType) =>
+  renderHook(() => useLayerData(layers, Object.keys(layers), elements, null));
+
+describe('useLayerData — the 17-member public surface', () => {
+  // ADR 0004 promises MDV that this surface survives the refactor behind a compat
+  // shim. MDV gets it via `...layerData` in SpatialCanvasViewer, so a member that
+  // silently vanishes is a downstream break with no local failure.
+  it('exposes exactly the seventeen members, and no more', () => {
+    const { result } = render({}, EMPTY_ELEMENTS);
+
+    expect(Object.keys(result.current).sort()).toEqual([...PUBLIC_SURFACE].sort());
+  });
+
+  it.each(PUBLIC_SURFACE)('exposes %s', (member) => {
+    const { result } = render({}, EMPTY_ELEMENTS);
+
+    expect(result.current[member]).toBeDefined();
+  });
+
+  it('is inert with no layers — no bounds, not loading, not blocking', () => {
+    const { result } = render({}, EMPTY_ELEMENTS);
+
+    expect(result.current.getLayers()).toEqual([]);
+    expect(result.current.getVivLayerProps()).toEqual([]);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.isBlocking).toBe(false);
+    expect(result.current.getWorldBoundsForVisibleLayers()).toBeNull();
+  });
+});
+
+describe('useLayerData — the load lifecycle', () => {
+  it('drives a shapes layer idle -> ready and produces a deck layer', async () => {
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, shapes: [shapesElement('cells')] };
+
+    const { result } = render({ 'layer-1': shapesConfig('layer-1', 'cells') }, elements);
+
+    // Nothing is renderable before the load resolves.
+    expect(result.current.hasRenderableLayerData('layer-1')).toBe(false);
+
+    await waitFor(() => {
+      expect(result.current.getLayerLoadState('layer-1')?.geometry).toBe('ready');
+    });
+
+    expect(result.current.hasRenderableLayerData('layer-1')).toBe(true);
+    expect(result.current.getLayers().length).toBeGreaterThan(0);
+    expect(result.current.isBlocking).toBe(false);
+  });
+
+  it('produces a deck layer for a points layer', async () => {
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pointsElement('transcripts')] };
+
+    const { result } = render({ 'layer-p': pointsConfig('layer-p', 'transcripts') }, elements);
+
+    await waitFor(() => {
+      expect(result.current.hasRenderableLayerData('layer-p')).toBe(true);
+    });
+
+    expect(result.current.getLayers().length).toBeGreaterThan(0);
+  });
+
+  it('reports world bounds once a layer has data', async () => {
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, shapes: [shapesElement('cells')] };
+
+    const { result } = render({ 'layer-1': shapesConfig('layer-1', 'cells') }, elements);
+
+    await waitFor(() => {
+      expect(result.current.getWorldBoundsForLayer('layer-1')).not.toBeNull();
+    });
+
+    expect(result.current.getWorldBoundsForVisibleLayers()).not.toBeNull();
+  });
+
+  it('does not resolve a points target for a shapes layer', async () => {
+    const elements: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      shapes: [shapesElement('cells')],
+      points: [pointsElement('transcripts')],
+    };
+
+    const { result } = render(
+      {
+        'layer-s': shapesConfig('layer-s', 'cells'),
+        'layer-p': pointsConfig('layer-p', 'transcripts'),
+      },
+      elements
+    );
+
+    expect(result.current.resolvePointsTarget('layer-s')).toBeUndefined();
+    expect(result.current.resolvePointsTarget('layer-p')).toMatchObject({
+      key: 'transcripts',
+      layerId: 'layer-p',
+    });
+  });
+});
+
+describe('useLayerData — render-resource identity', () => {
+  // THE regression this whole design guards against. Deck rebuilds a layer's batch
+  // when its `data` identity changes, so a resource rebuilt per getLayers() call is
+  // a teardown per frame: the pan flash. `getLayers()` is called on every render —
+  // every pan, hover and viewState tick — so it must be idempotent within a commit.
+  it('returns an identity-stable points resource across repeated getLayers() calls', async () => {
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pointsElement('transcripts')] };
+
+    const { result } = render({ 'layer-p': pointsConfig('layer-p', 'transcripts') }, elements);
+
+    await waitFor(() => {
+      expect(result.current.hasRenderableLayerData('layer-p')).toBe(true);
+    });
+
+    // Three "frames" in one commit. Deck must see one resource, not three.
+    const resources = [0, 1, 2].map(
+      () => (result.current.getLayers()[0]?.props as { resource?: unknown } | undefined)?.resource
+    );
+
+    expect(resources[0]).toBeDefined();
+    expect(resources[1]).toBe(resources[0]);
+    expect(resources[2]).toBe(resources[0]);
+  });
+
+  it('keeps the points resource stable across an unrelated re-render', async () => {
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pointsElement('transcripts')] };
+    const layers = { 'layer-p': pointsConfig('layer-p', 'transcripts') };
+
+    const { result, rerender } = renderHook(
+      ({ l }: { l: Record<string, LayerConfig> }) =>
+        useLayerData(l, Object.keys(l), elements, null),
+      { initialProps: { l: layers } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.hasRenderableLayerData('layer-p')).toBe(true);
+    });
+    const before = (result.current.getLayers()[0]?.props as { resource?: unknown }).resource;
+
+    // Same config object, new render — nothing about the DATA changed.
+    rerender({ l: layers });
+    const after = (result.current.getLayers()[0]?.props as { resource?: unknown }).resource;
+
+    expect(after).toBe(before);
+  });
+});

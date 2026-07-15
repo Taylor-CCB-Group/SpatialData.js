@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
@@ -13,10 +13,7 @@ const writerRoot = join(projectRoot, 'python/spatialdata-experimental-writer');
 async function writeSyntheticPointsZarr(root: string) {
   const elementDir = join(root, 'points', 'transcripts');
   await mkdir(elementDir, { recursive: true });
-  await writeFile(
-    join(root, 'zarr.json'),
-    JSON.stringify({ zarr_format: 3, node_type: 'group' })
-  );
+  await writeFile(join(root, 'zarr.json'), JSON.stringify({ zarr_format: 3, node_type: 'group' }));
   await writeFile(
     join(elementDir, 'zarr.json'),
     JSON.stringify({
@@ -63,10 +60,7 @@ PY`,
 async function writeBadSentinelMortonPointsZarr(root: string) {
   const elementDir = join(root, 'points', 'transcripts');
   await mkdir(elementDir, { recursive: true });
-  await writeFile(
-    join(root, 'zarr.json'),
-    JSON.stringify({ zarr_format: 3, node_type: 'group' })
-  );
+  await writeFile(join(root, 'zarr.json'), JSON.stringify({ zarr_format: 3, node_type: 'group' }));
   await writeFile(
     join(elementDir, 'zarr.json'),
     JSON.stringify({

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import { tableFromArrays } from 'apache-arrow';
+import { describe, expect, it, vi } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
 import * as pointsWorkerClient from '../src/workers/pointsWorkerClient.js';
 
@@ -66,10 +66,6 @@ describe('points preload read strategy', () => {
 
     await source.loadPoints('points/transcripts');
 
-    expect(cappedSpy).toHaveBeenCalledWith(
-      'points/transcripts/points.parquet',
-      ['x', 'y'],
-      100
-    );
+    expect(cappedSpy).toHaveBeenCalledWith('points/transcripts/points.parquet', ['x', 'y'], 100);
   });
 });

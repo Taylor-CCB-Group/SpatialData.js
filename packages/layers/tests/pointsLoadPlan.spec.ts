@@ -1,6 +1,5 @@
-import { describe, expect, it } from 'vitest';
-
 import type { PointsTilingMetadata } from '@spatialdata/core';
+import { describe, expect, it } from 'vitest';
 
 import {
   planPointsLoads,

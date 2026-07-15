@@ -21,7 +21,12 @@ describe('mergeVivImagePassthroughProps', () => {
 
   it('falls back to global extensions when resolver returns nothing', () => {
     const globalExt = [{ id: 'global' }];
-    const merged = mergeVivImagePassthroughProps({ brightness: [0.5] }, undefined, undefined, globalExt);
+    const merged = mergeVivImagePassthroughProps(
+      { brightness: [0.5] },
+      undefined,
+      undefined,
+      globalExt
+    );
     expect(merged.extensions).toEqual(globalExt);
   });
 });

@@ -11,7 +11,10 @@ import {
 
 const throwingReadParquet = (() => {
   throw new Error('readParquet should not be called on the rowGroup path');
-}) as unknown as (bytes: Uint8Array, options?: { columns?: string[] }) => {
+}) as unknown as (
+  bytes: Uint8Array,
+  options?: { columns?: string[] }
+) => {
   intoIPCStream(): Uint8Array;
 };
 
