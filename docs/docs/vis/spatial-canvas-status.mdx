@@ -20,12 +20,15 @@ sidebar_position: 1
 - **Channel UI is basic:** the properties pane exposes per-channel RGB (0–255), contrast min/max, `z`/`c`/`t`, and visibility (up to six channels). There is **no histogram** or brush yet; defaults from automatic stats can still look wrong until you tune values.
 - **Single primary image** path in the Viv viewer composition (first enabled image layer drives `DetailView.getLayers`).
 - **`useLayerData`** prefers explicit `LayerConfig.channels` when arrays are non-empty; further **override flags** may still be useful for edge cases.
-- **Points are still a minimal scatter path:** `PointsElement.loadPoints()`
-  loads coordinate columns into an ndarray-ish object and
-  `@spatialdata/vis` renders them directly with `ScatterplotLayer`. There is
-  not yet stable point identity, table-backed feature state, viewport/row-group
-  filtering, progressive multi-file Parquet loading, or a GeoArrow-backed
-  renderer.
+- **Points render through a data engine, not a raw scatter path:**
+  `PointsElement.loadPoints()` feeds `PointsDataEngine` (in `@spatialdata/layers`,
+  with its cache/lifecycle half — `PointsResolver` — in `@spatialdata/core`), which
+  owns a resident preload window with a configurable memory cap, a full-dataset
+  feature catalog, per-row feature codes, and a whole-dataset feature-index scan that
+  streams matching points in progressively. Rendering is via the `@spatialdata/layers`
+  `PointsLayer` composite with table-backed feature state (filter and colour by
+  feature). Still open: a GeoArrow-backed fast path, and viewport/tile-based loading
+  for points (shapes and points tiling are marked *Future* in ADR 0002/0003).
 
 ## Upstream Viv Follow-ups
 
@@ -37,13 +40,22 @@ sidebar_position: 1
 
 - [`packages/vis/src/SpatialCanvas/index.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/index.tsx) — `SpatialCanvas` UI and store wiring
 - [`packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx) — Viv + deck layer composition
-- [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts) — Loaders and Viv layer props
+- [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts) — the Resource Resolver reconcile loop (`SpatialEntryStore`) and Viv layer props
 - [`packages/vis/src/SpatialCanvas/types.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/types.ts) — `LayerConfig`, `ChannelConfig`
 - [`packages/core/src/tableAssociations.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/core/src/tableAssociations.ts) — feature/table row alignment following Python `spatialdata` semantics
 - [`packages/layers/src/shapeColorEncoding.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/shapeColorEncoding.ts) — renderer-agnostic shape column-to-colour encoding over resolved row alignment
 
 ## Recently landed (check repo for details)
 
+- **Resource Resolver + reconcile loop (ADR 0004).** `@spatialdata/core` defines the
+  `ResourceResolver` interface, `Resolution<T>`, `SpatialEntryError` / `EntryNotice`,
+  and a kind-blind `SpatialEntryStore` reconcile loop. `useLayerData` now *consumes*
+  per-kind resolvers — `PointsResolver` / `ShapesResolver` in `core`, `ImagesResolver`
+  / `LabelsResolver` in `vis` — through a single `store.reconcile()` commit-effect
+  instead of a per-kind load switch, with its 17-member public surface unchanged. See
+  [ADR 0004](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0004-resource-resolver-owned-by-core.md)
+  and the resolver handoff / Step 1 consumption plans; Step 2 (points state model,
+  shapes loader seam, memory) and Step 3 (renderer-adapter cleanup) remain.
 - **`@spatialdata/avivatorish`** — shared loaders and Zustand stores; SpatialCanvas / ImageView import from the package.
 - **`@spatialdata/layers`** — **`SpatialLayer`** + Zod **`SpatialLayerProps`** + **`migrateSpatialLayerProps`** (sublayer wiring still to grow).
 - **Feature/table split** — `@spatialdata/core` now exposes a
@@ -63,9 +75,11 @@ controlled, UI-free embedding (MDV, Vitessce, local experiments). See
 
 - **Histogram** (optional) and richer channel UX (MDV parity).
 - **Fold or replace `ImageView`** once SpatialCanvas covers the single-image case well.
-- **Feature/table foundations:** finish routing tooltip and pick-event row
-  resolution through the shared core resolver shape, then add annotation column
-  discovery for direct shape annotations and future matrix-backed values.
+- **Feature/table foundations:** tooltip and pick-event row resolution now route
+  through the shared core resolver shape; remaining work is closing the per-element
+  tooltip cache ping-pong (two layers over one element with different `tooltipFields`
+  invalidate each other — Track B) and adding annotation column discovery for direct
+  shape annotations and future matrix-backed values.
   See [Feature table associations and annotation columns](./feature-table-associations).
 
 ## Medium-term roadmap
