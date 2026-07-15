@@ -1,9 +1,30 @@
 /**
- * Defaults for Viv image loaders when Omero channel metadata is missing or when
- * channel setup fails partway through. Kept separate from useLayerData so the hook stays focused.
+ * Channel defaults for Viv image and labels loaders.
+ *
+ * The two `build*ChannelDefaults` functions at the bottom were **inline in
+ * `useLayerData`'s load effect** — ~180 lines braided into the middle of a
+ * kind-switch. They are lifted here **verbatim**, not rewritten: they now run in
+ * `ImagesResolver.load()` / `LabelsResolver.load()` instead of inside a React hook.
+ *
+ * They stay in `@spatialdata/vis` and are *not* moved to `core`. `avivatorish`
+ * imports React **and** Viv, and it is a de-vendoring holding pen for code that
+ * also lives upstream in Viv and in MDV — its own README calls the serialized image
+ * state model "still evolving". Shaping `core` around it, or inventing a port to
+ * hide it behind, would freeze a guess about an unsettled model into the package
+ * `tgpu-htj2k` depends on. See ADR 0004's amendment.
  */
 
-import { COLOR_PALLETE, getVivSelectionAxisSizes } from '@spatialdata/avivatorish';
+import {
+  buildDefaultSelection,
+  COLOR_PALLETE,
+  clampVivSelectionsToAxes,
+  getMultiSelectionStats,
+  getVivSelectionAxisSizes,
+  guessRgb,
+  isInterleaved,
+  tryParseOmeroHexColor,
+} from '@spatialdata/avivatorish';
+import type { ImageElement, LabelsElement } from '@spatialdata/core';
 
 /** Loader fields used for channel count and contrast range heuristics. */
 export type VivLoaderMetadata = {
@@ -84,4 +105,182 @@ export function applyPerChannelFallbackWithoutOmero(
         );
   imageData.channelsVisible = Array(channelCount).fill(true);
   imageData.selections = selections;
+}
+
+/** Shape of the resolved image data. Mirrors `ImageLoaderData` in `useLayerData`. */
+export interface ImageChannelDefaults extends ImageLoaderChannelTarget {
+  loader: unknown;
+  channelNames?: string[];
+}
+
+/** Shape of the resolved labels data. Mirrors `LabelsLoaderData` in `useLayerData`. */
+export interface LabelsChannelDefaults extends ImageLoaderChannelTarget {
+  loader: unknown;
+  channelOpacities?: number[];
+  channelOutlineOpacities?: number[];
+  channelsFilled?: boolean[];
+  channelStrokeWidths?: number[];
+}
+
+const hasVivMetadata = (loader: unknown): loader is VivLoaderMetadata =>
+  !!loader && typeof loader === 'object' && 'labels' in loader && 'shape' in loader;
+
+/** The last-resort defaults, used when the loader tells us nothing at all. */
+const applyBlindDefaults = (target: ImageLoaderChannelTarget): void => {
+  target.contrastLimits = [[0, 65535]];
+  target.colors = [[255, 255, 255]];
+  target.channelsVisible = [true];
+  target.selections = [{}];
+};
+
+/**
+ * Channel defaults for an image: Omero metadata when present, RGB heuristics when
+ * it looks like RGB, computed contrast stats otherwise, per-channel fallback when
+ * Omero has no channel list, and blind defaults when the loader exposes no
+ * labels/shape at all.
+ *
+ * Lifted verbatim from `useLayerData`'s image branch. The nested try/catch is
+ * deliberate and preserved: computing stats reads pixels, which can fail on a
+ * store that served its metadata perfectly well — and a channel-defaults failure
+ * must degrade to a fallback, not fail the image.
+ */
+export async function buildImageChannelDefaults(
+  loader: unknown,
+  element: ImageElement,
+  onNotice?: (reason: string) => void
+): Promise<ImageChannelDefaults> {
+  const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+  const imageData: ImageChannelDefaults = { loader };
+
+  try {
+    if (hasVivMetadata(loaderToCheck)) {
+      const loaderObj = loaderToCheck;
+      imageData.selectionAxisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
+
+      const selections = buildDefaultSelection({
+        labels: loaderObj.labels,
+        shape: loaderObj.shape,
+      });
+      const metadata = element.attrs.omero;
+
+      if (metadata?.channels) {
+        const Channels = metadata.channels;
+        imageData.channelNames = Channels.map(
+          (c: { label?: string }, i: number) => c.label ?? `Channel ${i + 1}`
+        );
+        const isRgb = guessRgb({
+          Pixels: { Channels: Channels.map((c: { label?: string }) => ({ Name: c.label })) },
+        });
+
+        if (isRgb) {
+          if (isInterleaved(loaderObj.shape)) {
+            imageData.contrastLimits = [[0, 255]];
+            imageData.colors = [[255, 0, 0]];
+          } else {
+            imageData.contrastLimits = [
+              [0, 255],
+              [0, 255],
+              [0, 255],
+            ];
+            imageData.colors = [
+              [255, 0, 0],
+              [0, 255, 0],
+              [0, 0, 255],
+            ];
+          }
+          imageData.channelsVisible = imageData.colors.map(() => true);
+        } else {
+          const stats = await getMultiSelectionStats({ loader, selections, use3d: false });
+          imageData.contrastLimits = stats.contrastLimits;
+          const computedColors: [number, number, number][] =
+            stats.contrastLimits.length === 1
+              ? [[255, 255, 255]]
+              : stats.contrastLimits.map((_, i): [number, number, number] => {
+                  const rgb = tryParseOmeroHexColor(Channels[i]?.color);
+                  const p = COLOR_PALLETE[i % COLOR_PALLETE.length];
+                  return rgb ?? [p[0], p[1], p[2]];
+                });
+          imageData.colors = computedColors;
+          imageData.channelsVisible = computedColors.map(() => true);
+        }
+        imageData.selections = selections;
+      } else {
+        applyPerChannelFallbackWithoutOmero(imageData, loaderObj, selections);
+      }
+    } else {
+      applyBlindDefaults(imageData);
+    }
+  } catch (error) {
+    // Healthy imagery whose channel defaults could not be computed is NOT a failed
+    // image — it draws with fallback channels. That distinction is why EntryNotice
+    // exists as a channel separate from SpatialEntryError.
+    onNotice?.(error instanceof Error ? error.message : String(error));
+    if (hasVivMetadata(loaderToCheck)) {
+      try {
+        imageData.selectionAxisSizes =
+          imageData.selectionAxisSizes ??
+          getVivSelectionAxisSizes(loaderToCheck.labels, loaderToCheck.shape);
+        const fallbackSelections = buildDefaultSelection({
+          labels: loaderToCheck.labels,
+          shape: loaderToCheck.shape,
+        });
+        applyPerChannelFallbackWithoutOmero(imageData, loaderToCheck, fallbackSelections);
+      } catch {
+        applyBlindDefaults(imageData);
+      }
+    } else {
+      applyBlindDefaults(imageData);
+    }
+  }
+
+  return imageData;
+}
+
+/**
+ * Channel defaults for a labels element: one channel, semi-transparent fill with a
+ * strong outline. Lifted verbatim from `useLayerData`'s labels branch.
+ *
+ * Note labels carry SEVEN channel arrays where images carry four — which is why
+ * `avivatorish`'s `mergeLayerChannelState` does not cover them and the ladder is
+ * hand-written in two places today.
+ */
+export function buildLabelsChannelDefaults(
+  loader: unknown,
+  element: LabelsElement
+): LabelsChannelDefaults {
+  const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
+  const labelsData: LabelsChannelDefaults = {
+    loader,
+    colors: [[255, 255, 255]],
+    channelsVisible: [true],
+    channelOpacities: [0.18],
+    channelOutlineOpacities: [0.95],
+    channelsFilled: [true],
+    channelStrokeWidths: [1.5],
+    selections: [{}],
+  };
+
+  if (hasVivMetadata(loaderToCheck)) {
+    const axisSizes = getVivSelectionAxisSizes(loaderToCheck.labels, loaderToCheck.shape);
+    const selections = clampVivSelectionsToAxes(
+      buildDefaultSelection({ labels: loaderToCheck.labels, shape: loaderToCheck.shape }),
+      axisSizes
+    ).slice(0, 1);
+    const metadataChannels = element.attrs.omero?.channels;
+
+    const rgb = tryParseOmeroHexColor(metadataChannels?.[0]?.color);
+    const palette = COLOR_PALLETE[0];
+    const color: [number, number, number] = rgb ?? [palette[0], palette[1], palette[2]];
+
+    labelsData.selectionAxisSizes = axisSizes;
+    labelsData.selections = selections.length > 0 ? selections : [{}];
+    labelsData.colors = [color];
+    labelsData.channelsVisible = [metadataChannels?.[0]?.active ?? true];
+    labelsData.channelOpacities = [0.18];
+    labelsData.channelOutlineOpacities = [0.95];
+    labelsData.channelsFilled = [true];
+    labelsData.channelStrokeWidths = [1.5];
+  }
+
+  return labelsData;
 }
