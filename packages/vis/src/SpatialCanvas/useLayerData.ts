@@ -20,8 +20,6 @@ import {
   getTooltipSignature,
   type LabelsElement,
   type PointsElement,
-  type PointsResolveConfig,
-  type ResourceResolver,
   resolvePointsMemoryCap,
   resolveTooltipItems,
   type ShapesElement,
@@ -33,10 +31,8 @@ import {
   unionBoundsList,
 } from '@spatialdata/core';
 import {
-  buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
-  EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
@@ -46,15 +42,22 @@ import {
   resolveShapeTooltipRowIndex,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
-  type ShapeFillColorMode,
-  type ShapesPrebuiltData,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { renderShapesLayer } from './renderers/shapesRenderer';
+import { createNonOwningResolver } from './resolvers/nonOwningResolver';
 import { ImagesResolver, LabelsResolver } from './resolvers/RasterResolvers';
+import {
+  getShapeFillColorAlpha,
+  getShapeFillColorSignature,
+  getStableShapeFeatureStateRuntime,
+  type ShapeFillColorEntry,
+  type ShapePrebuiltEntry,
+  serializeHiddenIds,
+} from './shapesProjection';
 import type {
   AvailableElement,
   ChannelConfig,
@@ -68,90 +71,6 @@ import {
   type VivImagePassthroughOptions,
 } from './vivImagePassthrough';
 
-/**
- * Wrap a resolver so the {@link SpatialEntryStore} can drive it WITHOUT owning its
- * lifecycle: every method delegates to `inner`, but `dispose()` is a no-op.
- *
- * This deliberately goes against the grain of the store's ownership model, so it is
- * worth being explicit about why.
- *
- * ## The problem: two owners for one resolver
- *
- * `SpatialEntryStore` is designed to OWN the resolvers it holds — it subscribes to
- * each in its constructor and disposes each in `dispose()`. That model fits
- * shapes/images/labels exactly: they close over `spatialData`, so a dataset swap
- * rebuilds them (their `useMemo`s are keyed on `spatialData`), which rebuilds the
- * store, whose cleanup disposes the now-replaced instances. One owner, clean handoff.
- *
- * Points does not fit that model. Its resolver lives inside `PointsDataEngine`, a
- * value this hook holds in `useState` and creates exactly ONCE — because the feature
- * panels subscribe to the engine directly (via `PointsFeatureStateProvider`) and the
- * identity-stable render-resource memos live in the engine's adapter. The engine has
- * to persist across dataset swaps, or those subscriptions break and the resident
- * points cache is thrown away on every swap. So points has a *pre-existing,
- * independent owner* that the store did not create and must not end.
- *
- * Hand the engine's real resolver straight to the store and the two owners collide:
- * the first dataset swap rebuilds the store, and the old store's cleanup calls
- * `dispose()` on every resolver it holds — including the points one — clearing the
- * engine's entries, snapshots and listeners while the engine itself lives on. Panels
- * go dead; the cache is gone. This proxy severs exactly that one edge: the store may
- * subscribe, plan, load, snapshot and evict through it, but it may not dispose it.
- * `PointsDataEngine.dispose()` stays the sole disposer.
- *
- * ## Why the no-op is correct, not merely safe
- *
- * `SpatialEntryStore.dispose()` also aborts a resolver's in-flight tasks. We do not
- * want that reaching points either: an in-flight preload belongs to the surviving
- * engine, not to the store being torn down. (In Step 1 it is moot — every resolver
- * ignores the load `signal` and dedups on its own in-flight map — but the intent is
- * that store teardown must not touch the engine at all.)
- *
- * ## Why this does NOT reintroduce "points is special" inside the store
- *
- * The store still holds four opaque `ResourceResolver`s and cannot tell which one is
- * proxied — the whole point of its kind-blindness (see its class doc). The asymmetry
- * lives entirely in THIS hook's construction, which is the correct home for a
- * host-specific lifecycle quirk: the store's interface stays honest.
- *
- * ## Alternatives considered and rejected
- *
- * - Rebuild `PointsDataEngine` on `spatialData` like the others — uniform lifecycle,
- *   but loses the cache and breaks panel subscriptions on every swap. That is the
- *   exact thing the stable engine exists to prevent.
- * - Make shapes/images/labels stable like points — they read `spatialData` in
- *   `load()` (tooltip / associated-table / multiscales), captured at construction, so
- *   a stable instance would silently use the previous dataset after a swap.
- * - Keep points out of the store, driven by its own effect — no proxy, but then there
- *   are two driving mechanisms again, which is precisely what this increment collapses
- *   into one `reconcile`.
- *
- * ## Exit condition (when this can be deleted)
- *
- * The proxy becomes unnecessary the day points shares the others' lifecycle — most
- * cleanly if `spatialData` were threaded through `ResolveContext` so that NO resolver
- * closes over it and none needs rebuilding (then all four could be stable and the
- * store could own them uniformly), or if the engine's stable-handle duties moved onto
- * the store itself. Both are larger than Step 1; until then, a no-op `dispose` on one
- * edge is the smallest cut that keeps the store honest and the engine intact.
- */
-function createNonOwningResolver(
-  inner: ResourceResolver<PointsResolveConfig, PointsElement>
-): ResourceResolver<PointsResolveConfig, PointsElement> {
-  return {
-    kind: inner.kind,
-    blockingResources: inner.blockingResources,
-    plan: (ctx) => inner.plan(ctx),
-    load: (task, ctx, signal) => inner.load(task, ctx, signal),
-    snapshot: (ctx) => inner.snapshot(ctx),
-    subscribe: (listener) => inner.subscribe(listener),
-    getVersion: () => inner.getVersion(),
-    evict: (key) => inner.evict(key),
-    // The one edge we cut — see the class doc above. Everything else delegates.
-    dispose: () => {},
-  };
-}
-
 export interface ImageLoaderData {
   loader: unknown;
   colors?: [number, number, number][];
@@ -162,23 +81,6 @@ export interface ImageLoaderData {
   channelNames?: string[];
   /** Present when loader exposes `labels` / `shape`: dimension lengths for z, c, t (omit axes that do not exist). */
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
-}
-
-interface ShapePrebuiltEntry {
-  prebuilt: ShapesPrebuiltData;
-  /** Serialised, sorted `hiddenFeatureIds` — used to detect when a rebuild is needed. */
-  signature: string;
-  /** The (merged) render data this prebuilt was built from. Rebuild on identity change. */
-  source: ShapesRenderData;
-}
-
-interface ShapeFillColorEntry {
-  fillColorByFeatureId: Record<string, [number, number, number, number]>;
-  signature: string;
-  /** The resolver fill-colour rows this map was built from. Rebuild on identity change. */
-  rowsSource?: unknown;
-  /** The render data this map was built from. Rebuild on identity change. */
-  renderSource?: ShapesRenderData;
 }
 
 export interface WorldBoundsCacheEntry {
@@ -331,34 +233,6 @@ function getLayerTooltipSignature(config: LayerConfig | undefined): string {
   return config && 'tooltipFields' in config ? getTooltipSignature(config.tooltipFields) : '';
 }
 
-function getShapeFillColorAlpha(config: ShapesLayerConfig): number {
-  return config.fillColor?.[3] ?? 180;
-}
-
-function getShapeFillColorSignature(config: LayerConfig | undefined): string {
-  if (config?.type !== 'shapes' || !config.fillColorByColumn?.columnName) {
-    return '';
-  }
-  const mode: ShapeFillColorMode = config.fillColorByColumn.mode;
-  return [config.fillColorByColumn.columnName, mode, String(getShapeFillColorAlpha(config))].join(
-    '\u0001'
-  );
-}
-
-/** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */
-function serializeHiddenIds(ids?: string[]): string {
-  if (!ids || ids.length === 0) return '';
-  return ids.slice().sort().join('\x00');
-}
-
-function serializeColorByFeatureId(
-  colors?: Record<string, readonly [number, number, number, number]>
-): string {
-  if (!colors || Object.keys(colors).length === 0) return '';
-  const entries = Object.entries(colors).sort(([a], [b]) => a.localeCompare(b));
-  return `\x02${entries.length}:${JSON.stringify(entries)}`;
-}
-
 function getPickedLabelObject(
   object: unknown
 ): { labelId: string; channelIndex?: number; object: unknown } | undefined {
@@ -435,57 +309,6 @@ export function getCachedWorldBounds(
   const bounds = compute();
   cache.set(key, { dataRef, transformRef, bounds });
   return bounds;
-}
-
-function mergeShapeFeatureStateForRender(
-  config: ShapesLayerConfig,
-  fillColorEntry: ShapeFillColorEntry | undefined
-): ShapesLayerConfig['featureState'] {
-  if (!config.fillColorByColumn?.columnName) {
-    return config.featureState;
-  }
-  return {
-    ...config.featureState,
-    fillColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
-    strokeColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
-  };
-}
-
-function getShapeFeatureStateSignature(
-  config: ShapesLayerConfig,
-  fillColorEntry: ShapeFillColorEntry | undefined
-): string {
-  const featureState = config.featureState;
-  const fillColors = featureState?.fillColorByFeatureId;
-  const strokeColors = featureState?.strokeColorByFeatureId;
-  return [
-    serializeHiddenIds(featureState?.hiddenFeatureIds),
-    serializeHiddenIds(featureState?.fadedFeatureIds),
-    String(featureState?.filteredOpacityMultiplier ?? ''),
-    fillColorEntry?.signature ?? '',
-    serializeColorByFeatureId(fillColors),
-    serializeColorByFeatureId(strokeColors),
-  ].join('\x01');
-}
-
-function getStableShapeFeatureStateRuntime(
-  layerId: string,
-  config: ShapesLayerConfig,
-  fillColorEntry: ShapeFillColorEntry | undefined,
-  cache: Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
-): ShapeFeatureStateRuntime {
-  const signature = getShapeFeatureStateSignature(config, fillColorEntry);
-  const cached = cache.get(layerId);
-  if (cached?.signature === signature) {
-    return cached.runtime;
-  }
-
-  const merged = mergeShapeFeatureStateForRender(config, fillColorEntry);
-  const runtime = merged
-    ? buildShapeFeatureStateRuntime(merged)
-    : EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
-  cache.set(layerId, { signature, runtime });
-  return runtime;
 }
 
 /**
