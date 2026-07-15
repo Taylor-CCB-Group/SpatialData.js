@@ -69,14 +69,71 @@ import {
 } from './vivImagePassthrough';
 
 /**
- * Wrap a resolver so the `SpatialEntryStore` can hold it WITHOUT owning its
+ * Wrap a resolver so the {@link SpatialEntryStore} can drive it WITHOUT owning its
  * lifecycle: every method delegates to `inner`, but `dispose()` is a no-op.
  *
- * Used for the points resolver. `PointsDataEngine` is a stable value the feature
- * panels subscribe to directly, and it owns its resolver — so when the store is
- * rebuilt on a dataset swap (because shapes/images/labels close over `spatialData`),
- * it must not tear the points resolver down and take the engine's cache and
- * subscriptions with it.
+ * This deliberately goes against the grain of the store's ownership model, so it is
+ * worth being explicit about why.
+ *
+ * ## The problem: two owners for one resolver
+ *
+ * `SpatialEntryStore` is designed to OWN the resolvers it holds — it subscribes to
+ * each in its constructor and disposes each in `dispose()`. That model fits
+ * shapes/images/labels exactly: they close over `spatialData`, so a dataset swap
+ * rebuilds them (their `useMemo`s are keyed on `spatialData`), which rebuilds the
+ * store, whose cleanup disposes the now-replaced instances. One owner, clean handoff.
+ *
+ * Points does not fit that model. Its resolver lives inside `PointsDataEngine`, a
+ * value this hook holds in `useState` and creates exactly ONCE — because the feature
+ * panels subscribe to the engine directly (via `PointsFeatureStateProvider`) and the
+ * identity-stable render-resource memos live in the engine's adapter. The engine has
+ * to persist across dataset swaps, or those subscriptions break and the resident
+ * points cache is thrown away on every swap. So points has a *pre-existing,
+ * independent owner* that the store did not create and must not end.
+ *
+ * Hand the engine's real resolver straight to the store and the two owners collide:
+ * the first dataset swap rebuilds the store, and the old store's cleanup calls
+ * `dispose()` on every resolver it holds — including the points one — clearing the
+ * engine's entries, snapshots and listeners while the engine itself lives on. Panels
+ * go dead; the cache is gone. This proxy severs exactly that one edge: the store may
+ * subscribe, plan, load, snapshot and evict through it, but it may not dispose it.
+ * `PointsDataEngine.dispose()` stays the sole disposer.
+ *
+ * ## Why the no-op is correct, not merely safe
+ *
+ * `SpatialEntryStore.dispose()` also aborts a resolver's in-flight tasks. We do not
+ * want that reaching points either: an in-flight preload belongs to the surviving
+ * engine, not to the store being torn down. (In Step 1 it is moot — every resolver
+ * ignores the load `signal` and dedups on its own in-flight map — but the intent is
+ * that store teardown must not touch the engine at all.)
+ *
+ * ## Why this does NOT reintroduce "points is special" inside the store
+ *
+ * The store still holds four opaque `ResourceResolver`s and cannot tell which one is
+ * proxied — the whole point of its kind-blindness (see its class doc). The asymmetry
+ * lives entirely in THIS hook's construction, which is the correct home for a
+ * host-specific lifecycle quirk: the store's interface stays honest.
+ *
+ * ## Alternatives considered and rejected
+ *
+ * - Rebuild `PointsDataEngine` on `spatialData` like the others — uniform lifecycle,
+ *   but loses the cache and breaks panel subscriptions on every swap. That is the
+ *   exact thing the stable engine exists to prevent.
+ * - Make shapes/images/labels stable like points — they read `spatialData` in
+ *   `load()` (tooltip / associated-table / multiscales), captured at construction, so
+ *   a stable instance would silently use the previous dataset after a swap.
+ * - Keep points out of the store, driven by its own effect — no proxy, but then there
+ *   are two driving mechanisms again, which is precisely what this increment collapses
+ *   into one `reconcile`.
+ *
+ * ## Exit condition (when this can be deleted)
+ *
+ * The proxy becomes unnecessary the day points shares the others' lifecycle — most
+ * cleanly if `spatialData` were threaded through `ResolveContext` so that NO resolver
+ * closes over it and none needs rebuilding (then all four could be stable and the
+ * store could own them uniformly), or if the engine's stable-handle duties moved onto
+ * the store itself. Both are larger than Step 1; until then, a no-op `dispose` on one
+ * edge is the smallest cut that keeps the store honest and the engine intact.
  */
 function createNonOwningResolver(
   inner: ResourceResolver<PointsResolveConfig, PointsElement>
@@ -90,6 +147,7 @@ function createNonOwningResolver(
     subscribe: (listener) => inner.subscribe(listener),
     getVersion: () => inner.getVersion(),
     evict: (key) => inner.evict(key),
+    // The one edge we cut — see the class doc above. Everything else delegates.
     dispose: () => {},
   };
 }
@@ -591,17 +649,28 @@ export function useLayerData(
     [getOmeZarrMultiscalesData, spatialData, setLayerResourceStatus]
   );
 
-  // Points resolver, wrapped non-owning: `pointsEngine` (the stable value the panels
-  // subscribe to) owns its lifecycle, so the store must not dispose it when it is
-  // rebuilt on a dataset swap. Stable, so it does not churn the store.
+  // Points resolver, wrapped non-owning so the store can drive it without disposing
+  // it. `pointsEngine` (the stable `useState` value the panels subscribe to) is its
+  // real owner and outlives the store; the proxy is what keeps a store rebuild from
+  // clearing the engine's cache and subscriptions. See `createNonOwningResolver` for
+  // the full rationale. Keyed on the stable `pointsEngine`, so it never churns the
+  // store on its own.
   const pointsResolverForStore = useMemo(
     () => createNonOwningResolver(pointsEngine.resourceResolver),
     [pointsEngine]
   );
 
   // The one reconcile loop over all four kinds (ADR 0004), replacing the per-kind
-  // driving effects. Rebuilds when any resolver identity changes — a dataset swap
-  // rebuilds shapes/images/labels; the points proxy is stable.
+  // driving effects.
+  //
+  // Ownership model, in one place:
+  //   • shapes/images/labels — created here (keyed on `spatialData`), OWNED by the
+  //     store: it subscribes to them and disposes them. A dataset swap rebuilds them,
+  //     which rebuilds the store, whose cleanup disposes the replaced instances.
+  //   • points — owned by the stable `pointsEngine`; the store only borrows it through
+  //     the non-owning proxy above and never disposes it.
+  // So the store's identity tracks the raster/shapes resolvers; the points proxy is
+  // stable and does not, on its own, force a rebuild.
   const store = useMemo(
     () =>
       new SpatialEntryStore({
@@ -614,11 +683,22 @@ export function useLayerData(
   );
 
   // Re-render on any resolver cache mutation, and dispose the store — and with it the
-  // shapes/images/labels resolvers it owns — when it is replaced or the hook unmounts.
-  // The points proxy's `dispose` is a no-op, so `pointsEngine` survives a dataset swap.
+  // shapes/images/labels resolvers it owns — when the store is replaced (dataset swap)
+  // or the hook unmounts. The points proxy's `dispose` is a no-op, so `pointsEngine`
+  // and its cache survive the swap. All four kinds' re-render notifications now route
+  // through the store (the engine's own subscription is gone), including points via
+  // the proxy → real resolver.
+  //
   // NOTE: the consuming component (SpatialCanvasInner) must opt out of the React
   // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from these
   // resolver getters and never repaints on a late async settle.
+  //
+  // Caveat: `SpatialEntryStore` subscribes to its resolvers in its constructor, which
+  // runs inside the `useMemo` above. Under React StrictMode's dev-only double-invoke a
+  // discarded store instance leaks one listener on the (never-disposed) points
+  // resolver per rebuild; each such listener only calls a dead store's `notify()`
+  // (empty listener set), so it is inert. Harmless in production; noted so it is not
+  // mistaken for a real leak.
   useEffect(() => {
     const unsubscribe = store.subscribe(notifyLoadedDataChanged);
     return () => {
