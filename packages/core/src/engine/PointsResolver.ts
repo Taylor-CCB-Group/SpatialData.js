@@ -6,6 +6,7 @@ import type { PointsFeatureCatalog } from '../pointsTiling.js';
 import type { EntryNotice } from './errors.js';
 import { Resolution } from './resolution.js';
 import type { EntryResources, ResolveContext, ResolveTask, ResourceResolver } from './resolver.js';
+import { SnapshotCache } from './snapshotCache.js';
 
 /**
  * The points Resource Resolver.
@@ -113,8 +114,6 @@ interface PointsEntry {
     scannedRows: number;
     partialResult?: PointsLoadResult;
   };
-  /** Cached snapshot, so `snapshot()` is identity-stable between mutations. */
-  snapshot?: { version: number; value: EntryResources };
 }
 
 /** Public snapshot of a selection's feature-index load, for the filter panel. */
@@ -136,6 +135,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   private readonly entries = new Map<string, PointsEntry>();
   private readonly listeners = new Set<() => void>();
   private readonly callbacks: PointsResolverCallbacks;
+  private readonly snapshots = new SnapshotCache();
   private version = 0;
 
   constructor(callbacks: PointsResolverCallbacks = {}) {
@@ -226,10 +226,12 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   snapshot(ctx: ResolveContext<PointsResolveConfig, PointsElement>): EntryResources {
     const key = ctx.elementKey;
-    const entry = this.entries.get(key);
-    if (entry?.snapshot && entry.snapshot.version === this.version) {
-      return entry.snapshot.value;
-    }
+    // Key the memo by everything the snapshot embeds: the entry (several layers
+    // may share one element), and the selection (it drives the truncation notice).
+    // Points bounds are not wired in Step 1, so the transform is not part of the key.
+    const configSig = (ctx.config.featureCodes ?? []).join(',');
+    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, configSig);
+    if (cached) return cached;
 
     const value: EntryResources = {
       entryId: ctx.entryId,
@@ -245,9 +247,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       revision: this.version,
     };
 
-    if (entry) {
-      entry.snapshot = { version: this.version, value };
-    }
+    this.snapshots.set(ctx.entryId, this.version, ctx.transform, configSig, value);
     return value;
   }
 
@@ -906,11 +906,16 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
 
   /** Drop an element from the cache. Catalog and row codes live in the same entry. */
   evict(key: string): void {
-    this.entries.delete(key);
+    const existed = this.entries.delete(key);
+    this.snapshots.evictByElement(key);
+    // Notify so external-store consumers drop the now-stale snapshot immediately,
+    // rather than showing it until the next unrelated mutation.
+    if (existed) this.notify();
   }
 
   dispose(): void {
     this.entries.clear();
+    this.snapshots.clear();
     this.listeners.clear();
   }
 }

@@ -4,6 +4,7 @@ import type { OmeZarrMultiscalesSource } from '@spatialdata/avivatorish';
 import {
   type AxisAlignedBounds,
   boundsFromImagePixelExtents,
+  type EntryNotice,
   type EntryResources,
   type ImageElement,
   isCancellation,
@@ -14,6 +15,7 @@ import {
   type ResolveContext,
   type ResolveTask,
   type ResourceResolver,
+  SnapshotCache,
   type SpatialData,
   toSpatialEntryError,
 } from '@spatialdata/core';
@@ -108,13 +110,23 @@ interface RasterEntry<T> {
   inFlight: Map<string, Promise<void>>;
   bounds?: AxisAlignedBounds | null;
   boundsSource?: unknown;
-  snapshot?: { version: number; value: EntryResources };
+  /** The transform `bounds` was computed with — world bounds are transform-relative. */
+  boundsTransform?: unknown;
+  /** Non-fatal facts about a successful load — e.g. channel defaults fell back. */
+  notices?: readonly EntryNotice[];
+}
+
+/** What a raster load produces: the resolved data, plus any non-fatal notices. */
+interface RasterLoadResult<T> {
+  data: T;
+  notices?: readonly EntryNotice[];
 }
 
 abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unknown }> {
   protected readonly entries = new Map<string, RasterEntry<TData>>();
   protected readonly listeners = new Set<() => void>();
   protected readonly options: RasterResolverOptions;
+  protected readonly snapshots = new SnapshotCache();
   protected version = 0;
 
   constructor(options: RasterResolverOptions = {}) {
@@ -157,19 +169,28 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
     if (!entry) return null;
     const data = Resolution.lastGood(entry.loader);
     if (!data) return null;
-    if (entry.boundsSource === data.loader) return entry.bounds ?? null;
+    // Memoise on BOTH the loader identity and the transform: the same raster under
+    // a new coordinate system has different world bounds.
+    if (entry.boundsSource === data.loader && entry.boundsTransform === transform) {
+      return entry.bounds ?? null;
+    }
     const computed = rasterBounds(data.loader, transform);
     entry.bounds = computed;
     entry.boundsSource = data.loader;
+    entry.boundsTransform = transform;
     return computed;
   }
 
   evict(key: string): void {
-    this.entries.delete(key);
+    const existed = this.entries.delete(key);
+    this.snapshots.evictByElement(key);
+    // Notify so external-store consumers drop the stale snapshot immediately.
+    if (existed) this.notify();
   }
 
   dispose(): void {
     this.entries.clear();
+    this.snapshots.clear();
     this.listeners.clear();
   }
 
@@ -178,11 +199,15 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
     entry: RasterEntry<TData>,
     task: ResolveTask,
     ctx: ResolveContext<TConfig, TElement>,
-    produce: () => Promise<TData>
+    produce: () => Promise<RasterLoadResult<TData>>
   ): Promise<void> {
     const existing = entry.inFlight.get(task.id);
     if (existing) return existing;
 
+    // Capture the exact pre-load resolution. On cancellation we restore it — an
+    // aborted initial load must fall back to its prior state, or `plan()` (which
+    // only schedules an idle loader) never reschedules it and the entry hangs.
+    const prior = entry.loader;
     const stale = Resolution.lastGood(entry.loader);
     entry.loader = Resolution.loading(stale !== undefined ? { stale } : {});
     this.options.onStatus?.(ctx.entryId, 'image', 'loading');
@@ -190,10 +215,15 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
 
     const run = (async () => {
       try {
-        entry.loader = Resolution.ready(await produce());
+        const result = await produce();
+        entry.loader = Resolution.ready(result.data);
+        entry.notices = result.notices;
         this.options.onStatus?.(ctx.entryId, 'image', 'ready');
       } catch (cause) {
-        if (isCancellation(cause)) return;
+        if (isCancellation(cause)) {
+          entry.loader = prior;
+          return;
+        }
         entry.loader = Resolution.failed(
           toSpatialEntryError(cause, {
             elementKey: ctx.elementKey,
@@ -243,24 +273,36 @@ export class ImagesResolver
     const entry = this.entry(ctx.elementKey);
     await this.runLoad(entry, task, ctx, async () => {
       const loader = await createImageLoader(ctx.element, this.options.fetchMultiscales);
-      return buildImageChannelDefaults(loader, ctx.element);
+      // Channel-default computation reads pixels and can fail on a store that served
+      // its metadata fine. That is healthy-data-with-a-caveat, so it surfaces as a
+      // NOTICE, not a failed loader — the image still draws with fallback channels.
+      const notices: EntryNotice[] = [];
+      const data = await buildImageChannelDefaults(loader, ctx.element, (reason) => {
+        notices.push({
+          kind: 'channel-defaults-fallback',
+          message: 'Channel defaults could not be computed; using fallbacks.',
+          reason,
+        });
+      });
+      return { data, notices };
     });
   }
 
   snapshot(ctx: ResolveContext<ImagesResolveConfig, ImageElement>): EntryResources {
+    // Key by entry (layers may share an element) and transform (it moves the bounds).
+    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, '');
+    if (cached) return cached;
+
     const entry = this.entries.get(ctx.elementKey);
-    if (entry?.snapshot && entry.snapshot.version === this.version) {
-      return entry.snapshot.value;
-    }
     const value: EntryResources = {
       entryId: ctx.entryId,
       elementKey: ctx.elementKey,
       resources: { loader: entry?.loader ?? Resolution.idle() },
-      notices: [],
+      notices: entry?.notices ?? [],
       bounds: this.boundsFor(ctx.elementKey, ctx.transform),
       revision: this.version,
     };
-    if (entry) entry.snapshot = { version: this.version, value };
+    this.snapshots.set(ctx.entryId, this.version, ctx.transform, '', value);
     return value;
   }
 }
@@ -311,13 +353,16 @@ export class LabelsResolver
       const entry = this.entry(key);
       await this.runLoad(entry, task, ctx, async () => {
         const loader = await createImageLoader(ctx.element, this.options.fetchMultiscales);
-        return buildLabelsChannelDefaults(loader, ctx.element);
+        return { data: buildLabelsChannelDefaults(loader, ctx.element) };
       });
       return;
     }
 
     if (task.resource === 'tooltip') {
-      const fields = (task.payload as { tooltipFields: string[] }).tooltipFields;
+      // `payload` is optional on ResolveTask; a malformed tooltip task must be a
+      // no-op rather than throwing out of load() and rejecting the whole reconcile.
+      const fields = (task.payload as { tooltipFields?: string[] } | undefined)?.tooltipFields;
+      if (!fields) return;
       const signature = fields.join('');
       try {
         const metadata = await loadLabelsTooltipMetadata(
@@ -351,10 +396,11 @@ export class LabelsResolver
   }
 
   snapshot(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): EntryResources {
+    // Key by entry (layers may share an element) and transform (it moves the bounds).
+    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, '');
+    if (cached) return cached;
+
     const entry = this.entries.get(ctx.elementKey);
-    if (entry?.snapshot && entry.snapshot.version === this.version) {
-      return entry.snapshot.value;
-    }
     const value: EntryResources = {
       entryId: ctx.entryId,
       elementKey: ctx.elementKey,
@@ -362,11 +408,11 @@ export class LabelsResolver
         loader: entry?.loader ?? Resolution.idle(),
         tooltip: this.tooltips.get(ctx.elementKey)?.resolution ?? Resolution.idle(),
       },
-      notices: [],
+      notices: entry?.notices ?? [],
       bounds: this.boundsFor(ctx.elementKey, ctx.transform),
       revision: this.version,
     };
-    if (entry) entry.snapshot = { version: this.version, value };
+    this.snapshots.set(ctx.entryId, this.version, ctx.transform, '', value);
     return value;
   }
 

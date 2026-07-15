@@ -34,3 +34,4 @@ export type { ShapesResolveConfig, ShapesResolverCallbacks } from './ShapesResol
 export { ShapesResolver } from './ShapesResolver.js';
 export type { AnyResolveContext, ResolverRegistry } from './SpatialEntryStore.js';
 export { SpatialEntryStore } from './SpatialEntryStore.js';
+export { SnapshotCache } from './snapshotCache.js';

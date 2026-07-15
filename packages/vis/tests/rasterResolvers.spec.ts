@@ -154,11 +154,65 @@ describe('ImagesResolver — a ResourceResolver that happens to live in vis', ()
   it('snapshot is identity-stable between mutations', async () => {
     const resolver = new ImagesResolver({ fetchMultiscales: fetchMultiscales() });
     const el = imageElement();
+    // One ctx, reused — a given entry sees a stable transform across renders.
+    const c = imageCtx(el);
+    await resolver.load({ id: 'l', resource: 'loader' }, c, signal());
+
+    const first = resolver.snapshot(c);
+
+    for (let i = 0; i < 5; i++) expect(resolver.snapshot(c)).toBe(first);
+  });
+
+  it('restores the prior resolution when an initial load is cancelled', async () => {
+    // Without the restore, plan() (which only schedules an idle loader) would never
+    // reschedule and the entry would hang in `loading` forever.
+    const resolver = new ImagesResolver({
+      fetchMultiscales: vi.fn(async () => {
+        throw new DOMException('Aborted', 'AbortError');
+      }),
+    });
+    const el = imageElement();
+    const c = imageCtx(el);
+
+    await resolver.load({ id: 'l', resource: 'loader' }, c, signal());
+
+    // Back to idle, not stuck loading — and therefore replannable.
+    expect(resolver.snapshot(c).resources.loader?.status).toBe('idle');
+    expect(resolver.plan(c).map((t) => t.resource)).toEqual(['loader']);
+  });
+
+  it('surfaces a channel-defaults failure as a NOTICE, not a failed loader', async () => {
+    // Computing contrast stats reads pixels and can fail on a store whose metadata
+    // loaded fine. The image still draws with fallback channels, so it is a notice.
+    const resolver = new ImagesResolver({
+      // A loader with omero channels forces the stats path, which we make throw.
+      fetchMultiscales: vi.fn(async () => [{ labels: ['c', 'y', 'x'], shape: [2, 64, 64] }]),
+    });
+    const el = imageElement({
+      attrs: { omero: { channels: [{ label: 'DAPI' }, { label: 'GFP' }] } },
+    });
+    const c = imageCtx(el);
+
+    await resolver.load({ id: 'l', resource: 'loader' }, c, signal());
+
+    const snapshot = resolver.snapshot(c);
+    // The loader itself is ready — the image draws.
+    expect(snapshot.resources.loader?.status).toBe('ready');
+    // ...and the failure is recorded, not swallowed.
+    expect(snapshot.notices).toEqual([
+      expect.objectContaining({ kind: 'channel-defaults-fallback' }),
+    ]);
+  });
+
+  it('recomputes bounds when the transform changes', async () => {
+    const resolver = new ImagesResolver({ fetchMultiscales: fetchMultiscales() });
+    const el = imageElement();
     await resolver.load({ id: 'l', resource: 'loader' }, imageCtx(el), signal());
 
-    const first = resolver.snapshot(imageCtx(el));
+    const a = resolver.snapshot({ ...imageCtx(el), transform: new Matrix4() });
+    const b = resolver.snapshot({ ...imageCtx(el), transform: new Matrix4().scale(2) });
 
-    for (let i = 0; i < 5; i++) expect(resolver.snapshot(imageCtx(el))).toBe(first);
+    expect(b).not.toBe(a);
   });
 });
 

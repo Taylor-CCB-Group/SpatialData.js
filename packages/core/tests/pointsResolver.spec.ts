@@ -187,27 +187,63 @@ describe('snapshot() — per-resource resolutions, identity-stable', () => {
   it('returns the SAME object until something mutates — an adapter memoises on this', async () => {
     const resolver = new PointsResolver();
     const el = element();
+    // ONE context, reused — the hook memoises AvailableElement (transform included)
+    // on [spatialData, coordinateSystem], so a given entry sees a stable ctx across
+    // renders. Repeated calls stand in for repeated renders (pan, hover, viewState).
+    const c = ctx(el);
     await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
 
-    const first = resolver.snapshot(ctx(el));
+    const first = resolver.snapshot(c);
 
     // Ten "renders" with no state change. A fresh object here is a deck teardown
     // per frame — the pan flash, one layer up.
     for (let i = 0; i < 10; i++) {
-      expect(resolver.snapshot(ctx(el))).toBe(first);
+      expect(resolver.snapshot(c)).toBe(first);
     }
   });
 
   it('returns a NEW object once state changes', async () => {
     const resolver = new PointsResolver();
     const el = element();
+    const c = ctx(el);
     await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
-    const before = resolver.snapshot(ctx(el));
+    const before = resolver.snapshot(c);
 
     await resolver.ensureFeatureCatalog({ key: 'transcripts', layerId: 'layer-p', element: el });
-    const after = resolver.snapshot(ctx(el));
+    const after = resolver.snapshot(c);
 
     expect(after).not.toBe(before);
+  });
+
+  it('gives two entries sharing one element DISTINCT snapshots', async () => {
+    // elementKey is the cache key; several layers may share one. The memo must not
+    // hand entry B the snapshot it built for entry A — entryId and all.
+    const resolver = new PointsResolver();
+    const el = element();
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-a', element: el });
+    // Same element, same transform — the ONLY difference is the entry (layer).
+    const base = ctx(el);
+
+    const a = resolver.snapshot({ ...base, entryId: 'layer-a' });
+    const b = resolver.snapshot({ ...base, entryId: 'layer-b' });
+
+    expect(a.entryId).toBe('layer-a');
+    expect(b.entryId).toBe('layer-b');
+    expect(a).not.toBe(b);
+    // ...but each is still stable on its own.
+    expect(resolver.snapshot({ ...base, entryId: 'layer-a' })).toBe(a);
+  });
+
+  it('refreshes the snapshot when the selection changes — it drives the notice', async () => {
+    // featureCodes is part of the memo key because the truncation notice depends on it.
+    const resolver = new PointsResolver();
+    const el = element();
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
+
+    const none = resolver.snapshot(ctx(el, {}));
+    const filtered = resolver.snapshot(ctx(el, { featureCodes: [0] }));
+
+    expect(filtered).not.toBe(none);
   });
 
   it('keeps a failed resource from blanking a healthy one — failure is PER-RESOURCE', async () => {

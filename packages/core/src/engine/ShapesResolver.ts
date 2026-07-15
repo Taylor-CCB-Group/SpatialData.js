@@ -15,6 +15,7 @@ import type { EntryNotice } from './errors.js';
 import { isCancellation, toSpatialEntryError } from './errors.js';
 import { Resolution } from './resolution.js';
 import type { EntryResources, ResolveContext, ResolveTask, ResourceResolver } from './resolver.js';
+import { SnapshotCache } from './snapshotCache.js';
 
 /**
  * The shapes Resource Resolver.
@@ -73,7 +74,8 @@ interface ShapesEntry {
   fillColorColumn?: string;
   bounds?: AxisAlignedBounds | null;
   boundsSource?: ShapesRenderData;
-  snapshot?: { version: number; value: EntryResources };
+  /** The transform `bounds` was computed with — world bounds are transform-relative. */
+  boundsTransform?: unknown;
 }
 
 const tooltipSignature = (fields: string[] | undefined): string => (fields ?? []).join('');
@@ -91,6 +93,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   private readonly listeners = new Set<() => void>();
   private readonly callbacks: ShapesResolverCallbacks;
   private readonly spatialData: SpatialData | undefined;
+  private readonly snapshots = new SnapshotCache();
   private version = 0;
 
   constructor(options: { spatialData?: SpatialData; callbacks?: ShapesResolverCallbacks } = {}) {
@@ -179,6 +182,10 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     const slot = task.resource as 'geometry' | 'tooltip' | 'fillColor';
     if (slot !== 'geometry' && slot !== 'tooltip' && slot !== 'fillColor') return;
 
+    // Capture the exact pre-load resolution. On cancellation we restore it — an
+    // initial load that is aborted must fall back to `idle`, or `plan()` (which
+    // only schedules idle geometry) never reschedules it and the entry hangs.
+    const prior = entry[slot];
     // Retain the last good value across the refine, so a reload keeps drawing.
     const stale = Resolution.lastGood(entry[slot] as Resolution<never>);
     entry[slot] = Resolution.loading(stale !== undefined ? { stale } : {}) as never;
@@ -215,8 +222,12 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       this.callbacks.onStatus?.(ctx.entryId, slot, 'ready');
     } catch (cause) {
       // Cancellation is a non-event: an aborted load is not a domain failure, and
-      // painting an error for one would be a visible regression.
-      if (isCancellation(cause)) return;
+      // painting an error for one would be a visible regression. Restore the exact
+      // pre-load resolution so a cancelled slot never hangs in `loading`.
+      if (isCancellation(cause)) {
+        entry[slot] = prior as never;
+        return;
+      }
       const error = toSpatialEntryError(cause, {
         elementKey: key,
         kind: 'shapes',
@@ -235,11 +246,13 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   /** PURE, SYNC. Identity-stable between mutations. */
   snapshot(ctx: ResolveContext<ShapesResolveConfig, ShapesElement>): EntryResources {
     const key = ctx.elementKey;
-    const entry = this.entries.get(key);
-    if (entry?.snapshot && entry.snapshot.version === this.version) {
-      return entry.snapshot.value;
-    }
+    // Key the memo by the entry (layers may share an element) and the transform
+    // (it moves the bounds). Shapes resources and notices don't depend on config,
+    // so there is no config dimension here.
+    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, '');
+    if (cached) return cached;
 
+    const entry = this.entries.get(key);
     const value: EntryResources = {
       entryId: ctx.entryId,
       elementKey: key,
@@ -253,16 +266,19 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       revision: this.version,
     };
 
-    if (entry) entry.snapshot = { version: this.version, value };
+    this.snapshots.set(ctx.entryId, this.version, ctx.transform, '', value);
     return value;
   }
 
   /**
-   * World bounds from the geometry, memoised on the render data's identity.
+   * World bounds from the geometry, memoised on the render data's identity AND the
+   * transform.
    *
    * Bounds are world-space, so they need the element→coordinate-system transform —
    * which is why `transform` is on `ResolveContext` and not something a renderer
-   * hands down. The resolver owns bounds (ADR 0004 §1).
+   * hands down. The transform is part of the memo key: reuse the same geometry under
+   * a new coordinate system and the old bounds would be wrong. The resolver owns
+   * bounds (ADR 0004 §1).
    */
   private bounds(
     ctx: ResolveContext<ShapesResolveConfig, ShapesElement>
@@ -271,7 +287,9 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     if (!entry) return null;
     const data = Resolution.lastGood(entry.geometry);
     if (!data) return null;
-    if (entry.boundsSource === data) return entry.bounds ?? null;
+    if (entry.boundsSource === data && entry.boundsTransform === ctx.transform) {
+      return entry.bounds ?? null;
+    }
 
     const computed = data.circles
       ? boundsFromCircles(data.circles, ctx.transform)
@@ -280,6 +298,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         : null;
     entry.bounds = computed;
     entry.boundsSource = data;
+    entry.boundsTransform = ctx.transform;
     return computed;
   }
 
@@ -321,11 +340,15 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   }
 
   evict(key: string): void {
-    this.entries.delete(key);
+    const existed = this.entries.delete(key);
+    this.snapshots.evictByElement(key);
+    // Notify so external-store consumers drop the stale snapshot immediately.
+    if (existed) this.notify();
   }
 
   dispose(): void {
     this.entries.clear();
+    this.snapshots.clear();
     this.listeners.clear();
   }
 }

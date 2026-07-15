@@ -163,9 +163,7 @@ export interface SpatialEntryErrorContext {
 export function isCancellation(cause: unknown): boolean {
   if (cause instanceof DOMException) return cause.name === 'AbortError';
   return (
-    typeof cause === 'object' &&
-    cause !== null &&
-    (cause as { name?: unknown }).name === 'AbortError'
+    typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError'
   );
 }
 

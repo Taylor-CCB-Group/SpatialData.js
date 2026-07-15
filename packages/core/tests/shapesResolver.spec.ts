@@ -169,6 +169,25 @@ describe('load() — the only place I/O starts', () => {
     expect(geometry.error.kind).toBe('decode-failed');
     expect(geometry.error.retryable).toBe(true);
   });
+
+  it('restores the prior resolution when an initial load is cancelled — never hangs', async () => {
+    // The slot is set to `loading` before the load. A cancelled initial load must
+    // fall back to `idle`, or plan() (which only schedules idle geometry) never
+    // reschedules it and the entry hangs in loading forever.
+    const resolver = new ShapesResolver();
+    const el = element({
+      loadRenderData: vi.fn(async () => {
+        throw new DOMException('Aborted', 'AbortError');
+      }),
+    });
+    const c = ctx(el);
+
+    await resolver.load({ id: 'g', resource: 'geometry' }, c, signal());
+
+    expect(resolver.snapshot(c).resources.geometry?.status).toBe('idle');
+    // ...and it is therefore replannable.
+    expect(resolver.plan(c).map((t) => t.resource)).toContain('geometry');
+  });
 });
 
 describe('failure is PER-RESOURCE', () => {
@@ -207,13 +226,45 @@ describe('snapshot() — identity and bounds', () => {
   it('returns the SAME object until something mutates', async () => {
     const resolver = new ShapesResolver();
     const el = element();
-    await resolver.load({ id: 'g', resource: 'geometry' }, ctx(el), signal());
+    // One ctx, reused — a given entry sees a stable transform across renders (the
+    // hook memoises it on [spatialData, coordinateSystem]).
+    const c = ctx(el);
+    await resolver.load({ id: 'g', resource: 'geometry' }, c, signal());
 
-    const first = resolver.snapshot(ctx(el));
+    const first = resolver.snapshot(c);
 
     for (let i = 0; i < 10; i++) {
-      expect(resolver.snapshot(ctx(el))).toBe(first);
+      expect(resolver.snapshot(c)).toBe(first);
     }
+  });
+
+  it('gives two layers over one element distinct snapshots', async () => {
+    const resolver = new ShapesResolver();
+    const el = element();
+    await resolver.load({ id: 'g', resource: 'geometry' }, ctx(el), signal());
+    const base = ctx(el); // same element, same transform — differ only by entry
+
+    const a = resolver.snapshot({ ...base, entryId: 'layer-a' });
+    const b = resolver.snapshot({ ...base, entryId: 'layer-b' });
+
+    expect(a.entryId).toBe('layer-a');
+    expect(b.entryId).toBe('layer-b');
+    expect(a).not.toBe(b);
+  });
+
+  it('recomputes bounds when the transform changes (a new coordinate system)', async () => {
+    // Bounds are world-space. Reuse the same geometry under a new Matrix4 and the
+    // old bounds would be wrong — so the transform is part of the snapshot key.
+    const resolver = new ShapesResolver();
+    const el = element();
+    await resolver.load({ id: 'g', resource: 'geometry' }, ctx(el), signal());
+
+    const identity = resolver.snapshot({ ...ctx(el), transform: new Matrix4() });
+    const scaled = resolver.snapshot({ ...ctx(el), transform: new Matrix4().scale(2) });
+
+    expect(scaled).not.toBe(identity);
+    // Circles at (0,0),(10,10) r=1 → [-1,11]; scaled ×2 → [-2,22].
+    expect(scaled.bounds).toMatchObject({ minX: -2, maxX: 22 });
   });
 
   it('computes world bounds from the geometry once loaded', async () => {
