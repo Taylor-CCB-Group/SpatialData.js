@@ -75,10 +75,14 @@ function mergeShapeFeatureStateForRender(
   if (!config.fillColorByColumn?.columnName) {
     return config.featureState;
   }
+  const fillColorByFeatureId = fillColorEntry?.fillColorByFeatureId ?? {};
   return {
     ...config.featureState,
-    fillColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
-    strokeColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
+    fillColorByFeatureId,
+    // Outlines mirror the fill-colour encoding by default (a fill encoding normally
+    // drives both fill and outline — see docs/vis/layer-prop-flow), but an explicit
+    // per-feature stroke override from the caller wins when one is present.
+    strokeColorByFeatureId: config.featureState?.strokeColorByFeatureId ?? fillColorByFeatureId,
   };
 }
 

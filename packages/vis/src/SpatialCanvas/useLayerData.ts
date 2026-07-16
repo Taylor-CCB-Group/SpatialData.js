@@ -535,12 +535,17 @@ export function useLayerData(
   // and each resolver keeps today's in-flight dedup, so re-running per commit is
   // cheap. Points row-codes and the feature-index scan stay on the render-phase
   // engine calls in `getLayers` (Track A / the `plan()` migration — out of scope).
+  //
+  // Depends on `elementMapValue` (not just the `elementMap` ref) so it replans when
+  // element resolution changes without `layers`/`store` changing — e.g. a coordinate
+  // system switch that makes a previously unavailable element resolvable. The map is
+  // memoised on `availableElements`, so this adds no per-render churn.
   useEffect(() => {
     const contexts: AnyResolveContext[] = [];
     for (const layerId of layerOrder) {
       const config = layers[layerId];
       if (!config?.visible) continue;
-      const elem = resolveLayerElement(layerId, config, elementMap.current);
+      const elem = resolveLayerElement(layerId, config, elementMapValue);
       if (!elem) continue;
       if (elem.type === 'shapes' && config.type === 'shapes') {
         contexts.push({
@@ -587,7 +592,7 @@ export function useLayerData(
       }
     }
     void store.reconcile(contexts);
-  }, [layers, layerOrder, store]);
+  }, [layers, layerOrder, store, elementMapValue]);
 
   // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
 
