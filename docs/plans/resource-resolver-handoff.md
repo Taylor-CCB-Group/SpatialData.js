@@ -176,6 +176,27 @@ unless it wins on *all three* of — supersession correctness under two concurre
 scans; interruption that actually reaches the worker; fewer lines to set up a race in
 a test. A tie means the plain slot wins.
 
+> **Spike outcome (Track A step A8): plain wins. Effect not adopted.** Run
+> empirically — `effect@3.22` added as a `core` devDependency, both slots implemented
+> and driven through the same two-concurrent-scan supersession race
+> (`packages/core/tests/matchingSlotEffectSpike.spec.ts`), then both removed per
+> "delete the loser". Against the three criteria:
+> 1. **Supersession correctness — tie.** Both drop the superseded scan's result; the
+>    plain slot by record identity (`this.current !== record`), Effect by
+>    `Fiber.interrupt`.
+> 2. **Interruption reaches the worker — tie.** Both abort the scan's `AbortSignal`
+>    (the seam A5 threads to the generator). The plain slot aborts its own
+>    `AbortController` *synchronously*; Effect runs the `Effect.async` canceler via
+>    `runFork(Fiber.interrupt(...))`, needing a runtime tick to propagate.
+> 3. **Lines to set up a race — plain wins.** Plain: two synchronous `request()`
+>    calls, assert immediately. Effect: an `Effect.async` + canceler + `runFork` slot
+>    (~15 extra lines) *and* an awaited runtime tick before every assertion; plus a
+>    multi-second import cost on a package whose ethos is zero runtime deps.
+>
+> Effect ties two and loses one, so by the agreed rule the plain `RequestSlot` wins.
+> The `RequestSlot` seam is deliberately shaped so a future reconsideration (e.g. if
+> `tgpu-htj2k`'s dependency-free stance is renegotiated) is a swap, not a rewrite.
+
 ---
 
 #### Track B — Shapes
