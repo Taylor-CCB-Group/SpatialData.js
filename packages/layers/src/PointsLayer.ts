@@ -34,6 +34,10 @@ export interface PointsLayerProps {
   featureCodes?: readonly number[];
   /** Source-side integer codes aligned with the preloaded table rows. */
   preloadedFeatureCodes?: ArrayLike<number>;
+  /** Bumps when a stable resource's backing batch grows in place (the streaming
+   * partial overlay, D10). A change re-reads `loader.loadAll()` WITHOUT resetting the
+   * layer, so the overlay fills in without a per-chunk teardown. */
+  resourceRevision?: number;
   /** Max rows to draw after feature filtering. */
   renderCap?: number;
   showTileDebugOverlay?: boolean;
@@ -131,6 +135,13 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       return;
     }
 
+    // Same loader, but its stable backing batch grew in place (the streaming partial
+    // overlay, D10): re-read `loadAll` for the grown buffer and re-filter, WITHOUT the
+    // reset above — that is what keeps the overlay from flashing per chunk.
+    if (props.resourceRevision !== oldProps.resourceRevision) {
+      void this.refreshPreloadedBatch();
+    }
+
     const signature = filterBatchSignature(
       props.featureCodes,
       props.preloadedFeatureCodes,
@@ -181,6 +192,38 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
           )
         );
       }
+    }
+  }
+
+  /**
+   * Re-read the (grown) batch from a stable loader whose backing buffer changed in
+   * place — the D10 streaming overlay. Unlike {@link ensurePreloadedBatch} it has no
+   * "already loaded" short-circuit (the whole point is to pick up the growth) and it
+   * does not reset filter state, so the overlay updates without a teardown.
+   */
+  private async refreshPreloadedBatch(): Promise<void> {
+    const { resource } = this.props;
+    if (resource.loader.capabilities.kind !== 'preloaded-columnar') {
+      return;
+    }
+    const batch = await resource.loader.loadAll?.();
+    if (batch?.format !== 'columnar-ndarray') {
+      return;
+    }
+    this.setState({ preloadedBatch: batch });
+    const awaitingRowCodes = featureFilterAwaitingRowCodes(
+      this.props.featureCodes,
+      this.props.preloadedFeatureCodes
+    );
+    if (!awaitingRowCodes) {
+      void this.ensureFilteredBatch(
+        batch,
+        filterBatchSignature(
+          this.props.featureCodes,
+          this.props.preloadedFeatureCodes,
+          this.props.renderCap
+        )
+      );
     }
   }
 

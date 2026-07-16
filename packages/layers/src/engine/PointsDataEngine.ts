@@ -97,13 +97,22 @@ export class PointsDataEngine {
     return this.adapter.getMatchingResource(element, key, this.resolver.getMatchedBatch(key));
   }
 
-  /** Render resource for the in-flight scan's growing partial buffer. */
+  /** Render resource for the in-flight scan's growing partial buffer. Identity is
+   * stable for the scan's lifetime (D10); {@link getMatchingPartialRevision} bumps
+   * as it grows. */
   getMatchingPartialResource(element: PointsElement, key: string): PointsRenderResource | null {
     return this.adapter.getMatchingPartialResource(
       element,
       key,
-      this.resolver.getPartialBatch(key)
+      this.resolver.getPartialBatch(key),
+      this.resolver.getPartialScanKey(key)
     );
+  }
+
+  /** The growing partial's revision — a `PointsLayer` `resourceRevision` prop, so the
+   * `__partial` sublayer re-reads the grown buffer without a per-chunk teardown. */
+  getMatchingPartialRevision(key: string): number {
+    return this.adapter.getMatchingPartialRevision(key);
   }
 
   // --- Lifecycle (resolver-owned) ---------------------------------------------

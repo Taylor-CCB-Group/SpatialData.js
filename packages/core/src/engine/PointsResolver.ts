@@ -445,6 +445,17 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return this.entries.get(key)?.matching.partial?.result;
   }
 
+  /**
+   * The key (`${signature}#${cap}`) of the in-flight scan whose partial is streaming,
+   * or `undefined` when no scan is loading. The Renderer Adapter uses it to tell a
+   * *growing* partial (same scan, keep the resource identity, bump a revision) from a
+   * *new* scan (fresh resource) — the D10 flash fix.
+   */
+  getPartialScanKey(key: string): string | undefined {
+    const slot = this.entries.get(key)?.matching;
+    return slot?.isLoading ? slot.pendingKey : undefined;
+  }
+
   getStatus(key: string): PointsLoadStatus {
     const resolution = this.entries.get(key)?.preload.resolution;
     switch (resolution?.status) {

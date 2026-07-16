@@ -1018,6 +1018,9 @@ export function useLayerData(
               new PointsLayer({
                 id: `${layerId}__partial`,
                 resource: partialResource,
+                // Stable resource across chunks; the revision bumps as the buffer
+                // grows so the overlay re-reads without a per-chunk teardown (D10).
+                resourceRevision: pointsEngine.getMatchingPartialRevision(elem.key),
                 modelMatrix: elem.transform,
                 opacity: config.opacity,
                 visible: config.visible,

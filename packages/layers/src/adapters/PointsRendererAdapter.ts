@@ -1,5 +1,9 @@
 import type { PointsElement, PointsLoadResult } from '@spatialdata/core';
-import type { PointsRenderResource } from '../pointsLoader.js';
+import {
+  columnarBatchFromPointData,
+  type PointsLoader,
+  type PointsRenderResource,
+} from '../pointsLoader.js';
 import {
   pointsRenderResourceSignature,
   resolvePointsRenderResource,
@@ -48,7 +52,25 @@ interface ResourceMemo {
 interface EntryMemos {
   resident?: ResourceMemo;
   matched?: ResourceMemo;
-  partial?: ResourceMemo;
+}
+
+/**
+ * The streaming overlay's resource (D10). Unlike the resident/matched memos — which
+ * key on batch IDENTITY and so mint a new resource whenever the batch changes — the
+ * partial's resource is held **stable for the lifetime of one scan** and its backing
+ * batch is swapped through a mutable holder, with a `revision` counter bumped on each
+ * growth. That is what stops `PointsLayer` tearing the `__partial` sublayer down and
+ * rebuilding it per chunk (the flash): the loader identity never changes mid-scan, so
+ * the composite re-reads the grown buffer on a `resourceRevision` prop change instead
+ * of resetting.
+ */
+interface GrowingPartial {
+  /** The scan this partial belongs to (`${signature}#${cap}`); a change means a new scan. */
+  scanKey: string;
+  resource: PointsRenderResource;
+  /** Swapped per chunk; the loader's `loadAll` reads through it. */
+  holder: { current: PointsLoadResult };
+  revision: number;
 }
 
 const RESOLVE_OPTIONS = { experimentalOptimizations: 'off' as const };
@@ -58,6 +80,7 @@ const isEmpty = (batch: PointsLoadResult): boolean => (batch.shape[1] ?? 0) === 
 
 export class PointsRendererAdapter {
   private readonly memos = new Map<string, EntryMemos>();
+  private readonly growingPartials = new Map<string, GrowingPartial>();
 
   private entry(key: string): EntryMemos {
     let memos = this.memos.get(key);
@@ -112,24 +135,79 @@ export class PointsRendererAdapter {
   }
 
   /**
-   * The in-flight scan's growing buffer, as a resource, so points progressively
-   * fill in before the full scan settles. Rebuilds only when a new chunk grows the
-   * buffer — not per pan, which is when the user is most likely to be moving.
+   * The in-flight scan's growing buffer, as a resource (D10).
+   *
+   * The resource identity is **held stable for the whole scan** (keyed on `scanKey`,
+   * not the batch): a grown buffer swaps the mutable holder and bumps
+   * {@link getMatchingPartialRevision} instead of minting a new resource. So the
+   * `PointsLayer` composite is NOT torn down per chunk — it re-reads the grown buffer
+   * on a `resourceRevision` prop change. One deck layer per *(entry, selection)*,
+   * zero teardowns per scan. A new scan (`scanKey` change) mints a fresh resource.
    */
   getMatchingPartialResource(
     element: PointsElement,
     key: string,
-    batch: PointsLoadResult | undefined
-  ) {
-    if (!batch || isEmpty(batch)) return null;
-    return this.resolve(this.entry(key), 'partial', element, batch);
+    batch: PointsLoadResult | undefined,
+    scanKey: string | undefined
+  ): PointsRenderResource | null {
+    if (!batch || isEmpty(batch) || scanKey === undefined) {
+      this.growingPartials.delete(key);
+      return null;
+    }
+    let growing = this.growingPartials.get(key);
+    if (!growing || growing.scanKey !== scanKey) {
+      // New scan → build ONE resource whose loader reads through a mutable holder.
+      const holder = { current: batch };
+      const resource = this.buildGrowingResource(element, holder);
+      if (!resource) return null;
+      growing = { scanKey, resource, holder, revision: 0 };
+      this.growingPartials.set(key, growing);
+    } else if (growing.holder.current !== batch) {
+      // Same scan, grown buffer → swap the holder + bump the revision. SAME resource.
+      growing.holder.current = batch;
+      growing.revision += 1;
+    }
+    return growing.resource;
+  }
+
+  /** The revision of the in-flight partial's growing buffer — a `PointsLayer`
+   * `resourceRevision` prop, bumped each time the buffer grows so the composite
+   * re-reads without a teardown. */
+  getMatchingPartialRevision(key: string): number {
+    return this.growingPartials.get(key)?.revision ?? 0;
+  }
+
+  /** A stable render resource whose `loadAll` reads the current holder batch. */
+  private buildGrowingResource(
+    element: PointsElement,
+    holder: { current: PointsLoadResult }
+  ): PointsRenderResource | null {
+    const base = resolvePointsRenderResource(
+      element,
+      { preloaded: holder.current, metadataKnown: false },
+      RESOLVE_OPTIONS
+    );
+    if (!base) return null;
+    const loader: PointsLoader = {
+      capabilities: base.loader.capabilities,
+      loadInBounds: (options) => base.loader.loadInBounds(options),
+      loadAll: async () =>
+        columnarBatchFromPointData({
+          shape: holder.current.shape,
+          data: holder.current.data,
+          ...(holder.current.featureCodes ? { featureCodes: holder.current.featureCodes } : {}),
+        }),
+    };
+    return { element, loader };
   }
 
   evict(key: string): void {
     this.memos.delete(key);
+    this.growingPartials.delete(key);
   }
 
   dispose(): void {
     this.memos.clear();
+    this.growingPartials.clear();
   }
 }

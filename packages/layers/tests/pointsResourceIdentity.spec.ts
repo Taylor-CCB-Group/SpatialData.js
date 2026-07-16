@@ -226,7 +226,7 @@ describe('partial render resource — getMatchingPartialResource', () => {
     await pending;
   });
 
-  it('CHANGES identity when the scan grows the buffer — and only then', async () => {
+  it('HOLDS identity when the scan grows the buffer, bumping a revision instead (D10)', async () => {
     const engine = new PointsDataEngine();
     const scan = deferred<PointsLoadResult>();
     const first = batch(2);
@@ -253,17 +253,20 @@ describe('partial render resource — getMatchingPartialResource', () => {
 
     const atFirstChunk = engine.getMatchingPartialResource(element, 'pts');
     expect(atFirstChunk).not.toBeNull();
+    const revisionBefore = engine.getMatchingPartialRevision('pts');
 
-    // A new chunk grows the buffer. The memo keys on the partial's IDENTITY, so
-    // this must produce a new resource — otherwise the overlay stops filling in.
+    // A new chunk grows the buffer. D10: the resource identity is held STABLE for the
+    // scan (so PointsLayer does not tear the overlay down per chunk) and the revision
+    // bumps instead — the composite re-reads the grown buffer on that prop change.
     emit({ matchedRows: 5, scannedRows: 30, partialResult: grown });
     const atSecondChunk = engine.getMatchingPartialResource(element, 'pts');
 
-    expect(atSecondChunk).not.toBeNull();
-    expect(atSecondChunk).not.toBe(atFirstChunk);
+    expect(atSecondChunk).toBe(atFirstChunk); // SAME resource — no teardown
+    expect(engine.getMatchingPartialRevision('pts')).toBe(revisionBefore + 1);
 
-    // ...and is then stable again until the next chunk.
+    // Stable across reads until the next growth.
     expect(engine.getMatchingPartialResource(element, 'pts')).toBe(atSecondChunk);
+    expect(engine.getMatchingPartialRevision('pts')).toBe(revisionBefore + 1);
 
     scan.resolve(grown);
     await pending;
