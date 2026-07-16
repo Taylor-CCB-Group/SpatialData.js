@@ -7,17 +7,9 @@
 
 import { getImageSize } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
+import { clampVivSelectionsToAxes } from '@spatialdata/avivatorish';
 import {
-  buildDefaultSelection,
-  COLOR_PALLETE,
-  clampVivSelectionsToAxes,
-  getMultiSelectionStats,
-  getVivSelectionAxisSizes,
-  guessRgb,
-  isInterleaved,
-  tryParseOmeroHexColor,
-} from '@spatialdata/avivatorish';
-import {
+  type AnyResolveContext,
   type AxisAlignedBounds,
   attachTooltipElementContext,
   boundsFromCircles,
@@ -26,27 +18,21 @@ import {
   boundsFromPolygons,
   getPhysicalSizeScalingMatrixFromMeta,
   getTooltipSignature,
-  type ImageElement,
   type LabelsElement,
-  type LabelsTooltipMetadata,
-  loadAssociatedTableFeatureRows,
-  loadLabelsTooltipMetadata,
-  loadShapesTooltipMetadata,
   type PointsElement,
   resolvePointsMemoryCap,
   resolveTooltipItems,
   type ShapesElement,
   type ShapesRenderData,
-  type ShapesTooltipMetadata,
+  ShapesResolver,
   type SpatialData,
+  SpatialEntryStore,
   type SpatialFeatureTooltipData,
   unionBoundsList,
 } from '@spatialdata/core';
 import {
-  buildShapeFeatureStateRuntime,
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
-  EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
@@ -56,18 +42,22 @@ import {
   resolveShapeTooltipRowIndex,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
-  type ShapeFillColorMode,
-  type ShapesPrebuiltData,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  applyPerChannelFallbackWithoutOmero,
-  type VivLoaderMetadata,
-} from './imageLoaderChannelDefaults';
-import { createImageLoader } from './renderers/imageRenderer';
+import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
-import { loadShapesData, renderShapesLayer } from './renderers/shapesRenderer';
+import { renderShapesLayer } from './renderers/shapesRenderer';
+import { createNonOwningResolver } from './resolvers/nonOwningResolver';
+import { ImagesResolver, LabelsResolver } from './resolvers/RasterResolvers';
+import {
+  getShapeFillColorAlpha,
+  getShapeFillColorSignature,
+  getStableShapeFeatureStateRuntime,
+  type ShapeFillColorEntry,
+  type ShapePrebuiltEntry,
+  serializeHiddenIds,
+} from './shapesProjection';
 import type {
   AvailableElement,
   ChannelConfig,
@@ -93,21 +83,6 @@ export interface ImageLoaderData {
   selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
 }
 
-interface LoadedShapesData extends ShapesTooltipMetadata {
-  renderData: ShapesRenderData;
-}
-
-interface ShapePrebuiltEntry {
-  prebuilt: ShapesPrebuiltData;
-  /** Serialised, sorted `hiddenFeatureIds` — used to detect when a rebuild is needed. */
-  signature: string;
-}
-
-interface ShapeFillColorEntry {
-  fillColorByFeatureId: Record<string, [number, number, number, number]>;
-  signature: string;
-}
-
 export interface WorldBoundsCacheEntry {
   dataRef: unknown;
   transformRef: Matrix4;
@@ -115,10 +90,10 @@ export interface WorldBoundsCacheEntry {
 }
 
 interface LoadedData {
-  shapes: Map<string, LoadedShapesData>;
-  // Points data lives in `pointsEngine` (PointsDataEngine), not here.
-  images: Map<string, ImageLoaderData>; // Viv loaders with computed channel data
-  labels: Map<string, LabelsLoaderData>;
+  // Kind-owned data lives in its resolver/engine, not here: shapes geometry/tooltip/
+  // fill-colour rows in `shapesResolver`, images in `imagesResolver`, labels in
+  // `labelsResolver`, points in `pointsEngine`. What remains are vis-side render
+  // projections keyed by layer id, plus the world-bounds cache.
   /**
    * Pre-built deck.gl `data` arrays keyed by **layer id** (not element key).
    * Each entry holds the O(n-features) array produced by `buildShapesPrebuiltData`
@@ -162,17 +137,12 @@ export interface ImageLayerConfig {
   vivProps?: Record<string, unknown>;
 }
 
-export interface LabelsLoaderData extends LabelsTooltipMetadata {
-  loader: unknown;
-  colors: [number, number, number][];
-  channelsVisible: boolean[];
-  channelOpacities: number[];
-  channelOutlineOpacities: number[];
-  channelsFilled: boolean[];
-  channelStrokeWidths: number[];
-  selections: Array<Partial<{ z: number; c: number; t: number }>>;
-  selectionAxisSizes?: Partial<Record<'z' | 'c' | 't', number>>;
-}
+/**
+ * The labels channel defaults the properties panel reads. Now the exact shape the
+ * `LabelsResolver` produces (`getLoadedData`) — tooltip metadata is a separate
+ * resolver resource (`getTooltipMetadata`), no longer bundled into loaded data.
+ */
+export type LabelsLoaderData = LabelsChannelDefaults;
 
 export interface ShapeFeaturePickEventData {
   elementKind: 'shapes';
@@ -263,34 +233,6 @@ function getLayerTooltipSignature(config: LayerConfig | undefined): string {
   return config && 'tooltipFields' in config ? getTooltipSignature(config.tooltipFields) : '';
 }
 
-function getShapeFillColorAlpha(config: ShapesLayerConfig): number {
-  return config.fillColor?.[3] ?? 180;
-}
-
-function getShapeFillColorSignature(config: LayerConfig | undefined): string {
-  if (config?.type !== 'shapes' || !config.fillColorByColumn?.columnName) {
-    return '';
-  }
-  const mode: ShapeFillColorMode = config.fillColorByColumn.mode;
-  return [config.fillColorByColumn.columnName, mode, String(getShapeFillColorAlpha(config))].join(
-    '\u0001'
-  );
-}
-
-/** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */
-function serializeHiddenIds(ids?: string[]): string {
-  if (!ids || ids.length === 0) return '';
-  return ids.slice().sort().join('\x00');
-}
-
-function serializeColorByFeatureId(
-  colors?: Record<string, readonly [number, number, number, number]>
-): string {
-  if (!colors || Object.keys(colors).length === 0) return '';
-  const entries = Object.entries(colors).sort(([a], [b]) => a.localeCompare(b));
-  return `\x02${entries.length}:${JSON.stringify(entries)}`;
-}
-
 function getPickedLabelObject(
   object: unknown
 ): { labelId: string; channelIndex?: number; object: unknown } | undefined {
@@ -369,100 +311,6 @@ export function getCachedWorldBounds(
   return bounds;
 }
 
-async function loadShapesLayerData(
-  element: ShapesElement
-): Promise<Pick<LoadedShapesData, 'renderData'>> {
-  const renderData = await loadShapesData(element);
-  return { renderData };
-}
-
-async function loadShapeFillColorData({
-  spatialData,
-  element,
-  renderData,
-  config,
-}: {
-  spatialData: SpatialData | undefined;
-  element: ShapesElement;
-  renderData: ShapesRenderData;
-  config: ShapesLayerConfig;
-}): Promise<ShapeFillColorEntry> {
-  const fillColorByColumn = config.fillColorByColumn;
-  const signature = getShapeFillColorSignature(config);
-  if (!fillColorByColumn?.columnName) {
-    return { signature: '', fillColorByFeatureId: {} };
-  }
-
-  const rows = await loadAssociatedTableFeatureRows({
-    spatialData,
-    kind: 'shapes',
-    key: element.key,
-    extraColumnNames: [fillColorByColumn.columnName],
-  });
-
-  return {
-    signature,
-    fillColorByFeatureId: buildShapeFillColorByFeatureId({
-      featureIds: renderData.featureIds,
-      rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
-      column: rows.extraColumns?.[0],
-      mode: fillColorByColumn.mode,
-      alpha: getShapeFillColorAlpha(config),
-    }),
-  };
-}
-
-function mergeShapeFeatureStateForRender(
-  config: ShapesLayerConfig,
-  fillColorEntry: ShapeFillColorEntry | undefined
-): ShapesLayerConfig['featureState'] {
-  if (!config.fillColorByColumn?.columnName) {
-    return config.featureState;
-  }
-  return {
-    ...config.featureState,
-    fillColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
-    strokeColorByFeatureId: fillColorEntry?.fillColorByFeatureId ?? {},
-  };
-}
-
-function getShapeFeatureStateSignature(
-  config: ShapesLayerConfig,
-  fillColorEntry: ShapeFillColorEntry | undefined
-): string {
-  const featureState = config.featureState;
-  const fillColors = featureState?.fillColorByFeatureId;
-  const strokeColors = featureState?.strokeColorByFeatureId;
-  return [
-    serializeHiddenIds(featureState?.hiddenFeatureIds),
-    serializeHiddenIds(featureState?.fadedFeatureIds),
-    String(featureState?.filteredOpacityMultiplier ?? ''),
-    fillColorEntry?.signature ?? '',
-    serializeColorByFeatureId(fillColors),
-    serializeColorByFeatureId(strokeColors),
-  ].join('\x01');
-}
-
-function getStableShapeFeatureStateRuntime(
-  layerId: string,
-  config: ShapesLayerConfig,
-  fillColorEntry: ShapeFillColorEntry | undefined,
-  cache: Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
-): ShapeFeatureStateRuntime {
-  const signature = getShapeFeatureStateSignature(config, fillColorEntry);
-  const cached = cache.get(layerId);
-  if (cached?.signature === signature) {
-    return cached.runtime;
-  }
-
-  const merged = mergeShapeFeatureStateForRender(config, fillColorEntry);
-  const runtime = merged
-    ? buildShapeFeatureStateRuntime(merged)
-    : EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
-  cache.set(layerId, { signature, runtime });
-  return runtime;
-}
-
 /**
  * Hook to manage async loading of layer data and produce deck.gl layers.
  *
@@ -484,13 +332,22 @@ export function useLayerData(
 
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
-    shapes: new Map(),
-    images: new Map(),
-    labels: new Map(),
     shapePrebuiltData: new Map(),
     shapeFillColorData: new Map(),
     worldBounds: new Map(),
   });
+  // Vis-side projection cache for coupling #1: the shapes resolver keeps raw
+  // geometry and tooltip metadata independent, but the render/pick sites need the
+  // geometry with `rowIndexByFeatureIndex` overwritten by the tooltip's
+  // `tooltipRowIndices` (when present). Keyed by element key, memoised on
+  // (raw identity, tooltipRowIndices identity) so a fresh merged object is not
+  // produced per `getLayers()` call (that would be a deck teardown per frame).
+  const mergedShapeRenderDataRef = useRef<
+    Map<
+      string,
+      { raw: ShapesRenderData; tooltipRowIndices: Int32Array | undefined; merged: ShapesRenderData }
+    >
+  >(new Map());
   const stableSelectionArraysRef = useRef<
     Map<string, { signature: string; value: RasterSelection[] }>
   >(new Map());
@@ -575,575 +432,267 @@ export function useLayerData(
       })
   );
 
-  // Re-render on every points-engine cache mutation (async loads/scans settling).
-  // NOTE: the consuming component (SpatialCanvasInner) must opt out of the React
-  // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from
-  // these engine getters and never repaints on a late async settle, since the
-  // getters read mutable engine state with no compiler-tracked dependency.
-  useEffect(
-    () => pointsEngine.subscribe(notifyLoadedDataChanged),
-    [pointsEngine, notifyLoadedDataChanged]
+  // Shapes / images / labels Resource Resolvers (ADR 0004). Shapes lives in `core`,
+  // images/labels in `vis` (next to Viv/avivatorish) — the store below holds only
+  // `ResourceResolver`s and cannot tell which package each came from. Each rebuilds
+  // when the dataset (`spatialData`) swaps because it closes over it; the store owns
+  // their re-render subscription and disposal. Shapes forwards geometry/tooltip
+  // status; the rasters forward loader status as `image` (fill and tooltip statuses
+  // have never driven the blocking overlay).
+  const shapesResolver = useMemo(
+    () =>
+      new ShapesResolver({
+        spatialData,
+        callbacks: {
+          onStatus: (layerId, resource, status) => {
+            if (resource === 'geometry' || resource === 'tooltip') {
+              setLayerResourceStatus(layerId, resource, status);
+            }
+          },
+        },
+      }),
+    [spatialData, setLayerResourceStatus]
+  );
+  const imagesResolver = useMemo(
+    () =>
+      new ImagesResolver({
+        fetchMultiscales: getOmeZarrMultiscalesData,
+        spatialData,
+        onStatus: (layerId, _resource, status) => setLayerResourceStatus(layerId, 'image', status),
+      }),
+    [getOmeZarrMultiscalesData, spatialData, setLayerResourceStatus]
+  );
+  const labelsResolver = useMemo(
+    () =>
+      new LabelsResolver({
+        fetchMultiscales: getOmeZarrMultiscalesData,
+        spatialData,
+        onStatus: (layerId, _resource, status) => setLayerResourceStatus(layerId, 'image', status),
+      }),
+    [getOmeZarrMultiscalesData, spatialData, setLayerResourceStatus]
   );
 
-  // Load data for enabled layers that don't have data yet
+  // Points resolver, wrapped non-owning so the store can drive it without disposing
+  // it. `pointsEngine` (the stable `useState` value the panels subscribe to) is its
+  // real owner and outlives the store; the proxy is what keeps a store rebuild from
+  // clearing the engine's cache and subscriptions. See `createNonOwningResolver` for
+  // the full rationale. Keyed on the stable `pointsEngine`, so it never churns the
+  // store on its own.
+  const pointsResolverForStore = useMemo(
+    () => createNonOwningResolver(pointsEngine.resourceResolver),
+    [pointsEngine]
+  );
+
+  // The one reconcile loop over all four kinds (ADR 0004), replacing the per-kind
+  // driving effects.
+  //
+  // Ownership model, in one place:
+  //   • shapes/images/labels — created here (keyed on `spatialData`), OWNED by the
+  //     store: it subscribes to them and disposes them. A dataset swap rebuilds them,
+  //     which rebuilds the store, whose cleanup disposes the replaced instances.
+  //   • points — owned by the stable `pointsEngine`; the store only borrows it through
+  //     the non-owning proxy above and never disposes it.
+  // So the store's identity tracks the raster/shapes resolvers; the points proxy is
+  // stable and does not, on its own, force a rebuild.
+  const store = useMemo(
+    () =>
+      new SpatialEntryStore({
+        points: pointsResolverForStore,
+        shapes: shapesResolver,
+        images: imagesResolver,
+        labels: labelsResolver,
+      }),
+    [pointsResolverForStore, shapesResolver, imagesResolver, labelsResolver]
+  );
+
+  // Re-render on any resolver cache mutation, and dispose the store — and with it the
+  // shapes/images/labels resolvers it owns — when the store is replaced (dataset swap)
+  // or the hook unmounts. The points proxy's `dispose` is a no-op, so `pointsEngine`
+  // and its cache survive the swap. All four kinds' re-render notifications now route
+  // through the store (the engine's own subscription is gone), including points via
+  // the proxy → real resolver.
+  //
+  // NOTE: the consuming component (SpatialCanvasInner) must opt out of the React
+  // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from these
+  // resolver getters and never repaints on a late async settle.
+  //
+  // Caveat: `SpatialEntryStore` subscribes to its resolvers in its constructor, which
+  // runs inside the `useMemo` above. Under React StrictMode's dev-only double-invoke a
+  // discarded store instance leaks one listener on the (never-disposed) points
+  // resolver per rebuild; each such listener only calls a dead store's `notify()`
+  // (empty listener set), so it is inert. Harmless in production; noted so it is not
+  // mistaken for a real leak.
   useEffect(() => {
-    const loadData = async () => {
-      const loaded = loadedDataRef.current;
-
-      // ── Synchronous prebuilt invalidation ──────────────────────────────────
-      // Rebuild the pre-filtered feature arrays when hiddenFeatureIds changes.
-      // This is O(n-features) CPU work on already-loaded geometry; no IO.
-      for (const layerId of layerOrder) {
-        const config = layers[layerId];
-        if (!config?.visible || config.type !== 'shapes') continue;
-        const elem = resolveLayerElement(layerId, config, elementMap.current);
-        if (!elem) continue;
-        const loadedShapes = loaded.shapes.get(elem.key);
-        if (!loadedShapes) continue;
-        const hiddenIds = config.featureState?.hiddenFeatureIds;
-        const sig = serializeHiddenIds(hiddenIds);
-        const cached = loaded.shapePrebuiltData.get(layerId);
-        if (!cached || cached.signature !== sig) {
-          loaded.shapePrebuiltData.set(layerId, {
-            prebuilt: buildShapesPrebuiltData(loadedShapes.renderData, hiddenIds),
-            signature: sig,
-          });
-        }
-      }
-      // ── Async IO loads ─────────────────────────────────────────────────────
-
-      const toLoad: Array<{
-        layerId: string;
-        element: AvailableElement;
-        loadGeometry: boolean;
-        loadTooltip: boolean;
-        loadFillColor: boolean;
-        loadImage: boolean;
-        loadPoints: boolean;
-        loadLabels: boolean;
-      }> = [];
-
-      for (const layerId of layerOrder) {
-        const config = layers[layerId];
-        if (!config?.visible) continue;
-
-        const elem = resolveLayerElement(layerId, config, elementMap.current);
-        if (!elem) continue;
-
-        if (config.type === 'shapes') {
-          const loadedShapes = loaded.shapes.get(elem.key);
-          const tooltipSignature = getLayerTooltipSignature(config);
-          const fillColorSignature = getShapeFillColorSignature(config);
-          const fillColorEntry = loaded.shapeFillColorData.get(layerId);
-          const loadGeometry = !loadedShapes;
-          const loadTooltip = !loadedShapes || loadedShapes.tooltipSignature !== tooltipSignature;
-          const loadFillColor = fillColorSignature
-            ? fillColorEntry?.signature !== fillColorSignature
-            : fillColorEntry !== undefined;
-          if (loadGeometry || loadTooltip || loadFillColor) {
-            toLoad.push({
-              layerId,
-              element: elem,
-              loadGeometry,
-              loadTooltip,
-              loadFillColor,
-              loadImage: false,
-              loadPoints: false,
-              loadLabels: false,
-            });
-          }
-        } else if (config.type === 'labels') {
-          const loadedLabels = loaded.labels.get(elem.key);
-          const tooltipSignature = getLayerTooltipSignature(config);
-          const loadLabels = !loadedLabels;
-          const loadTooltip = !loadedLabels || loadedLabels.tooltipSignature !== tooltipSignature;
-          if (loadLabels || loadTooltip) {
-            toLoad.push({
-              layerId,
-              element: elem,
-              loadGeometry: false,
-              loadTooltip,
-              loadFillColor: false,
-              loadImage: false,
-              loadPoints: false,
-              loadLabels,
-            });
-          }
-        } else if (
-          config.type === 'points' &&
-          // Reload when the resident window is missing OR was loaded at a
-          // different memory cap (the props-panel control changed it).
-          !pointsEngine.isLoadedWithCap(elem.key, resolvePointsMemoryCap(config.pointsMemoryCap))
-        ) {
-          toLoad.push({
-            layerId,
-            element: elem,
-            loadGeometry: false,
-            loadTooltip: false,
-            loadFillColor: false,
-            loadImage: false,
-            loadPoints: true,
-            loadLabels: false,
-          });
-        } else if (config.type === 'image' && !loaded.images.has(elem.key)) {
-          toLoad.push({
-            layerId,
-            element: elem,
-            loadGeometry: false,
-            loadTooltip: false,
-            loadFillColor: false,
-            loadImage: true,
-            loadPoints: false,
-            loadLabels: false,
-          });
-        }
-      }
-
-      if (toLoad.length === 0) return;
-
-      // Load in parallel
-      await Promise.all(
-        toLoad.map(
-          async ({
-            layerId,
-            element,
-            loadGeometry,
-            loadTooltip,
-            loadFillColor,
-            loadImage,
-            loadPoints,
-            loadLabels,
-          }) => {
-            if (element.type === 'shapes') {
-              const existing = loadedDataRef.current.shapes.get(element.key);
-              if (loadGeometry) {
-                try {
-                  setLayerResourceStatus(layerId, 'geometry', 'loading');
-                  const geometryData = await loadShapesLayerData(element.element as ShapesElement);
-                  loadedDataRef.current.shapes.set(element.key, {
-                    ...existing,
-                    ...geometryData,
-                  });
-                  setLayerResourceStatus(layerId, 'geometry', 'ready');
-                  // Build the initial prebuilt data for this layer.
-                  const curConfig = layersRef.current[layerId];
-                  const hiddenIds =
-                    curConfig?.type === 'shapes'
-                      ? curConfig.featureState?.hiddenFeatureIds
-                      : undefined;
-                  loadedDataRef.current.shapePrebuiltData.set(layerId, {
-                    prebuilt: buildShapesPrebuiltData(geometryData.renderData, hiddenIds),
-                    signature: serializeHiddenIds(hiddenIds),
-                  });
-                } catch (error) {
-                  setLayerResourceStatus(layerId, 'geometry', 'error');
-                  console.error(`Failed to load shapes geometry for ${layerId}:`, error);
-                  return;
-                }
-              } else {
-                setLayerResourceStatus(layerId, 'geometry', existing ? 'ready' : 'idle');
-              }
-
-              if (loadTooltip) {
-                try {
-                  const shapeLayerConfig =
-                    layersRef.current[layerId]?.type === 'shapes'
-                      ? layersRef.current[layerId]
-                      : undefined;
-                  const tooltipFields = shapeLayerConfig?.tooltipFields ?? [];
-                  const requestedSignature = getLayerTooltipSignature(shapeLayerConfig);
-                  if (tooltipFields.length > 0) {
-                    setLayerResourceStatus(layerId, 'tooltip', 'loading');
-                    const current = loadedDataRef.current.shapes.get(element.key);
-                    const tooltipData = await loadShapesTooltipMetadata(
-                      spatialData,
-                      element.element as ShapesElement,
-                      tooltipFields
-                    );
-                    const latestDesired = getLayerTooltipSignature(
-                      layersRef.current[layerId]?.type === 'shapes'
-                        ? layersRef.current[layerId]
-                        : undefined
-                    );
-                    if (latestDesired !== requestedSignature) {
-                      return;
-                    }
-                    const mergedShapeData = {
-                      ...current,
-                      ...tooltipData,
-                    } as LoadedShapesData;
-                    if (tooltipData.tooltipRowIndices) {
-                      mergedShapeData.renderData = {
-                        ...mergedShapeData.renderData,
-                        rowIndexByFeatureIndex: tooltipData.tooltipRowIndices,
-                      };
-                      const hiddenIds =
-                        layersRef.current[layerId]?.type === 'shapes'
-                          ? layersRef.current[layerId].featureState?.hiddenFeatureIds
-                          : undefined;
-                      loadedDataRef.current.shapePrebuiltData.set(layerId, {
-                        prebuilt: buildShapesPrebuiltData(mergedShapeData.renderData, hiddenIds),
-                        signature: serializeHiddenIds(hiddenIds),
-                      });
-                    }
-                    loadedDataRef.current.shapes.set(element.key, mergedShapeData);
-                    setLayerResourceStatus(
-                      layerId,
-                      'tooltip',
-                      tooltipData.tooltipSignature === undefined ? 'idle' : 'ready'
-                    );
-                  } else {
-                    const current = loadedDataRef.current.shapes.get(element.key);
-                    loadedDataRef.current.shapes.set(element.key, {
-                      ...current,
-                      tooltipSignature: '',
-                      tooltipFields: [],
-                      tooltipColumns: undefined,
-                      tooltipRowIndices: undefined,
-                      tooltipRowIndexByFeatureId: undefined,
-                    } as LoadedShapesData);
-                    setLayerResourceStatus(layerId, 'tooltip', 'idle');
-                  }
-                } catch (error) {
-                  setLayerResourceStatus(layerId, 'tooltip', 'error');
-                  console.error(`Failed to load shapes tooltip for ${layerId}:`, error);
-                }
-              }
-
-              if (loadFillColor) {
-                const shapeLayerConfig =
-                  layersRef.current[layerId]?.type === 'shapes'
-                    ? layersRef.current[layerId]
-                    : undefined;
-                const requestedSignature = getShapeFillColorSignature(shapeLayerConfig);
-                if (!shapeLayerConfig || !requestedSignature) {
-                  loadedDataRef.current.shapeFillColorData.delete(layerId);
-                  notifyLoadedDataChanged();
-                } else {
-                  try {
-                    const current = loadedDataRef.current.shapes.get(element.key);
-                    if (!current?.renderData) {
-                      return;
-                    }
-                    const fillColorData = await loadShapeFillColorData({
-                      spatialData,
-                      element: element.element as ShapesElement,
-                      renderData: current.renderData,
-                      config: shapeLayerConfig,
-                    });
-                    const latestDesired = getShapeFillColorSignature(
-                      layersRef.current[layerId]?.type === 'shapes'
-                        ? layersRef.current[layerId]
-                        : undefined
-                    );
-                    if (latestDesired !== requestedSignature) {
-                      return;
-                    }
-                    loadedDataRef.current.shapeFillColorData.set(layerId, fillColorData);
-                    notifyLoadedDataChanged();
-                  } catch (error) {
-                    loadedDataRef.current.shapeFillColorData.delete(layerId);
-                    notifyLoadedDataChanged();
-                    console.error(`Failed to load shapes fill colours for ${layerId}:`, error);
-                  }
-                }
-              }
-            } else if (element.type === 'points' && loadPoints) {
-              // The engine owns loading/caching/status; it reports status back
-              // through the onStatus callback wired at construction. The resident
-              // window size is the layer's configured memory cap (props panel).
-              const pointsConfig = layers[layerId];
-              const memoryCap = resolvePointsMemoryCap(
-                pointsConfig?.type === 'points' ? pointsConfig.pointsMemoryCap : undefined
-              );
-              await pointsEngine.ensureLoaded(
-                {
-                  key: element.key,
-                  layerId,
-                  element: element.element as PointsElement,
-                },
-                memoryCap
-              );
-            } else if (element.type === 'image' && loadImage) {
-              try {
-                setLayerResourceStatus(layerId, 'image', 'loading');
-                const loader = await createImageLoader(
-                  element.element as ImageElement,
-                  getOmeZarrMultiscalesData
-                );
-                // Compute channel defaults from loader metadata
-                const imageElement = element.element as ImageElement;
-                const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
-
-                const imageData: ImageLoaderData = { loader };
-
-                try {
-                  if (
-                    loaderToCheck &&
-                    typeof loaderToCheck === 'object' &&
-                    'labels' in loaderToCheck &&
-                    'shape' in loaderToCheck
-                  ) {
-                    const loaderObj = loaderToCheck as VivLoaderMetadata;
-                    imageData.selectionAxisSizes = getVivSelectionAxisSizes(
-                      loaderObj.labels,
-                      loaderObj.shape
-                    );
-
-                    // Build selections
-                    const selections = buildDefaultSelection({
-                      labels: loaderObj.labels,
-                      shape: loaderObj.shape,
-                    });
-
-                    // Get metadata from image element
-                    const metadata = imageElement.attrs.omero;
-
-                    if (metadata?.channels) {
-                      const Channels = metadata.channels;
-                      imageData.channelNames = Channels.map(
-                        (c: { label?: string }, i: number) => c.label ?? `Channel ${i + 1}`
-                      );
-                      const isRgb = guessRgb({
-                        Pixels: {
-                          Channels: Channels.map((c: { label?: string }) => ({ Name: c.label })),
-                        },
-                      });
-
-                      if (isRgb) {
-                        if (isInterleaved(loaderObj.shape)) {
-                          imageData.contrastLimits = [[0, 255]];
-                          imageData.colors = [[255, 0, 0]];
-                        } else {
-                          imageData.contrastLimits = [
-                            [0, 255],
-                            [0, 255],
-                            [0, 255],
-                          ];
-                          imageData.colors = [
-                            [255, 0, 0],
-                            [0, 255, 0],
-                            [0, 0, 255],
-                          ];
-                        }
-                        imageData.channelsVisible = imageData.colors.map(() => true);
-                      } else {
-                        // Compute stats for non-RGB images
-                        const stats = await getMultiSelectionStats({
-                          loader,
-                          selections,
-                          use3d: false,
-                        });
-                        imageData.contrastLimits = stats.contrastLimits;
-                        // Use channel colors from metadata or palette
-                        const computedColors: [number, number, number][] =
-                          stats.contrastLimits.length === 1
-                            ? [[255, 255, 255]]
-                            : stats.contrastLimits.map((_, i): [number, number, number] => {
-                                const rgb = tryParseOmeroHexColor(Channels[i]?.color);
-                                const p = COLOR_PALLETE[i % COLOR_PALLETE.length];
-                                return rgb ?? [p[0], p[1], p[2]];
-                              });
-                        imageData.colors = computedColors;
-                        imageData.channelsVisible = computedColors.map(() => true);
-                      }
-                      imageData.selections = selections;
-                    } else {
-                      applyPerChannelFallbackWithoutOmero(imageData, loaderObj, selections);
-                    }
-                  } else {
-                    imageData.contrastLimits = [[0, 65535]];
-                    imageData.colors = [[255, 255, 255]];
-                    imageData.channelsVisible = [true];
-                    imageData.selections = [{}];
-                  }
-                } catch (error) {
-                  console.warn(`Failed to compute channel defaults for ${element.key}:`, error);
-                  const fallbackLoader =
-                    loaderToCheck &&
-                    typeof loaderToCheck === 'object' &&
-                    'labels' in loaderToCheck &&
-                    'shape' in loaderToCheck
-                      ? (loaderToCheck as VivLoaderMetadata)
-                      : undefined;
-                  if (fallbackLoader) {
-                    try {
-                      imageData.selectionAxisSizes =
-                        imageData.selectionAxisSizes ??
-                        getVivSelectionAxisSizes(fallbackLoader.labels, fallbackLoader.shape);
-                      const fallbackSelections = buildDefaultSelection({
-                        labels: fallbackLoader.labels,
-                        shape: fallbackLoader.shape,
-                      });
-                      applyPerChannelFallbackWithoutOmero(
-                        imageData,
-                        fallbackLoader,
-                        fallbackSelections
-                      );
-                    } catch {
-                      imageData.contrastLimits = [[0, 65535]];
-                      imageData.colors = [[255, 255, 255]];
-                      imageData.channelsVisible = [true];
-                      imageData.selections = [{}];
-                    }
-                  } else {
-                    imageData.contrastLimits = [[0, 65535]];
-                    imageData.colors = [[255, 255, 255]];
-                    imageData.channelsVisible = [true];
-                    imageData.selections = [{}];
-                  }
-                }
-
-                loadedDataRef.current.images.set(element.key, imageData);
-                setLayerResourceStatus(layerId, 'image', 'ready');
-              } catch (error) {
-                setLayerResourceStatus(layerId, 'image', 'error');
-                console.error(`Failed to load image for ${layerId}:`, error);
-              }
-            } else if (element.type === 'labels') {
-              const existing = loadedDataRef.current.labels.get(element.key);
-              if (loadLabels) {
-                try {
-                  setLayerResourceStatus(layerId, 'image', 'loading');
-                  const loader = await createImageLoader(
-                    element.element as LabelsElement,
-                    getOmeZarrMultiscalesData
-                  );
-                  const loaderToCheck = Array.isArray(loader) ? loader[0] : loader;
-                  const labelsData: LabelsLoaderData = {
-                    loader,
-                    colors: [[255, 255, 255]],
-                    channelsVisible: [true],
-                    channelOpacities: [0.18],
-                    channelOutlineOpacities: [0.95],
-                    channelsFilled: [true],
-                    channelStrokeWidths: [1.5],
-                    selections: [{}],
-                  };
-
-                  if (
-                    loaderToCheck &&
-                    typeof loaderToCheck === 'object' &&
-                    'labels' in loaderToCheck &&
-                    'shape' in loaderToCheck
-                  ) {
-                    const loaderObj = loaderToCheck as VivLoaderMetadata;
-                    const axisSizes = getVivSelectionAxisSizes(loaderObj.labels, loaderObj.shape);
-                    const selections = clampVivSelectionsToAxes(
-                      buildDefaultSelection({
-                        labels: loaderObj.labels,
-                        shape: loaderObj.shape,
-                      }),
-                      axisSizes
-                    ).slice(0, 1);
-                    const metadataChannels = (element.element as LabelsElement).attrs.omero
-                      ?.channels;
-
-                    const rgb = tryParseOmeroHexColor(metadataChannels?.[0]?.color);
-                    const palette = COLOR_PALLETE[0];
-                    const color: [number, number, number] = rgb ?? [
-                      palette[0],
-                      palette[1],
-                      palette[2],
-                    ];
-
-                    labelsData.selectionAxisSizes = axisSizes;
-                    labelsData.selections = selections.length > 0 ? selections : [{}];
-                    labelsData.colors = [color];
-                    labelsData.channelsVisible = [metadataChannels?.[0]?.active ?? true];
-                    labelsData.channelOpacities = [0.18];
-                    labelsData.channelOutlineOpacities = [0.95];
-                    labelsData.channelsFilled = [true];
-                    labelsData.channelStrokeWidths = [1.5];
-                  }
-
-                  loadedDataRef.current.labels.set(element.key, {
-                    ...existing,
-                    ...labelsData,
-                  });
-                  setLayerResourceStatus(layerId, 'image', 'ready');
-                } catch (error) {
-                  setLayerResourceStatus(layerId, 'image', 'error');
-                  console.error(`Failed to load labels for ${layerId}:`, error);
-                  return;
-                }
-              } else {
-                setLayerResourceStatus(layerId, 'image', existing ? 'ready' : 'idle');
-              }
-
-              if (loadTooltip) {
-                try {
-                  const labelsLayerConfig =
-                    layersRef.current[layerId]?.type === 'labels'
-                      ? layersRef.current[layerId]
-                      : undefined;
-                  const tooltipFields = labelsLayerConfig?.tooltipFields ?? [];
-                  const requestedSignature = getLayerTooltipSignature(labelsLayerConfig);
-                  if (tooltipFields.length > 0) {
-                    setLayerResourceStatus(layerId, 'tooltip', 'loading');
-                    const current = loadedDataRef.current.labels.get(element.key);
-                    const tooltipData = await loadLabelsTooltipMetadata(
-                      spatialData,
-                      element.element as LabelsElement,
-                      tooltipFields
-                    );
-                    const latestDesired = getLayerTooltipSignature(
-                      layersRef.current[layerId]?.type === 'labels'
-                        ? layersRef.current[layerId]
-                        : undefined
-                    );
-                    if (latestDesired !== requestedSignature) {
-                      return;
-                    }
-                    loadedDataRef.current.labels.set(element.key, {
-                      ...current,
-                      ...tooltipData,
-                    } as LabelsLoaderData);
-                    setLayerResourceStatus(
-                      layerId,
-                      'tooltip',
-                      tooltipData.tooltipSignature === undefined ? 'idle' : 'ready'
-                    );
-                  } else {
-                    const current = loadedDataRef.current.labels.get(element.key);
-                    loadedDataRef.current.labels.set(element.key, {
-                      ...current,
-                      tooltipSignature: '',
-                      tooltipFields: [],
-                      tooltipColumns: undefined,
-                      tooltipRowIndexByFeatureId: undefined,
-                    } as LabelsLoaderData);
-                    setLayerResourceStatus(layerId, 'tooltip', 'idle');
-                  }
-                } catch (error) {
-                  setLayerResourceStatus(layerId, 'tooltip', 'error');
-                  console.error(`Failed to load labels tooltip for ${layerId}:`, error);
-                }
-              }
-            }
-          }
-        )
-      );
+    const unsubscribe = store.subscribe(notifyLoadedDataChanged);
+    return () => {
+      unsubscribe();
+      store.dispose();
     };
+  }, [store, notifyLoadedDataChanged]);
 
-    loadData();
-  }, [
-    layers,
-    layerOrder,
-    getOmeZarrMultiscalesData,
-    spatialData,
-    setLayerResourceStatus,
-    notifyLoadedDataChanged,
-    pointsEngine,
-  ]);
+  // The single commit-phase driving effect. Build a `ResolveContext` for every
+  // visible entry and hand them to the store: `reconcile` plans (pure) then loads,
+  // and each resolver keeps today's in-flight dedup, so re-running per commit is
+  // cheap. Points row-codes and the feature-index scan stay on the render-phase
+  // engine calls in `getLayers` (Track A / the `plan()` migration — out of scope).
+  //
+  // Depends on `elementMapValue` (not just the `elementMap` ref) so it replans when
+  // element resolution changes without `layers`/`store` changing — e.g. a coordinate
+  // system switch that makes a previously unavailable element resolvable. The map is
+  // memoised on `availableElements`, so this adds no per-render churn.
+  useEffect(() => {
+    const contexts: AnyResolveContext[] = [];
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible) continue;
+      const elem = resolveLayerElement(layerId, config, elementMapValue);
+      if (!elem) continue;
+      if (elem.type === 'shapes' && config.type === 'shapes') {
+        contexts.push({
+          entryId: layerId,
+          elementKey: elem.key,
+          kind: 'shapes',
+          element: elem.element,
+          config: {
+            tooltipFields: config.tooltipFields,
+            fillColorByColumn: config.fillColorByColumn,
+          },
+          transform: elem.transform,
+        });
+      } else if (elem.type === 'image' && config.type === 'image') {
+        contexts.push({
+          entryId: layerId,
+          elementKey: elem.key,
+          kind: 'images',
+          element: elem.element,
+          config: { channels: config.channels },
+          transform: elem.transform,
+        });
+      } else if (elem.type === 'labels' && config.type === 'labels') {
+        contexts.push({
+          entryId: layerId,
+          elementKey: elem.key,
+          kind: 'labels',
+          element: elem.element,
+          config: { tooltipFields: config.tooltipFields, channels: config.channels },
+          transform: elem.transform,
+        });
+      } else if (elem.type === 'points' && config.type === 'points') {
+        // Only the preload is planned here; row-codes and the feature-index scan
+        // stay on the render-phase engine calls in `getLayers` (Track A), so the
+        // config deliberately carries just the memory cap.
+        contexts.push({
+          entryId: layerId,
+          elementKey: elem.key,
+          kind: 'points',
+          element: elem.element,
+          config: { pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap) },
+          transform: elem.transform,
+        });
+      }
+    }
+    void store.reconcile(contexts);
+  }, [layers, layerOrder, store, elementMapValue]);
+
+  // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
+
+  // Coupling #1: geometry with `rowIndexByFeatureIndex` patched by the tooltip's
+  // `tooltipRowIndices`. Identity-stable per (raw, tooltipRowIndices) so deck does
+  // not tear the layer down between frames. Returns raw identity when no patch.
+  const getMergedShapeRenderData = useCallback(
+    (key: string): ShapesRenderData | undefined => {
+      const raw = shapesResolver.getRenderData(key);
+      if (!raw) return undefined;
+      const tooltipRowIndices = shapesResolver.getTooltipMetadata(key)?.tooltipRowIndices;
+      const cached = mergedShapeRenderDataRef.current.get(key);
+      if (cached && cached.raw === raw && cached.tooltipRowIndices === tooltipRowIndices) {
+        return cached.merged;
+      }
+      const merged = tooltipRowIndices
+        ? { ...raw, rowIndexByFeatureIndex: tooltipRowIndices }
+        : raw;
+      mergedShapeRenderDataRef.current.set(key, { raw, tooltipRowIndices, merged });
+      return merged;
+    },
+    [shapesResolver]
+  );
+
+  // Pre-filtered feature arrays for deck, keyed by layer id. Lazy: (re)built only
+  // when the merged render data identity or the `hiddenFeatureIds` signature moves.
+  const getShapePrebuilt = useCallback(
+    (layerId: string, renderData: ShapesRenderData, hiddenIds: string[] | undefined) => {
+      const signature = serializeHiddenIds(hiddenIds);
+      const cache = loadedDataRef.current.shapePrebuiltData;
+      const cached = cache.get(layerId);
+      if (cached && cached.signature === signature && cached.source === renderData) {
+        return cached.prebuilt;
+      }
+      const prebuilt = buildShapesPrebuiltData(renderData, hiddenIds);
+      cache.set(layerId, { prebuilt, signature, source: renderData });
+      return prebuilt;
+    },
+    []
+  );
+
+  // Per-layer table-column fill-colour map, built from the resolver's raw rows.
+  // Returns undefined (and drops any cached entry) when the layer has no fill
+  // column, matching the old "no entry" state the feature-state helpers expect.
+  const getShapeFillColorEntry = useCallback(
+    (
+      layerId: string,
+      key: string,
+      config: ShapesLayerConfig,
+      renderData: ShapesRenderData
+    ): ShapeFillColorEntry | undefined => {
+      const fillColorByColumn = config.fillColorByColumn;
+      const cache = loadedDataRef.current.shapeFillColorData;
+      if (!fillColorByColumn?.columnName) {
+        cache.delete(layerId);
+        return undefined;
+      }
+      // No entry until the resolver's rows are actually loaded. The feature-state
+      // runtime is memoised on a signature whose only fill term is this entry's
+      // presence (`fillColorEntry?.signature`), so an eager empty-map entry with the
+      // full signature would suppress the rebuild that makes fill colours appear when
+      // the rows settle. Mirrors the old async path: entry exists only once loaded.
+      const rows = shapesResolver.getFillColorRows(key);
+      if (!rows) return undefined;
+      const signature = getShapeFillColorSignature(config);
+      const cached = cache.get(layerId);
+      if (
+        cached &&
+        cached.signature === signature &&
+        cached.rowsSource === rows &&
+        cached.renderSource === renderData
+      ) {
+        return cached;
+      }
+      const entry: ShapeFillColorEntry = {
+        signature,
+        fillColorByFeatureId: buildShapeFillColorByFeatureId({
+          featureIds: renderData.featureIds,
+          rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
+          column: rows.extraColumns?.[0],
+          mode: fillColorByColumn.mode,
+          alpha: getShapeFillColorAlpha(config),
+        }),
+        rowsSource: rows,
+        renderSource: renderData,
+      };
+      cache.set(layerId, entry);
+      return entry;
+    },
+    [shapesResolver]
+  );
 
   const reloadElement = useCallback(
     (type: string, key: string) => {
       const loaded = loadedDataRef.current;
       if (type === 'shapes') {
-        loaded.shapes.delete(key);
+        shapesResolver.evict(key);
+        mergedShapeRenderDataRef.current.delete(key);
         loaded.worldBounds.delete(`shapes:${key}`);
-        // Clear prebuilt data for every layer that maps to this element key.
+        // Clear per-layer projection caches for every layer that maps to this key.
         for (const [layerId, config] of Object.entries(layersRef.current)) {
           if (config.type === 'shapes' && config.elementKey === key) {
             loaded.shapePrebuiltData.delete(layerId);
@@ -1154,15 +703,15 @@ export function useLayerData(
         pointsEngine.evict(key);
         loaded.worldBounds.delete(`points:${key}`);
       } else if (type === 'image') {
-        loaded.images.delete(key);
+        imagesResolver.evict(key);
         loaded.worldBounds.delete(`image:${key}`);
       } else if (type === 'labels') {
-        loaded.labels.delete(key);
+        labelsResolver.evict(key);
         loaded.worldBounds.delete(`labels:${key}`);
       }
-      // The useEffect will pick up the missing data and reload
+      // The resolver/engine effects will pick up the missing data and reload
     },
-    [pointsEngine]
+    [pointsEngine, shapesResolver, imagesResolver, labelsResolver]
   );
 
   const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
@@ -1181,20 +730,20 @@ export function useLayerData(
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem) return false;
       if (elem.type === 'shapes') {
-        return loadedDataRef.current.shapes.has(elem.key);
+        return shapesResolver.getRenderData(elem.key) !== undefined;
       }
       if (elem.type === 'points') {
         return pointsEngine.hasData(elem.key);
       }
       if (elem.type === 'image') {
-        return loadedDataRef.current.images.has(elem.key);
+        return imagesResolver.getLoadedData(elem.key) !== undefined;
       }
       if (elem.type === 'labels') {
-        return loadedDataRef.current.labels.has(elem.key);
+        return labelsResolver.getLoadedData(elem.key) !== undefined;
       }
       return false;
     },
-    [pointsEngine]
+    [pointsEngine, shapesResolver, imagesResolver, labelsResolver]
   );
 
   // --- Points feature state (filter panel) -----------------------------------
@@ -1217,9 +766,8 @@ export function useLayerData(
         if (!config?.visible || !elem) return null;
         const loaded = loadedDataRef.current;
         if (elem.type === 'shapes') {
-          const shapeData = loaded.shapes.get(elem.key);
-          if (!shapeData) return null;
-          const { renderData } = shapeData;
+          const renderData = getMergedShapeRenderData(elem.key);
+          if (!renderData) return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
             getWorldBoundsCacheKey(elem),
@@ -1249,9 +797,12 @@ export function useLayerData(
           );
         }
         if (elem.type === 'image') {
-          const imageData = loaded.images.get(elem.key);
-          if (!imageData?.loader) return null;
-          const source = Array.isArray(imageData.loader) ? imageData.loader[0] : imageData.loader;
+          // Physical-size bounds (coupling #2): the raster resolvers' own bounds omit
+          // `getPhysicalSizeScalingMatrixFromMeta`, so the hook keeps the compute and
+          // sources only the loader from the resolver.
+          const loader = imagesResolver.getLoadedData(elem.key)?.loader;
+          if (!loader) return null;
+          const source = Array.isArray(loader) ? loader[0] : loader;
           if (!source || typeof source !== 'object') return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
@@ -1266,11 +817,9 @@ export function useLayerData(
           );
         }
         if (elem.type === 'labels') {
-          const labelsData = loaded.labels.get(elem.key);
-          if (!labelsData?.loader) return null;
-          const source = Array.isArray(labelsData.loader)
-            ? labelsData.loader[0]
-            : labelsData.loader;
+          const loader = labelsResolver.getLoadedData(elem.key)?.loader;
+          if (!loader) return null;
+          const source = Array.isArray(loader) ? loader[0] : loader;
           if (!source || typeof source !== 'object') return null;
           return getCachedWorldBounds(
             loaded.worldBounds,
@@ -1290,7 +839,7 @@ export function useLayerData(
         return null;
       }
     },
-    [layers, pointsEngine]
+    [layers, pointsEngine, getMergedShapeRenderData, imagesResolver, labelsResolver]
   );
 
   const getWorldBoundsForVisibleLayers = useCallback((): AxisAlignedBounds | null => {
@@ -1311,7 +860,6 @@ export function useLayerData(
       // on every pointer move. Defaults to enabled.
       const pickingEnabled = options?.pickingEnabled ?? true;
       const deckLayers: Layer[] = [];
-      const loaded = loadedDataRef.current;
 
       for (const layerId of layerOrder) {
         const config = layers[layerId];
@@ -1321,8 +869,9 @@ export function useLayerData(
         if (!elem) continue;
 
         if (config.type === 'shapes') {
-          const shapeData = loaded.shapes.get(elem.key);
-          if (shapeData) {
+          const renderData = getMergedShapeRenderData(elem.key);
+          if (renderData) {
+            const fillColorEntry = getShapeFillColorEntry(layerId, elem.key, config, renderData);
             const layer = renderShapesLayer({
               element: elem.element as ShapesElement,
               id: layerId,
@@ -1338,11 +887,15 @@ export function useLayerData(
               featureStateRuntime: getStableShapeFeatureStateRuntime(
                 layerId,
                 config,
-                loaded.shapeFillColorData.get(layerId),
+                fillColorEntry,
                 stableShapeFeatureStateRef.current
               ),
-              renderData: shapeData.renderData,
-              prebuilt: loaded.shapePrebuiltData.get(layerId)?.prebuilt,
+              renderData,
+              prebuilt: getShapePrebuilt(
+                layerId,
+                renderData,
+                config.featureState?.hiddenFeatureIds
+              ),
               pickingEnabled,
             });
             if (layer) deckLayers.push(layer);
@@ -1470,44 +1023,51 @@ export function useLayerData(
             );
           }
         } else if (config.type === 'labels') {
-          const labelsData = loaded.labels.get(elem.key);
+          const labelsData = labelsResolver.getLoadedData(elem.key);
           if (labelsData) {
             const ch = config.channels;
             const rawSelections =
-              ch?.selections && ch.selections.length > 0 ? ch.selections : labelsData.selections;
+              ch?.selections && ch.selections.length > 0
+                ? ch.selections
+                : (labelsData.selections ?? [{}]);
             const selections =
               labelsData.selectionAxisSizes !== undefined
                 ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
                 : rawSelections;
             const stableSelections = getStableSelections(`labels:${layerId}`, selections);
 
+            // Fallbacks mirror `buildLabelsChannelDefaults`: the resolver always
+            // populates these, but its `LabelsChannelDefaults` types them optional.
             const layer = renderLabelsLayer({
               id: layerId,
               loader: labelsData.loader,
               modelMatrix: elem.transform,
               opacity: config.opacity,
               visible: config.visible,
-              channelColors: ch?.colors && ch.colors.length > 0 ? ch.colors : labelsData.colors,
+              channelColors:
+                ch?.colors && ch.colors.length > 0
+                  ? ch.colors
+                  : (labelsData.colors ?? [[255, 255, 255]]),
               channelsVisible:
                 ch?.channelsVisible && ch.channelsVisible.length > 0
                   ? ch.channelsVisible
-                  : labelsData.channelsVisible,
+                  : (labelsData.channelsVisible ?? [true]),
               channelOpacities:
                 ch?.channelOpacities && ch.channelOpacities.length > 0
                   ? ch.channelOpacities
-                  : labelsData.channelOpacities,
+                  : (labelsData.channelOpacities ?? [0.18]),
               channelOutlineOpacities:
                 ch?.channelOutlineOpacities && ch.channelOutlineOpacities.length > 0
                   ? ch.channelOutlineOpacities
-                  : labelsData.channelOutlineOpacities,
+                  : (labelsData.channelOutlineOpacities ?? [0.95]),
               channelsFilled:
                 ch?.channelsFilled && ch.channelsFilled.length > 0
                   ? ch.channelsFilled
-                  : labelsData.channelsFilled,
+                  : (labelsData.channelsFilled ?? [true]),
               channelStrokeWidths:
                 ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
                   ? ch.channelStrokeWidths
-                  : labelsData.channelStrokeWidths,
+                  : (labelsData.channelStrokeWidths ?? [1.5]),
               selections: stableSelections,
             });
             if (layer) deckLayers.push(layer);
@@ -1518,27 +1078,42 @@ export function useLayerData(
 
       return deckLayers;
     },
-    [layers, layerOrder, getStableSelections, pointsEngine]
+    [
+      layers,
+      layerOrder,
+      getStableSelections,
+      pointsEngine,
+      getMergedShapeRenderData,
+      getShapeFillColorEntry,
+      getShapePrebuilt,
+      labelsResolver,
+    ]
   );
 
-  const getImageLayerLoadedData = useCallback((layerId: string): ImageLoaderData | undefined => {
-    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (elem?.type !== 'image') return undefined;
-    return loadedDataRef.current.images.get(elem.key);
-  }, []);
+  const getImageLayerLoadedData = useCallback(
+    (layerId: string): ImageLoaderData | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (elem?.type !== 'image') return undefined;
+      return imagesResolver.getLoadedData(elem.key);
+    },
+    [imagesResolver]
+  );
 
   const getImageLoadedDataByElementKey = useCallback(
     (elementKey: string): ImageLoaderData | undefined => {
-      return loadedDataRef.current.images.get(elementKey);
+      return imagesResolver.getLoadedData(elementKey);
     },
-    []
+    [imagesResolver]
   );
 
-  const getLabelsLayerLoadedData = useCallback((layerId: string): LabelsLoaderData | undefined => {
-    const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
-    if (elem?.type !== 'labels') return undefined;
-    return loadedDataRef.current.labels.get(elem.key);
-  }, []);
+  const getLabelsLayerLoadedData = useCallback(
+    (layerId: string): LabelsLoaderData | undefined => {
+      const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+      if (elem?.type !== 'labels') return undefined;
+      return labelsResolver.getLoadedData(elem.key);
+    },
+    [labelsResolver]
+  );
 
   const getLayerLoadState = useCallback(
     (layerId?: string): LayerLoadState | undefined => {
@@ -1571,23 +1146,23 @@ export function useLayerData(
         }
         const { labelId } = pickedLabel;
 
-        const loadedLabelData = loadedDataRef.current.labels.get(elem.key);
+        const labelsTooltip = labelsResolver.getTooltipMetadata(elem.key);
         const config = layersRef.current[layerId];
         const items: Array<{ label: string; value: string }> = [{ label: 'id', value: labelId }];
 
         if (
           config?.type === 'labels' &&
           (config.tooltipFields?.length ?? 0) > 0 &&
-          loadedLabelData?.tooltipFields &&
-          loadedLabelData.tooltipColumns &&
-          loadedLabelData.tooltipRowIndexByFeatureId &&
-          getLayerTooltipSignature(config) === (loadedLabelData.tooltipSignature ?? '')
+          labelsTooltip?.tooltipFields &&
+          labelsTooltip.tooltipColumns &&
+          labelsTooltip.tooltipRowIndexByFeatureId &&
+          getLayerTooltipSignature(config) === (labelsTooltip.tooltipSignature ?? '')
         ) {
-          const rowIndex = loadedLabelData.tooltipRowIndexByFeatureId.get(labelId);
+          const rowIndex = labelsTooltip.tooltipRowIndexByFeatureId.get(labelId);
           if (rowIndex !== undefined && rowIndex >= 0) {
             const tooltipItems = resolveTooltipItems(
-              loadedLabelData.tooltipFields,
-              loadedLabelData.tooltipColumns,
+              labelsTooltip.tooltipFields,
+              labelsTooltip.tooltipColumns,
               rowIndex
             );
             items.push(...tooltipItems);
@@ -1608,28 +1183,31 @@ export function useLayerData(
       }
 
       const config = layersRef.current[layerId];
-      const loadedShapeData = loadedDataRef.current.shapes.get(elem.key);
-      const prebuilt = loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt;
+      const tooltipMetadata = shapesResolver.getTooltipMetadata(elem.key);
+      const renderData = getMergedShapeRenderData(elem.key);
+      const hiddenIds =
+        config?.type === 'shapes' ? config.featureState?.hiddenFeatureIds : undefined;
+      const prebuilt = renderData ? getShapePrebuilt(layerId, renderData, hiddenIds) : undefined;
       const feature = resolveShapeFeatureFromPick(pickInfo, prebuilt);
       if (!feature) {
         return undefined;
       }
 
       if (
-        loadedShapeData?.tooltipFields &&
-        loadedShapeData.tooltipColumns &&
-        getLayerTooltipSignature(config) === (loadedShapeData.tooltipSignature ?? '')
+        tooltipMetadata?.tooltipFields &&
+        tooltipMetadata.tooltipColumns &&
+        getLayerTooltipSignature(config) === (tooltipMetadata.tooltipSignature ?? '')
       ) {
         const tooltip = resolveShapeTooltipFromPickInfo(
           {
-            tooltipFields: loadedShapeData.tooltipFields,
-            tooltipColumns: loadedShapeData.tooltipColumns,
+            tooltipFields: tooltipMetadata.tooltipFields,
+            tooltipColumns: tooltipMetadata.tooltipColumns,
           },
           pickInfo,
           {
-            tooltipRowIndexByFeatureId: loadedShapeData.tooltipRowIndexByFeatureId,
-            tooltipRowIndices: loadedShapeData.tooltipRowIndices,
-            rowIndexByFeatureIndex: loadedShapeData.renderData.rowIndexByFeatureIndex,
+            tooltipRowIndexByFeatureId: tooltipMetadata.tooltipRowIndexByFeatureId,
+            tooltipRowIndices: tooltipMetadata.tooltipRowIndices,
+            rowIndexByFeatureIndex: renderData?.rowIndexByFeatureIndex,
           },
           prebuilt
         );
@@ -1646,7 +1224,7 @@ export function useLayerData(
         elementContext
       );
     },
-    []
+    [shapesResolver, labelsResolver, getMergedShapeRenderData, getShapePrebuilt]
   );
 
   const getShapePickEvent = useCallback(
@@ -1655,20 +1233,21 @@ export function useLayerData(
       if (elem?.type !== 'shapes') {
         return undefined;
       }
-      const feature = resolveShapeFeatureFromPick(
-        pickInfo,
-        loadedDataRef.current.shapePrebuiltData.get(layerId)?.prebuilt
-      );
+      const config = layersRef.current[layerId];
+      const renderData = getMergedShapeRenderData(elem.key);
+      const hiddenIds =
+        config?.type === 'shapes' ? config.featureState?.hiddenFeatureIds : undefined;
+      const prebuilt = renderData ? getShapePrebuilt(layerId, renderData, hiddenIds) : undefined;
+      const feature = resolveShapeFeatureFromPick(pickInfo, prebuilt);
       if (!feature) {
         return undefined;
       }
+      const tooltipMetadata = shapesResolver.getTooltipMetadata(elem.key);
       const rowIndex =
         resolveShapeTooltipRowIndex(feature, {
-          tooltipRowIndexByFeatureId: loadedDataRef.current.shapes.get(elem.key)
-            ?.tooltipRowIndexByFeatureId,
-          tooltipRowIndices: loadedDataRef.current.shapes.get(elem.key)?.tooltipRowIndices,
-          rowIndexByFeatureIndex: loadedDataRef.current.shapes.get(elem.key)?.renderData
-            .rowIndexByFeatureIndex,
+          tooltipRowIndexByFeatureId: tooltipMetadata?.tooltipRowIndexByFeatureId,
+          tooltipRowIndices: tooltipMetadata?.tooltipRowIndices,
+          rowIndexByFeatureIndex: renderData?.rowIndexByFeatureIndex,
         }) ?? feature.rowIndex;
       return {
         layerId,
@@ -1679,7 +1258,7 @@ export function useLayerData(
         object: feature,
       };
     },
-    []
+    [shapesResolver, getMergedShapeRenderData, getShapePrebuilt]
   );
 
   const getFeaturePickEvent = useCallback(
@@ -1697,8 +1276,8 @@ export function useLayerData(
         if (!pickedLabel) {
           return undefined;
         }
-        const rowIndex = loadedDataRef.current.labels
-          .get(elem.key)
+        const rowIndex = labelsResolver
+          .getTooltipMetadata(elem.key)
           ?.tooltipRowIndexByFeatureId?.get(pickedLabel.labelId);
         return {
           elementKind: 'labels',
@@ -1732,12 +1311,11 @@ export function useLayerData(
         tooltip: getFeatureTooltip(layerId, pickInfo),
       };
     },
-    [getFeatureTooltip, getShapePickEvent]
+    [getFeatureTooltip, getShapePickEvent, labelsResolver]
   );
 
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
     const vivProps: ImageLayerConfig[] = [];
-    const loaded = loadedDataRef.current;
     const passthrough = vivPassthrough;
 
     for (const layerId of layerOrder) {
@@ -1747,7 +1325,7 @@ export function useLayerData(
       const elem = resolveLayerElement(layerId, config, elementMap.current);
       if (elem?.type !== 'image') continue;
 
-      const imageData = loaded.images.get(elem.key);
+      const imageData = imagesResolver.getLoadedData(elem.key);
       if (!imageData) continue; // Skip if loader not ready yet
 
       const ch = config.channels;
@@ -1810,7 +1388,7 @@ export function useLayerData(
     }
 
     return vivProps;
-  }, [layers, layerOrder, getStableSelections, vivPassthrough]);
+  }, [layers, layerOrder, getStableSelections, vivPassthrough, imagesResolver]);
 
   const isLoading = useMemo(
     () =>

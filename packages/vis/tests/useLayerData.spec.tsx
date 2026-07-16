@@ -1,5 +1,5 @@
 import { Matrix4 } from '@math.gl/core';
-import type { PointsElement, ShapesElement } from '@spatialdata/core';
+import type { PointsElement, ShapesElement, SpatialData } from '@spatialdata/core';
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AvailableElement, ElementsByType, LayerConfig } from '../src/SpatialCanvas/types.js';
@@ -238,5 +238,48 @@ describe('useLayerData — render-resource identity', () => {
     const after = (result.current.getLayers()[0]?.props as { resource?: unknown }).resource;
 
     expect(after).toBe(before);
+  });
+});
+
+describe('useLayerData — resolver lifecycle across a dataset swap', () => {
+  // The load-bearing guard for `createNonOwningResolver`. Shapes/images/labels
+  // resolvers close over `spatialData`, so a dataset swap rebuilds them AND the
+  // SpatialEntryStore that holds them; the old store is disposed. Points, by
+  // contrast, is owned by the stable PointsDataEngine and only BORROWED by the store
+  // through a non-owning proxy. If that proxy ever regressed to a real `dispose`, the
+  // store teardown would clear the engine's cache — and this test would catch it:
+  // the resident points batch (and its stable render-resource identity) must survive
+  // the swap untouched.
+  it('preserves the points cache when spatialData changes and the store is rebuilt', async () => {
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pointsElement('transcripts')] };
+    const layers = { 'layer-p': pointsConfig('layer-p', 'transcripts') };
+    const datasetA = {} as SpatialData;
+    const datasetB = {} as SpatialData;
+
+    const { result, rerender } = renderHook(
+      ({ sd }: { sd: SpatialData }) =>
+        useLayerData(layers, Object.keys(layers), elements, null, sd),
+      { initialProps: { sd: datasetA } }
+    );
+
+    const pointsResource = () => {
+      const [layer] = result.current.getLayers();
+      return (layer?.props as { resource?: unknown } | undefined)?.resource;
+    };
+
+    await waitFor(() => {
+      expect(result.current.hasRenderableLayerData('layer-p')).toBe(true);
+    });
+    const before = pointsResource();
+    expect(before).toBeDefined();
+
+    // Swap the dataset. New spatialData identity → shapes/images/labels resolvers and
+    // the store are rebuilt, and the previous store is disposed.
+    rerender({ sd: datasetB });
+
+    // The engine (held via the non-owning proxy) was NOT disposed: its resident batch
+    // is still present and hands back the same identity-stable render resource.
+    expect(result.current.hasRenderableLayerData('layer-p')).toBe(true);
+    expect(pointsResource()).toBe(before);
   });
 });

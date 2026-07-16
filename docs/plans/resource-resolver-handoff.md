@@ -1,11 +1,38 @@
 # Resource Resolver — implementation handoff
 
-**Status:** ready for implementation
+**Status:** Step 0 + Step 1 **landed** — see [Progress](#progress-2026-07-15). Step 2
+(Tracks A / B / C) and Step 3 (Renderer Adapter cleanup) remain.
 **Decisions:** [ADR 0004 — Resource Resolver Owned By Core](../adr/0004-resource-resolver-owned-by-core.md), [ADR 0005 — Memory Accounting Before Management](../adr/0005-memory-accounting-before-management.md)
 **Supersedes:** [layer-data-engine-decomposition.md](layer-data-engine-decomposition.md)
 **Vocabulary:** [CONTEXT.md](../../CONTEXT.md) — *Resource Resolver, Renderer Adapter, Spatial Entry, Resolution, Spatial Entry Error, Entry Notice, Encoded/Decoded Tier, Resource Ceiling*
 
 Read the two ADRs first. This document is sequencing, not rationale.
+
+---
+
+## Progress (2026-07-15)
+
+- **Step 0 — shared contracts: landed** (#85). `Resolution<T>`, `SpatialEntryError`,
+  `EntryNotice`, `toSpatialEntryError`, `fromResult` in `packages/core/src/engine`.
+- **Step 1 — interface + four adapters: landed** (#85, unconsumed) **and now
+  consumed** (branch `claude/resource-resolver-adr-88a5c8`). `PointsResolver` /
+  `ShapesResolver` in `core`, `ImagesResolver` / `LabelsResolver` in `vis`, plus
+  `SpatialEntryStore`. `useLayerData` is now a single `store.reconcile(contexts)`
+  commit-effect over per-kind resolvers instead of the ~400-line `Promise.all`
+  kind-switch; its 17-member public surface is unchanged and guarded by
+  `useLayerData.spec.tsx`. Executed per [step1-consumption-tactics.md](step1-consumption-tactics.md).
+  - Points is owned by the stable `PointsDataEngine` (panels subscribe to it), so the
+    store holds it through a **non-owning proxy** whose `dispose` is a no-op — a
+    deliberate exception to the store's ownership model, documented at the
+    `createNonOwningResolver` call site.
+  - Deferred within Step 1 by design: the render-phase
+    `pointsEngine.ensureMatchingFeaturesLoaded` / `ensureRowFeatureCodes` calls in
+    `getLayers` stay put (they migrate into `plan()` under Track A), so the points
+    reconcile context carries only the memory cap.
+- **Remaining:** Step 2 Tracks A (points state model / `RequestSlot` / races R1–R5),
+  B (shapes loader seam + tooltip ping-pong), C (memory, ADR 0005 rungs 1–3); Step 3
+  (Renderer Adapter `project()`/`render()`, `'use no memo'` removal, dead-surface
+  cleanup). None started.
 
 ---
 
@@ -53,7 +80,7 @@ defence in `PointsDataEngine` disappears with it.
 
 ## Sequence
 
-### Step 0 — shared contracts (land first, land alone)
+### Step 0 — shared contracts (land first, land alone) — ✅ LANDED (#85)
 
 `packages/core/src/engine/{resolution,errors}.ts`. The types, plus the two small
 functions that are inseparable from them. No imports beyond `core`'s own.
@@ -72,7 +99,7 @@ Also here: `fromResult()`, a three-liner lifting `getTransformation`'s existing
 > **Do not** put `Resolution` in `zarrextra`. Do not push it down into `core`'s leaf
 > loaders — they keep throwing, and the resolver classifies at the seam.
 
-### Step 1 — the resolver interface + four thin adapters (shared; the fork point)
+### Step 1 — the resolver interface + four thin adapters (shared; the fork point) — ✅ LANDED (#85 + consumption)
 
 Extract the interface **from the shape `PointsDataEngine` already has**, generalised.
 Write `Shapes` / `Images` / `Labels` resolvers as **thin adapters holding today's
@@ -95,6 +122,9 @@ race fixes, no memory work.
 
 `useLayerData` becomes a loop over resolvers instead of a switch over kinds. Keep
 its 17-member public surface intact behind a compat shim — MDV consumes it.
+**Done** on `claude/resource-resolver-adr-88a5c8`: it is now one
+`SpatialEntryStore.reconcile(contexts)` commit-effect; the surface is unchanged and
+guarded by `useLayerData.spec.tsx`. See [step1-consumption-tactics.md](step1-consumption-tactics.md).
 
 **This is the commit that unblocks parallel work.** After it lands, the tracks below
 touch different files.
