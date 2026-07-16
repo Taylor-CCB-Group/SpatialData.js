@@ -375,3 +375,75 @@ describe('SpatialEntryStore — the reconcile loop', () => {
     expect(s.getVersion()).toBeGreaterThan(before);
   });
 });
+
+describe('Track A — races closed by the slot keys', () => {
+  /** An element whose preload settlements you control per memory cap. */
+  function deferredPreloadElement() {
+    const release = new Map<number, (value: PointsLoadResult) => void>();
+    const loadPoints = vi.fn(
+      (opts: { memoryCap: number; signal?: AbortSignal }) =>
+        new Promise<PointsLoadResult>((resolve, reject) => {
+          release.set(opts.memoryCap, resolve);
+          opts.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        })
+    );
+    const loadRowFeatureCodes = vi.fn(async () => new Int32Array([0, 1, 0, 1]));
+    const el = {
+      key: 'transcripts',
+      loadPoints,
+      loadRowFeatureCodes,
+      listFeaturesWithCounts: vi.fn(async () => null),
+    } as unknown as PointsElement;
+    return { el, loadPoints, loadRowFeatureCodes, release };
+  }
+
+  const target = (el: PointsElement) => ({ key: 'transcripts', layerId: 'L', element: el });
+
+  it('R1: a cap drag 4M→8M→4M does not wipe the live load, so a redundant request dedups', async () => {
+    // The old bug: superseding 4M→8M→4M left the *first* 4M load's `finally` to run
+    // with `entry.memoryCap === 4M` (the final cap), so it cleared the LIVE final
+    // load's markers. A subsequent 4M request then failed to dedup and kicked a
+    // SECOND concurrent decode. Record-identity supersession forbids this.
+    const resolver = new PointsResolver();
+    const { el, loadPoints, release } = deferredPreloadElement();
+
+    const p4a = resolver.ensureLoaded(target(el), 4_000_000); // decode #1 (4M)
+    const p8 = resolver.ensureLoaded(target(el), 8_000_000); //  decode #2 (8M), aborts #1
+    const p4b = resolver.ensureLoaded(target(el), 4_000_000); // decode #3 (4M), aborts #2
+
+    // Let the superseded first 4M load's rejection + continuation run — this is where
+    // the old `finally` wiped the live load's markers.
+    await p4a;
+
+    // A redundant 4M request must dedup to the live decode #3, NOT start a fourth.
+    const p4c = resolver.ensureLoaded(target(el), 4_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(3);
+
+    release.get(4_000_000)?.(batch(4));
+    await Promise.all([p4b, p4c]);
+    expect(resolver.getData('transcripts')?.shape[1]).toBe(4);
+    await Promise.allSettled([p8]);
+  });
+
+  it('R5: row codes are read at the resident preload cap, not the 4M default', async () => {
+    // The old bug: `ensureRowFeatureCodes` took no cap, so it read 4M rows while an
+    // 8M preload was resident → index i in the codes named a different row than
+    // point i in the batch → a corrupted filter mask. Keying the rowCodes slot on the
+    // preload's cap is the fix.
+    const resolver = new PointsResolver();
+    const { el, loadRowFeatureCodes, release } = deferredPreloadElement();
+
+    // Preload in flight at 8M (pendingKey = 8M).
+    const preload = resolver.ensureLoaded(target(el), 8_000_000);
+    // Filter toggled mid-preload → the codes must be read at the SAME 8M window.
+    await resolver.ensureRowFeatureCodes(target(el));
+
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryCap: 8_000_000 })
+    );
+    release.get(8_000_000)?.(batch(8));
+    await preload;
+  });
+});
