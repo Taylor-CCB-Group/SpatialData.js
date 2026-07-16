@@ -553,3 +553,45 @@ describe('Track A — retryable failures', () => {
     expect(Resolution.isReady(resolver.snapshot(ctx(el)).resources.catalog as never)).toBe(true);
   });
 });
+
+describe('Track A — cancellation reaches the scan (D8)', () => {
+  /** An element whose in-flight scan never settles, capturing the signal it sees. */
+  function neverSettlingScanElement() {
+    const signals: AbortSignal[] = [];
+    const el = {
+      key: 'transcripts',
+      loadPoints: vi.fn(async () => batch(4)),
+      loadPointsMatchingFeatureCodes: vi.fn(
+        (opts: { signal?: AbortSignal }) =>
+          new Promise<PointsLoadResult>(() => {
+            if (opts.signal) signals.push(opts.signal);
+          })
+      ),
+    } as unknown as PointsElement;
+    return { el, signals };
+  }
+
+  const target = (el: PointsElement) => ({ key: 'transcripts', layerId: 'L', element: el });
+
+  it('supersede aborts the previous scan’s signal — cancellation reaches the element', async () => {
+    const resolver = new PointsResolver();
+    const { el, signals } = neverSettlingScanElement();
+    await resolver.ensureLoaded(target(el));
+
+    resolver.ensureMatchingFeaturesLoaded(target(el), [0]); // scan A
+    expect(signals[0]?.aborted).toBe(false);
+    resolver.ensureMatchingFeaturesLoaded(target(el), [1]); // scan B supersedes A
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
+  it('evict aborts an in-flight scan', async () => {
+    const resolver = new PointsResolver();
+    const { el, signals } = neverSettlingScanElement();
+    await resolver.ensureLoaded(target(el));
+
+    resolver.ensureMatchingFeaturesLoaded(target(el), [0]);
+    expect(signals[0]?.aborted).toBe(false);
+    resolver.evict('transcripts');
+    expect(signals[0]?.aborted).toBe(true);
+  });
+});

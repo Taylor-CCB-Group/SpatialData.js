@@ -581,9 +581,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
   ) {
     ensurePointsWorker();
+    checkAbort(options.abort);
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
-    // if (options.abort?.aborted) return;
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
     const normAxes = normalizeAxes(axes);
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
@@ -665,6 +665,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       const canSkipRowGroups = rowGroupExtents.length === datasetRowGroups;
 
       for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
+        // A superseded scan aborts here, between row groups — the at-most-one-chunk
+        // bound on wasted decode. Throws AbortError, which the resolver's slot reads
+        // as a non-event.
+        checkAbort(options.abort);
         if (matchedRows >= options.memoryCap) {
           break;
         }
@@ -678,9 +682,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         if (!chunk) {
           continue;
         }
-        // the memoryCap could work by the consumer choosing not to exhaust the stream
-        // (although that wouldn't help to pass last worker invocation a smaller chunk size)
-        // we should be passing abort to worker
+        // Cancellation is enforced between chunks (checkAbort above), not inside the
+        // worker: each worker call decodes ONE row group — a single, uninterruptible
+        // WASM decode — so an abort can at most skip the NEXT chunk, which is what the
+        // loop-top check does. There is no queue of pending worker requests to drain
+        // (chunks are awaited serially), so a worker-side cancel message would buy
+        // nothing here; revisit only if one request ever spans many row groups.
         const partial = await scanParquetByFeatureCodesInWorker({
           rowGroups: [chunk],
           axisNames,
@@ -717,6 +724,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
 
       for (let partIndex = 0; partIndex < partPaths.length; partIndex += 1) {
+        checkAbort(options.abort); // superseded → stop before the next part's decode
         const partPath = partPaths[partIndex];
         if (matchedRows >= options.memoryCap) {
           break;
@@ -766,15 +774,21 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
        * code space the selection was made in. When absent for a dict-only
        * element the scan cannot match by name and returns nothing. */
       featureCodeByName?: ReadonlyMap<string, number>;
+      /** Aborts the scan between row-group chunks when it is superseded. */
+      signal?: AbortSignal;
     }
   ): Promise<PointsLoadResult> {
-    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, options);
+    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, {
+      ...options,
+      abort: options.signal,
+    });
     // Each `progress.partialResult` is already the full accumulated buffer, so the
     // last one IS the whole matched batch — no need to re-accumulate/concat here.
     // Final totals come from the generator's return value (authoritative: it also
     // counts rows scanned after the last match, which the last partial can't see).
     let latest: PointsLoadResult | undefined;
     while (true) {
+      checkAbort(options.signal);
       const next = await chunkGenerator.next();
       if (next.done) {
         const { totalRowCount, scannedRows, matchedRows, axisNames } = next.value;
@@ -929,8 +943,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     options: {
       memoryCap?: number;
       featureCatalog?: PointsFeatureCatalog | null;
+      signal?: AbortSignal;
     } = {}
   ): Promise<ArrayLike<number> | undefined> {
+    checkAbort(options.signal);
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { spatialdata_attrs: spatialDataAttrs } = zattrs;

@@ -708,7 +708,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     const scanKey = PointsResolver.matchingKey(signature, memoryCap);
     const PROGRESS_NOTIFY_STEP = 5_000;
     let lastNotifiedMatched = 0;
-    return slot.request(scanKey, async ({ emit }) => {
+    return slot.request(scanKey, async ({ emit, signal }) => {
       // Dict-only elements have no file-backed code column, so the scan must resolve
       // each row's feature_name against the same catalog the selection was made in.
       // The core call ignores this for indexed elements.
@@ -735,6 +735,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
         featureCodes,
         memoryCap,
         onProgress,
+        signal, // superseded scan aborts between row-group chunks
         ...(featureCodeByName ? { featureCodeByName } : {}),
       });
       return { signature, result };
@@ -974,7 +975,11 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     }
     return slot.request(cap, async ({ signal }) => {
       const catalog = this.getFeatureCatalog(key);
-      const codes = await element.loadRowFeatureCodes({ featureCatalog: catalog, memoryCap: cap });
+      const codes = await element.loadRowFeatureCodes({
+        featureCatalog: catalog,
+        memoryCap: cap,
+        signal,
+      });
       if (signal.aborted) return codes;
       // These codes were just built against `catalog`, so their code space IS the
       // current one — no remap here. A *later* catalog upgrade re-expresses them via
@@ -1006,6 +1011,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
 
   /** Drop an element from the cache. Catalog and row codes live in the same entry. */
   evict(key: string): void {
+    const entry = this.entries.get(key);
+    if (entry) {
+      // Abort any in-flight load so a superseded/evicted scan stops decoding rather
+      // than running to completion into a dropped result.
+      entry.preload.reset();
+      entry.rowCodes.reset();
+      entry.catalog.reset();
+      entry.matching.reset();
+    }
     const existed = this.entries.delete(key);
     this.snapshots.evictByElement(key);
     // Notify so external-store consumers drop the now-stale snapshot immediately,
@@ -1014,6 +1028,12 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   dispose(): void {
+    for (const entry of this.entries.values()) {
+      entry.preload.reset();
+      entry.rowCodes.reset();
+      entry.catalog.reset();
+      entry.matching.reset();
+    }
     this.entries.clear();
     this.snapshots.clear();
     this.listeners.clear();

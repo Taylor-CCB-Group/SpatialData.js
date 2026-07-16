@@ -370,10 +370,12 @@ describe('PointsDataEngine — row feature codes', () => {
     expect(Array.from(engine.getRowFeatureCodes('pts:rc')!)).toEqual([0, 1, 0]);
     // R5 fix (Track A): the codes are read at the resident preload's cap so they
     // stay row-aligned with the batch. No preload ran here, so the cap is the default.
-    expect(loadRowFeatureCodes).toHaveBeenCalledWith({
-      featureCatalog: sampleCatalog,
-      memoryCap: DEFAULT_POINTS_MEMORY_CAP,
-    });
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureCatalog: sampleCatalog,
+        memoryCap: DEFAULT_POINTS_MEMORY_CAP,
+      })
+    );
   });
 
   it('passes undefined catalog when none is built yet (core scans internally)', async () => {
@@ -383,10 +385,12 @@ describe('PointsDataEngine — row feature codes', () => {
     await engine.ensureRowFeatureCodes({ key: 'pts:rc2', layerId: 'l', element });
 
     // R5 fix (Track A): the cap is threaded through even with no catalog yet.
-    expect(loadRowFeatureCodes).toHaveBeenCalledWith({
-      featureCatalog: undefined,
-      memoryCap: DEFAULT_POINTS_MEMORY_CAP,
-    });
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureCatalog: undefined,
+        memoryCap: DEFAULT_POINTS_MEMORY_CAP,
+      })
+    );
   });
 
   it('is idempotent', async () => {
