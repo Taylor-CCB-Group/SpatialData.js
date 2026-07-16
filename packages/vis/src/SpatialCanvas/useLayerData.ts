@@ -368,7 +368,11 @@ export function useLayerData(
   layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
-  const [, setLoadedDataRevision] = useState(0);
+  // Bumped on every resolver settle. The reconcile effect depends on it so that an
+  // async settle (e.g. the preload landing, which flips `supportsFeatureScan`) re-runs
+  // planning — this is what lets the row-codes and feature-index scan be planned from
+  // the commit phase (Track A) instead of kicked imperatively during render.
+  const [loadedDataRevision, setLoadedDataRevision] = useState(0);
 
   const notifyLoadedDataChanged = useCallback(() => {
     setLoadedDataRevision((revision) => revision + 1);
@@ -541,6 +545,11 @@ export function useLayerData(
   // system switch that makes a previously unavailable element resolvable. The map is
   // memoised on `availableElements`, so this adds no per-render churn.
   useEffect(() => {
+    // Bare reference: `loadedDataRevision` is a re-trigger, not a value we read. A
+    // resolver settle (the preload landing flips `supportsFeatureScan`) must replan so
+    // the scan/row-codes tasks get emitted; touching it here declares that dependency
+    // honestly to exhaustive-deps. The plan/load dedup makes the extra runs convergent.
+    void loadedDataRevision;
     const contexts: AnyResolveContext[] = [];
     for (const layerId of layerOrder) {
       const config = layers[layerId];
@@ -578,21 +587,26 @@ export function useLayerData(
           transform: elem.transform,
         });
       } else if (elem.type === 'points' && config.type === 'points') {
-        // Only the preload is planned here; row-codes and the feature-index scan
-        // stay on the render-phase engine calls in `getLayers` (Track A), so the
-        // config deliberately carries just the memory cap.
+        // The full points config drives planning (Track A): `plan()` emits the
+        // preload, and — once the preload makes a scan possible — the row-codes and
+        // feature-index scan tasks from `featureCodes`/`colorByFeature`. These used
+        // to be kicked imperatively from `getLayers` during render.
         contexts.push({
           entryId: layerId,
           elementKey: elem.key,
           kind: 'points',
           element: elem.element,
-          config: { pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap) },
+          config: {
+            pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap),
+            ...(config.featureCodes ? { featureCodes: [...config.featureCodes] } : {}),
+            ...(config.colorByFeature ? { colorByFeature: true } : {}),
+          },
           transform: elem.transform,
         });
       }
     }
     void store.reconcile(contexts);
-  }, [layers, layerOrder, store, elementMapValue]);
+  }, [layers, layerOrder, store, elementMapValue, loadedDataRevision]);
 
   // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
 
@@ -905,14 +919,14 @@ export function useLayerData(
           const featureCodes = config.featureCodes;
           const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
 
-          // Feature-index render scan: when a selection is active, load the WHOLE
-          // dataset's matching points (footer stats skip the row groups a selected
-          // feature can't live in), so features outside the resident preload window
-          // still render. The scan is idempotent per selection; kicking it here is a
-          // no-op once resident/in-flight. On settle it notifies → re-render → the
-          // matched resource appears below. `getMatchingResource` returns the LAST
-          // completed matched batch, so a selection change keeps showing the prior
-          // selection's points until the new scan settles (no blank mid-scan).
+          // Feature-index render scan: when a selection is active, the WHOLE
+          // dataset's matching points are loaded (footer stats skip the row groups a
+          // selected feature can't live in), so features outside the resident preload
+          // window still render. The scan is PLANNED from the reconcile effect (Track
+          // A) — `getLayers` only READS its result here. `getMatchingResource`
+          // returns the LAST completed matched batch, so a selection change keeps
+          // showing the prior selection's points until the new scan settles (no blank
+          // mid-scan).
           //
           // Gated on scan capability: an authoritative code column (footer stats
           // skip row groups) OR a dictionary-only element with a catalog loaded —
@@ -925,11 +939,6 @@ export function useLayerData(
           let matchingResource: PointsRenderResource | null = null;
           let partialResource: PointsRenderResource | null = null;
           if (selectionActive && canFeatureScan) {
-            void pointsEngine.ensureMatchingFeaturesLoaded(
-              { key: elem.key, layerId, element },
-              featureCodes,
-              resolvePointsMemoryCap(config.pointsMemoryCap)
-            );
             matchingResource = pointsEngine.getMatchingResource(element, elem.key);
             // The in-flight scan's growing buffer (all matched chunks so far), drawn
             // as an extra overlay sub-layer below so the base (resident preview /
@@ -971,12 +980,10 @@ export function useLayerData(
             if (resource) {
               const filterActive = featureCodes !== undefined;
               // Row codes are needed to filter by feature AND to colour by feature.
-              // Colour-by-feature applies even with no filter ("all features"), so
-              // load/pass the codes whenever either is on — not just when filtering.
+              // Colour-by-feature applies even with no filter ("all features"), so we
+              // READ the codes whenever either is on. The row-codes LOAD is planned
+              // from the reconcile effect (Track A), not kicked here.
               const needsRowCodes = filterActive || config.colorByFeature === true;
-              if (needsRowCodes && !pointsEngine.hasRowFeatureCodes(elem.key)) {
-                void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
-              }
               const preloadedFeatureCodes = needsRowCodes
                 ? pointsEngine.getRowFeatureCodes(elem.key)
                 : undefined;
