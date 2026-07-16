@@ -216,6 +216,23 @@ describe('streaming partials', () => {
     capturedEmit([1, 2, 3]);
     expect(s.partial).toBeUndefined(); // new loading has no partial yet
   });
+
+  it('a silent emit updates the partial without notifying', async () => {
+    const onChange = vi.fn();
+    const s = new RequestSlot<string, number[]>({ context, onChange });
+    let emit!: SlotLoadContext<number[]>['emit'];
+    s.request('scan', (ctx) => {
+      emit = ctx.emit;
+      return deferred<number[]>().promise;
+    });
+    onChange.mockClear(); // ignore the loading-start notify
+    emit([1], undefined, { silent: true });
+    expect(s.partial).toEqual([1]); // value fresh...
+    expect(onChange).not.toHaveBeenCalled(); // ...but no re-render
+    emit([1, 2]); // a loud tick flushes
+    expect(s.partial).toEqual([1, 2]);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('settle', () => {

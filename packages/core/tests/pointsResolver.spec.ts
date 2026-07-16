@@ -446,4 +446,74 @@ describe('Track A — races closed by the slot keys', () => {
     release.get(8_000_000)?.(batch(8));
     await preload;
   });
+
+  /** An element whose feature-index scans you settle per call. */
+  function deferredScanElement() {
+    const calls: Array<{
+      featureCodes: number[];
+      memoryCap: number;
+      resolve: (result: PointsLoadResult) => void;
+    }> = [];
+    const loadPointsMatchingFeatureCodes = vi.fn(
+      (opts: { featureCodes: readonly number[]; memoryCap: number }) =>
+        new Promise<PointsLoadResult>((resolve) => {
+          calls.push({ featureCodes: [...opts.featureCodes], memoryCap: opts.memoryCap, resolve });
+        })
+    );
+    const el = {
+      key: 'transcripts',
+      loadPoints: vi.fn(async () => batch(4)), // hasFeatureCodeColumn: true → authoritative
+      loadPointsMatchingFeatureCodes,
+    } as unknown as PointsElement;
+    return { el, loadPointsMatchingFeatureCodes, calls };
+  }
+
+  it('R2: a superseded scan cannot corrupt the reselected one ({0,1}→{2}→{0,1})', async () => {
+    // The old bug: rapid selection changes left two scans with the SAME signature
+    // running concurrently (the first, and the reselected third), both writing the
+    // one shared matchingLoading marker — so the superseded first scan's `finally`
+    // could clobber the live third's result. Record-identity supersession forbids it.
+    const resolver = new PointsResolver();
+    const { el, loadPointsMatchingFeatureCodes, calls } = deferredScanElement();
+    const t = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(t);
+
+    resolver.ensureMatchingFeaturesLoaded(t, [0, 1]); // scan A
+    resolver.ensureMatchingFeaturesLoaded(t, [2]); //    scan B (supersedes A)
+    const pC = resolver.ensureMatchingFeaturesLoaded(t, [0, 1]); // scan C (supersedes B)
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(3);
+
+    const resultA = batch(9, { featureCodes: new Int32Array([0, 1, 0, 1, 0, 1, 0, 1, 0]) });
+    const resultC = batch(3, { featureCodes: new Int32Array([0, 1, 0]) });
+    // The superseded first scan settles FIRST — in the old engine this is where it
+    // wrote resultA over the live scan's marker.
+    calls[0].resolve(resultA);
+    await Promise.resolve();
+    // The live reselected scan settles.
+    calls[2].resolve(resultC);
+    await pC;
+
+    expect(resolver.getMatchedBatch('transcripts')).toBe(resultC);
+    calls[1].resolve(batch(1)); // drain the superseded {2} scan
+  });
+
+  it('R3: raising the cap during a scan supersedes it, not served by the smaller one', async () => {
+    // The old bug: a cap raise for the same selection was "covered" by the in-flight
+    // smaller scan and deduped to it, so the extra rows were never fetched. The cap
+    // is in the slot key, so it supersedes.
+    const resolver = new PointsResolver();
+    const { el, loadPointsMatchingFeatureCodes, calls } = deferredScanElement();
+    const t = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(t, 4_000_000);
+
+    resolver.ensureMatchingFeaturesLoaded(t, [0], 4_000_000); // scan at 4M
+    const p8 = resolver.ensureMatchingFeaturesLoaded(t, [0], 8_000_000); // raise → supersede
+
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(2);
+    expect(calls[1]?.memoryCap).toBe(8_000_000);
+
+    calls[1].resolve(batch(6));
+    await p8;
+    calls[0].resolve(batch(3)); // drain the superseded 4M scan
+  });
 });

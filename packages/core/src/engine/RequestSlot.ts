@@ -57,8 +57,13 @@ export interface SlotLoadContext<V> {
    * Publish the streaming load's growing value (+ progress). Dropped silently once
    * this request is no longer current — a late tick from a superseded scan cannot
    * repaint the live one.
+   *
+   * `options.silent` updates the value **without** firing `onChange`: use it to keep
+   * the partial data fresh on every producer tick while throttling how often the
+   * host re-renders. The value's identity still changes, so a getter reading it sees
+   * the update; only the notification is suppressed.
    */
-  emit(partial: V, progress?: ResolutionProgress): void;
+  emit(partial: V, progress?: ResolutionProgress, options?: { silent?: boolean }): void;
 }
 
 /** Runs one request. Returns the settled value; may `emit` partials along the way. */
@@ -205,15 +210,16 @@ export class RequestSlot<K, V> {
       try {
         const value = await loader({
           signal: controller.signal,
-          emit: (partial, progress) => {
+          emit: (partial, progress, options) => {
             if (this.current !== record) return; // superseded → drop the tick
-            this.set(
-              Resolution.loading({
-                ...(stale !== undefined ? { stale } : {}),
-                partial,
-                ...(progress !== undefined ? { progress } : {}),
-              })
-            );
+            // Update the partial value (identity changes so a getter sees it); notify
+            // unless silent — the caller throttles re-renders while keeping data fresh.
+            this._resolution = Resolution.loading({
+              ...(stale !== undefined ? { stale } : {}),
+              partial,
+              ...(progress !== undefined ? { progress } : {}),
+            });
+            if (!options?.silent) this.onChange?.();
           },
         });
         if (this.current !== record) return; // superseded → drop the result

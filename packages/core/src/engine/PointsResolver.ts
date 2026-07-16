@@ -52,11 +52,13 @@ import { SnapshotCache } from './snapshotCache.js';
  *
  * ## State model (Track A)
  *
- * Each entry's `preload` and `rowCodes` are {@link RequestSlot}s: one tested
- * dedup/supersede/settle primitive, keyed so that everything a request depends on is
- * in the key. Supersession is by record identity, never value — a superseded load
- * cannot write anything, which is what closes R1. (`catalog` and `matching` are
- * slotified in step A3.)
+ * Each entry's `preload`, `rowCodes` and `matching` are {@link RequestSlot}s: one
+ * tested dedup/supersede/settle primitive, keyed so that everything a request depends
+ * on is in the key. Supersession is by record identity, never value — a superseded
+ * load cannot write anything. The keys ARE the race fixes: `preload`/`rowCodes` on
+ * the memory cap (R1, R5); `matching` on `` `${signature}#${cap}` `` (R2 dedups a
+ * re-selected covered scan, R3 supersedes on a cap raise). (`catalog` is slotified in
+ * step A4, alongside its retryable-failure change.)
  */
 
 export type PointsLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -101,7 +103,7 @@ interface PointsEntry {
   rowCodes: RequestSlot<number, ArrayLike<number> | undefined>;
   /** Feature catalog: `undefined` while unloaded, `null` once settled for an
    * element with no `feature_key`, else the catalog. `catalogLoaded` disambiguates
-   * "not yet requested" from "settled as null". (Slotified in Track A step A3.) */
+   * "not yet requested" from "settled as null". (Slotified in Track A step A4.) */
   catalog?: PointsFeatureCatalog | null;
   catalogLoaded?: boolean;
   catalogLoading?: Promise<void>;
@@ -117,17 +119,21 @@ interface PointsEntry {
    * identity. A DATA memo (a Set), not a render resource — it stays in core. */
   residentCodes?: ReadonlySet<number>;
   residentCodesSource?: ArrayLike<number>;
-  /** Whole-dataset points for the active selection, keyed by the selected-codes
-   * `signature` so a selection change rebuilds it. (Slotified in step A3.) */
-  matching?: { signature: string; result: PointsLoadResult };
-  /** In-flight feature-index scan, with progressive counts from `onProgress`. */
-  matchingLoading?: {
-    signature: string;
-    promise: Promise<void>;
-    matchedRows: number;
-    scannedRows: number;
-    partialResult?: PointsLoadResult;
-  };
+  /**
+   * Whole-dataset points for the active selection — the feature-index scan — as a
+   * {@link RequestSlot}. Keyed by `` `${signature}#${cap}` ``: the selected-codes
+   * signature closes R2 (re-selecting a covered selection dedups to the live scan),
+   * and the cap closes R3 (raising the cap supersedes rather than reusing the smaller
+   * scan). The value carries its `signature` so coverage checks can read it, and the
+   * streaming `partial` is the scan's growing buffer.
+   */
+  matching: RequestSlot<string, MatchingValue>;
+}
+
+/** A settled or in-flight matched batch, tagged with the selection it covers. */
+interface MatchingValue {
+  readonly signature: string;
+  readonly result: PointsLoadResult;
 }
 
 /** Public snapshot of a selection's feature-index load, for the filter panel. */
@@ -183,6 +189,18 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
           },
           onChange,
           notifyOnLoading: false,
+        }),
+        matching: new RequestSlot<string, MatchingValue>({
+          context: {
+            elementKey: key,
+            kind: 'points',
+            resource: 'matching',
+            fallback: 'decode-failed',
+          },
+          onChange,
+          // The scan reports progress and a growing partial the panel/overlay draw,
+          // so its loading transitions and streamed partials ARE re-renders.
+          notifyOnLoading: true,
         }),
       };
       this.entries.set(key, entry);
@@ -318,17 +336,26 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   private matchingResolution(key: string): Resolution<PointsLoadResult> {
-    const entry = this.entries.get(key);
-    if (!entry) return Resolution.idle();
-    const loading = entry.matchingLoading;
-    if (loading) {
-      return Resolution.loading({
-        ...(loading.partialResult !== undefined ? { partial: loading.partialResult } : {}),
-        ...(entry.matching !== undefined ? { stale: entry.matching.result } : {}),
-        progress: { done: loading.matchedRows, scanned: loading.scannedRows },
-      });
+    // Unwrap the slot's Resolution<MatchingValue> into Resolution<PointsLoadResult>
+    // — the resource surface is the batch, the signature is internal bookkeeping.
+    // Built on a snapshot-cache miss (once per version), so a fresh identity is fine.
+    const slot = this.entries.get(key)?.matching;
+    if (!slot) return Resolution.idle();
+    const r = slot.resolution;
+    switch (r.status) {
+      case 'ready':
+        return Resolution.ready(r.value.result);
+      case 'loading':
+        return Resolution.loading({
+          ...(r.partial !== undefined ? { partial: r.partial.result } : {}),
+          ...(r.stale !== undefined ? { stale: r.stale.result } : {}),
+          ...(r.progress !== undefined ? { progress: r.progress } : {}),
+        });
+      case 'failed':
+        return Resolution.failed(r.error, r.stale?.result);
+      default:
+        return Resolution.idle();
     }
-    return entry.matching ? Resolution.ready(entry.matching.result) : Resolution.idle();
   }
 
   private notices(key: string, featureCodes: readonly number[] | undefined): EntryNotice[] {
@@ -384,14 +411,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return this.entries.get(key)?.preload.lastGood;
   }
 
-  /** The settled matched-selection batch. Input to the adapter's matched memo. */
+  /** The last-good matched-selection batch (survives a new scan as `stale`). Input
+   * to the adapter's matched memo. */
   getMatchedBatch(key: string): PointsLoadResult | undefined {
-    return this.entries.get(key)?.matching?.result;
+    return this.entries.get(key)?.matching.lastGood?.result;
   }
 
   /** The in-flight scan's growing buffer. Input to the adapter's partial memo. */
   getPartialBatch(key: string): PointsLoadResult | undefined {
-    return this.entries.get(key)?.matchingLoading?.partialResult;
+    return this.entries.get(key)?.matching.partial?.result;
   }
 
   getStatus(key: string): PointsLoadStatus {
@@ -411,6 +439,17 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   /** Order-independent cache key for a selected-codes set. */
   private static matchingSignature(featureCodes: readonly number[]): string {
     return [...featureCodes].sort((left, right) => left - right).join(',');
+  }
+
+  /** The matching slot key — signature AND cap, so both R2 and R3 are decided by it. */
+  private static matchingKey(signature: string, memoryCap: number): string {
+    return `${signature}#${memoryCap}`;
+  }
+
+  /** Split a matching slot key back into its signature and cap. */
+  private static parseMatchingKey(key: string): { signature: string; memoryCap: number } {
+    const hash = key.lastIndexOf('#');
+    return { signature: key.slice(0, hash), memoryCap: Number(key.slice(hash + 1)) };
   }
 
   /** Feature codes a matched batch/scan covers, parsed from its signature. */
@@ -499,10 +538,11 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (!entry) {
       return undefined;
     }
-    if (featureCodes && featureCodes.length > 0 && entry.matching) {
-      const covered = PointsResolver.coveredCodes(entry.matching.signature);
+    const matched = entry.matching.lastGood;
+    if (featureCodes && featureCodes.length > 0 && matched) {
+      const covered = PointsResolver.coveredCodes(matched.signature);
       if (covered.size > 0 && featureCodes.every((code) => covered.has(code))) {
-        const result = entry.matching.result;
+        const result = matched.result;
         return {
           truncated: result.preloadTruncated === true,
           loaded: result.shape[1] ?? 0,
@@ -606,147 +646,146 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   ): Promise<void> {
     const { key, element } = target;
     const entry = this.ensureEntry(key);
+    const slot = entry.matching;
     const signature = PointsResolver.matchingSignature(featureCodes);
     const isCoveredBy = (sig: string): boolean => {
       const covered = PointsResolver.coveredCodes(sig);
       return featureCodes.every((code) => covered.has(code));
     };
-    // A loaded batch already covers this selection AND still satisfies the cap →
-    // reuse it; the layer filters down. No scan.
+
+    // (1) A last-good batch already covers this selection AND still satisfies the
+    //     cap → reuse it; the layer filters down in memory. No scan. Coverage is a
+    //     subset relation, richer than the slot's exact-key dedup, so it stays here.
+    const lastGood = slot.lastGood;
     if (
-      entry.matching &&
-      isCoveredBy(entry.matching.signature) &&
-      PointsResolver.batchAdequateForCap(entry.matching.result, memoryCap)
+      lastGood &&
+      isCoveredBy(lastGood.signature) &&
+      PointsResolver.batchAdequateForCap(lastGood.result, memoryCap)
     ) {
-      entry.matchingLoading = undefined;
-      return Promise.resolve();
-    }
-    // An in-flight scan will cover this selection once it settles → wait for it.
-    if (entry.matchingLoading && isCoveredBy(entry.matchingLoading.signature)) {
-      return entry.matchingLoading.promise;
+      // A now-unneeded scan may be in flight (the selection just shrank) → cancel it
+      // and keep the covering batch resident.
+      if (slot.isLoading) {
+        slot.settle(PointsResolver.matchingKey(lastGood.signature, memoryCap), lastGood);
+      }
+      return slot.pending ?? Promise.resolve();
     }
 
+    // (2) An in-flight scan at this cap will cover this selection once it settles →
+    //     wait for it. This is R2: re-selecting a covered selection mid-scan must not
+    //     start a second scan corrupting the first.
+    if (slot.isLoading && slot.pendingKey !== undefined) {
+      const pending = PointsResolver.parseMatchingKey(slot.pendingKey);
+      if (pending.memoryCap === memoryCap && isCoveredBy(pending.signature)) {
+        return slot.pending ?? Promise.resolve();
+      }
+    }
+
+    // (3) A new scan. The key carries the cap, so raising it supersedes rather than
+    //     being served by the smaller scan (R3).
+    const scanKey = PointsResolver.matchingKey(signature, memoryCap);
     const PROGRESS_NOTIFY_STEP = 5_000;
     let lastNotifiedMatched = 0;
-    const onProgress = (progress: PointsLoadProgress): void => {
-      const loading = entry.matchingLoading;
-      if (!loading || loading.signature !== signature) {
-        return;
-      }
-      loading.matchedRows = progress.matchedRows;
-      loading.scannedRows = progress.scannedRows;
-      loading.partialResult = progress.partialResult;
-      if (progress.matchedRows - lastNotifiedMatched >= PROGRESS_NOTIFY_STEP) {
-        lastNotifiedMatched = progress.matchedRows;
-        this.notify(); // runs during the async scan, not render — safe to notify sync
-      }
-    };
-
-    const promise = (async () => {
-      try {
-        // Dict-only elements have no file-backed code column, so the scan must
-        // resolve each row's feature_name against the same catalog the selection
-        // was made in. The core call ignores this for indexed elements.
-        const featureCodeByName =
-          entry.featureCodeColumn === true ? undefined : featureCodeMapFromCatalog(entry.catalog);
-        const result = await element.loadPointsMatchingFeatureCodes({
-          featureCodes,
-          memoryCap,
-          onProgress,
-          ...(featureCodeByName ? { featureCodeByName } : {}),
-        });
-        // Apply only if this is still the latest requested scan. Keeping the
-        // previous `matching` batch until the current one is ready is what lets
-        // the render keep showing the prior selection instead of blanking.
-        if (entry.matchingLoading?.signature === signature) {
-          entry.matching = { signature, result };
+    return slot.request(scanKey, async ({ emit }) => {
+      // Dict-only elements have no file-backed code column, so the scan must resolve
+      // each row's feature_name against the same catalog the selection was made in.
+      // The core call ignores this for indexed elements.
+      const featureCodeByName =
+        entry.featureCodeColumn === true ? undefined : featureCodeMapFromCatalog(entry.catalog);
+      const onProgress = (progress: PointsLoadProgress): void => {
+        // Keep the partial buffer fresh on EVERY tick (its identity drives the
+        // overlay resource), but only NOTIFY every PROGRESS_NOTIFY_STEP matched rows
+        // — the render granularity the old engine used. `emit` is dropped by the slot
+        // once this scan is superseded.
+        const silent = progress.matchedRows - lastNotifiedMatched < PROGRESS_NOTIFY_STEP;
+        if (!silent) {
+          lastNotifiedMatched = progress.matchedRows;
         }
-      } catch (error) {
-        console.error(`Failed feature-index scan for ${target.layerId}:`, error);
-      } finally {
-        if (entry.matchingLoading?.signature === signature) {
-          entry.matchingLoading = undefined;
-        }
-        this.notify();
-      }
-    })();
-    entry.matchingLoading = { signature, promise, matchedRows: 0, scannedRows: 0 };
-    // No queueMicrotask here, and none needed: nothing kicks a scan from render
-    // any more. `plan()` is pure and returns a task; the store calls `load()` from
-    // a commit-phase effect. The old engine's `queueMicrotask(() => this.notify())`
-    // existed solely to defend against a synchronous notify during render, and the
-    // phase separation makes that unreachable by construction.
-    this.notify();
-    return promise;
+        emit(
+          { signature, result: progress.partialResult },
+          { done: progress.matchedRows, scanned: progress.scannedRows },
+          { silent }
+        );
+      };
+      const result = await element.loadPointsMatchingFeatureCodes({
+        featureCodes,
+        memoryCap,
+        onProgress,
+        ...(featureCodeByName ? { featureCodeByName } : {}),
+      });
+      return { signature, result };
+    });
   }
 
   /** Whether the feature-index scan for this exact selection is in flight. */
   isMatchingLoading(key: string, featureCodes: readonly number[]): boolean {
-    const entry = this.entries.get(key);
-    return entry?.matchingLoading?.signature === PointsResolver.matchingSignature(featureCodes);
+    const slot = this.entries.get(key)?.matching;
+    if (!slot?.isLoading || slot.pendingKey === undefined) {
+      return false;
+    }
+    return (
+      PointsResolver.parseMatchingKey(slot.pendingKey).signature ===
+      PointsResolver.matchingSignature(featureCodes)
+    );
   }
 
   getMatchingLoadState(
     key: string,
     featureCodes: readonly number[]
   ): PointsMatchingLoadState | undefined {
-    const entry = this.entries.get(key);
-    if (!entry) {
+    const slot = this.entries.get(key)?.matching;
+    if (!slot) {
       return undefined;
     }
     const signature = PointsResolver.matchingSignature(featureCodes);
-    const loading = entry.matchingLoading;
-    if (loading?.signature === signature) {
-      return {
-        loading: true,
-        matchedRows: loading.matchedRows,
-        scannedRows: loading.scannedRows,
-        settled: false,
-      };
+
+    // A scan for exactly this selection is in flight.
+    if (slot.isLoading && slot.pendingKey !== undefined) {
+      const pending = PointsResolver.parseMatchingKey(slot.pendingKey);
+      if (pending.signature === signature) {
+        const progress =
+          slot.resolution.status === 'loading' ? slot.resolution.progress : undefined;
+        return {
+          loading: true,
+          matchedRows: progress?.done ?? 0,
+          scannedRows: progress?.scanned ?? 0,
+          settled: false,
+        };
+      }
     }
-    const matching = entry.matching;
-    if (!matching) {
+
+    const matched = slot.lastGood;
+    if (!matched) {
       return undefined;
     }
-    if (matching.signature === signature) {
-      return {
-        loading: false,
-        matchedRows: matching.result.shape[1] ?? 0,
-        scannedRows: matching.result.shape[1] ?? 0,
-        settled: true,
-      };
+    const rows = matched.result.shape[1] ?? 0;
+    if (matched.signature === signature) {
+      return { loading: false, matchedRows: rows, scannedRows: rows, settled: true };
     }
     // A larger loaded batch covers this selection — served from memory, no scan.
-    const covered = PointsResolver.coveredCodes(matching.signature);
+    const covered = PointsResolver.coveredCodes(matched.signature);
     if (covered.size > 0 && featureCodes.every((code) => covered.has(code))) {
-      return {
-        loading: false,
-        matchedRows: matching.result.shape[1] ?? 0,
-        scannedRows: matching.result.shape[1] ?? 0,
-        settled: true,
-        covered: true,
-      };
+      return { loading: false, matchedRows: rows, scannedRows: rows, settled: true, covered: true };
     }
     return undefined;
   }
 
-  /** The feature codes the settled matched batch covers. */
+  /** The feature codes the last-good matched batch covers. */
   getLoadedMatchingFeatureCodes(key: string): ReadonlySet<number> | undefined {
-    const matching = this.entries.get(key)?.matching;
-    if (!matching) {
+    const matched = this.entries.get(key)?.matching.lastGood;
+    if (!matched) {
       return undefined;
     }
-    return PointsResolver.coveredCodes(matching.signature);
+    return PointsResolver.coveredCodes(matched.signature);
   }
 
-  /** Per-row feature codes of the settled matched batch, row-aligned with it. */
+  /** Per-row feature codes of the last-good matched batch, row-aligned with it. */
   getMatchingRowFeatureCodes(key: string): ArrayLike<number> | undefined {
-    return this.entries.get(key)?.matching?.result.featureCodes;
+    return this.entries.get(key)?.matching.lastGood?.result.featureCodes;
   }
 
   /** Per-row feature codes of the in-flight scan's partial buffer. */
   getMatchingPartialRowFeatureCodes(key: string): ArrayLike<number> | undefined {
-    return this.entries.get(key)?.matchingLoading?.partialResult?.featureCodes;
+    return this.entries.get(key)?.matching.partial?.result.featureCodes;
   }
 
   // --- Feature catalog --------------------------------------------------------
