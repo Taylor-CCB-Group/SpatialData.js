@@ -213,6 +213,11 @@ export class PointsDataEngine {
     return this.resolver.hasRowFeatureCodes(key);
   }
 
+  /** Re-run any failed resources of an element (e.g. a stuck full-catalog scan). */
+  retry(key: string): Promise<void> {
+    return this.resolver.retry(key);
+  }
+
   // --- Lifecycle --------------------------------------------------------------
 
   /** Drop an element from both halves — the data AND the resources built from it. */

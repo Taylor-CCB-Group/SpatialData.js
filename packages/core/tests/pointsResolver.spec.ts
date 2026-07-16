@@ -263,7 +263,13 @@ describe('snapshot() — per-resource resolutions, identity-stable', () => {
     const snapshot = resolver.snapshot(ctx(el));
 
     expect(Resolution.isReady(snapshot.resources.preload as never)).toBe(true);
-    expect(Resolution.readyValue(snapshot.resources.catalog as never)).toBeNull();
+    // A4: a failed full-catalog scan is a retryable `failed`, not a permanent
+    // null-settle — and it must not blank the healthy preload beside it.
+    const catalog = snapshot.resources.catalog;
+    expect(Resolution.isFailed(catalog as never)).toBe(true);
+    if (catalog.status === 'failed') {
+      expect(catalog.error.retryable).toBe(true);
+    }
   });
 
   it('carries `stale` through a cap raise, so the old batch keeps drawing', async () => {
@@ -515,5 +521,35 @@ describe('Track A — races closed by the slot keys', () => {
     calls[1].resolve(batch(6));
     await p8;
     calls[0].resolve(batch(3)); // drain the superseded 4M scan
+  });
+});
+
+describe('Track A — retryable failures', () => {
+  it('a failed full-catalog scan is retryable, and retry() re-runs it', async () => {
+    const resolver = new PointsResolver();
+    let attempts = 0;
+    const el = element({
+      listFeaturesWithCounts: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('scan failed');
+        return { featureKey: 'feature_name', entries: [{ code: 0, name: 'GeneA' }] };
+      }),
+    });
+    const t = { key: 'transcripts', layerId: 'L', element: el };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await resolver.ensureFeatureCatalog(t);
+    const failed = resolver.snapshot(ctx(el)).resources.catalog;
+    expect(Resolution.isFailed(failed as never)).toBe(true);
+    if (failed.status === 'failed') expect(failed.error.retryable).toBe(true);
+    // The old code marked it permanently complete; here the value is simply not loaded.
+    expect(resolver.getFeatureCatalog('transcripts')).toBeUndefined();
+
+    await resolver.retry('transcripts');
+    expect(resolver.getFeatureCatalog('transcripts')).toEqual({
+      featureKey: 'feature_name',
+      entries: [{ code: 0, name: 'GeneA' }],
+    });
+    expect(Resolution.isReady(resolver.snapshot(ctx(el)).resources.catalog as never)).toBe(true);
   });
 });

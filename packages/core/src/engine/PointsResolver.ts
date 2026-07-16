@@ -52,13 +52,15 @@ import { SnapshotCache } from './snapshotCache.js';
  *
  * ## State model (Track A)
  *
- * Each entry's `preload`, `rowCodes` and `matching` are {@link RequestSlot}s: one
- * tested dedup/supersede/settle primitive, keyed so that everything a request depends
- * on is in the key. Supersession is by record identity, never value — a superseded
- * load cannot write anything. The keys ARE the race fixes: `preload`/`rowCodes` on
- * the memory cap (R1, R5); `matching` on `` `${signature}#${cap}` `` (R2 dedups a
- * re-selected covered scan, R3 supersedes on a cap raise). (`catalog` is slotified in
- * step A4, alongside its retryable-failure change.)
+ * All four resources — `preload`, `rowCodes`, `catalog`, `matching` — are
+ * {@link RequestSlot}s: one tested dedup/supersede/settle primitive, keyed so that
+ * everything a request depends on is in the key. Supersession is by record identity,
+ * never value — a superseded load cannot write anything. The keys ARE the race fixes:
+ * `preload`/`rowCodes` on the memory cap (R1, R5); `matching` on
+ * `` `${signature}#${cap}` `` (R2 dedups a re-selected covered scan, R3 supersedes on
+ * a cap raise). A failed slot holds a structured, **retryable** `SpatialEntryError`
+ * that {@link retry} re-runs — which is what unsticks the previously-permanent
+ * full-catalog-scan failure.
  */
 
 export type PointsLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -101,15 +103,17 @@ interface PointsEntry {
    * codes settles `ready(undefined)` — a settled fact, not an absence.
    */
   rowCodes: RequestSlot<number, ArrayLike<number> | undefined>;
-  /** Feature catalog: `undefined` while unloaded, `null` once settled for an
-   * element with no `feature_key`, else the catalog. `catalogLoaded` disambiguates
-   * "not yet requested" from "settled as null". (Slotified in Track A step A4.) */
-  catalog?: PointsFeatureCatalog | null;
-  catalogLoaded?: boolean;
-  catalogLoading?: Promise<void>;
-  /** True once the full-dataset catalog scan (`listFeaturesWithCounts`) has
-   * replaced any resident-subset preview. */
-  catalogComplete?: boolean;
+  /**
+   * Feature catalog, two-phase, as a {@link RequestSlot} keyed `'preview' | 'full'`.
+   * The resident-subset **preview** falls out of the geometry preload's decode
+   * (`settle('preview', …)`); the authoritative **full** scan
+   * (`listFeaturesWithCounts`) supersedes it (`request('full', …)`), retaining the
+   * preview as `stale` so it keeps showing while the full list loads. A settled value
+   * is the catalog, or `null` for an element with no `feature_key` — a fact, not an
+   * absence. A failed full scan is `failed` + **retryable** (Track A step A4): it no
+   * longer settles permanently, so {@link retry} can re-run it.
+   */
+  catalog: RequestSlot<CatalogPhase, PointsFeatureCatalog | null>;
   /** The catalog whose code space the {@link rowCodes} value is expressed in. */
   rowCodesCatalog?: PointsFeatureCatalog;
   /** True when the element has a file-backed feature code column (authoritative
@@ -135,6 +139,10 @@ interface MatchingValue {
   readonly signature: string;
   readonly result: PointsLoadResult;
 }
+
+/** The two catalog phases: the instant resident-subset preview, then the
+ * authoritative full-dataset scan that supersedes it. */
+type CatalogPhase = 'preview' | 'full';
 
 /** Public snapshot of a selection's feature-index load, for the filter panel. */
 export interface PointsMatchingLoadState {
@@ -200,6 +208,17 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
           onChange,
           // The scan reports progress and a growing partial the panel/overlay draw,
           // so its loading transitions and streamed partials ARE re-renders.
+          notifyOnLoading: true,
+        }),
+        catalog: new RequestSlot<CatalogPhase, PointsFeatureCatalog | null>({
+          context: {
+            elementKey: key,
+            kind: 'points',
+            resource: 'catalog',
+            fallback: 'decode-failed',
+          },
+          onChange,
+          // The full-list scan shows a spinner; its loading transition is a re-render.
           notifyOnLoading: true,
         }),
       };
@@ -325,10 +344,14 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   private catalogResolution(key: string): Resolution<PointsFeatureCatalog | null> {
-    const entry = this.entries.get(key);
-    if (!entry) return Resolution.idle();
-    if (entry.catalogLoaded) return Resolution.ready(entry.catalog ?? null);
-    return this.isFeatureCatalogLoading(key) ? Resolution.loading() : Resolution.idle();
+    const slot = this.entries.get(key)?.catalog;
+    if (!slot) return Resolution.idle();
+    // The catalog rides the geometry preload, so surface a running preload as the
+    // catalog loading too — a spinner, not an "idle" gap before the preview arrives.
+    if (slot.resolution.status === 'idle' && this.entries.get(key)?.preload.isLoading) {
+      return Resolution.loading();
+    }
+    return slot.resolution;
   }
 
   private rowCodesResolution(key: string): Resolution<ArrayLike<number> | undefined> {
@@ -608,15 +631,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       entry.residentCodes = undefined;
       entry.residentCodesSource = undefined;
       entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
-      if (data.featureCatalog !== undefined && !entry.catalogComplete) {
-        entry.catalog = data.featureCatalog;
-        entry.catalogLoaded = true;
+      if (data.featureCatalog !== undefined && entry.catalog.settledKey !== 'full') {
+        // Instant resident-subset preview; the full-dataset scan may supersede it.
+        entry.catalog.settle('preview', data.featureCatalog);
       }
       if (data.featureCodes !== undefined) {
         // Row codes fall out of this decode, aligned to the batch at exactly this cap.
         entry.rowCodes.settle(memoryCap, data.featureCodes);
         entry.rowCodesCatalog = data.featureCatalog;
-        this.reconcileRowCodes(entry);
+        this.reconcileRowCodes(entry, this.getFeatureCatalog(key));
       }
       return data;
     });
@@ -690,7 +713,9 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       // each row's feature_name against the same catalog the selection was made in.
       // The core call ignores this for indexed elements.
       const featureCodeByName =
-        entry.featureCodeColumn === true ? undefined : featureCodeMapFromCatalog(entry.catalog);
+        entry.featureCodeColumn === true
+          ? undefined
+          : featureCodeMapFromCatalog(this.getFeatureCatalog(key));
       const onProgress = (progress: PointsLoadProgress): void => {
         // Keep the partial buffer fresh on EVERY tick (its identity drives the
         // overlay resource), but only NOTIFY every PROGRESS_NOTIFY_STEP matched rows
@@ -791,28 +816,31 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   // --- Feature catalog --------------------------------------------------------
 
   getFeatureCatalog(key: string): PointsFeatureCatalog | null | undefined {
-    const entry = this.entries.get(key);
-    return entry?.catalogLoaded ? (entry.catalog ?? null) : undefined;
+    const slot = this.entries.get(key)?.catalog;
+    if (!slot) return undefined;
+    // Settled (preview or full) → the value (a catalog, or null for no feature_key).
+    if (slot.isReady) return slot.value ?? null;
+    // Loading behind a preview, or a failed full-scan that retained one → keep
+    // showing it. Not-yet-previewed / failed-with-nothing → undefined (not loaded).
+    return slot.lastGood ?? undefined;
   }
 
+  /** True while a settled catalog does not yet exist AND one is on its way (either
+   * the full-list scan or the geometry preload that carries the preview). */
   isFeatureCatalogLoading(key: string): boolean {
     const entry = this.entries.get(key);
-    if (!entry || entry.catalogLoaded) {
-      return false;
-    }
-    // The catalog rides the geometry preload, so a running geometry load counts as
-    // the catalog loading too — a spinner, not a premature "load feature list" prompt.
-    return entry.catalogLoading !== undefined || entry.preload.isLoading;
+    if (!entry) return false;
+    const slot = entry.catalog;
+    // A settled preview or full catalog is "loaded"; the full scan behind a preview
+    // is *refining*, not loading (see isFeatureCatalogRefining).
+    if (slot.isReady || slot.lastGood !== undefined) return false;
+    return slot.isLoading || entry.preload.isLoading;
   }
 
   /** True while the full-dataset scan runs behind an instant resident-subset preview. */
   isFeatureCatalogRefining(key: string): boolean {
-    const entry = this.entries.get(key);
-    return (
-      entry?.catalogLoaded === true &&
-      entry.catalogComplete !== true &&
-      entry.catalogLoading !== undefined
-    );
+    const slot = this.entries.get(key)?.catalog;
+    return slot?.isLoading === true && slot.pendingKey === 'full' && slot.lastGood !== undefined;
   }
 
   /** True when the element has a file-backed feature code column (globally authoritative). */
@@ -831,20 +859,25 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (!entry) {
       return false;
     }
-    return entry.featureCodeColumn === true || (entry.catalogLoaded === true && !!entry.catalog);
+    const catalog = this.getFeatureCatalog(key);
+    return entry.featureCodeColumn === true || (catalog !== undefined && catalog !== null);
   }
 
   /**
-   * Re-express `rowCodes` in the current catalog's code space when it was derived
-   * against an older one (resident preview → full-dataset upgrade). No-op for
-   * authoritative file-backed codes, which are identical across builds.
+   * Re-express `rowCodes` in a catalog's code space when they were derived against an
+   * older one (resident preview → full-dataset upgrade). No-op for authoritative
+   * file-backed codes, which are identical across builds. `target` is passed
+   * explicitly because it may not yet be the settled catalog (the full scan calls
+   * this with its result before returning it to its slot).
    */
-  private reconcileRowCodes(entry: PointsEntry): void {
+  private reconcileRowCodes(
+    entry: PointsEntry,
+    target: PointsFeatureCatalog | null | undefined
+  ): void {
     if (entry.featureCodeColumn === true) {
       return;
     }
     const source = entry.rowCodesCatalog;
-    const target = entry.catalog;
     const codes = entry.rowCodes.value;
     if (codes === undefined || !source || !target || source === target) {
       return;
@@ -888,35 +921,25 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   ensureFeatureCatalog(target: PointsLoadTarget): Promise<void> {
     const { key, element } = target;
     const entry = this.ensureEntry(key);
-    if (entry.catalogComplete) {
+    const slot = entry.catalog;
+    // Already the authoritative full catalog, or a full scan already in flight → done.
+    if (slot.settledKey === 'full') {
       return Promise.resolve();
     }
-    if (entry.catalogLoading) {
-      return entry.catalogLoading;
+    if (slot.isLoading && slot.pendingKey === 'full') {
+      return slot.pending ?? Promise.resolve();
     }
-
-    const loading = (async () => {
-      try {
-        const fullCatalog = await element.listFeaturesWithCounts();
-        entry.catalog = fullCatalog;
-        // The full-dataset catalog is authoritative. Re-express any resident row
-        // codes in its code space so the render's per-row codes match the panel's
-        // selection and swatches.
-        this.reconcileRowCodes(entry);
-      } catch (error) {
-        // Keep any resident preview catalog on failure rather than blanking it.
-        if (!entry.catalogLoaded) entry.catalog = null;
-        console.error(`Failed to build points feature catalog for ${target.layerId}:`, error);
-      } finally {
-        entry.catalogLoaded = true;
-        entry.catalogComplete = true;
-        entry.catalogLoading = undefined;
-        this.notify();
-      }
-    })();
-    entry.catalogLoading = loading;
-    this.notify(); // surface the loading transition to the panel
-    return loading;
+    // Request 'full' — supersedes any 'preview', retaining it as `stale` so the
+    // preview keeps showing while the full list loads. A rejection becomes a
+    // `failed` (retryable) resolution, NOT a permanent null-settle: that is what
+    // A4's retry() unsticks. The preview, if any, survives as the failed `stale`.
+    return slot.request('full', async () => {
+      const fullCatalog = await element.listFeaturesWithCounts();
+      // The full-dataset catalog is authoritative. Re-express any resident row codes
+      // in its space so the render's per-row codes match the panel's selection.
+      this.reconcileRowCodes(entry, fullCatalog);
+      return fullCatalog;
+    });
   }
 
   // --- Row feature codes ------------------------------------------------------
@@ -959,6 +982,24 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       entry.rowCodesCatalog = catalog ?? undefined;
       return codes;
     });
+  }
+
+  // --- Retry ------------------------------------------------------------------
+
+  /**
+   * Re-run any **failed** resources of an element. This is what unsticks the
+   * permanently-settled catalog scan (ADR 0004 §3): a failed full-catalog scan is a
+   * `failed` slot, not a null-settle, so `retry()` re-runs its loader. Idle/loading/
+   * ready slots are untouched. Returns once every retried load settles.
+   */
+  retry(key: string): Promise<void> {
+    const entry = this.entries.get(key);
+    if (!entry) return Promise.resolve();
+    const pending = [entry.preload, entry.catalog, entry.rowCodes, entry.matching]
+      .filter((slot) => slot.isFailed)
+      .map((slot) => slot.retry())
+      .filter((promise): promise is Promise<void> => promise !== undefined);
+    return Promise.all(pending).then(() => undefined);
   }
 
   // --- Lifecycle --------------------------------------------------------------

@@ -334,21 +334,26 @@ describe('PointsDataEngine — feature catalog', () => {
     expect(engine.getFeatureCatalog('pts:other')).toBeUndefined();
   });
 
-  it('records null and stays settled when the scan rejects', async () => {
+  it('leaves the catalog retryable when the scan rejects, and retry() recovers it', async () => {
+    // A4: a failed full-catalog scan no longer settles permanently as null — it is a
+    // retryable `failed`, so it is not "loaded", not "loading", and retry() re-runs it.
     const engine = new PointsDataEngine();
+    let attempts = 0;
     const element = {
       key: 'pts:boom',
       listFeaturesWithCounts: vi.fn(async () => {
-        throw new Error('scan failed');
+        attempts += 1;
+        if (attempts === 1) throw new Error('scan failed');
+        return sampleCatalog;
       }),
     } as unknown as PointsElement;
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await engine.ensureFeatureCatalog({ key: 'pts:boom', layerId: 'l', element });
-
-    expect(engine.getFeatureCatalog('pts:boom')).toBeNull();
+    expect(engine.getFeatureCatalog('pts:boom')).toBeUndefined();
     expect(engine.isFeatureCatalogLoading('pts:boom')).toBe(false);
-    errSpy.mockRestore();
+
+    await engine.retry('pts:boom');
+    expect(engine.getFeatureCatalog('pts:boom')).toEqual(sampleCatalog);
   });
 });
 
