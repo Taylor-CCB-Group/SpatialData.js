@@ -1,7 +1,8 @@
 # Resource Resolver — implementation handoff
 
-**Status:** Step 0 + Step 1 **landed** — see [Progress](#progress-2026-07-15). Step 2
-(Tracks A / B / C) and Step 3 (Renderer Adapter cleanup) remain.
+**Status:** Step 0 + Step 1 **landed**; **Step 2 Track A (points state model) landed**
+— see [Progress](#progress-2026-07-15). Step 2 Tracks B / C and Step 3 (Renderer
+Adapter cleanup) remain.
 **Decisions:** [ADR 0004 — Resource Resolver Owned By Core](../adr/0004-resource-resolver-owned-by-core.md), [ADR 0005 — Memory Accounting Before Management](../adr/0005-memory-accounting-before-management.md)
 **Supersedes:** [layer-data-engine-decomposition.md](layer-data-engine-decomposition.md)
 **Vocabulary:** [CONTEXT.md](../../CONTEXT.md) — *Resource Resolver, Renderer Adapter, Spatial Entry, Resolution, Spatial Entry Error, Entry Notice, Encoded/Decoded Tier, Resource Ceiling*
@@ -29,10 +30,26 @@ Read the two ADRs first. This document is sequencing, not rationale.
     `pointsEngine.ensureMatchingFeaturesLoaded` / `ensureRowFeatureCodes` calls in
     `getLayers` stay put (they migrate into `plan()` under Track A), so the points
     reconcile context carries only the memory cap.
-- **Remaining:** Step 2 Tracks A (points state model / `RequestSlot` / races R1–R5),
-  B (shapes loader seam + tooltip ping-pong), C (memory, ADR 0005 rungs 1–3); Step 3
-  (Renderer Adapter `project()`/`render()`, `'use no memo'` removal, dead-surface
-  cleanup). None started.
+- **Step 2 Track A — points state model: landed** (branch
+  `claude/points-implementation-stages`, commits A1–A8). All four points resources —
+  `preload`, `rowCodes`, `catalog`, `matching` — are now `RequestSlot`s (one tested
+  dedup/supersede/settle primitive, keyed so everything a request depends on is in the
+  key). **Races R1/R2/R3/R5 closed** with fail-before/pass-after tests. Failures are
+  structured, **retryable** `SpatialEntryError`s with a `retry()` API (the stuck
+  full-catalog-scan fix). Cancellation is threaded to the scan generator (D8;
+  supersede/evict abort it between chunks). The render-phase engine kicks are
+  **migrated into `plan()`** — `getLayers` is now pure reads, driven by the reconcile
+  effect. The streaming-overlay **flash is fixed** (D10) via a scan-stable partial
+  resource + `resourceRevision`. The Effect-vs-plain spike ran and **plain won**
+  (recorded above). `PointsResolver`'s public surface is unchanged; the 855-line
+  `pointsDataEngine` regression net stays green (a few failure/cap-alignment cases
+  flipped to the new behaviour). 573 tests green repo-wide.
+  - **Pending browser verification:** the D10 no-flash behaviour is proven headlessly
+    (adapter resource-identity + revision) but its *visual* confirmation needs a
+    running app with a large streaming Xenium `transcripts` scan.
+- **Remaining:** Step 2 Tracks B (shapes loader seam + tooltip ping-pong), C (memory,
+  ADR 0005 rungs 1–3); Step 3 (Renderer Adapter `project()`/`render()`, `'use no memo'`
+  removal, dead-surface cleanup; retire the `PointsDataEngine` facade). Not started.
 
 ---
 
