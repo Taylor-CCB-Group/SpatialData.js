@@ -20,14 +20,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
-import {
-  getDeckFromDeckGlRef,
-  type HoverPointerEvent,
-  isHoverDuringDrag,
-  resolveHoverFeatureTooltip,
-} from './featureTooltipHover';
+import { type HoverPointerEvent, isHoverDuringDrag } from './featureTooltipHover';
 import { ImageChannelPanelFromStore } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
@@ -35,20 +29,18 @@ import { layerConfig } from './layerConfig';
 import PointsLayerPanel from './PointsLayerPanel';
 import { ShapeFillColorPanel } from './ShapeFillColorPanel';
 import {
+  DEFAULT_HOVER_TOOLTIP_MODE,
   type HoverTooltipMode,
   isHoverTooltipMode,
   shouldAutoFitSpatialView,
   useSpatialCanvasRendererFromLayerInputs,
 } from './SpatialCanvasViewer';
-import {
-  type SpatialCanvasTooltipRenderProps,
-  SpatialFeatureTooltip,
-  type SpatialFeatureTooltipData,
-} from './SpatialFeatureTooltip';
+import type { SpatialCanvasTooltipRenderProps } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
 import type { SpatialCanvasStoreApi } from './stores';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
+import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import type { ImageLayerConfig } from './useLayerData';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
@@ -379,7 +371,7 @@ interface SpatialCanvasInnerProps {
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
-  hoverTooltipMode = 'aggregate',
+  hoverTooltipMode = DEFAULT_HOVER_TOOLTIP_MODE,
 }: SpatialCanvasInnerProps) {
   // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
   // subscribes to the engine via useSyncExternalStore), so this component no
@@ -390,7 +382,6 @@ function SpatialCanvasInner({
   const [tooltipMode, setTooltipMode] = useState<HoverTooltipMode>(hoverTooltipMode);
   const [measureRef, { width, height }] = useMeasure();
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<DeckGLRef | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   // A one-shot request to refit the view after a fullscreen toggle changes the
@@ -400,9 +391,6 @@ function SpatialCanvasInner({
     width: number;
     height: number;
   } | null>(null);
-  const [hoverTooltip, setHoverTooltip] = useState<
-    (SpatialFeatureTooltipData & { x: number; y: number; clientX: number; clientY: number }) | null
-  >(null);
 
   const coordinateSystem = useSpatialCanvasStore((s) => s.coordinateSystem);
   const layers = useSpatialCanvasStore((s) => s.layers);
@@ -458,6 +446,18 @@ function SpatialCanvasInner({
     vivLayerProps,
   } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
+
+  // Shared hover-tooltip machinery (pick → tooltip → portal); see
+  // useHoverFeatureTooltip. `handleHover` below stays local (the drag guard).
+  const { containerRef, resolveTooltip, clearTooltip, tooltipPortal } = useHoverFeatureTooltip({
+    enabled: tooltipMode !== 'off',
+    aggregate: tooltipMode === 'aggregate',
+    getFeatureTooltip,
+    hoverPickLayerIds,
+    deckRef,
+    renderTooltip,
+    tooltipContainer,
+  });
 
   useEffect(() => {
     const pending = pendingFullscreenRefitSizeRef.current;
@@ -565,55 +565,25 @@ function SpatialCanvasInner({
 
   // The expensive part of hovering: aggregate-pick the feature(s) under the
   // cursor and position the tooltip. Throttled to one run per animation frame.
-  const resolveTooltip = useCallback(
-    (info: PickingInfo) => {
-      if (tooltipMode === 'off') {
-        setHoverTooltip(null);
-        return;
-      }
-      const tooltip =
-        info.picked && typeof info.x === 'number' && typeof info.y === 'number'
-          ? resolveHoverFeatureTooltip(info, getFeatureTooltip, {
-              aggregate: tooltipMode === 'aggregate',
-              deck: getDeckFromDeckGlRef(deckRef),
-              pickLayerIds: hoverPickLayerIds,
-            })
-          : null;
-      // Resolve viewport coordinates here (in the event handler) rather than
-      // reading the container ref during render.
-      if (!tooltip) {
-        setHoverTooltip(null);
-        return;
-      }
-      const rect = viewerContainerRef.current?.getBoundingClientRect();
-      setHoverTooltip({
-        ...tooltip,
-        clientX: (rect?.left ?? 0) + tooltip.x,
-        clientY: (rect?.top ?? 0) + tooltip.y,
-      });
-    },
-    [tooltipMode, getFeatureTooltip, hoverPickLayerIds]
-  );
-
   const handleHover = useCallback(
     (info: PickingInfo, event?: HoverPointerEvent) => {
       // While panning/dragging, deck keeps firing hover events; the gesture is
       // changing the view, not inspecting features, so suppress tooltip work.
       if (isHoverDuringDrag(event)) {
-        setHoverTooltip(null);
+        clearTooltip();
         return;
       }
       resolveTooltip(info);
     },
-    [resolveTooltip]
+    [resolveTooltip, clearTooltip]
   );
 
   const handleViewerRef = useCallback(
     (node: HTMLDivElement | null) => {
-      viewerContainerRef.current = node;
+      containerRef.current = node;
       measureRef(node);
     },
-    [measureRef]
+    [measureRef, containerRef]
   );
 
   const handleCenterOnSelectedLayer = useCallback(() => {
@@ -642,41 +612,10 @@ function SpatialCanvasInner({
   }
 
   const hasElements = Object.values(availableElements).some((arr) => arr.length > 0);
-  /** Viewport coordinates of the deck.gl pick (for portaled `position: fixed` tooltip). */
-  const tooltipClientPosition = hoverTooltip
-    ? { x: hoverTooltip.clientX, y: hoverTooltip.clientY }
-    : null;
 
   const shellStyle: CSSProperties = fullscreen
     ? { ...containerStyle, ...fullscreenOverlayStyle, position: 'fixed' }
     : { ...containerStyle, position: 'relative' };
-
-  const tooltipPayload: SpatialFeatureTooltipData | null =
-    tooltipMode !== 'off' && hoverTooltip && tooltipClientPosition ? hoverTooltip : null;
-
-  const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
-
-  const tooltipPortal =
-    tooltipPayload &&
-    tooltipClientPosition &&
-    portalTarget &&
-    createPortal(
-      renderTooltip ? (
-        renderTooltip({
-          clientX: tooltipClientPosition.x,
-          clientY: tooltipClientPosition.y,
-          tooltip: tooltipPayload,
-        })
-      ) : (
-        <SpatialFeatureTooltip
-          x={tooltipClientPosition.x}
-          y={tooltipClientPosition.y}
-          tooltip={tooltipPayload}
-          position="fixed"
-        />
-      ),
-      portalTarget
-    );
 
   return (
     <>

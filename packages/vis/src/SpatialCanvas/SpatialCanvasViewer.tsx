@@ -2,23 +2,9 @@ import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
 import type { RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
-import {
-  type CSSProperties,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import { createPortal } from 'react-dom';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ensureCodecWorkers } from '../codecWorkers';
-import {
-  getDeckFromDeckGlRef,
-  type HoverPointerEvent,
-  isHoverDuringDrag,
-  resolveHoverFeatureTooltip,
-} from './featureTooltipHover';
+import { type HoverPointerEvent, isHoverDuringDrag } from './featureTooltipHover';
 import { ImageLayerContextProvider } from './ImageLayerContext';
 import {
   type RenderStackHostLayerResolver,
@@ -29,13 +15,10 @@ import {
   sortLayersByRenderStackOrder,
   type UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
-import {
-  type SpatialCanvasTooltipRenderProps,
-  SpatialFeatureTooltip,
-  type SpatialFeatureTooltipData,
-} from './SpatialFeatureTooltip';
+import type { SpatialCanvasTooltipRenderProps } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
+import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import {
   type LabelFeaturePickEventData,
   type ShapeFeaturePickEventData,
@@ -63,9 +46,9 @@ export type SpatialCanvasViewerRenderTooltip =
  * Hover tooltip / picking behaviour:
  * - `'off'`: no hover tooltip, and shape layers are made non-pickable (no
  *   autoHighlight, no picking buffer render) — the cheapest mode.
- * - `'simple'` (default): tooltip from the single top-most pick under the cursor.
- * - `'aggregate'`: tooltip aggregated across all layers under the cursor, which
- *   issues extra `pickMultipleObjects` GPU passes per pointer move.
+ * - `'simple'`: tooltip from the single top-most pick under the cursor.
+ * - `'aggregate'` (default): tooltip aggregated across all layers under the cursor,
+ *   which issues extra `pickMultipleObjects` GPU passes per pointer move.
  */
 export type HoverTooltipMode = 'off' | 'simple' | 'aggregate';
 
@@ -73,6 +56,12 @@ export type HoverTooltipMode = 'off' | 'simple' | 'aggregate';
 export function isHoverTooltipMode(value: string): value is HoverTooltipMode {
   return value === 'off' || value === 'simple' || value === 'aggregate';
 }
+
+/**
+ * The default hover tooltip mode for both SpatialCanvas surfaces. A single source of
+ * truth so the headless viewer and the full-UI canvas can't drift apart.
+ */
+export const DEFAULT_HOVER_TOOLTIP_MODE: HoverTooltipMode = 'aggregate';
 
 type SpatialFeaturePickEventRuntimeFields = {
   coordinateSystem: string | null;
@@ -447,22 +436,18 @@ function SpatialCanvasViewerInner({
   showLoadingOverlay = true,
   autoFit = true,
   style,
-  hoverTooltipMode = 'aggregate',
+  hoverTooltipMode = DEFAULT_HOVER_TOOLTIP_MODE,
   vivImageExtensions,
   vivImageExtensionResolver,
   vivImagePropsResolver,
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
-  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<DeckGLRef | null>(null);
   // Shapes are pickable whenever hover tooltips are on. Picking stays live through
   // pan/zoom: the FlatPolygonLayer picking pass is a single vertex-pulled draw, so
   // the old "suppress picking during camera moves" gate (a full-geometry pick draw
   // on the SolidPolygonLayer + PathLayer path) is no longer needed.
   const pickingEnabled = hoverTooltipMode !== 'off';
-  const [hoverTooltip, setHoverTooltip] = useState<
-    (SpatialFeatureTooltipData & { x: number; y: number; clientX: number; clientY: number }) | null
-  >(null);
 
   const vw = width ?? 0;
   const vh = height ?? 0;
@@ -509,37 +494,17 @@ function SpatialCanvasViewerInner({
     [renderer.enabledLayerIds]
   );
 
-  // The expensive part of hovering: aggregate-pick the feature(s) under the
-  // cursor and position the tooltip. Throttled to one run per animation frame.
-  const resolveTooltip = useCallback(
-    (info: PickingInfo) => {
-      if (hoverTooltipMode === 'off' || !shouldRenderInternalTooltip(renderTooltip)) {
-        setHoverTooltip(null);
-        return;
-      }
-      const tooltip =
-        info.picked && typeof info.x === 'number' && typeof info.y === 'number'
-          ? resolveHoverFeatureTooltip(info, renderer.getFeatureTooltip, {
-              aggregate: hoverTooltipMode === 'aggregate',
-              deck: getDeckFromDeckGlRef(deckRef),
-              pickLayerIds: hoverPickLayerIds,
-            })
-          : null;
-      // Resolve viewport coordinates here (in the event handler) rather than
-      // reading the container ref during render.
-      if (!tooltip) {
-        setHoverTooltip(null);
-        return;
-      }
-      const rect = viewerContainerRef.current?.getBoundingClientRect();
-      setHoverTooltip({
-        ...tooltip,
-        clientX: (rect?.left ?? 0) + tooltip.x,
-        clientY: (rect?.top ?? 0) + tooltip.y,
-      });
-    },
-    [hoverTooltipMode, hoverPickLayerIds, renderTooltip, renderer.getFeatureTooltip]
-  );
+  // Shared hover-tooltip machinery (pick → tooltip → portal). See
+  // useHoverFeatureTooltip; the pick-event callbacks below stay component-local.
+  const { containerRef, resolveTooltip, clearTooltip, tooltipPortal } = useHoverFeatureTooltip({
+    enabled: hoverTooltipMode !== 'off',
+    aggregate: hoverTooltipMode === 'aggregate',
+    getFeatureTooltip: renderer.getFeatureTooltip,
+    hoverPickLayerIds,
+    deckRef,
+    renderTooltip,
+    tooltipContainer,
+  });
 
   const handleHover = useCallback(
     (info: PickingInfo, event?: HoverPointerEvent) => {
@@ -547,7 +512,7 @@ function SpatialCanvasViewerInner({
       // While panning/dragging, deck keeps firing hover events; the gesture is
       // changing the view, not inspecting features, so suppress tooltip work.
       if (isHoverDuringDrag(event)) {
-        setHoverTooltip(null);
+        clearTooltip();
         return;
       }
       if (info.picked && typeof info.x === 'number' && typeof info.y === 'number') {
@@ -579,7 +544,16 @@ function SpatialCanvasViewerInner({
       }
       resolveTooltip(info);
     },
-    [coordinateSystem, onFeatureHover, onHover, onShapeHover, renderer, resolveTooltip, spatialData]
+    [
+      clearTooltip,
+      coordinateSystem,
+      onFeatureHover,
+      onHover,
+      onShapeHover,
+      renderer,
+      resolveTooltip,
+      spatialData,
+    ]
   );
 
   const handleClick = useCallback(
@@ -619,42 +593,11 @@ function SpatialCanvasViewerInner({
 
   const handleViewerRef = useCallback(
     (node: HTMLDivElement | null) => {
-      viewerContainerRef.current = node;
+      containerRef.current = node;
       measureRef(node);
     },
-    [measureRef]
+    [measureRef, containerRef]
   );
-
-  const tooltipClientPosition = hoverTooltip
-    ? { x: hoverTooltip.clientX, y: hoverTooltip.clientY }
-    : null;
-
-  const tooltipPayload: SpatialFeatureTooltipData | null = hoverTooltip;
-
-  const portalTarget = typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
-  const tooltipPortal =
-    hoverTooltipMode !== 'off' &&
-    shouldRenderInternalTooltip(renderTooltip) &&
-    tooltipPayload &&
-    tooltipClientPosition &&
-    portalTarget &&
-    createPortal(
-      renderTooltip ? (
-        renderTooltip({
-          clientX: tooltipClientPosition.x,
-          clientY: tooltipClientPosition.y,
-          tooltip: tooltipPayload,
-        })
-      ) : (
-        <SpatialFeatureTooltip
-          x={tooltipClientPosition.x}
-          y={tooltipClientPosition.y}
-          tooltip={tooltipPayload}
-          position="fixed"
-        />
-      ),
-      portalTarget
-    );
 
   const getLayerLoadStateByElementKey = useCallback(
     (elementKey: string) => {
