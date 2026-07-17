@@ -278,6 +278,12 @@ export function useSpatialCanvasRendererFromLayerInputs({
   const hasRenderableInputs = hasEnabledLayers || hasExternalDeckLayers;
   const hasLayersDrawn = deckLayers.length > 0 || vivLayerProps.length > 0;
 
+  // Latches once a visible layer has been observed loading. It lets the auto-fit
+  // distinguish "no world bounds *yet*" (data still arriving — stay armed) from "no
+  // world bounds *ever*" (everything settled without any — default the view). See
+  // the effect below.
+  const autoFitLoadingObservedRef = useRef(false);
+
   useEffect(() => {
     // Skip auto-fit when viewState is not managed by this hook (caller handles it).
     if (viewState === undefined || !onViewStateChange) return;
@@ -293,12 +299,24 @@ export function useSpatialCanvasRendererFromLayerInputs({
     ) {
       return;
     }
+    if (layerData.isLoading) {
+      autoFitLoadingObservedRef.current = true;
+    }
     const bounds = layerData.getWorldBoundsForVisibleLayers();
-    onViewStateChange(
-      bounds ? viewStateFromBounds(bounds, width, height) : { target: [0, 0], zoom: 0 }
-    );
+    if (bounds) {
+      onViewStateChange(viewStateFromBounds(bounds, width, height));
+      return;
+    }
+    // No world bounds. Non-blocking layers (shapes) can settle their geometry — and
+    // thus their bounds — *after* this effect first fires, so defaulting the view
+    // here unconditionally is what left a shapes-only view un-framed. Only default
+    // once loading has actually run and finished without producing bounds; otherwise
+    // stay armed (`viewState` stays null) and re-fit when `isLoading` next flips.
+    if (autoFitLoadingObservedRef.current && !layerData.isLoading) {
+      onViewStateChange({ target: [0, 0], zoom: 0 });
+    }
     // useLayerData returns a fresh object every render, so we intentionally depend
-    // on its stable members (memoized flag + useCallback'd bounds getter) rather
+    // on its stable members (memoized flags + useCallback'd bounds getter) rather
     // than `layerData` itself, which would re-run this effect on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -306,6 +324,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
     hasEnabledLayers,
     height,
     layerData.isBlocking,
+    layerData.isLoading,
     layerData.getWorldBoundsForVisibleLayers,
     onViewStateChange,
     viewState,

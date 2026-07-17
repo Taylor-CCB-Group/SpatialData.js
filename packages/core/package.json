@@ -41,7 +41,8 @@
     "apache-arrow": "catalog:",
     "ol": "^10.6.1",
     "zarrita": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "earcut": "^3.0.2"
   },
   "overrides": {
     "zarrita": "catalog:"

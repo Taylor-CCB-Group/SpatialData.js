@@ -57,6 +57,19 @@ export * from './pointsTiling.js';
 // MDV consumes these as a data contract and no consumer import moves.
 export * from './renderStack.js';
 export * from './shapes.js';
+export * from './shapesPolygonTessellate.js';
+export {
+  type CoreShapesLoader,
+  createFullShapesLoader,
+  createShapesLoaderForElement,
+  type DecodedShapesBatch,
+  resolveShapesEncoding,
+  type ShapesBatch,
+  type ShapesBatchFormat,
+  type ShapesEncodingKind,
+  type ShapesLoaderCapabilities,
+  type ShapesLoadInBoundsOptions,
+} from './shapesLoader.js';
 export * from './spatialLayerProps.js';
 export * from './spatialViewFit.js';
 export * from './store/index.js';

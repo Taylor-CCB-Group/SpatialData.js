@@ -3,6 +3,7 @@ import type { ShapesRenderData } from '../shapes.js';
 import {
   type AxisAlignedBounds,
   boundsFromCircles,
+  boundsFromFlatPolygonPositions,
   boundsFromPolygons,
 } from '../spatialViewFit.js';
 import type { SpatialData } from '../store/index.js';
@@ -24,7 +25,8 @@ import { SnapshotCache } from './snapshotCache.js';
  * rather than per-entry — they fail independently. A shapes entry whose tooltip
  * column is broken must still draw its geometry.
  *
- *  - `geometry`   — `element.loadRenderData()`. The only one that blocks first paint.
+ *  - `geometry`   — `element.loadRenderData()`. Refines the canvas; blocks nothing
+ *                   (see `blockingResources`). The layer draws once it settles.
  *  - `tooltip`    — `loadShapesTooltipMetadata()`. Keyed by the tooltip-fields signature.
  *  - `fillColor`  — `loadAssociatedTableFeatureRows()`. Keyed by the column name.
  *
@@ -83,11 +85,18 @@ const tooltipSignature = (fields: string[] | undefined): string => (fields ?? []
 export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, ShapesElement> {
   readonly kind = 'shapes' as const;
   /**
-   * Geometry only. Tooltip and fill colour have never blocked a first paint and
-   * must not start — which is precisely why `isBlocking` already treats shapes
-   * differently from points today. That asymmetry was a kind-switch; here it is data.
+   * **Nothing blocks.** Shapes load non-blocking: geometry refines an
+   * already-painted canvas rather than gating first paint, so a shapes-only view
+   * shows immediately and the geometry pops in when it settles. (Tooltip and fill
+   * colour never blocked either.) This is the whole point of the non-blocking
+   * pass — `blockingResources` is empty *data*, not a kind-switch, so
+   * `store.isBlocking` reports shapes as never-blocking with no special case.
+   *
+   * The wait is still visible: the resolver reports `geometry: 'loading'` via
+   * `onStatus`, which drives the host's non-modal `isLoading` indicator — just
+   * not the modal overlay.
    */
-  readonly blockingResources = ['geometry'] as const;
+  readonly blockingResources = [] as const;
 
   private readonly entries = new Map<string, ShapesEntry>();
   private readonly listeners = new Set<() => void>();
@@ -293,9 +302,11 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
 
     const computed = data.circles
       ? boundsFromCircles(data.circles, ctx.transform)
-      : data.polygons?.length
-        ? boundsFromPolygons(data.polygons, ctx.transform)
-        : null;
+      : data.polygonBinary
+        ? boundsFromFlatPolygonPositions(data.polygonBinary.positions, ctx.transform)
+        : data.polygons?.length
+          ? boundsFromPolygons(data.polygons, ctx.transform)
+          : null;
     entry.bounds = computed;
     entry.boundsSource = data;
     entry.boundsTransform = ctx.transform;

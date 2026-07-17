@@ -79,10 +79,11 @@ function mergeShapeFeatureStateForRender(
   return {
     ...config.featureState,
     fillColorByFeatureId,
-    // Outlines mirror the fill-colour encoding by default (a fill encoding normally
-    // drives both fill and outline — see docs/vis/layer-prop-flow), but an explicit
-    // per-feature stroke override from the caller wins when one is present.
-    strokeColorByFeatureId: config.featureState?.strokeColorByFeatureId ?? fillColorByFeatureId,
+    // The outline is NOT pre-mirrored from the fill here. `@spatialdata/layers`
+    // derives a lighter outline from each feature's resolved fill at render time
+    // (see `deriveStrokeColor`), so a same-colour outline would be invisible. A
+    // genuine per-feature stroke override from the caller (carried by the spread
+    // above) still wins over that derivation.
   };
 }
 
@@ -107,11 +108,26 @@ export function getStableShapeFeatureStateRuntime(
   layerId: string,
   config: ShapesLayerConfig,
   fillColorEntry: ShapeFillColorEntry | undefined,
-  cache: Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
+  cache: Map<
+    string,
+    {
+      signature: string;
+      runtime: ShapeFeatureStateRuntime;
+      fillColorEntry: ShapeFillColorEntry | undefined;
+    }
+  >
 ): ShapeFeatureStateRuntime {
   const signature = getShapeFeatureStateSignature(config, fillColorEntry);
   const cached = cache.get(layerId);
-  if (cached?.signature === signature) {
+  // The entry's identity is part of the key, not just its signature string. The
+  // signature is column-based (name/mode/alpha), but a column change serves the
+  // PREVIOUS column's rows until the new ones load — so the entry's *data* can
+  // change while its signature does not. `getShapeFillColorEntry` returns a fresh
+  // entry object whenever the rows change, making identity the exact "the colours
+  // are now different" signal; keying on it alone would leave the runtime one
+  // column behind. It stays stable across bare re-renders (same cached entry), so
+  // the fill-colour buffer is not thrashed.
+  if (cached?.signature === signature && cached.fillColorEntry === fillColorEntry) {
     return cached.runtime;
   }
 
@@ -119,6 +135,6 @@ export function getStableShapeFeatureStateRuntime(
   const runtime = merged
     ? buildShapeFeatureStateRuntime(merged)
     : EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
-  cache.set(layerId, { signature, runtime });
+  cache.set(layerId, { signature, runtime, fillColorEntry });
   return runtime;
 }
