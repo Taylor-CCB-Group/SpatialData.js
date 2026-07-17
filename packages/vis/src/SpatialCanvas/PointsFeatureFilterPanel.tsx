@@ -7,25 +7,29 @@ import { usePointsFeatureState } from './PointsFeatureState';
 import type { PointsLayerConfig } from './types';
 
 // we need a pass on how we manage styles
-const swatchStyle: CSSProperties = {
-  width: 10,
-  height: 10,
-  borderRadius: 2,
+
+// The colour swatch IS the picker: this span's background shows the feature's
+// effective colour, and a transparent native colour input overlays it. `inline-block`
+// + `box-sizing: border-box` make the 12×12 size hold regardless of flex context and
+// keep the 1px border inside the box (an inline span would ignore width/height, and a
+// content-box border would overflow — the layout bug this replaces).
+const colorSwatchStyle: CSSProperties = {
+  position: 'relative',
+  display: 'inline-block',
+  boxSizing: 'border-box',
+  width: 12,
+  height: 12,
   flexShrink: 0,
+  borderRadius: 2,
   border: '1px solid rgba(255, 255, 255, 0.25)',
 };
 
-// The colour swatch doubles as a colour picker: a transparent native colour input
-// overlays a swatch showing the feature's EFFECTIVE colour (override or default).
-const swatchPickerWrapStyle: CSSProperties = {
-  position: 'relative',
-  width: 10,
-  height: 10,
-  flexShrink: 0,
-  lineHeight: 0,
+const colorSwatchOverriddenStyle: CSSProperties = {
+  borderColor: '#6cb6ff',
+  boxShadow: '0 0 0 1px #6cb6ff',
 };
 
-const swatchInputStyle: CSSProperties = {
+const colorInputStyle: CSSProperties = {
   position: 'absolute',
   inset: 0,
   width: '100%',
@@ -35,6 +39,8 @@ const swatchInputStyle: CSSProperties = {
   border: 'none',
   opacity: 0,
   cursor: 'pointer',
+  appearance: 'none',
+  WebkitAppearance: 'none',
 };
 
 const resetOverrideStyle: CSSProperties = {
@@ -383,25 +389,22 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
                 checked={selected}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
               />
-              {/* Swatch = colour picker: a transparent colour input over the effective
-                  colour. It is interactive content inside the label, so clicking it
-                  opens the picker without toggling the checkbox. */}
+              {/* Swatch = colour picker: this span's background is the effective
+                  colour and a transparent colour input overlays it. Interactive content
+                  inside the label, so operating it does not toggle the checkbox. */}
               <span
                 style={{
-                  ...swatchPickerWrapStyle,
-                  ...(overridden ? { boxShadow: '0 0 0 1px #6cb6ff' } : {}),
+                  ...colorSwatchStyle,
+                  background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
+                  ...(overridden ? colorSwatchOverriddenStyle : {}),
                 }}
                 title={`${entry.name} colour${overridden ? ' (overridden)' : ''}`}
               >
-                <span
-                  aria-hidden
-                  style={{ ...swatchStyle, background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }}
-                />
                 <input
                   type="color"
                   aria-label={`${entry.name} colour`}
                   value={rgbToHex(rgb)}
-                  style={swatchInputStyle}
+                  style={colorInputStyle}
                   onClick={(event) => event.stopPropagation()}
                   onChange={(event) => setColorOverride(entry.name, hexToRgb(event.target.value))}
                 />
