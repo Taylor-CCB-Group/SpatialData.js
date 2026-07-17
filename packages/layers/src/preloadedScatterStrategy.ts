@@ -76,6 +76,8 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       color = [255, 100, 100, 200],
       use3d,
       colorByFeature,
+      featureCodeSpaceSize,
+      featureColorOverrides,
     } = layer.props;
 
     if (!visible) {
@@ -102,6 +104,8 @@ export const preloadedScatterStrategy: PointsRenderStrategy = {
       modelMatrix: layer.props.modelMatrix,
       use3d,
       colorByFeature,
+      ...(featureCodeSpaceSize !== undefined ? { featureCodeSpaceSize } : {}),
+      ...(featureColorOverrides ? { featureColorOverrides } : {}),
     });
   },
 };

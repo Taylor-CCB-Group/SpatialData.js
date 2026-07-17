@@ -1,58 +1,78 @@
-import type { Layer } from '@deck.gl/core';
+import type { Layer, UpdateParameters } from '@deck.gl/core';
 import { LayerExtension } from '@deck.gl/core';
-import { PFC_CHROMA, PFC_GOLDEN_RATIO_CONJUGATE, PFC_LIGHTNESS } from './pointsFeatureColor.js';
+import { buildFeaturePalette, type FeatureColorOverrides } from './pointsFeatureColor.js';
 
-/** Render a JS number as a GLSL float literal (always with a decimal point, so an
- * integer-valued constant doesn't become an `int` in the shader). Lets the shader
- * interpolate the SAME palette constants the JS swatch mirror uses. */
-function glslFloat(value: number): string {
-  const text = String(value);
-  return text.includes('.') || text.includes('e') ? text : `${text}.0`;
+/** A luma texture, narrowed to the members this extension touches. */
+interface PaletteTexture {
+  width: number;
+  destroy?: () => void;
+  delete?: () => void;
+}
+
+interface DeviceLike {
+  createTexture(descriptor: Record<string, unknown>): PaletteTexture;
 }
 
 /**
- * Uniform block for the highlight. The stored value is `highlightCode + 1`, so
- * the "no highlight" state is 0 — which is also what an unbound/zeroed UBO
- * reads, making the default safe even if the binding ever fails (feature code 0
- * would otherwise be a valid, and wrongly-highlighted, value).
+ * Uniform block for the colour pass:
+ *  - `highlightCode`: the emphasised feature code + 1 (0 = no highlight; also what a
+ *    zeroed UBO reads, so the default is safe even if the binding fails — code 0 would
+ *    otherwise be a valid, wrongly-highlighted value).
+ *  - `paletteWidth`: the LUT width, so the shader can clamp an out-of-range code to
+ *    the last texel instead of reading undefined memory.
  */
-const PFC_HIGHLIGHT_MODULE = {
-  name: 'pfcHighlight',
+const PFC_COLOR_MODULE = {
+  name: 'pfcColor',
   vs: /* glsl */ `
-    layout(std140) uniform pfcHighlightUniforms {
-      float code;
-    } pfcHighlight;
+    uniform sampler2D pfcPalette;
+    layout(std140) uniform pfcColorUniforms {
+      float highlightCode;
+      float paletteWidth;
+    } pfcColor;
   `,
-  uniformTypes: { code: 'f32' as const },
+  uniformTypes: { highlightCode: 'f32' as const, paletteWidth: 'f32' as const },
 };
+
+/** Dispose a luma texture across the two method names different versions expose. */
+function destroyTexture(texture: PaletteTexture | undefined): void {
+  texture?.destroy?.();
+  texture?.delete?.();
+}
 
 /**
  * Colours scatter points by their per-point feature code, entirely on the GPU.
  *
- * The feature code rides along as an instance attribute (`featureCode`, supplied
- * as the binary `getFeatureCode` attribute) and a small vertex-shader hook maps
- * it to a categorical colour, overwriting `vFillColor`. The mapping is
- * procedural (a golden-angle hue from the code) so there is no palette buffer to
- * upload and no CPU colour pass; the code attribute is also the one a future
- * per-code visibility mask will read.
+ * The feature code rides along as an instance attribute (`featureCode`, supplied as
+ * the binary `getFeatureCode` attribute); the vertex shader looks the code up in a
+ * **palette texture** (`pfcPalette`) — a 1-row RGBA LUT, one texel per code — and
+ * writes the result to `vFillColor`. The palette is built on the CPU from
+ * {@link buildFeaturePalette} (defaults matching the old procedural golden-angle
+ * hue, plus any per-feature overrides), so colour is now DATA, not a hard-coded
+ * formula: a feature can be recoloured by patching one texel.
  *
- * The extension is attached to EVERY scatter layer, not just when colour is on.
- * This is load-bearing: deck only calls an extension's `initializeState` when
- * the layer first mounts, so attaching it lazily (when colour is toggled on)
- * would never register the `featureCode` attribute — the sublayer already
- * exists and only updates. Colour is instead gated by the attribute value: with
- * no `getFeatureCode` buffer the attribute reads its `-1` default and the shader
- * leaves the flat fill colour untouched.
+ * Why a texture and not the old inline OKLab math: it makes per-feature override
+ * possible at all, gives one source of truth shared with the JS swatches, and keeps
+ * the shader trivial (one `texelFetch`). Hover highlight stays a UNIFORM
+ * (`highlightCode`), not a palette write — it changes every mousemove, and a uniform
+ * is far cheaper than re-uploading a texture per frame.
  *
- * Two more deck subtleties that cost a debugging session:
- *  - the `in float featureCode` declaration must be in `vs:#decl` (deck does NOT
- *    auto-declare it) and the main hook in a TOP-LEVEL `inject` (a module's own
- *    `inject` does not apply to the host layer here);
- *  - `defaultProps.getFeatureCode` must be declared or deck treats the attribute
- *    as constant and never reads the binary buffer (as DataFilterExtension does).
+ * The extension is attached to EVERY scatter layer, not just when colour is on. This
+ * is load-bearing: deck only calls an extension's `initializeState` when the layer
+ * first mounts, so attaching it lazily (when colour is toggled on) would never
+ * register the `featureCode` attribute — the sublayer already exists and only
+ * updates. Colour is instead gated by the attribute value: with no `getFeatureCode`
+ * buffer the attribute reads its `-1` default and the shader leaves the flat fill
+ * colour untouched. A palette texture is ALWAYS bound (a 1×1 fallback until a real
+ * one arrives), because a declared sampler with no binding is a draw error.
  *
- * Deliberately the smallest possible deck extension — one attribute, one shader
- * hook — so it is a low-risk first candidate to port to a WebGPU shading model.
+ * Deck subtleties that each cost a debugging session:
+ *  - `in float featureCode` must be declared in `vs:#decl` (deck does NOT auto-declare
+ *    it) and the colour hook in a TOP-LEVEL `inject` (a module's own `inject` does not
+ *    apply to the host layer here);
+ *  - `defaultProps.getFeatureCode` must be declared or deck treats the attribute as
+ *    constant and never reads the binary buffer (as DataFilterExtension does);
+ *  - the `pfcPalette` sampler is bound with `model.setBindings` (mirroring
+ *    `LabelsBitmaskTileLayer`), which is separate from the UBO's `setShaderModuleProps`.
  */
 export class PointsFeatureColorExtension extends LayerExtension {
   static get componentName(): string {
@@ -64,6 +84,11 @@ export class PointsFeatureColorExtension extends LayerExtension {
     /** Emphasize one feature code: points of other codes are desaturated + dimmed
      * while this is >= 0. -1 (default) highlights nothing. */
     highlightFeatureCode: { type: 'number', value: -1 },
+    /** Number of feature codes the palette must cover (the catalog's `maxCode + 1`).
+     * Sizes the LUT texture. */
+    featureCodeSpaceSize: { type: 'number', value: 0 },
+    /** Per-feature colour overrides (`code → [r,g,b]`); absent codes keep the default. */
+    featureColorOverrides: { type: 'object', value: null as FeatureColorOverrides | null },
   };
 
   getShaders(this: Layer, extension: this) {
@@ -71,66 +96,29 @@ export class PointsFeatureColorExtension extends LayerExtension {
     const shaders = (super.getShaders(extension) ?? {}) as { modules?: unknown[] };
     return {
       ...shaders,
-      modules: [...(shaders.modules ?? []), PFC_HIGHLIGHT_MODULE],
+      modules: [...(shaders.modules ?? []), PFC_COLOR_MODULE],
       inject: {
         'vs:#decl': /* glsl */ `
           in float featureCode;
-
-          // OKLab → linear sRGB → gamma sRGB. OKLab spaces hues perceptually
-          // evenly, so a golden-angle sweep of its hue gives adjacent codes
-          // colours that look as distinct as they are numerically (unlike HSV,
-          // where big hue arcs — the greens — read as one colour). Out-of-gamut
-          // (L,C) combinations are clamped rather than gamut-mapped; fine for
-          // categorical swatches at a fixed moderate chroma.
-          vec3 pfc_oklab2rgb(vec3 lab) {
-            float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
-            float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
-            float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
-            vec3 lms = vec3(l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
-            vec3 rgb = vec3(
-               4.0767416621 * lms.x - 3.3077115913 * lms.y + 0.2309699292 * lms.z,
-              -1.2684380046 * lms.x + 2.6097574011 * lms.y - 0.3413193965 * lms.z,
-              -0.0041960863 * lms.x - 0.7034186147 * lms.y + 1.7076147010 * lms.z
-            );
-            vec3 low = rgb * 12.92;
-            vec3 high = 1.055 * pow(max(rgb, 0.0), vec3(1.0 / 2.4)) - 0.055;
-            return clamp(mix(high, low, step(rgb, vec3(0.0031308))), 0.0, 1.0);
-          }
-
-          // Golden-angle hue in OKLCh at a fixed lightness/chroma. The lightness,
-          // chroma and golden-ratio constants come from pointsFeatureColor.ts so
-          // the swatches and the GPU points share one source (tweak them there).
-          vec3 pfc_codeToColor(float code) {
-            float h = fract(code * ${glslFloat(PFC_GOLDEN_RATIO_CONJUGATE)}) * 6.28318530717958648;
-            return pfc_oklab2rgb(vec3(
-              ${glslFloat(PFC_LIGHTNESS)},
-              ${glslFloat(PFC_CHROMA)} * cos(h),
-              ${glslFloat(PFC_CHROMA)} * sin(h)
-            ));
-          }
         `,
         'vs:#main-end': /* glsl */ `
           if (featureCode >= 0.0) {
-            vec3 pfcColor = pfc_codeToColor(featureCode);
-            // Highlight: uniform holds highlightCode + 1 (0 = off). Non-matching
-            // codes are desaturated toward their luminance and dimmed.
-            if (pfcHighlight.code > 0.5 && abs(featureCode - (pfcHighlight.code - 1.0)) > 0.5) {
-              float pfcLum = dot(pfcColor, vec3(0.2126, 0.7152, 0.0722));
-              pfcColor = mix(vec3(pfcLum), pfcColor, 0.2) * 0.55;
+            // Clamp to the last texel so a code beyond the LUT mis-colours its tail
+            // rather than reading undefined texture memory (texelFetch ignores the
+            // sampler's clamp-to-edge, unlike texture()).
+            int pfcIdx = clamp(int(featureCode + 0.5), 0, int(pfcColor.paletteWidth) - 1);
+            vec3 pfcRgb = texelFetch(pfcPalette, ivec2(pfcIdx, 0), 0).rgb;
+            // Highlight: uniform holds highlightCode + 1 (0 = off). Non-matching codes
+            // are desaturated toward their luminance and dimmed.
+            if (pfcColor.highlightCode > 0.5 && abs(featureCode - (pfcColor.highlightCode - 1.0)) > 0.5) {
+              float pfcLum = dot(pfcRgb, vec3(0.2126, 0.7152, 0.0722));
+              pfcRgb = mix(vec3(pfcLum), pfcRgb, 0.2) * 0.55;
             }
-            vFillColor = vec4(pfcColor, vFillColor.a);
+            vFillColor = vec4(pfcRgb, vFillColor.a);
           }
         `,
       },
     };
-  }
-
-  draw(this: Layer): void {
-    const highlight = (this.props as { highlightFeatureCode?: number }).highlightFeatureCode ?? -1;
-    // Store code + 1 so "no highlight" is 0 (safe default; see PFC_HIGHLIGHT_MODULE).
-    (this as unknown as { setShaderModuleProps(props: unknown): void }).setShaderModuleProps({
-      pfcHighlight: { code: highlight >= 0 ? highlight + 1 : 0 },
-    });
   }
 
   initializeState(this: Layer): void {
@@ -144,5 +132,92 @@ export class PointsFeatureColorExtension extends LayerExtension {
         defaultValue: -1,
       },
     });
+    // A sampler with no binding is a draw error, so bind a 1×1 fallback immediately;
+    // `updateState` swaps in the real palette once its size/overrides are known.
+    pfcSetPaletteTexture(this, pfcBuildPaletteTexture(this, 1, null));
   }
+
+  updateState(this: Layer, params: UpdateParameters<Layer>): void {
+    const props = params.props as {
+      featureCodeSpaceSize?: number;
+      featureColorOverrides?: FeatureColorOverrides | null;
+    };
+    const oldProps = params.oldProps as typeof props;
+    if (
+      props.featureCodeSpaceSize !== oldProps.featureCodeSpaceSize ||
+      props.featureColorOverrides !== oldProps.featureColorOverrides
+    ) {
+      pfcSetPaletteTexture(
+        this,
+        pfcBuildPaletteTexture(
+          this,
+          props.featureCodeSpaceSize ?? 0,
+          props.featureColorOverrides ?? null
+        )
+      );
+    }
+  }
+
+  draw(this: Layer): void {
+    const props = this.props as { highlightFeatureCode?: number };
+    const state = this.state as { pfcPaletteTexture?: PaletteTexture; model?: unknown };
+    const highlight = props.highlightFeatureCode ?? -1;
+    const texture = state.pfcPaletteTexture;
+    // Store code + 1 so "no highlight" is 0 (safe default; see PFC_COLOR_MODULE).
+    (this as unknown as { setShaderModuleProps(props: unknown): void }).setShaderModuleProps({
+      pfcColor: {
+        highlightCode: highlight >= 0 ? highlight + 1 : 0,
+        paletteWidth: texture?.width ?? 1,
+      },
+    });
+    if (texture) {
+      (
+        state.model as { setBindings?: (b: Record<string, unknown>) => void } | undefined
+      )?.setBindings?.({ pfcPalette: texture });
+    }
+  }
+
+  finalizeState(this: Layer): void {
+    const state = this.state as { pfcPaletteTexture?: PaletteTexture };
+    destroyTexture(state.pfcPaletteTexture);
+    state.pfcPaletteTexture = undefined;
+  }
+}
+
+/** Create the LUT texture for a code space (+ overrides). Falls back to a 1×1 texel
+ * when the code space isn't known yet, so a texture is always available to bind. */
+function pfcBuildPaletteTexture(
+  layer: Layer,
+  codeSpaceSize: number,
+  overrides: FeatureColorOverrides | null
+): PaletteTexture | undefined {
+  const device = (layer.context as { device?: DeviceLike } | undefined)?.device;
+  if (!device) {
+    return undefined;
+  }
+  const palette = buildFeaturePalette(codeSpaceSize, overrides ?? undefined);
+  return device.createTexture({
+    width: palette.width,
+    height: 1,
+    dimension: '2d',
+    data: palette.data,
+    mipmaps: false,
+    format: 'rgba8unorm',
+    sampler: {
+      minFilter: 'nearest',
+      magFilter: 'nearest',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    },
+  });
+}
+
+/** Swap the layer's palette texture, disposing the previous one. */
+function pfcSetPaletteTexture(layer: Layer, texture: PaletteTexture | undefined): void {
+  const state = layer.state as { pfcPaletteTexture?: PaletteTexture };
+  if (state.pfcPaletteTexture === texture) {
+    return;
+  }
+  destroyTexture(state.pfcPaletteTexture);
+  state.pfcPaletteTexture = texture;
 }

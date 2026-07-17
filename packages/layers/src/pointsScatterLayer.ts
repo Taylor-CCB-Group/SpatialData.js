@@ -1,5 +1,6 @@
 import type { Matrix4 } from '@math.gl/core';
 import { ScatterplotLayer } from 'deck.gl';
+import type { FeatureColorOverrides } from './pointsFeatureColor.js';
 import { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import { buildPointsAttributes } from './pointsRenderAttributes.js';
@@ -39,6 +40,10 @@ export interface PointsScatterStyleProps {
   tileSubLayer?: boolean;
   /** Colour points by their per-point feature code (requires batch codes). */
   colorByFeature?: boolean;
+  /** Number of feature codes the colour LUT must cover (catalog `maxCode + 1`). */
+  featureCodeSpaceSize?: number;
+  /** Per-feature colour overrides (`code → [r,g,b]`); absent codes keep the default. */
+  featureColorOverrides?: FeatureColorOverrides | null;
 }
 
 // One shared extension instance: it is stateless, so every scatter layer that
@@ -95,6 +100,10 @@ export function renderColumnarScatterLayer(
     },
     ...(props.tileBounds ? { bounds: props.tileBounds } : {}),
     extensions: [pointsFeatureColorExtension],
+    // Sizes the colour LUT texture and supplies any per-feature overrides — read by
+    // the extension to (re)build `pfcPalette`.
+    featureCodeSpaceSize: props.featureCodeSpaceSize ?? 0,
+    ...(props.featureColorOverrides ? { featureColorOverrides: props.featureColorOverrides } : {}),
     // Constant default: the binary getFeatureCode attribute overrides it when
     // colouring; when it is withdrawn (colour off), deck reverts to this -1, so
     // the shader's `featureCode >= 0.0` guard falls through to the flat colour.

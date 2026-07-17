@@ -31,6 +31,10 @@ export interface PointsLayerProps {
   color?: [number, number, number, number];
   /** Colour points by their per-point feature code instead of the flat color. */
   colorByFeature?: boolean;
+  /** Number of feature codes the colour LUT must cover (catalog `maxCode + 1`). */
+  featureCodeSpaceSize?: number;
+  /** Per-feature colour overrides (`code → [r,g,b]`); absent codes keep the default. */
+  featureColorOverrides?: import('./pointsFeatureColor.js').FeatureColorOverrides | null;
   featureCodes?: readonly number[];
   /** Source-side integer codes aligned with the preloaded table rows. */
   preloadedFeatureCodes?: ArrayLike<number>;

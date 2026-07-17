@@ -62,3 +62,43 @@ export function featureCodeToCssColor(code: number): string {
   const [r, g, b] = featureCodeToRgb(code);
   return `rgb(${r}, ${g}, ${b})`;
 }
+
+/** Per-feature colour overrides: `code → [r, g, b]` (0–255). Any code absent here
+ * keeps its default {@link featureCodeToRgb} colour. */
+export type FeatureColorOverrides = ReadonlyMap<number, readonly [number, number, number]>;
+
+/** A colour lookup table indexed by feature code — one RGBA texel per code. Uploaded
+ * to a GPU texture and sampled by {@link pointsFeatureColorExtension} with
+ * `texelFetch(pfcPalette, ivec2(code, 0), 0)`. */
+export interface FeaturePalette {
+  /** RGBA8, row-major: bytes `[4*code .. 4*code+3]` are the colour for `code`. */
+  data: Uint8Array;
+  /** Texture width = number of codes covered (`maxCode + 1`). Always ≥ 1. */
+  width: number;
+}
+
+/**
+ * Build the feature-colour lookup table. Texel `i` is the colour for code `i`:
+ * {@link featureCodeToRgb} by default (so the palette is byte-identical to the
+ * procedural shader it replaced), with `overrides` patching individual codes.
+ *
+ * `codeSpaceSize` must cover every code the points carry — pass the feature
+ * catalog's `maxCode + 1`. A code beyond the table is clamped to the last texel by
+ * the shader, so an under-sized table mis-colours the tail rather than crashing.
+ */
+export function buildFeaturePalette(
+  codeSpaceSize: number,
+  overrides?: FeatureColorOverrides
+): FeaturePalette {
+  const width = Math.max(1, Math.floor(codeSpaceSize));
+  const data = new Uint8Array(width * 4);
+  for (let code = 0; code < width; code += 1) {
+    const [r, g, b] = overrides?.get(code) ?? featureCodeToRgb(code);
+    const offset = code * 4;
+    data[offset] = r;
+    data[offset + 1] = g;
+    data[offset + 2] = b;
+    data[offset + 3] = 255;
+  }
+  return { data, width };
+}

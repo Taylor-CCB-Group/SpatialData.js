@@ -59,6 +59,11 @@ export type PointsDataEngineCallbacks = PointsResolverCallbacks;
 export class PointsDataEngine {
   private readonly resolver: PointsResolver;
   private readonly adapter = new PointsRendererAdapter();
+  /** Memo for {@link getFeatureCodeSpaceSize}, invalidated by catalog identity. */
+  private readonly codeSpaceMemo = new Map<
+    string,
+    { catalog: PointsFeatureCatalog | null | undefined; size: number }
+  >();
 
   constructor(callbacks: PointsDataEngineCallbacks = {}) {
     this.resolver = new PointsResolver(callbacks);
@@ -218,6 +223,31 @@ export class PointsDataEngine {
     return this.resolver.getFeatureCatalog(key);
   }
 
+  /**
+   * The feature-code space size — `maxCode + 1` across the catalog, i.e. the width the
+   * colour LUT must cover so every point's code indexes a real texel. 0 until a catalog
+   * loads. Memoised on catalog identity (the resolver replaces it, never mutates), so
+   * this is O(entries) only when the catalog changes — cheap enough for the per-frame
+   * `getLayers`.
+   */
+  getFeatureCodeSpaceSize(key: string): number {
+    const catalog = this.resolver.getFeatureCatalog(key);
+    const cached = this.codeSpaceMemo.get(key);
+    if (cached && cached.catalog === catalog) {
+      return cached.size;
+    }
+    let size = 0;
+    if (catalog) {
+      for (const entry of catalog.entries) {
+        if (entry.code + 1 > size) {
+          size = entry.code + 1;
+        }
+      }
+    }
+    this.codeSpaceMemo.set(key, { catalog, size });
+    return size;
+  }
+
   isFeatureCatalogLoading(key: string): boolean {
     return this.resolver.isFeatureCatalogLoading(key);
   }
@@ -257,10 +287,12 @@ export class PointsDataEngine {
   evict(key: string): void {
     this.resolver.evict(key);
     this.adapter.evict(key);
+    this.codeSpaceMemo.delete(key);
   }
 
   dispose(): void {
     this.resolver.dispose();
     this.adapter.dispose();
+    this.codeSpaceMemo.clear();
   }
 }
