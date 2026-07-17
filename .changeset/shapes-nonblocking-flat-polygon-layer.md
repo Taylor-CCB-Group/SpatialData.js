@@ -36,8 +36,11 @@ one-shot auto-fit from the shapes-blocking transition so a shapes-only view stil
 correctly.
 
 Also fixes a fill-colour "one column behind" bug (the feature-state runtime cache is now
-keyed on the fill-colour entry identity, not just its column signature) and the
-hover/pan buffer-thrash from unstable deck `updateTrigger` arrays.
+keyed on the fill-colour entry identity, not just its column signature); the hover/pan
+buffer-thrash from unstable deck `updateTrigger` arrays; and a per-feature colour-buffer
+thrash where two shapes layers sharing the default feature-state runtime rebuilt each
+other's (million-element) colour buffer on every frame — the `FlatPolygonLayer` colour
+cache is now keyed per layer.
 
 Known follow-ups: the main-thread GPU texture upload (~seconds on the largest elements)
 is not yet off the main thread — a WGSL/WebGPU variant (storage buffers instead of
