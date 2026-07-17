@@ -425,12 +425,14 @@ function SpatialCanvasInner({
 
   const vw = width ?? 0;
   const vh = height ?? 0;
-  // Disable shape picking while the camera is being panned/zoomed. `interacting`
-  // flips at most twice per gesture (start/settle), so this hook re-runs to
-  // rebuild layers with toggled pickability — not on every pan frame.
-  const { interacting, onInteractionStateChange } = useViewInteractionGate();
-  // Shapes are pickable unless tooltips are off or the camera is being moved.
-  const pickingEnabled = tooltipMode !== 'off' && !interacting;
+  // Shapes are pickable whenever hover tooltips are on. The camera-move suppression
+  // (`&& !interacting`) that used to gate this off during pan/zoom is intentionally
+  // removed: it guarded against deck's full-geometry picking-buffer draw on the old
+  // PolygonLayer + PathLayer path, but the FlatPolygonLayer picking pass is a single
+  // vertex-pulled draw. `interacting` from the gate is still driven
+  // (`onInteractionStateChange` below) so restoring the guard is a one-line change.
+  const { onInteractionStateChange } = useViewInteractionGate();
+  const pickingEnabled = tooltipMode !== 'off';
 
   // keeping a big bundle of these to pass into child components
   // (may not be a good idea).
