@@ -135,11 +135,16 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       return;
     }
 
-    // Same loader, but its stable backing batch grew in place (the streaming partial
-    // overlay, D10): re-read `loadAll` for the grown buffer and re-filter, WITHOUT the
-    // reset above — that is what keeps the overlay from flashing per chunk.
+    // Same loader, but its stable backing batch was swapped in place (the streaming
+    // partial overlay grows per chunk, D10; the base swaps resident↔matched↔streaming,
+    // P2): re-read `loadAll` for the new buffer and re-filter, WITHOUT the reset above
+    // — that is what keeps it from flashing. Return so the signature-filter pass below
+    // does not run against the STALE `preloadedBatch` with the NEW codes (a swap
+    // changes the batch and its row-aligned codes together); `refreshPreloadedBatch`
+    // re-filters the new batch with the current props.
     if (props.resourceRevision !== oldProps.resourceRevision) {
       void this.refreshPreloadedBatch();
+      return;
     }
 
     const signature = filterBatchSignature(

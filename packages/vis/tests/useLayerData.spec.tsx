@@ -316,9 +316,8 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
     return { key, type: 'points', element, transform: new Matrix4() };
   }
 
-  it('shows the resident base (not the stale matched batch) when the selection is not covered', async () => {
+  it('draws the resident batch (not the stale matched batch), via one stable base resource', async () => {
     const pts = scanPointsElement('transcripts');
-    const element = pts.element as PointsElement;
     const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
 
     const { result, rerender } = renderHook(
@@ -330,17 +329,20 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
         },
       }
     );
-    const base = () =>
-      (result.current.getLayers()[0]?.props as { resource?: unknown } | undefined)?.resource;
+    type LoadAllResource = { loader: { loadAll?: () => Promise<{ shape: number[] }> } };
+    const baseResource = () =>
+      (result.current.getLayers()[0]?.props as { resource?: LoadAllResource } | undefined)
+        ?.resource;
+    const baseRowCount = async () => (await baseResource()?.loader.loadAll?.())?.shape[1];
 
-    // The {0} scan settles → the matched batch covers {0} and IS the base.
+    // The {0} scan settles → the matched batch covers {0}; the base draws it (2 rows).
     await waitFor(() => {
       expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.has(0)).toBe(
         true
       );
     });
-    const matchedResource = result.current.pointsEngine.getMatchingResource(element, 'transcripts');
-    expect(base()).toBe(matchedResource);
+    const before = baseResource();
+    expect(await baseRowCount()).toBe(2); // matched-{0}
 
     // Switch to a DISJOINT gene {1}; its scan is in flight, so `lastGood` is still {0}.
     rerender({
@@ -350,10 +352,10 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
       expect(result.current.pointsEngine.isMatchingLoading('transcripts', [1])).toBe(true);
     });
 
-    // The base must now be the RESIDENT resource (filtered to {1} in-memory), never
-    // the stale matched-{0} batch.
-    const residentResource = result.current.pointsEngine.getResource(element, 'transcripts');
-    expect(base()).toBe(residentResource);
-    expect(base()).not.toBe(matchedResource);
+    // P2: the base resource identity is STABLE across the resident↔matched swap — no
+    // teardown, no flicker. P1: it now draws the RESIDENT batch (3 rows), never the
+    // stale matched-{0} batch (2 rows).
+    expect(baseResource()).toBe(before);
+    expect(await baseRowCount()).toBe(3);
   });
 });

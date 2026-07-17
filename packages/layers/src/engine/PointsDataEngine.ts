@@ -115,6 +115,25 @@ export class PointsDataEngine {
     return this.adapter.getMatchingPartialRevision(key);
   }
 
+  /**
+   * The BASE layer's stable render resource for a chosen batch (matched-if-covered
+   * else resident — the caller decides). Identity is fixed for the element; the batch
+   * swaps under it (see {@link getBaseRevision}), so the base never tears down across
+   * resident↔matched↔streaming transitions.
+   */
+  getBaseResource(
+    element: PointsElement,
+    key: string,
+    batch: PointsLoadResult | undefined
+  ): PointsRenderResource | null {
+    return this.adapter.getBaseResource(element, key, batch);
+  }
+
+  /** The base resource's revision — a `PointsLayer` `resourceRevision` prop. */
+  getBaseRevision(key: string): number {
+    return this.adapter.getBaseRevision(key);
+  }
+
   // --- Lifecycle (resolver-owned) ---------------------------------------------
 
   ensureLoaded(target: PointsLoadTarget, memoryCap?: number): Promise<void> {
@@ -149,6 +168,11 @@ export class PointsDataEngine {
 
   getData(key: string): PointsLoadResult | undefined {
     return this.resolver.getData(key);
+  }
+
+  /** The last-good matched-selection batch (whole-dataset scan result). */
+  getMatchedBatch(key: string): PointsLoadResult | undefined {
+    return this.resolver.getMatchedBatch(key);
   }
 
   getStatus(key: string): PointsLoadStatus {

@@ -936,88 +936,76 @@ export function useLayerData(
           // catalog loads (no shared code space) there is nothing to match names
           // against, so it falls through to resident in-memory filtering.
           const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
-          let matchingResource: PointsRenderResource | null = null;
           let partialResource: PointsRenderResource | null = null;
+          let matchedCovers = false;
           if (selectionActive && canFeatureScan) {
-            // Only use the matched batch as the base when it actually COVERS the
-            // current selection. The last-good matched batch survives a selection
-            // change as `stale`, so switching from gene A to a disjoint gene B would
-            // otherwise draw all of A's points until B's scan settles. When B is not
-            // covered we fall through to the resident branch, which filters the
-            // resident preload to B in-memory (instant, correct gene) while the
-            // partial overlay streams B's out-of-window matches in.
+            // The matched (whole-dataset) batch is the base ONLY when it covers the
+            // current selection. Its last-good result survives a selection change as
+            // `stale`, so switching from gene A to a disjoint gene B must NOT draw A —
+            // when B is not covered we show the resident preload filtered to B while
+            // the partial overlay streams B's out-of-window matches in.
             const covered = pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
-            const matchedCovers =
+            matchedCovers =
               covered !== undefined &&
               featureCodes !== undefined &&
               featureCodes.every((code) => covered.has(code));
-            if (matchedCovers) {
-              matchingResource = pointsEngine.getMatchingResource(element, elem.key);
-            }
-            // The in-flight scan's growing buffer (all matched chunks so far), drawn
-            // as an extra overlay sub-layer below so the base stays visible while
-            // points progressively fill in.
             partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
           }
 
-          if (matchingResource) {
-            // The matched batch covers the selection (equal, or a superset when the
-            // selection just shrank). Pass the batch's per-row codes + the current
-            // selection so the layer filters IN MEMORY down to the selected codes —
-            // this is what makes removing a feature a free filter instead of a
-            // re-scan. When the selection equals what was scanned, skip the filter
-            // (render the batch whole); the batch's own codes still drive colour.
-            const matchedRowCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
+          // Choose the base batch: the matched batch when it covers the selection and
+          // has rows, else the resident preload. Both flow through ONE stable base
+          // resource (`getBaseResource`) whose backing batch swaps under it — so the
+          // base layer never tears down as the view evolves resident↔matched, which is
+          // the base flicker. An empty matched batch (a scan that matched nothing)
+          // falls back to resident rather than locking the view empty.
+          const matchedBatch = matchedCovers ? pointsEngine.getMatchedBatch(elem.key) : undefined;
+          const useMatched = matchedBatch !== undefined && (matchedBatch.shape[1] ?? 0) > 0;
+          const baseBatch = useMatched ? matchedBatch : pointsEngine.getData(elem.key);
+
+          let basePreloadedCodes: ArrayLike<number> | undefined;
+          let baseFilter: readonly number[] | undefined;
+          if (useMatched) {
+            basePreloadedCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
             const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
-            const filterMatched = featureCodes !== undefined && featureCodes.length < coveredSize;
+            // Filter down only when the selection is a strict subset of what was
+            // scanned (a removed feature); an equal selection renders the batch whole.
+            baseFilter =
+              featureCodes !== undefined && featureCodes.length < coveredSize
+                ? featureCodes
+                : undefined;
+          } else {
+            // Row codes drive both the in-memory filter (resident → selection) and
+            // colour-by-feature. The row-codes LOAD is planned from the reconcile
+            // effect (Track A), not kicked here.
+            const needsRowCodes = featureCodes !== undefined || config.colorByFeature === true;
+            basePreloadedCodes = needsRowCodes
+              ? pointsEngine.getRowFeatureCodes(elem.key)
+              : undefined;
+            baseFilter = featureCodes;
+          }
+
+          const baseResource = pointsEngine.getBaseResource(element, elem.key, baseBatch);
+          if (baseResource) {
             deckLayers.push(
               new PointsLayer({
                 id: layerId,
-                resource: matchingResource,
+                resource: baseResource,
+                // Stable resource; the revision bumps when the base batch is swapped
+                // (resident↔matched↔streaming) so the composite re-reads without a
+                // teardown — no base flicker on selection change or scan settle.
+                resourceRevision: pointsEngine.getBaseRevision(elem.key),
                 modelMatrix: elem.transform,
                 opacity: config.opacity,
                 visible: config.visible,
+                // Legacy renderPointsLayer defaulted radius to 1px; preserve that for
+                // parity (the composite's own default is smaller).
                 pointSize: config.pointSize ?? 1,
-                ...(filterMatched ? { featureCodes } : {}),
-                ...(matchedRowCodes ? { preloadedFeatureCodes: matchedRowCodes } : {}),
+                ...(baseFilter ? { featureCodes: baseFilter } : {}),
+                ...(basePreloadedCodes ? { preloadedFeatureCodes: basePreloadedCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
               })
             );
-          } else {
-            // Resident batch: the default view (no selection), and an instant preview
-            // of the resident subset while the feature-index scan is still running.
-            // The engine returns a STABLE render resource (memoized by signature), so
-            // re-running getLayers every pan/zoom frame reuses the same loader
-            // identity and the composite does not reset its batch (no flashing).
-            const resource = pointsEngine.getResource(element, elem.key);
-            if (resource) {
-              const filterActive = featureCodes !== undefined;
-              // Row codes are needed to filter by feature AND to colour by feature.
-              // Colour-by-feature applies even with no filter ("all features"), so we
-              // READ the codes whenever either is on. The row-codes LOAD is planned
-              // from the reconcile effect (Track A), not kicked here.
-              const needsRowCodes = filterActive || config.colorByFeature === true;
-              const preloadedFeatureCodes = needsRowCodes
-                ? pointsEngine.getRowFeatureCodes(elem.key)
-                : undefined;
-              deckLayers.push(
-                new PointsLayer({
-                  id: layerId,
-                  resource,
-                  modelMatrix: elem.transform,
-                  opacity: config.opacity,
-                  visible: config.visible,
-                  // Legacy renderPointsLayer defaulted radius to 1px; preserve that
-                  // for parity (the composite's own default is smaller).
-                  pointSize: config.pointSize ?? 1,
-                  ...(config.color ? { color: config.color } : {}),
-                  ...(config.colorByFeature ? { colorByFeature: true } : {}),
-                  ...(featureCodes ? { featureCodes } : {}),
-                  ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
-                })
-              );
-            }
           }
 
           // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on

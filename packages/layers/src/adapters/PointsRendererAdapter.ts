@@ -81,6 +81,11 @@ const isEmpty = (batch: PointsLoadResult): boolean => (batch.shape[1] ?? 0) === 
 export class PointsRendererAdapter {
   private readonly memos = new Map<string, EntryMemos>();
   private readonly growingPartials = new Map<string, GrowingPartial>();
+  /** The base layer's stable resource per element — see {@link getBaseResource}. */
+  private readonly growingBases = new Map<
+    string,
+    { resource: PointsRenderResource; holder: { current: PointsLoadResult }; revision: number }
+  >();
 
   private entry(key: string): EntryMemos {
     let memos = this.memos.get(key);
@@ -177,6 +182,53 @@ export class PointsRendererAdapter {
     return this.growingPartials.get(key)?.revision ?? 0;
   }
 
+  /**
+   * The **base** layer's render resource — ONE stable resource per element whose
+   * backing batch evolves.
+   *
+   * The base's "current best view" changes over an element's life: the resident
+   * preload (streaming in during initial load), that preload filtered to a selection,
+   * then the whole-dataset matched batch once a scan covers the selection. Each of
+   * those is a *different* batch, and the old code drew them under one `id: layerId`
+   * from two different resources (resident vs matched) — so every transition changed
+   * the loader identity and `PointsLayer` hard-reset (the base flash).
+   *
+   * Here the resource identity is fixed for the element (built once, from the first
+   * batch); a new batch swaps the mutable holder and bumps {@link getBaseRevision},
+   * and `PointsLayer` re-reads `loadAll` on that revision change WITHOUT resetting. No
+   * teardown across resident↔matched↔streaming transitions. Callers choose the batch
+   * (matched-if-covered else resident) and pass the matching `preloadedFeatureCodes`.
+   */
+  getBaseResource(
+    element: PointsElement,
+    key: string,
+    batch: PointsLoadResult | undefined
+  ): PointsRenderResource | null {
+    if (!batch || isEmpty(batch)) {
+      this.growingBases.delete(key);
+      return null;
+    }
+    let growing = this.growingBases.get(key);
+    if (!growing) {
+      const holder = { current: batch };
+      const resource = this.buildGrowingResource(element, holder);
+      if (!resource) return null;
+      growing = { resource, holder, revision: 0 };
+      this.growingBases.set(key, growing);
+    } else if (growing.holder.current !== batch) {
+      growing.holder.current = batch;
+      growing.revision += 1;
+    }
+    return growing.resource;
+  }
+
+  /** The base resource's revision — a `PointsLayer` `resourceRevision` prop, bumped
+   * each time the base batch is swapped (resident↔matched↔streaming) so the composite
+   * re-reads without a teardown. */
+  getBaseRevision(key: string): number {
+    return this.growingBases.get(key)?.revision ?? 0;
+  }
+
   /** A stable render resource whose `loadAll` reads the current holder batch. */
   private buildGrowingResource(
     element: PointsElement,
@@ -204,10 +256,12 @@ export class PointsRendererAdapter {
   evict(key: string): void {
     this.memos.delete(key);
     this.growingPartials.delete(key);
+    this.growingBases.delete(key);
   }
 
   dispose(): void {
     this.memos.clear();
     this.growingPartials.clear();
+    this.growingBases.clear();
   }
 }
