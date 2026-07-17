@@ -116,9 +116,10 @@ export interface SpatialCanvasViewerProps {
   autoFit?: boolean;
   style?: CSSProperties;
   /**
-   * Hover tooltip / picking behaviour: `'off'` | `'simple'` (default) |
-   * `'aggregate'`. See {@link HoverTooltipMode}. `'aggregate'` is more expensive
-   * (extra GPU pick passes per move); `'off'` disables shape picking entirely.
+   * Hover tooltip / picking behaviour: `'off'` | `'simple'` | `'aggregate'`
+   * (default). See {@link HoverTooltipMode}. `'aggregate'` reports every feature
+   * under the cursor across layers (extra GPU pick passes per move); `'off'`
+   * disables shape picking entirely.
    */
   hoverTooltipMode?: HoverTooltipMode;
   /** Global fallback Viv LayerExtension instances for image layers. */
@@ -447,7 +448,7 @@ function SpatialCanvasViewerInner({
   showLoadingOverlay = true,
   autoFit = true,
   style,
-  hoverTooltipMode = 'simple',
+  hoverTooltipMode = 'aggregate',
   vivImageExtensions,
   vivImageExtensionResolver,
   vivImagePropsResolver,

@@ -384,7 +384,7 @@ interface SpatialCanvasInnerProps {
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
-  hoverTooltipMode = 'simple',
+  hoverTooltipMode = 'aggregate',
 }: SpatialCanvasInnerProps) {
   // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
   // subscribes to the engine via useSyncExternalStore), so this component no
@@ -990,7 +990,7 @@ export interface SpatialCanvasProps {
    */
   renderTooltip?: (props: SpatialCanvasTooltipRenderProps) => ReactNode;
   /**
-   * Initial hover tooltip mode: `'off'` | `'simple'` (default) | `'aggregate'`.
+   * Initial hover tooltip mode: `'off'` | `'simple'` | `'aggregate'` (default).
    * The canvas UI exposes a selector to change it live. See {@link HoverTooltipMode}.
    */
   hoverTooltipMode?: HoverTooltipMode;
