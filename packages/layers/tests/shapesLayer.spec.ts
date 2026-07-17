@@ -4,11 +4,11 @@ import {
   buildShapeFeatureStateRuntime,
   buildShapesPrebuiltData,
   createShapesDeckLayer,
-  deriveStrokeColor,
-  featureFromBinary,
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+  deriveStrokeColor,
+  featureFromBinary,
   type GeoarrowTableLike,
   isShapeFeatureStateRuntime,
   normalizeShapeFeatureState,
@@ -566,6 +566,51 @@ describe('binary (flat-polygons) render path', () => {
     expect((second[0].props as any).ringPositions).toBe((first[0].props as any).ringPositions);
     // Stable per-feature colour buffer identity → no colour texture rebuild.
     expect((second[0].props as any).featureColors).toBe((first[0].props as any).featureColors);
+  });
+
+  it('does not thrash the per-feature colour buffer between two layers sharing a runtime', () => {
+    // Two shapes layers, neither with an explicit featureState, both resolve to the
+    // SAME `EMPTY_SHAPE_FEATURE_STATE_RUNTIME` singleton. With different feature
+    // counts, a colour cache keyed only on the runtime holds one buffer and the two
+    // layers overwrite each other every `getLayers()` call — a per-frame rebuild of
+    // both million-element buffers during pan/hover. The buffer must instead stay
+    // stable per layer across bare re-renders.
+    const dataA = binaryRenderData; // 2 features
+    const dataB: ShapesRenderDataLike = {
+      kind: 'flat-polygons',
+      geometryKind: 'polygon',
+      elementKey: 'cellsB',
+      featureIds: ['b-1', 'b-2', 'b-3'],
+      polygonBinary: {
+        // Three triangular rings → 3 features.
+        // biome-ignore format: coordinate triples read clearer grouped
+        positions: new Float32Array([
+          0, 0, 1, 0, 0, 1,
+          10, 10, 11, 10, 10, 11,
+          20, 20, 21, 20, 20, 21,
+        ]),
+        startIndices: new Int32Array([0, 3, 6, 9]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([1, 2, 3]),
+    };
+    const sublayerA = { kind: 'shapes', elementKey: 'cells', visible: true } as const;
+    const sublayerB = { kind: 'shapes', elementKey: 'cellsB', visible: true } as const;
+    const prebuiltA = buildShapesPrebuiltData(dataA);
+    const prebuiltB = buildShapesPrebuiltData(dataB);
+
+    // Interleaved renders mimic two shapes layers built in one `getLayers()` pass,
+    // repeated each frame.
+    const a1 = createShapesDeckLayer(dataA, sublayerA, { id: 'A' }, prebuiltA) as any[];
+    const b1 = createShapesDeckLayer(dataB, sublayerB, { id: 'B' }, prebuiltB) as any[];
+    const a2 = createShapesDeckLayer(dataA, sublayerA, { id: 'A' }, prebuiltA) as any[];
+    const b2 = createShapesDeckLayer(dataB, sublayerB, { id: 'B' }, prebuiltB) as any[];
+
+    expect((a1[0].props as any).featureColors).toHaveLength(2 * 4);
+    expect((b1[0].props as any).featureColors).toHaveLength(3 * 4);
+    // Each layer keeps a stable colour buffer identity across re-renders — the other
+    // layer's render must not evict it.
+    expect((a2[0].props as any).featureColors).toBe((a1[0].props as any).featureColors);
+    expect((b2[0].props as any).featureColors).toBe((b1[0].props as any).featureColors);
   });
 });
 

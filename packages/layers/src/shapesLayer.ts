@@ -453,23 +453,45 @@ function getTessellation(positions: Float32Array, startIndices: Int32Array): Tes
 
 /**
  * Per-**feature** RGBA colours (the "table column → buffer" primitive), rebuilt only
- * when feature-state changes. Keyed on the feature-state runtime identity (which
- * changes exactly on a real feature-state change), so the returned buffer has a
- * **stable identity** across bare re-renders. This is `featureCount` texels — the
- * layer uploads it to a small texture and the shader samples it by feature index, so
- * the (large) geometry textures never re-upload. Hide/fade are folded into alpha.
+ * when feature-state changes. This is `featureCount` texels — the layer uploads it to
+ * a small texture and the shader samples it by feature index, so the (large) geometry
+ * textures never re-upload. Hide/fade are folded into alpha.
+ *
+ * Keyed by **layer id**, not the feature-state runtime: two layers with no explicit
+ * feature-state both resolve to the SAME `EMPTY_SHAPE_FEATURE_STATE_RUNTIME` singleton
+ * (as do two layers with identical feature-state), so a runtime-keyed cache holds one
+ * slot the layers overwrite each other in — a per-frame rebuild of both (million-
+ * element) buffers on every `getLayers()` (pan/hover). The layer id is the stable
+ * per-layer discriminator; the entry is reused only while all of (runtime, feature-id
+ * array, default colour) keep their identity — the exact set the buffer's contents
+ * depend on — so it stays stable across bare re-renders and rebuilds precisely when a
+ * real change (feature-state, element swap, default-colour change) occurs.
  */
-const featureColorsCache = new WeakMap<ShapeFeatureStateRuntime, Uint8Array>();
+interface FeatureColorsCacheEntry {
+  runtime: ShapeFeatureStateRuntime;
+  featureIds: readonly string[];
+  defaultColor: readonly number[];
+  colors: Uint8Array;
+}
+const featureColorsCache = new Map<string, FeatureColorsCacheEntry>();
 
 function getFeatureColors(
+  layerId: string,
   featureState: ShapeFeatureStateRuntime,
-  featureCount: number,
+  featureIds: readonly string[],
+  defaultColor: readonly number[],
   colorForFeatureIndex: (index: number) => [number, number, number, number]
 ): Uint8Array {
-  const cached = featureColorsCache.get(featureState);
-  if (cached && cached.length === featureCount * 4) {
-    return cached;
+  const cached = featureColorsCache.get(layerId);
+  if (
+    cached &&
+    cached.runtime === featureState &&
+    cached.featureIds === featureIds &&
+    cached.defaultColor === defaultColor
+  ) {
+    return cached.colors;
   }
+  const featureCount = featureIds.length;
   const colors = new Uint8Array(featureCount * 4);
   for (let f = 0; f < featureCount; f += 1) {
     const c = colorForFeatureIndex(f);
@@ -478,7 +500,7 @@ function getFeatureColors(
     colors[f * 4 + 2] = c[2];
     colors[f * 4 + 3] = c[3];
   }
-  featureColorsCache.set(featureState, colors);
+  featureColorsCache.set(layerId, { runtime: featureState, featureIds, defaultColor, colors });
   return colors;
 }
 
@@ -969,7 +991,13 @@ function createBinaryPolygonDeckLayers(
     );
   };
 
-  const featureColors = getFeatureColors(featureState, featureIds.length, fillColorAt);
+  const featureColors = getFeatureColors(
+    options.id,
+    featureState,
+    featureIds,
+    defaultFillColor,
+    fillColorAt
+  );
 
   const layer = new FlatPolygonLayer({
     id: options.id,
