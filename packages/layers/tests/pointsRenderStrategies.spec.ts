@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PointsLayer } from '../src/PointsLayer.js';
+import { filterBatchSignature } from '../src/pointsFeatureCodes.js';
 import { resolvePointsRenderStrategy } from '../src/pointsRenderStrategies.js';
 import { preloadedScatterStrategy } from '../src/preloadedScatterStrategy.js';
 
@@ -60,5 +61,59 @@ describe('preloadedScatterStrategy sublayer id', () => {
     expect(layer).toBeTruthy();
     expect(layer?.id).toBe(`${compositeId}-scatter`);
     expect(layer?.id).not.toBe(compositeId);
+  });
+});
+
+describe('preloadedScatterStrategy — never shows the previous selection while a new one filters', () => {
+  const codes = new Int32Array([0, 1, 0]);
+  const preloadedBatch = {
+    format: 'columnar-ndarray' as const,
+    data: [new Float32Array([0, 1, 2]), new Float32Array([0, 1, 2])],
+    shape: [2, 3] as [number, number],
+    pointCount: 3,
+    featureCodes: codes,
+  };
+  // A previously-computed filtered batch for gene {0} (2 of the 3 rows).
+  const filteredForZero = {
+    format: 'columnar-ndarray' as const,
+    data: [new Float32Array([0, 2]), new Float32Array([0, 2])],
+    shape: [2, 2] as [number, number],
+    pointCount: 2,
+    featureCodes: new Int32Array([0, 0]),
+  };
+  const drawnCount = (layer: unknown): number | undefined =>
+    (layer as { props?: { data?: { length?: number } } } | null)?.props?.data?.length;
+
+  function layerWith(props: Record<string, unknown>): PointsLayer {
+    return {
+      props: { id: 'points:x', visible: true, ...props },
+      state: {
+        preloadedBatch,
+        filteredBatch: filteredForZero,
+        filteredBatchSignature: filterBatchSignature([0], codes, undefined),
+      },
+    } as unknown as PointsLayer;
+  }
+
+  it('draws nothing (not the old gene) when the selection changed and the new filter is pending', () => {
+    // Selection moved {0} → {1}; the stale filteredBatch still holds gene {0}. Reusing
+    // it would draw gene 0 under a gene-1 selection — the "wrong gene shown" bug.
+    const layer = layerWith({ featureCodes: [1], preloadedFeatureCodes: codes });
+    expect(preloadedScatterStrategy.renderLayers(layer)).toBeNull();
+  });
+
+  it('reuses the previous filtered batch when only the render cap moved (same genes)', () => {
+    // Same selection {0}, only renderCap differs → the full signature changed but the
+    // GENE signature did not, so keeping the stale batch on screen is correct (no flash).
+    const layer = layerWith({ featureCodes: [0], preloadedFeatureCodes: codes, renderCap: 100 });
+    const result = preloadedScatterStrategy.renderLayers(layer);
+    expect(drawnCount(Array.isArray(result) ? result[0] : result)).toBe(2);
+  });
+
+  it('falls back to the full batch for the "all features" view, not the stale selection', () => {
+    // No selection: draw everything (3 rows), never the previous {0} filtered batch.
+    const layer = layerWith({ featureCodes: undefined, preloadedFeatureCodes: codes });
+    const result = preloadedScatterStrategy.renderLayers(layer);
+    expect(drawnCount(Array.isArray(result) ? result[0] : result)).toBe(3);
   });
 });

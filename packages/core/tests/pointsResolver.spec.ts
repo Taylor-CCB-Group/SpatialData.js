@@ -76,10 +76,13 @@ describe('plan() — pure, synchronous, starts nothing', () => {
     expect(el.loadPointsMatchingFeatureCodes).not.toHaveBeenCalled();
   });
 
-  it('plans a preload for a fresh entry', () => {
+  it('plans a preload for a fresh entry, plus rowCodes (colour is on by default)', () => {
     const tasks = new PointsResolver().plan(ctx(element()));
 
-    expect(tasks.map((t) => t.resource)).toEqual(['preload']);
+    // Colour-by-feature is on by default, so the per-row codes are planned alongside
+    // the preload — for a code-column dataset they fall out of the preload decode (the
+    // rowCodes task is then a no-op); for a dict-only dataset the task settles them.
+    expect(tasks.map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
   });
 
   it('puts the memory cap IN the task id, so a cap change supersedes rather than dedups', () => {
@@ -94,16 +97,21 @@ describe('plan() — pure, synchronous, starts nothing', () => {
     expect(at4m?.id).toContain('4000000');
   });
 
-  it('plans rowCodes only when a filter or colour-by-feature needs them', () => {
+  it('plans rowCodes by default (colour is on by default), skipping only when colour is off and nothing is selected', () => {
     const resolver = new PointsResolver();
     const resources = (config: PointsResolveConfig) =>
       resolver.plan(ctx(element(), config)).map((t) => t.resource);
 
-    expect(resources({})).not.toContain('rowCodes');
+    // Colour-by-feature is on by default, so the codes load without any explicit flag.
+    expect(resources({})).toContain('rowCodes');
     expect(resources({ colorByFeature: true })).toContain('rowCodes');
     expect(resources({ featureCodes: [0] })).toContain('rowCodes');
+    // A live filter still needs the codes even with colour explicitly off.
+    expect(resources({ featureCodes: [0], colorByFeature: false })).toContain('rowCodes');
+    // Colour explicitly off AND nothing selected: no code consumer, so skip the load.
+    expect(resources({ colorByFeature: false })).not.toContain('rowCodes');
     // An empty selection is "no filter", not "filter to nothing".
-    expect(resources({ featureCodes: [] })).not.toContain('rowCodes');
+    expect(resources({ featureCodes: [], colorByFeature: false })).not.toContain('rowCodes');
   });
 
   it('plans a matching scan only once the element is known to support one', async () => {

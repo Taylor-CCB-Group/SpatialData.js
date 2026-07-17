@@ -1,7 +1,11 @@
 import { applyRenderCapToColumnar } from '@spatialdata/core';
 import type { Layer, LayersList } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
-import { featureFilterAwaitingRowCodes, filterBatchSignature } from './pointsFeatureCodes.js';
+import {
+  featureCodesSignature,
+  featureFilterAwaitingRowCodes,
+  filterBatchSignature,
+} from './pointsFeatureCodes.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
 import { DEFAULT_POINT_SIZE, renderColumnarScatterLayer } from './pointsScatterLayer.js';
@@ -38,20 +42,21 @@ function resolveScatterBatch(layer: PointsLayer): ColumnarNdarrayPointsBatch | u
     return state.filteredBatch;
   }
 
-  // The selection changed and the new filtered batch is still computing off-thread.
-  // Keep showing the PREVIOUS filtered result rather than flashing the full
-  // unfiltered batch — but only when that previous result was itself a real
-  // selection, not the unfiltered "all features" batch (whose signature matches
-  // `featureCodes === undefined`). Reusing the unfiltered batch here is exactly
-  // the flash-of-all-points the filter is meant to avoid.
-  const unfilteredSignature = filterBatchSignature(undefined, preloadedFeatureCodes, renderCap);
-  if (state.filteredBatch && state.filteredBatchSignature !== unfilteredSignature) {
+  // A new filtered batch is still computing off-thread. We may keep the PREVIOUS
+  // filtered result on screen ONLY while it is the SAME SET OF GENES — e.g. the render
+  // cap or the row-code buffer moved but the selection did not. If the SELECTION
+  // itself changed (A → B), reusing the previous batch would draw gene A under a
+  // gene-B selection: the "wrong gene shown" bug. The gene signature is the first
+  // segment of `filterBatchSignature` (`featureCodesSignature | preloaded | renderCap`).
+  const currentGeneSignature = featureCodesSignature(featureCodes);
+  const staleGeneSignature = state.filteredBatchSignature?.split('|')[0];
+  if (state.filteredBatch && staleGeneSignature === currentGeneSignature) {
     return state.filteredBatch;
   }
 
-  // No reusable filtered batch. Draw the full batch only when nothing is selected;
-  // while a selection's first filter is pending, draw nothing (a brief blank beats
-  // a misleading flash of every feature).
+  // No reusable filtered batch for these genes. Draw the full batch only when nothing
+  // is selected; while a changed selection's first filter is pending, draw nothing (a
+  // brief blank beats showing either every feature or the previous selection's genes).
   if (featureCodes === undefined) {
     return cappedPreloaded();
   }

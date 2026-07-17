@@ -937,48 +937,58 @@ export function useLayerData(
           // against, so it falls through to resident in-memory filtering.
           const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
           let partialResource: PointsRenderResource | null = null;
-          let matchedCovers = false;
-          if (selectionActive && canFeatureScan) {
-            // The matched (whole-dataset) batch is the base ONLY when it covers the
-            // current selection. Its last-good result survives a selection change as
-            // `stale`, so switching from gene A to a disjoint gene B must NOT draw A —
-            // when B is not covered we show the resident preload filtered to B while
-            // the partial overlay streams B's out-of-window matches in.
+          // The selected genes the LAST-GOOD scan already covers. This is the pivot of
+          // the show/hide policy: the whole-dataset matched batch survives a selection
+          // change as `stale`, so `covered` is the previous scan's genes. Intersecting
+          // it with the CURRENT selection gives exactly the genes we may safely draw
+          // from that batch — never a deselected gene (that would be bug B: a gene shown
+          // when it shouldn't be), and never dropping a still-wanted gene the scan
+          // already has (bug A: a wanted gene vanishing when the selection grows).
+          let coveredSelection: readonly number[] | undefined;
+          if (selectionActive && canFeatureScan && featureCodes !== undefined) {
             const covered = pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
-            matchedCovers =
-              covered !== undefined &&
-              featureCodes !== undefined &&
-              featureCodes.every((code) => covered.has(code));
+            coveredSelection =
+              covered !== undefined ? featureCodes.filter((code) => covered.has(code)) : [];
             partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
           }
 
-          // Choose the base batch: the matched batch when it covers the selection and
-          // has rows, else the resident preload. Both flow through ONE stable base
-          // resource (`getBaseResource`) whose backing batch swaps under it — so the
-          // base layer never tears down as the view evolves resident↔matched, which is
-          // the base flicker. An empty matched batch (a scan that matched nothing)
-          // falls back to resident rather than locking the view empty.
-          const matchedBatch = matchedCovers ? pointsEngine.getMatchedBatch(elem.key) : undefined;
+          // Choose the base batch: the whole-dataset matched batch whenever it covers
+          // ANY still-wanted gene (drawn filtered to that covered subset), else the
+          // resident preload. Growing [A]→[A,B] keeps A on screen from the matched batch
+          // while B's scan streams in via the overlay, instead of blinking A out to the
+          // resident window. Both flow through ONE stable base resource
+          // (`getBaseResource`) whose backing batch swaps under it — so the base never
+          // tears down as the view evolves resident↔matched (the base flicker). An empty
+          // matched batch (a scan that matched nothing) falls back to resident.
+          const matchedBatch =
+            coveredSelection && coveredSelection.length > 0
+              ? pointsEngine.getMatchedBatch(elem.key)
+              : undefined;
           const useMatched = matchedBatch !== undefined && (matchedBatch.shape[1] ?? 0) > 0;
           const baseBatch = useMatched ? matchedBatch : pointsEngine.getData(elem.key);
 
+          // Colour-by-feature is ON BY DEFAULT (opt-out via `colorByFeature: false`), so
+          // thread the per-row codes whenever colour is not explicitly disabled — the
+          // "all features" view (no selection) needs them too, or it draws flat.
+          const wantsRowCodes = config.colorByFeature !== false || featureCodes !== undefined;
           let basePreloadedCodes: ArrayLike<number> | undefined;
           let baseFilter: readonly number[] | undefined;
           if (useMatched) {
             basePreloadedCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
             const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
-            // Filter down only when the selection is a strict subset of what was
-            // scanned (a removed feature); an equal selection renders the batch whole.
+            // Filter the whole-dataset batch to the still-wanted covered subset unless
+            // the selection is exactly the scanned set (then render it whole). The batch
+            // only holds covered genes, so this can only ever DROP a deselected gene —
+            // never surface an unselected one.
             baseFilter =
-              featureCodes !== undefined && featureCodes.length < coveredSize
-                ? featureCodes
+              coveredSelection !== undefined && coveredSelection.length < coveredSize
+                ? coveredSelection
                 : undefined;
           } else {
             // Row codes drive both the in-memory filter (resident → selection) and
             // colour-by-feature. The row-codes LOAD is planned from the reconcile
             // effect (Track A), not kicked here.
-            const needsRowCodes = featureCodes !== undefined || config.colorByFeature === true;
-            basePreloadedCodes = needsRowCodes
+            basePreloadedCodes = wantsRowCodes
               ? pointsEngine.getRowFeatureCodes(elem.key)
               : undefined;
             baseFilter = featureCodes;

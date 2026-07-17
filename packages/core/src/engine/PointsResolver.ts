@@ -253,7 +253,14 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     const selectionActive = selection !== undefined && selection.length > 0;
 
     // Was `void engine.ensureRowFeatureCodes(...)` at useLayerData.ts:1425.
-    const needsRowCodes = selectionActive || config.colorByFeature === true;
+    // Colour-by-feature is ON BY DEFAULT in the renderer (opt-out via
+    // `colorByFeature: false`), so the per-row codes must load whenever colour is not
+    // explicitly disabled — not only on an active selection. Gating on
+    // `=== true` left the "all features" view (no selection, no explicit flag) with no
+    // codes, so it drew flat. A dataset with a code column carries codes on the batch
+    // regardless, but the dict-only fallback settles the codes through THIS task, so
+    // the gate is what made dict-only "all features" render flat.
+    const needsRowCodes = selectionActive || config.colorByFeature !== false;
     if (needsRowCodes && !this.hasRowFeatureCodes(key)) {
       tasks.push({ id: `${key}#rowCodes`, resource: 'rowCodes' });
     }
