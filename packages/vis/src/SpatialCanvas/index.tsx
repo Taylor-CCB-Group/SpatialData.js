@@ -50,7 +50,6 @@ import type { SpatialCanvasStoreApi } from './stores';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
-import { useViewInteractionGate, type ViewInteractionState } from './useViewInteractionGate';
 import { generateLayerId, getAllCoordinateSystems } from './utils';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 
@@ -227,7 +226,6 @@ interface ViewerSectionProps {
   vw: number;
   vh: number;
   onHover?: (info: PickingInfo, event?: HoverPointerEvent) => void;
-  onInteractionStateChange: (state: ViewInteractionState) => void;
   coordinateSystem: string | null;
   deckRef: React.RefObject<DeckGLRef | null>;
 }
@@ -244,11 +242,9 @@ function ViewerSection({
   vw,
   vh,
   onHover,
-  onInteractionStateChange,
   coordinateSystem,
   deckRef,
 }: ViewerSectionProps) {
-  const deckProps = useMemo(() => ({ onInteractionStateChange }), [onInteractionStateChange]);
   const viewState = useSpatialCanvasStore((s) => s.viewState);
   const actions = useSpatialCanvasActions();
 
@@ -312,7 +308,6 @@ function ViewerSection({
         layerOrder={layerOrder}
         vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
         onHover={onHover}
-        deckProps={deckProps}
         deckRef={deckRef}
       />
       {isBlocking && (
@@ -425,13 +420,9 @@ function SpatialCanvasInner({
 
   const vw = width ?? 0;
   const vh = height ?? 0;
-  // Shapes are pickable whenever hover tooltips are on. The camera-move suppression
-  // (`&& !interacting`) that used to gate this off during pan/zoom is intentionally
-  // removed: it guarded against deck's full-geometry picking-buffer draw on the old
-  // PolygonLayer + PathLayer path, but the FlatPolygonLayer picking pass is a single
-  // vertex-pulled draw. `interacting` from the gate is still driven
-  // (`onInteractionStateChange` below) so restoring the guard is a one-line change.
-  const { onInteractionStateChange } = useViewInteractionGate();
+  // Shapes are pickable whenever hover tooltips are on. Picking stays live through
+  // pan/zoom: the FlatPolygonLayer picking pass is a single vertex-pulled draw, so
+  // the old "suppress picking during camera moves" gate is no longer needed.
   const pickingEnabled = tooltipMode !== 'off';
 
   // keeping a big bundle of these to pass into child components
@@ -770,7 +761,6 @@ function SpatialCanvasInner({
               vw={vw}
               vh={vh}
               onHover={tooltipMode === 'off' ? undefined : handleHover}
-              onInteractionStateChange={onInteractionStateChange}
               coordinateSystem={coordinateSystem}
               deckRef={deckRef}
             />

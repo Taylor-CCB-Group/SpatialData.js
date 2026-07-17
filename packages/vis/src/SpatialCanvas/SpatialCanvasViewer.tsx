@@ -41,7 +41,6 @@ import {
   type ShapeFeaturePickEventData,
   useLayerData,
 } from './useLayerData';
-import { useViewInteractionGate } from './useViewInteractionGate';
 import { getAvailableElements } from './utils';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 import type {
@@ -456,14 +455,10 @@ function SpatialCanvasViewerInner({
   const [measureRef, { width, height }] = useMeasure();
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef<DeckGLRef | null>(null);
-  const { onInteractionStateChange } = useViewInteractionGate();
-  // Shapes are pickable whenever hover tooltips are on. The camera-move suppression
-  // (`&& !interacting`) that used to gate this off during pan/zoom is intentionally
-  // removed: it guarded against deck's full-geometry picking-buffer draw on the old
-  // PolygonLayer + PathLayer path, but the FlatPolygonLayer picking pass is a single
-  // vertex-pulled draw. Keeping picking live during interaction is under evaluation;
-  // `interacting` from the gate is still driven (`onInteractionStateChange` below) so
-  // restoring the guard is a one-line change.
+  // Shapes are pickable whenever hover tooltips are on. Picking stays live through
+  // pan/zoom: the FlatPolygonLayer picking pass is a single vertex-pulled draw, so
+  // the old "suppress picking during camera moves" gate (a full-geometry pick draw
+  // on the SolidPolygonLayer + PathLayer path) is no longer needed.
   const pickingEnabled = hoverTooltipMode !== 'off';
   const [hoverTooltip, setHoverTooltip] = useState<
     (SpatialFeatureTooltipData & { x: number; y: number; clientX: number; clientY: number }) | null
@@ -513,21 +508,6 @@ function SpatialCanvasViewerInner({
     () => Array.from(renderer.enabledLayerIds),
     [renderer.enabledLayerIds]
   );
-  // Feed deck's interaction state into the gate (via deckProps so the existing
-  // spread reaches both DeckGL branches) while still invoking any caller-supplied
-  // onInteractionStateChange handler.
-  const mergedDeckProps = useMemo(() => {
-    const callerOnInteractionStateChange = deckProps?.onInteractionStateChange;
-    return {
-      ...deckProps,
-      onInteractionStateChange: (
-        state: Parameters<NonNullable<DeckGLProps['onInteractionStateChange']>>[0]
-      ) => {
-        callerOnInteractionStateChange?.(state);
-        onInteractionStateChange(state);
-      },
-    };
-  }, [deckProps, onInteractionStateChange]);
 
   // The expensive part of hovering: aggregate-pick the feature(s) under the
   // cursor and position the tooltip. Throttled to one run per animation frame.
@@ -717,7 +697,7 @@ function SpatialCanvasViewerInner({
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={hoverTooltipMode === 'off' ? undefined : handleHover}
               onClick={handleClick}
-              deckProps={mergedDeckProps}
+              deckProps={deckProps}
               deckRef={deckRef}
             />
             {showLoadingOverlay && renderer.isBlocking && (
