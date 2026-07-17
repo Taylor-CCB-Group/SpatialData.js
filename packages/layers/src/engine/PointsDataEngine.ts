@@ -72,6 +72,10 @@ export class PointsDataEngine {
     string,
     { catalog: PointsFeatureCatalog | null | undefined; size: number }
   >();
+  /** Per-element hover-highlighted feature code (runtime-only UI state), or -1 for
+   * none. Lives here — not in core — because it is a render concern the feature panel
+   * writes and the render path reads through this one shared engine. */
+  private readonly highlightByKey = new Map<string, number>();
   /** Memo for {@link getFeatureColorOverrideMap}, invalidated by config + catalog. */
   private readonly overrideMapMemo = new Map<
     string,
@@ -308,6 +312,30 @@ export class PointsDataEngine {
     return map;
   }
 
+  /** The hover-highlighted feature code for an element, or -1 for none. Read by the
+   * render path (drives the `highlightFeatureCode` uniform). */
+  getHighlightedFeature(key: string): number {
+    return this.highlightByKey.get(key) ?? -1;
+  }
+
+  /**
+   * Set (or clear, with null) the hover-highlighted feature for an element and notify
+   * subscribers so the panel and the render path repaint. Called from the feature
+   * list's row hover. A no-op when unchanged, so mousemove churn is cheap.
+   */
+  setHighlightedFeature(key: string, featureCode: number | null): void {
+    const next = featureCode ?? -1;
+    if (this.getHighlightedFeature(key) === next) {
+      return;
+    }
+    if (next < 0) {
+      this.highlightByKey.delete(key);
+    } else {
+      this.highlightByKey.set(key, next);
+    }
+    this.resolver.notify();
+  }
+
   isFeatureCatalogLoading(key: string): boolean {
     return this.resolver.isFeatureCatalogLoading(key);
   }
@@ -349,6 +377,7 @@ export class PointsDataEngine {
     this.adapter.evict(key);
     this.codeSpaceMemo.delete(key);
     this.overrideMapMemo.delete(key);
+    this.highlightByKey.delete(key);
   }
 
   dispose(): void {
@@ -356,5 +385,6 @@ export class PointsDataEngine {
     this.adapter.dispose();
     this.codeSpaceMemo.clear();
     this.overrideMapMemo.clear();
+    this.highlightByKey.clear();
   }
 }

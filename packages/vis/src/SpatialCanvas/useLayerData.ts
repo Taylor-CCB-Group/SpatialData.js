@@ -926,6 +926,11 @@ export function useLayerData(
             elem.key,
             config.featureColorOverrides
           );
+          // Hover highlight (runtime): emphasise the hovered feature's points, -1 (no
+          // highlight) otherwise. Held on the engine — the shared external store the
+          // feature panel writes to and this render path reads — so it needs no store /
+          // renderStack plumbing. A uniform, so it costs nothing per frame.
+          const highlightFeatureCode = pointsEngine.getHighlightedFeature(elem.key);
 
           // Feature-index render scan: when a selection is active, the WHOLE
           // dataset's matching points are loaded (footer stats skip the row groups a
@@ -1024,6 +1029,7 @@ export function useLayerData(
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
+                highlightFeatureCode,
               })
             );
           }
@@ -1053,6 +1059,7 @@ export function useLayerData(
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
+                highlightFeatureCode,
               })
             );
           }

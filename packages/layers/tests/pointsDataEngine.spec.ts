@@ -907,4 +907,24 @@ describe('PointsDataEngine — colour LUT inputs', () => {
     // is not rebuilt on every getLayers frame.
     expect(engine.getFeatureColorOverrideMap('pts:ov2', overrides)).toBe(first);
   });
+
+  it('holds a per-element hover highlight and notifies subscribers on change only', () => {
+    const engine = new PointsDataEngine();
+    let notifications = 0;
+    engine.subscribe(() => {
+      notifications += 1;
+    });
+    expect(engine.getHighlightedFeature('pts:h')).toBe(-1); // none by default
+
+    engine.setHighlightedFeature('pts:h', 3);
+    expect(engine.getHighlightedFeature('pts:h')).toBe(3);
+    expect(notifications).toBe(1);
+
+    engine.setHighlightedFeature('pts:h', 3); // unchanged → no repaint
+    expect(notifications).toBe(1);
+
+    engine.setHighlightedFeature('pts:h', null); // clear
+    expect(engine.getHighlightedFeature('pts:h')).toBe(-1);
+    expect(notifications).toBe(2);
+  });
 });

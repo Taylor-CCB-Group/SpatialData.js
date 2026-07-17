@@ -162,6 +162,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     supportsOnDemandLoad,
     matchingLoadState,
     requestCatalog,
+    setHighlightedFeature,
   } = usePointsFeatureState(config.featureCodes);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -171,6 +172,9 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   useEffect(() => {
     requestCatalog();
   }, [requestCatalog]);
+  // Clear any lingering hover highlight when the panel unmounts (or its layer
+  // changes), so an emphasis doesn't stick after the pointer is long gone.
+  useEffect(() => () => setHighlightedFeature(null), [setHighlightedFeature]);
   const entries = useMemo(() => catalog?.entries ?? [], [catalog?.entries]);
   const hasCounts = entries.some((entry) => entry.count !== undefined);
   const allSelected = config.featureCodes === undefined;
@@ -383,6 +387,8 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
               key={entry.code}
               style={{ ...checkboxLabelStyle, opacity: featureRowOpacity(state) }}
               title={title}
+              onMouseEnter={() => setHighlightedFeature(entry.code)}
+              onMouseLeave={() => setHighlightedFeature(null)}
             >
               <input
                 type="checkbox"

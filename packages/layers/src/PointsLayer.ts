@@ -35,6 +35,9 @@ export interface PointsLayerProps {
   featureCodeSpaceSize?: number;
   /** Per-feature colour overrides (`code → [r,g,b]`); absent codes keep the default. */
   featureColorOverrides?: import('./pointsFeatureColor.js').FeatureColorOverrides | null;
+  /** Emphasise one feature code: its points keep their colour, others desaturate +
+   * dim. -1 (default) highlights nothing. */
+  highlightFeatureCode?: number;
   featureCodes?: readonly number[];
   /** Source-side integer codes aligned with the preloaded table rows. */
   preloadedFeatureCodes?: ArrayLike<number>;

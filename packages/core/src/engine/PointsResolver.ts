@@ -421,7 +421,10 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return this.version;
   }
 
-  private notify(): void {
+  /** Bump the version and re-run subscribers. Public so a facade holding derived
+   * render state (e.g. the hover highlight in `PointsDataEngine`) can request a
+   * repaint without a data mutation. */
+  notify(): void {
     this.version += 1;
     for (const listener of this.listeners) {
       listener();

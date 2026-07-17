@@ -118,9 +118,15 @@ export interface PointsFeatureState {
   truncation: ReturnType<PointsDataEngine['getActiveTruncation']>;
   /** Stable callback — trigger the full-dataset catalog build (idempotent). */
   requestCatalog: () => void;
+  /** Stable callback — set (or clear, with null) the hover-highlighted feature code
+   * for this layer, so its points are emphasised on the canvas. */
+  setHighlightedFeature: (featureCode: number | null) => void;
 }
 
-const EMPTY_POINTS_FEATURE_STATE: Omit<PointsFeatureState, 'requestCatalog'> = {
+const EMPTY_POINTS_FEATURE_STATE: Omit<
+  PointsFeatureState,
+  'requestCatalog' | 'setHighlightedFeature'
+> = {
   catalog: undefined,
   catalogLoading: false,
   catalogRefining: false,
@@ -147,9 +153,15 @@ export function usePointsFeatureState(featureCodes?: readonly number[]): PointsF
   const requestCatalog = useCallback(() => {
     if (target) void engine.ensureFeatureCatalog(target);
   }, [engine, target]);
+  const setHighlightedFeature = useCallback(
+    (featureCode: number | null) => {
+      if (target) engine.setHighlightedFeature(target.key, featureCode);
+    },
+    [engine, target]
+  );
 
   if (!target) {
-    return { ...EMPTY_POINTS_FEATURE_STATE, requestCatalog };
+    return { ...EMPTY_POINTS_FEATURE_STATE, requestCatalog, setHighlightedFeature };
   }
   const key = target.key;
   const scannable = engine.supportsFeatureScan(key);
@@ -167,5 +179,6 @@ export function usePointsFeatureState(featureCodes?: readonly number[]): PointsF
       hasSelection && scannable ? engine.getMatchingLoadState(key, featureCodes) : undefined,
     truncation: engine.getActiveTruncation(key, featureCodes),
     requestCatalog,
+    setHighlightedFeature,
   };
 }

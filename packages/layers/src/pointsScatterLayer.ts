@@ -44,6 +44,8 @@ export interface PointsScatterStyleProps {
   featureCodeSpaceSize?: number;
   /** Per-feature colour overrides (`code → [r,g,b]`); absent codes keep the default. */
   featureColorOverrides?: FeatureColorOverrides | null;
+  /** Emphasise one feature code (others desaturate + dim); -1 highlights nothing. */
+  highlightFeatureCode?: number;
 }
 
 // One shared extension instance: it is stateless, so every scatter layer that
@@ -104,6 +106,7 @@ export function renderColumnarScatterLayer(
     // the extension to (re)build `pfcPalette`.
     featureCodeSpaceSize: props.featureCodeSpaceSize ?? 0,
     ...(props.featureColorOverrides ? { featureColorOverrides: props.featureColorOverrides } : {}),
+    highlightFeatureCode: props.highlightFeatureCode ?? -1,
     // Constant default: the binary getFeatureCode attribute overrides it when
     // colouring; when it is withdrawn (colour off), deck reverts to this -1, so
     // the shader's `featureCode >= 0.0` guard falls through to the flat colour.
