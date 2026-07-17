@@ -5,7 +5,15 @@ import {
   PointsResolver,
 } from '@spatialdata/core';
 import { PointsRendererAdapter } from '../adapters/PointsRendererAdapter.js';
+import type { FeatureColorOverrides } from '../pointsFeatureColor.js';
 import type { PointsRenderResource } from '../pointsLoader.js';
+
+/** Per-feature colour overrides as authored in layer config: keyed by feature NAME
+ * (robust to the code remapping between a resident-preview and the full catalog),
+ * resolved to codes at render time by {@link PointsDataEngine.getFeatureColorOverrideMap}. */
+export type FeatureColorOverridesByName = Readonly<
+  Record<string, readonly [number, number, number]>
+>;
 
 /**
  * `PointsDataEngine` — now a **facade** over `PointsResolver` (`core`) and
@@ -63,6 +71,15 @@ export class PointsDataEngine {
   private readonly codeSpaceMemo = new Map<
     string,
     { catalog: PointsFeatureCatalog | null | undefined; size: number }
+  >();
+  /** Memo for {@link getFeatureColorOverrideMap}, invalidated by config + catalog. */
+  private readonly overrideMapMemo = new Map<
+    string,
+    {
+      source: FeatureColorOverridesByName | undefined;
+      catalog: PointsFeatureCatalog | null | undefined;
+      map: FeatureColorOverrides | null;
+    }
   >();
 
   constructor(callbacks: PointsDataEngineCallbacks = {}) {
@@ -248,6 +265,49 @@ export class PointsDataEngine {
     return size;
   }
 
+  /**
+   * Resolve config's by-NAME colour overrides to the `code → rgb` map the LUT builder
+   * wants, using the current catalog's name↔code mapping. Returns null when there are
+   * no overrides (or no catalog yet) — the palette then falls back to all defaults.
+   *
+   * Keyed by name on purpose: a feature's code can differ between the resident-preview
+   * catalog and the authoritative full one, but its name does not, so an override
+   * authored against a name lands on the right feature once the catalog settles.
+   * Memoised on (config identity, catalog identity) so the map — and thus the palette
+   * texture downstream — keeps a stable identity across the per-frame `getLayers`.
+   */
+  getFeatureColorOverrideMap(
+    key: string,
+    overridesByName: FeatureColorOverridesByName | undefined
+  ): FeatureColorOverrides | null {
+    const catalog = this.resolver.getFeatureCatalog(key);
+    const cached = this.overrideMapMemo.get(key);
+    if (cached && cached.source === overridesByName && cached.catalog === catalog) {
+      return cached.map;
+    }
+    let map: Map<number, readonly [number, number, number]> | null = null;
+    if (overridesByName && catalog) {
+      const codeByName = new Map<string, number>();
+      for (const entry of catalog.entries) {
+        codeByName.set(entry.name, entry.code);
+      }
+      const resolved = new Map<number, readonly [number, number, number]>();
+      for (const [name, rgb] of Object.entries(overridesByName)) {
+        const code = codeByName.get(name);
+        if (code !== undefined) {
+          resolved.set(code, rgb);
+        }
+      }
+      // Null (not an empty map) when nothing resolved, so callers fall back to the
+      // all-default palette and the identity check stays meaningful.
+      if (resolved.size > 0) {
+        map = resolved;
+      }
+    }
+    this.overrideMapMemo.set(key, { source: overridesByName, catalog, map });
+    return map;
+  }
+
   isFeatureCatalogLoading(key: string): boolean {
     return this.resolver.isFeatureCatalogLoading(key);
   }
@@ -288,11 +348,13 @@ export class PointsDataEngine {
     this.resolver.evict(key);
     this.adapter.evict(key);
     this.codeSpaceMemo.delete(key);
+    this.overrideMapMemo.delete(key);
   }
 
   dispose(): void {
     this.resolver.dispose();
     this.adapter.dispose();
     this.codeSpaceMemo.clear();
+    this.overrideMapMemo.clear();
   }
 }

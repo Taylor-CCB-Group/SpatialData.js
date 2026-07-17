@@ -119,6 +119,14 @@ export interface PointsLayerConfig extends BaseLayerConfig {
    * the runtime-only Feature Highlight added in MVP step 3.
    */
   featureCodes?: number[];
+  /**
+   * Per-feature colour overrides, keyed by feature NAME (not code): `{ "EPCAM":
+   * [220, 30, 30] }` draws that gene in that RGB instead of its default categorical
+   * colour. Keyed by name so an override survives the code remapping between the
+   * resident-preview catalog and the full one. Absent features keep their default.
+   * Serializable Stack-Entry state.
+   */
+  featureColorOverrides?: Record<string, [number, number, number]>;
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

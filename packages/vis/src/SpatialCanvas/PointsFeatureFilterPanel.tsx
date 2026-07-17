@@ -1,4 +1,4 @@
-import { featureCodeToCssColor } from '@spatialdata/layers';
+import { featureCodeToRgb } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSpatialCanvasActions } from './context';
@@ -14,6 +14,53 @@ const swatchStyle: CSSProperties = {
   flexShrink: 0,
   border: '1px solid rgba(255, 255, 255, 0.25)',
 };
+
+// The colour swatch doubles as a colour picker: a transparent native colour input
+// overlays a swatch showing the feature's EFFECTIVE colour (override or default).
+const swatchPickerWrapStyle: CSSProperties = {
+  position: 'relative',
+  width: 10,
+  height: 10,
+  flexShrink: 0,
+  lineHeight: 0,
+};
+
+const swatchInputStyle: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  margin: 0,
+  padding: 0,
+  border: 'none',
+  opacity: 0,
+  cursor: 'pointer',
+};
+
+const resetOverrideStyle: CSSProperties = {
+  color: '#888',
+  fontSize: '11px',
+  padding: '0 3px',
+  border: '1px solid #444',
+  borderRadius: 3,
+  background: '#222',
+  cursor: 'pointer',
+  flexShrink: 0,
+};
+
+const hex2 = (value: number): string =>
+  Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0');
+
+/** `[r,g,b]` (0–255) → `#rrggbb` for a native colour input's value. */
+function rgbToHex([r, g, b]: readonly [number, number, number]): string {
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+}
+
+/** `#rrggbb` → `[r,g,b]` (0–255). */
+function hexToRgb(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
 
 const panelStyle: CSSProperties = {
   display: 'flex',
@@ -152,6 +199,24 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
 
   const setFeatureCodes = (nextCodes: number[] | undefined) => {
     updateLayer(layerId, { featureCodes: nextCodes });
+  };
+
+  // Per-feature colour overrides, keyed by feature NAME (survives code remapping).
+  const colorOverrides = config.featureColorOverrides;
+  const effectiveRgb = (name: string, code: number): [number, number, number] =>
+    colorOverrides?.[name] ?? featureCodeToRgb(code);
+  const setColorOverride = (name: string, rgb: [number, number, number]) => {
+    updateLayer(layerId, { featureColorOverrides: { ...(colorOverrides ?? {}), [name]: rgb } });
+  };
+  const clearColorOverride = (name: string) => {
+    if (!colorOverrides || !(name in colorOverrides)) {
+      return;
+    }
+    const next = { ...colorOverrides };
+    delete next[name];
+    updateLayer(layerId, {
+      featureColorOverrides: Object.keys(next).length > 0 ? next : undefined,
+    });
   };
 
   const toggleFeature = (code: number, checked: boolean) => {
@@ -300,6 +365,8 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
             entry.count !== undefined ? ` · ${entry.count.toLocaleString()} pts` : '';
           // Multi-line diagnostic: the human state + reason, then the raw signals
           // that drove the decision (what made this row grey / not grey).
+          const overridden = colorOverrides?.[entry.name] !== undefined;
+          const rgb = effectiveRgb(entry.name, entry.code);
           const title =
             `${entry.name} · code ${entry.code}${countStr}\n` +
             `${state.label}: ${state.reason}\n` +
@@ -316,14 +383,47 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
                 checked={selected}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
               />
+              {/* Swatch = colour picker: a transparent colour input over the effective
+                  colour. It is interactive content inside the label, so clicking it
+                  opens the picker without toggling the checkbox. */}
               <span
-                aria-hidden
-                style={{ ...swatchStyle, background: featureCodeToCssColor(entry.code) }}
-              />
+                style={{
+                  ...swatchPickerWrapStyle,
+                  ...(overridden ? { boxShadow: '0 0 0 1px #6cb6ff' } : {}),
+                }}
+                title={`${entry.name} colour${overridden ? ' (overridden)' : ''}`}
+              >
+                <span
+                  aria-hidden
+                  style={{ ...swatchStyle, background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }}
+                />
+                <input
+                  type="color"
+                  aria-label={`${entry.name} colour`}
+                  value={rgbToHex(rgb)}
+                  style={swatchInputStyle}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setColorOverride(entry.name, hexToRgb(event.target.value))}
+                />
+              </span>
               <span>
                 {entry.name}
                 {state.greyed ? ' ·' : ''}
               </span>
+              {overridden ? (
+                <button
+                  type="button"
+                  style={resetOverrideStyle}
+                  title="Reset to default colour"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    clearColorOverride(entry.name);
+                  }}
+                >
+                  ⟲
+                </button>
+              ) : null}
               {hasCounts ? <span style={countStyle}>{formatFeatureCount(entry.count)}</span> : null}
             </label>
           );

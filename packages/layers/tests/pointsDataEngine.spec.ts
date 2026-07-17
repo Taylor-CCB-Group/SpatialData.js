@@ -871,3 +871,40 @@ describe('PointsDataEngine — shed complete batch on lower', () => {
     });
   });
 });
+
+describe('PointsDataEngine — colour LUT inputs', () => {
+  it('reports the feature code-space size as maxCode + 1, memoised on catalog identity', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:lut');
+    expect(engine.getFeatureCodeSpaceSize('pts:lut')).toBe(0); // no catalog yet
+    await engine.ensureFeatureCatalog({ key: 'pts:lut', layerId: 'l', element });
+    expect(engine.getFeatureCodeSpaceSize('pts:lut')).toBe(2); // codes {0,1} → width 2
+  });
+
+  it('resolves by-name colour overrides to a code→rgb map via the catalog', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:ov');
+    await engine.ensureFeatureCatalog({ key: 'pts:ov', layerId: 'l', element });
+
+    const map = engine.getFeatureColorOverrideMap('pts:ov', {
+      GeneB: [10, 20, 30],
+    });
+    expect(map?.get(1)).toEqual([10, 20, 30]); // GeneB is code 1
+    expect(map?.has(0)).toBe(false);
+    // A name absent from the catalog is dropped, not thrown.
+    expect(engine.getFeatureColorOverrideMap('pts:ov', { Nope: [1, 2, 3] })).toBeNull();
+  });
+
+  it('returns null (all-default palette) with no overrides, and a stable map identity otherwise', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:ov2');
+    await engine.ensureFeatureCatalog({ key: 'pts:ov2', layerId: 'l', element });
+    expect(engine.getFeatureColorOverrideMap('pts:ov2', undefined)).toBeNull();
+
+    const overrides = { GeneA: [1, 2, 3] as [number, number, number] };
+    const first = engine.getFeatureColorOverrideMap('pts:ov2', overrides);
+    // Same (config, catalog) → same map identity, so the palette texture downstream
+    // is not rebuilt on every getLayers frame.
+    expect(engine.getFeatureColorOverrideMap('pts:ov2', overrides)).toBe(first);
+  });
+});

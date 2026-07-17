@@ -920,6 +920,12 @@ export function useLayerData(
           const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
           // Sizes the colour LUT so every point's feature code indexes a real texel.
           const featureCodeSpaceSize = pointsEngine.getFeatureCodeSpaceSize(elem.key);
+          // Resolve config's by-name colour overrides to a stable code→rgb map for the
+          // LUT (identity-stable so the palette texture is not rebuilt every frame).
+          const featureColorOverrides = pointsEngine.getFeatureColorOverrideMap(
+            elem.key,
+            config.featureColorOverrides
+          );
 
           // Feature-index render scan: when a selection is active, the WHOLE
           // dataset's matching points are loaded (footer stats skip the row groups a
@@ -1017,6 +1023,7 @@ export function useLayerData(
                 ...(config.color ? { color: config.color } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
                 featureCodeSpaceSize,
+                ...(featureColorOverrides ? { featureColorOverrides } : {}),
               })
             );
           }
@@ -1045,6 +1052,7 @@ export function useLayerData(
                 ...(config.color ? { color: config.color } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
                 featureCodeSpaceSize,
+                ...(featureColorOverrides ? { featureColorOverrides } : {}),
               })
             );
           }
