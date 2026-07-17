@@ -939,15 +939,29 @@ export function useLayerData(
           let matchingResource: PointsRenderResource | null = null;
           let partialResource: PointsRenderResource | null = null;
           if (selectionActive && canFeatureScan) {
-            matchingResource = pointsEngine.getMatchingResource(element, elem.key);
+            // Only use the matched batch as the base when it actually COVERS the
+            // current selection. The last-good matched batch survives a selection
+            // change as `stale`, so switching from gene A to a disjoint gene B would
+            // otherwise draw all of A's points until B's scan settles. When B is not
+            // covered we fall through to the resident branch, which filters the
+            // resident preload to B in-memory (instant, correct gene) while the
+            // partial overlay streams B's out-of-window matches in.
+            const covered = pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
+            const matchedCovers =
+              covered !== undefined &&
+              featureCodes !== undefined &&
+              featureCodes.every((code) => covered.has(code));
+            if (matchedCovers) {
+              matchingResource = pointsEngine.getMatchingResource(element, elem.key);
+            }
             // The in-flight scan's growing buffer (all matched chunks so far), drawn
-            // as an extra overlay sub-layer below so the base (resident preview /
-            // prior matched batch) stays visible while points progressively fill in.
+            // as an extra overlay sub-layer below so the base stays visible while
+            // points progressively fill in.
             partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
           }
 
           if (matchingResource) {
-            // The matched batch covers the selection (or a superset of it, when the
+            // The matched batch covers the selection (equal, or a superset when the
             // selection just shrank). Pass the batch's per-row codes + the current
             // selection so the layer filters IN MEMORY down to the selected codes —
             // this is what makes removing a feature a free filter instead of a

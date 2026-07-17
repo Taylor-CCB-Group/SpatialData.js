@@ -283,3 +283,77 @@ describe('useLayerData — resolver lifecycle across a dataset swap', () => {
     expect(pointsResource()).toBe(before);
   });
 });
+
+describe('useLayerData — coverage-gated base (never shows the wrong gene)', () => {
+  // The reported bug: select gene A, deselect, select disjoint gene B → the base
+  // drew ALL of A's points (the matched batch survives a selection change as
+  // `stale`) until B's scan settled. The base must use the matched batch ONLY when
+  // it covers the current selection; otherwise show the resident preload (filtered
+  // to B) while B streams in.
+  function scanPointsElement(key: string): AvailableElement {
+    const resident = {
+      shape: [2, 3],
+      data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
+      featureCodes: new Int32Array([0, 1, 0]),
+      hasFeatureCodeColumn: true, // → supportsFeatureScan true right after preload
+    };
+    const matchedForZero = {
+      shape: [2, 2],
+      data: [new Float32Array([0, 1]), new Float32Array([0, 1])],
+      featureCodes: new Int32Array([0, 0]),
+    };
+    const element = {
+      key,
+      loadPoints: vi.fn(async () => resident),
+      loadRowFeatureCodes: vi.fn(async () => new Int32Array([0, 1, 0])),
+      listFeaturesWithCounts: vi.fn(async () => null),
+      // The {0} scan settles; the {1} scan is left in flight so `lastGood` stays {0}
+      // — the exact window where the old code drew the wrong gene.
+      loadPointsMatchingFeatureCodes: vi.fn((opts: { featureCodes: readonly number[] }) =>
+        opts.featureCodes[0] === 0 ? Promise.resolve(matchedForZero) : new Promise<never>(() => {})
+      ),
+    } as unknown as PointsElement;
+    return { key, type: 'points', element, transform: new Matrix4() };
+  }
+
+  it('shows the resident base (not the stale matched batch) when the selection is not covered', async () => {
+    const pts = scanPointsElement('transcripts');
+    const element = pts.element as PointsElement;
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
+
+    const { result, rerender } = renderHook(
+      ({ l }: { l: Record<string, LayerConfig> }) =>
+        useLayerData(l, Object.keys(l), elements, null),
+      {
+        initialProps: {
+          l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0] } },
+        },
+      }
+    );
+    const base = () =>
+      (result.current.getLayers()[0]?.props as { resource?: unknown } | undefined)?.resource;
+
+    // The {0} scan settles → the matched batch covers {0} and IS the base.
+    await waitFor(() => {
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.has(0)).toBe(
+        true
+      );
+    });
+    const matchedResource = result.current.pointsEngine.getMatchingResource(element, 'transcripts');
+    expect(base()).toBe(matchedResource);
+
+    // Switch to a DISJOINT gene {1}; its scan is in flight, so `lastGood` is still {0}.
+    rerender({
+      l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [1] } },
+    });
+    await waitFor(() => {
+      expect(result.current.pointsEngine.isMatchingLoading('transcripts', [1])).toBe(true);
+    });
+
+    // The base must now be the RESIDENT resource (filtered to {1} in-memory), never
+    // the stale matched-{0} batch.
+    const residentResource = result.current.pointsEngine.getResource(element, 'transcripts');
+    expect(base()).toBe(residentResource);
+    expect(base()).not.toBe(matchedResource);
+  });
+});
