@@ -1,6 +1,6 @@
 {
   "name": "@spatialdata/vis",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "description": "React visualisation components for SpatialData",
   "type": "module",
   "module": "./dist/index.js",
