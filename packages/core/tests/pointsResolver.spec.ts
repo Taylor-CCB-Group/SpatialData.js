@@ -603,3 +603,67 @@ describe('Track A — cancellation reaches the scan (D8)', () => {
     expect(signals[0]?.aborted).toBe(true);
   });
 });
+
+describe('progressive preload (D3)', () => {
+  // The fix for "a cold wild-type transcripts load shows nothing for ages": the
+  // preload publishes its growing geometry so the base can paint while the rest
+  // decodes, instead of only after the whole capped window lands.
+  it('exposes the growing geometry as a preload partial, then settles the full batch', async () => {
+    // An element whose loadPoints streams two chunks before resolving.
+    const el = element({
+      loadPoints: vi.fn(
+        async (options: {
+          onProgress?: (p: {
+            scannedRows: number;
+            matchedRows: number;
+            partIndex: number;
+            partCount: number;
+            partialResult: PointsLoadResult;
+          }) => void;
+        }) => {
+          options.onProgress?.({
+            scannedRows: 2,
+            matchedRows: 2,
+            partIndex: 0,
+            partCount: 2,
+            partialResult: batch(2),
+          });
+          options.onProgress?.({
+            scannedRows: 4,
+            matchedRows: 4,
+            partIndex: 1,
+            partCount: 2,
+            partialResult: batch(4),
+          });
+          return batch(4);
+        }
+      ),
+    });
+    const resolver = new PointsResolver();
+    const seen: number[] = [];
+    resolver.subscribe(() => {
+      const partial = resolver.getPreloadPartialBatch('transcripts');
+      if (partial) seen.push(partial.shape[1] ?? 0);
+    });
+
+    const pending = resolver.ensureLoaded({ key: 'transcripts', layerId: 'l', element: el });
+    // Partials are published while the load is still in flight — that IS the feature.
+    expect(resolver.getPreloadPartialBatch('transcripts')?.shape[1]).toBe(4);
+    await pending;
+
+    // Once settled, the resident batch takes over and equals the one-shot result.
+    expect(resolver.getData('transcripts')?.shape[1]).toBe(4);
+    // At least one growing partial was observed before the settle.
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('passes an onProgress through to the element so streaming can happen at all', async () => {
+    const el = element();
+    const resolver = new PointsResolver();
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'l', element: el });
+
+    expect(el.loadPoints).toHaveBeenCalledWith(
+      expect.objectContaining({ onProgress: expect.any(Function) })
+    );
+  });
+});

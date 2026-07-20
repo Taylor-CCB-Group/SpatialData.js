@@ -995,7 +995,14 @@ export function useLayerData(
               ? pointsEngine.getMatchedBatch(elem.key)
               : undefined;
           const useMatched = matchedBatch !== undefined && (matchedBatch.shape[1] ?? 0) > 0;
-          const baseBatch = useMatched ? matchedBatch : pointsEngine.getData(elem.key);
+          // Falling back to the in-flight preload's growing buffer (D3) is what makes a
+          // COLD load paint progressively: until the first full window settles there is
+          // no resident batch, and the base would otherwise draw nothing. It flows
+          // through the same stable base resource, so the growth is a revision bump —
+          // no teardown, no flicker.
+          const baseBatch = useMatched
+            ? matchedBatch
+            : (pointsEngine.getData(elem.key) ?? pointsEngine.getPreloadPartialBatch(elem.key));
 
           // Colour-by-feature is ON BY DEFAULT (opt-out via `colorByFeature: false`), so
           // thread the per-row codes whenever colour is not explicitly disabled — the

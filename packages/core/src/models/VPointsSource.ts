@@ -378,6 +378,114 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    *  shape: [number, number],
    * }>} A promise for a zarr array containing the data.
    */
+  /**
+   * Progressive geometry preload (D3): decode the capped window ONE ROW GROUP AT A
+   * TIME, emitting a growing partial after each, so points appear while the rest
+   * decodes instead of only after a single multi-second whole-part decode. This is
+   * the fix for "wild-type transcripts show nothing for ages".
+   *
+   * Only the axes (and an authoritative INTEGER feature-code column, when the
+   * dataset has one) are read here. That restriction is the whole design:
+   * `readParquetRowGroup` mis-decodes DICTIONARY-encoded columns, so the
+   * `feature_name` dict column can never be read this way — but plain float axes and
+   * a plain int code column are safe. So a dataset WITH a code column streams fully
+   * COLOURED from the first chunk, while a dict-only dataset streams flat and has
+   * its codes/catalog settled afterwards by the one-shot whole-part decode.
+   *
+   * The accumulator is preallocated at `maxRows` and appended at an offset cursor;
+   * each partial exposes the filled prefix as `subarray` VIEWS, so a progress tick
+   * is free — no re-concatenation (contrast {@link pointsScanChunkProgress}, which
+   * re-copies the whole buffer per chunk and is O(chunks²)).
+   *
+   * Returns null when streaming isn't possible (no dataset metadata, no range
+   * reads, worker disabled, nothing decoded) so the caller falls back to one-shot.
+   */
+  private async streamPointsGeometryByRowGroup(
+    parquetPath: string,
+    options: {
+      axisNames: string[];
+      columns: string[];
+      maxRows: number;
+      totalRowCount: number;
+      preloadTruncated: boolean;
+      featureCodeColumnName?: string;
+      onProgress?: (progress: PointsLoadProgress) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<PointsLoadResult | null> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.totalNumRowGroups <= 0) {
+      return null;
+    }
+    const { axisNames, maxRows, featureCodeColumnName } = options;
+    const axisCount = axisNames.length;
+    const axisBuffers = Array.from({ length: axisCount }, () => new Float32Array(maxRows));
+    const codeBuffer = featureCodeColumnName ? new Int32Array(maxRows) : undefined;
+    let filled = 0;
+
+    // Views over the filled prefix — no copy, so emitting a partial is O(1).
+    const snapshot = (): PointsLoadResult => ({
+      shape: [axisCount, filled] as [number, number],
+      data: axisBuffers.map((buffer) => buffer.subarray(0, filled)),
+      totalRowCount: options.totalRowCount,
+      preloadTruncated: options.preloadTruncated,
+      hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+      ...(codeBuffer ? { featureCodes: codeBuffer.subarray(0, filled) } : {}),
+    });
+
+    for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
+      checkAbort(options.signal); // superseded → stop before the next range read
+      if (filled >= maxRows) {
+        break;
+      }
+      const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+      if (!chunk) {
+        return filled > 0 ? snapshot() : null;
+      }
+      const decoded = await decodeParquetGeometryCappedInWorker({
+        rowGroups: [chunk],
+        axisNames,
+        columns: options.columns,
+        maxRows: maxRows - filled,
+        ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+      });
+      if (!decoded) {
+        // Worker unavailable: with nothing decoded yet the caller can still take the
+        // one-shot path; mid-stream we keep what we have rather than discard it.
+        return filled > 0 ? snapshot() : null;
+      }
+      const decodedRows = decoded.shape[1] ?? decoded.data[0]?.length ?? 0;
+      const rows = Math.min(decodedRows, maxRows - filled);
+      if (rows <= 0) {
+        continue;
+      }
+      for (let axis = 0; axis < axisCount; axis += 1) {
+        const column = decoded.data[axis];
+        if (!column) {
+          continue;
+        }
+        const values =
+          column instanceof Float32Array
+            ? column.subarray(0, rows)
+            : Float32Array.from(Array.prototype.slice.call(column, 0, rows));
+        axisBuffers[axis].set(values, filled);
+      }
+      if (codeBuffer && decoded.featureCodes) {
+        codeBuffer.set(decoded.featureCodes.subarray(0, rows), filled);
+      }
+      filled += rows;
+      options.onProgress?.({
+        // Unfiltered preload: every decoded row is kept, so scanned === matched.
+        scannedRows: filled,
+        matchedRows: filled,
+        partIndex: rowGroupIndex,
+        partCount: dataset.totalNumRowGroups,
+        partialResult: snapshot(),
+      });
+    }
+    return filled > 0 ? snapshot() : null;
+  }
+
   async loadPoints(
     elementPath: string,
     options: PointsLoadOptions = {}
@@ -429,6 +537,41 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
+      // Progressive preload (D3), when the caller asked for progress and the store
+      // supports row-group range reads. Streams the axes — plus an authoritative
+      // integer code column when the dataset has one, so those datasets stream
+      // COLOURED rather than colour-later.
+      if (options.onProgress && (await this.canLoadParquetRowGroups())) {
+        try {
+          const streamed = await this.streamPointsGeometryByRowGroup(parquetPath, {
+            axisNames,
+            columns: [...axisNames, ...(featureCodeColumnName ? [featureCodeColumnName] : [])],
+            maxRows,
+            totalRowCount: rowCount,
+            preloadTruncated: truncatePreload,
+            ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+            onProgress: options.onProgress,
+            ...(options.signal ? { signal: options.signal } : {}),
+          });
+          // The streamed batch is the FINAL result only when nothing more is needed
+          // from the dictionary column: either there is no feature key at all, or an
+          // authoritative code column already supplied per-row codes. A dict-only
+          // element still needs its codes + catalog, so it falls through to the
+          // one-shot decode below — the streaming pass has already earned its keep
+          // by painting points early.
+          if (streamed && (!featureKey || featureCodeColumnName !== undefined)) {
+            return streamed;
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            throw error;
+          }
+          console.warn(
+            `Progressive points preload failed for ${elementPath}; falling back to a single decode.`,
+            error
+          );
+        }
+      }
       try {
         if (featureKey) {
           // Off-thread the codes-with-geometry decode: fetch whole row-group (or

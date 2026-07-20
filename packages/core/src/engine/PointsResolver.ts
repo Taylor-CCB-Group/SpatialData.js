@@ -456,6 +456,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   /**
+   * The in-flight PRELOAD's growing geometry (D3) — what the base draws before the
+   * first full window settles, so a cold load paints progressively instead of
+   * staying blank. Undefined once the preload settles (`getData` takes over).
+   */
+  getPreloadPartialBatch(key: string): PointsLoadResult | undefined {
+    return this.entries.get(key)?.preload.partial;
+  }
+
+  /**
    * The key (`${signature}#${cap}`) of the in-flight scan whose partial is streaming,
    * or `undefined` when no scan is loading. The Renderer Adapter uses it to tell a
    * *growing* partial (same scan, keep the resource identity, bump a revision) from a
@@ -640,11 +649,33 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // live one's state). The previous batch stays on screen as `stale` until the new
     // one settles — the atomic swap.
     const before = slot.pending;
-    const loading = slot.request(memoryCap, async ({ signal }) => {
+    // Repaint granularity for the progressive preload: emitting every row group would
+    // re-render far more often than the eye needs on a multi-million-row load.
+    const PRELOAD_NOTIFY_STEP = 250_000;
+    let lastNotifiedRows = 0;
+    const loading = slot.request(memoryCap, async ({ emit, signal }) => {
       // Read the feature column with the geometry so the filter's catalog and per-row
       // codes come from this one decode. The catalog here reflects only the *resident*
       // batch — an instant preview the full-dataset scan may still supersede.
-      const data = await element.loadPoints({ includeFeatureCodes: true, memoryCap, signal });
+      const data = await element.loadPoints({
+        includeFeatureCodes: true,
+        memoryCap,
+        signal,
+        // Progressive preload (D3): publish the growing geometry so the base layer
+        // paints points as they decode instead of staying blank until the whole
+        // window lands. `emit` is inert once this request is superseded.
+        onProgress: (progress) => {
+          const silent = progress.matchedRows - lastNotifiedRows < PRELOAD_NOTIFY_STEP;
+          if (!silent) {
+            lastNotifiedRows = progress.matchedRows;
+          }
+          emit(
+            progress.partialResult,
+            { done: progress.matchedRows, scanned: progress.scannedRows },
+            { silent }
+          );
+        },
+      });
       // Superseded mid-flight (a newer cap won): drop the derived cross-slot writes
       // and let the slot ignore the return. Writing catalog/row codes from a stale
       // load is exactly the corruption R1/R5 were.

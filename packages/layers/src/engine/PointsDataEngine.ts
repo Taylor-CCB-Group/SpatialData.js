@@ -201,6 +201,12 @@ export class PointsDataEngine {
     return this.resolver.getMatchedBatch(key);
   }
 
+  /** The in-flight preload's growing geometry (D3) — drawn before the first full
+   * window settles so a cold load paints progressively. */
+  getPreloadPartialBatch(key: string): PointsLoadResult | undefined {
+    return this.resolver.getPreloadPartialBatch(key);
+  }
+
   getStatus(key: string): PointsLoadStatus {
     return this.resolver.getStatus(key);
   }
