@@ -272,6 +272,62 @@ const pointsSubElementRegex = /^points\/([^/]*)\/(.*)$/;
  */
 const FEATURE_STREAM_BATCH_ROWS = 16_384;
 
+/**
+ * How long a single streamed batch may take before the scan gives up and falls
+ * back to the byte-oriented path.
+ *
+ * The streaming reader has two failure modes that cannot be caught normally: a
+ * failed range request mid-stream leaves `read()` pending forever (no error, no
+ * rejection), and a wasm panic surfaces as an async `RuntimeError` that escapes
+ * try/catch, again leaving the read unsettled. Neither is recoverable by
+ * inspection, so progress is bounded instead: no batch within this window means
+ * abandon the stream rather than strand every consumer waiting on the catalog.
+ *
+ * Generous because a legitimate first batch over a slow link has been measured
+ * near 3s; this is an abnormal-condition backstop, not a latency budget.
+ */
+const FEATURE_STREAM_STALL_TIMEOUT_MS = 15_000;
+
+/**
+ * A no-progress watchdog for the whole streaming attempt.
+ *
+ * It must cover opening the file and the stream, not only the reads: an HTTP
+ * error mid-stream panics the reader during setup as readily as during a read,
+ * and in both cases the promise simply never settles. Guarding `read()` alone
+ * leaves `fromUrl()`/`stream()` able to hang forever.
+ *
+ * `progress()` is called whenever a batch lands, so a legitimately long scan
+ * keeps running while a truly stalled one is abandoned.
+ */
+function createStallGuard(timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reject: ((error: Error) => void) | undefined;
+  let settled = false;
+  const promise = new Promise<never>((_resolve, rejectFn) => {
+    reject = rejectFn;
+  });
+  const arm = () => {
+    clearTimeout(timer);
+    if (settled) {
+      return;
+    }
+    timer = setTimeout(() => {
+      settled = true;
+      reject?.(new Error(`Parquet feature stream made no progress for ${timeoutMs}ms`));
+    }, timeoutMs);
+  };
+  arm();
+  return {
+    /** Rejects once the watchdog trips; never resolves. */
+    promise,
+    progress: arm,
+    dispose: () => {
+      settled = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
 function getPointsElementPath(arrPath?: string) {
   if (arrPath) {
     const matches = arrPath.match(pointsSubElementRegex);
@@ -1365,37 +1421,59 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const nameToCode = new Map<string, number>();
     let publishedFeatureCount = 0;
 
-    for (const url of partUrls) {
-      const file = await ParquetFile.fromUrl(url);
-      const stream = await file.stream({
-        columns: columnNames,
-        batchSize: FEATURE_STREAM_BATCH_ROWS,
-      });
-      const reader = stream.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
+    // The watchdog spans opening AND draining every part: a failed range request
+    // can panic the reader at any of those points, and the panic never settles
+    // the promise it came from.
+    const stall = createStallGuard(FEATURE_STREAM_STALL_TIMEOUT_MS);
+    const scanAllParts = async () => {
+      for (const url of partUrls) {
+        const file = await ParquetFile.fromUrl(url);
+        const stream = await file.stream({
+          columns: columnNames,
+          batchSize: FEATURE_STREAM_BATCH_ROWS,
+        });
+        const reader = stream.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            stall.progress();
+            accumulateFeatureCatalogFromTable(
+              codeToName,
+              nameToCode,
+              tableFromIPC(value.intoIPCStream()),
+              featureKey,
+              featureCodeColumnName,
+              { skipMortonSentinels: hasMortonColumn }
+            );
+            // Only republish when the list actually grew; most batches add
+            // nothing once the common features have been seen.
+            if (onPartialCatalog && codeToName.size > publishedFeatureCount) {
+              publishedFeatureCount = codeToName.size;
+              onPartialCatalog(featureCatalogFromCodeMap(featureKey, codeToName));
+            }
           }
-          accumulateFeatureCatalogFromTable(
-            codeToName,
-            nameToCode,
-            tableFromIPC(value.intoIPCStream()),
-            featureKey,
-            featureCodeColumnName,
-            { skipMortonSentinels: hasMortonColumn }
-          );
-          // Only republish when the list actually grew; most batches add nothing
-          // once the common features have been seen.
-          if (onPartialCatalog && codeToName.size > publishedFeatureCount) {
-            publishedFeatureCount = codeToName.size;
-            onPartialCatalog(featureCatalogFromCodeMap(featureKey, codeToName));
-          }
+        } finally {
+          // Best-effort: after a wasm panic the reader may itself be unusable,
+          // and cancel() can hang exactly like read() does — never await it.
+          void reader.cancel().catch(() => {});
+          reader.releaseLock();
         }
-      } finally {
-        reader.releaseLock();
       }
+    };
+
+    try {
+      await Promise.race([scanAllParts(), stall.promise]);
+    } catch (error) {
+      // Includes the watchdog tripping. Returning null keeps the contract with
+      // the caller: fall through to the byte-oriented scan rather than surface
+      // a half-built catalog.
+      console.warn(`Streaming feature catalog scan abandoned for ${parquetPath}:`, error);
+      return null;
+    } finally {
+      stall.dispose();
     }
 
     if (featureCatalogNeedsParquetFallback(codeToName)) {
