@@ -1,10 +1,24 @@
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialShapesSublayer } from '@spatialdata/core';
+import {
+  type SpatialShapesSublayer,
+  type TessellatedPolygons,
+  tessellateFlatPolygons,
+} from '@spatialdata/core';
 import { type Layer, type PickingInfo, PolygonLayer, ScatterplotLayer } from 'deck.gl';
+import { FlatPolygonLayer } from './FlatPolygonLayer';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
 
 export type ShapesGeometryKind = 'polygon' | 'circle' | 'point';
+
+/**
+ * Default shape fill colour. A **single stable reference** on purpose: it feeds
+ * `updateTriggers.getFillColor`, which deck compares shallowly. A fresh
+ * `[100,100,200,180]` literal per render (e.g. a default parameter) reads as a
+ * changed trigger and forces deck to rebuild the entire per-feature colour
+ * attribute every frame — an O(vertices) main-thread stall on every hover/pan.
+ */
+export const DEFAULT_SHAPE_FILL_COLOR: [number, number, number, number] = [100, 100, 200, 180];
 
 /** Default marker radius for point landmarks (pixels). */
 export const DEFAULT_SHAPE_POINT_RADIUS_PX = 8;
@@ -13,12 +27,24 @@ export const DEFAULT_SHAPE_STROKE_WIDTH_UNITS = 'common' as const;
 export const DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS = 0;
 export const DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS = 1;
 
-export type ShapesGeometryRepresentationKind = 'js-polygons' | 'wkb-parquet' | 'geoarrow-table';
+export type ShapesGeometryRepresentationKind =
+  | 'js-polygons'
+  | 'flat-polygons'
+  | 'wkb-parquet'
+  | 'geoarrow-table';
 export type ShapeStrokeWidthUnits = 'common' | 'pixels';
 
 export interface ShapeCircleColumnarLike {
   positions: [Float32Array, Float32Array];
   radii?: Float32Array;
+}
+
+/** Flat GeoArrow-style polygon geometry (interleaved positions + vertex offsets). */
+export interface FlatPolygonGeometryLike {
+  positions: Float32Array;
+  startIndices: Int32Array;
+  /** Off-thread-tessellated render topology (worker path); absent → tessellate lazily. */
+  tessellation?: TessellatedPolygons;
 }
 
 export interface ShapesRenderDataLike {
@@ -27,6 +53,8 @@ export interface ShapesRenderDataLike {
   elementKey: string;
   featureIds: string[];
   polygons?: ShapePolygon[];
+  /** Transferable flat polygon geometry. Rendered via a binary `PolygonLayer`. */
+  polygonBinary?: FlatPolygonGeometryLike;
   circles?: ShapeCircleColumnarLike;
   rowIndexByFeatureIndex: Int32Array;
   geometryTable?: GeoarrowTableLike;
@@ -98,9 +126,31 @@ export interface ShapeTooltipRuntimeData {
  * and stored in the load cache. `createShapesDeckLayer` uses them directly when provided,
  * avoiding the O(n-features) allocation on every `getLayers()` call.
  */
+/**
+ * Binary polygon geometry ready for a deck.gl binary `PolygonLayer`: the flat
+ * coordinate + offset buffers plus the per-index feature identity needed to drive
+ * colour and picking without a per-feature JS object. `featureIds[i]` /
+ * `rowIndexByFeatureIndex[i]` name feature `i`, which is exactly the binary
+ * polygon at `startIndices[i]`.
+ */
+export interface ShapesBinaryPolygonData {
+  positions: Float32Array;
+  startIndices: Int32Array;
+  featureIds: string[];
+  rowIndexByFeatureIndex?: Int32Array;
+  /** Off-thread-tessellated render topology; when absent the layer tessellates lazily. */
+  tessellation?: TessellatedPolygons;
+}
+
 export interface ShapesPrebuiltData {
   geometryKind: ShapesGeometryKind;
+  /** Per-feature descriptors (circle/point, or the legacy nested-polygon path). */
   data: ShapePolygonRenderDatum[] | ShapeCircleRenderDatum[];
+  /**
+   * Present for `flat-polygons` geometry. When set, `data` is empty and the layer
+   * renders from these binary buffers, resolving features by index.
+   */
+  binary?: ShapesBinaryPolygonData;
 }
 
 /** Cache normalised featureState runtimes by plain-object identity. */
@@ -190,6 +240,48 @@ function shapeFeatureColorUpdateTriggers(
   ];
 }
 
+/**
+ * The fill-colour `updateTrigger` array with a **stable identity** while its
+ * contents are unchanged, memoised on the (stable) feature-state runtime.
+ *
+ * This is the fix for the interaction/hover buffer thrash: `createShapesDeckLayer`
+ * runs on every `getLayers()` (a hover re-renders for the tooltip), and a fresh
+ * trigger array each time reads to deck as "the colours changed", so it rebuilds
+ * the whole per-feature colour attribute — millions of `getFillColor` calls, a
+ * multi-hundred-ms main-thread stall — on every render. Feeding a stable identity
+ * lets deck skip the rebuild unless feature-state actually changes.
+ */
+// Two levels so fill and stroke (same runtime, different default colours) each get
+// a stable trigger. Both keys are stable references — the runtime from the vis-side
+// feature-state cache, the default colour a module constant / config value — so a
+// steady state yields a cache hit and deck skips the rebuild.
+const colorTriggerCache = new WeakMap<
+  ShapeFeatureStateRuntime,
+  WeakMap<object, readonly unknown[]>
+>();
+
+function stableColorUpdateTrigger(
+  featureState: ShapeFeatureStateRuntime,
+  defaultColor: [number, number, number, number]
+): readonly unknown[] {
+  let byColor = colorTriggerCache.get(featureState);
+  if (!byColor) {
+    byColor = new WeakMap();
+    colorTriggerCache.set(featureState, byColor);
+  }
+  const key = defaultColor as unknown as object;
+  let trigger = byColor.get(key);
+  if (!trigger) {
+    // The runtime already changes identity on ANY feature-state change — the
+    // vis-side cache keys it by a signature that includes hidden/faded/colours —
+    // so `featureState` (the memo key) is a complete invalidation signal; the
+    // trigger contents need only be stable-per-runtime.
+    trigger = shapeFeatureColorUpdateTriggers(featureState, defaultColor);
+    byColor.set(key, trigger);
+  }
+  return trigger;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -268,6 +360,193 @@ function resolveFeatureColor(
   return featureState.fadedFeatureIds.has(featureId)
     ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
     : base;
+}
+
+/**
+ * How far the outline is lifted toward white, and how much its alpha is raised,
+ * relative to the fill it is derived from.
+ */
+const STROKE_LIGHTEN = 0.45;
+const STROKE_ALPHA_LIFT = 55;
+
+/**
+ * Memoise the derivation on the **input array identity**. A stable fill (a module
+ * default, or the caller's stable per-feature colour array) must yield a stable
+ * outline array, so the outline's `updateTrigger` keeps a stable identity and deck
+ * does not rebuild the outline colour buffer on every hover/pan — the same
+ * buffer-thrash fix the fill relies on.
+ */
+const derivedStrokeCache = new WeakMap<object, [number, number, number, number]>();
+
+/**
+ * Derive a shape's outline colour from its **fill**. The fill is the *specified*
+ * colour (a layer default or a data-column encoding); the outline is a lighter,
+ * slightly more opaque accent of it, so adjacent shapes read as distinct without
+ * the edge competing with the fill. A ≤1px outline the *same* colour as the fill
+ * is invisible — the reason shapes previously did not read as shapes. A genuine
+ * per-feature stroke override still wins over this derivation (see
+ * `resolveStrokeColor`).
+ */
+export function deriveStrokeColor(
+  fill: [number, number, number, number]
+): [number, number, number, number] {
+  const key = fill as unknown as object;
+  const cached = derivedStrokeCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const lift = (channel: number): number => Math.round(channel + (255 - channel) * STROKE_LIGHTEN);
+  const result: [number, number, number, number] = [
+    lift(fill[0]),
+    lift(fill[1]),
+    lift(fill[2]),
+    Math.min(255, fill[3] + STROKE_ALPHA_LIFT),
+  ];
+  derivedStrokeCache.set(key, result);
+  return result;
+}
+
+/**
+ * Resolve a feature's outline colour. Precedence: an explicit per-feature stroke
+ * override, else a lighter derivation of the feature's resolved fill (per-feature
+ * fill colour when present, otherwise the caller's default outline). Fade is
+ * applied last, mirroring `resolveFeatureColor`.
+ */
+function resolveStrokeColor(
+  featureId: string,
+  featureState: ShapeFeatureStateRuntime,
+  resolvedDefaultStroke: [number, number, number, number]
+): [number, number, number, number] {
+  const explicit = featureState.strokeColorByFeatureId.get(featureId);
+  const fill = featureState.fillColorByFeatureId.get(featureId);
+  const base = explicit ?? (fill ? deriveStrokeColor(fill) : resolvedDefaultStroke);
+  return featureState.fadedFeatureIds.has(featureId)
+    ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
+    : base;
+}
+
+/** Hidden features are not excluded from a binary buffer (that would misalign the
+ *  index); they render fully transparent instead. */
+const TRANSPARENT_RGBA: [number, number, number, number] = [0, 0, 0, 0];
+
+/**
+ * The tessellation pipeline for the binary polygon path. Each stage is memoised on
+ * its stable upstream input so `createShapesDeckLayer` (which runs every
+ * `getLayers()`) does no per-frame work and hands deck stable buffer identities —
+ * the same discipline the old binary descriptors used, extended to the fill +
+ * fwidth-outline geometry.
+ */
+
+/** Shared ring positions + per-triangle topology for vertex pulling, memoised on the
+ *  positions buffer (stable, resolver-owned) so tessellation runs once. */
+const tessellationCache = new WeakMap<Float32Array, WeakMap<Int32Array, TessellatedPolygons>>();
+
+function getTessellation(positions: Float32Array, startIndices: Int32Array): TessellatedPolygons {
+  // Keyed on BOTH buffers: the topology depends on the offsets as much as the
+  // coordinates, so keying on `positions` alone would serve one element's topology
+  // for another that reuses the coordinate buffer with different offsets (wrong
+  // triangles, wrong picking indices).
+  let byStartIndices = tessellationCache.get(positions);
+  const cached = byStartIndices?.get(startIndices);
+  if (cached) {
+    return cached;
+  }
+  const tess = tessellateFlatPolygons(positions, startIndices);
+  if (!byStartIndices) {
+    byStartIndices = new WeakMap();
+    tessellationCache.set(positions, byStartIndices);
+  }
+  byStartIndices.set(startIndices, tess);
+  return tess;
+}
+
+/**
+ * Per-**feature** RGBA colours (the "table column → buffer" primitive), rebuilt only
+ * when feature-state changes. This is `featureCount` texels — the layer uploads it to
+ * a small texture and the shader samples it by feature index, so the (large) geometry
+ * textures never re-upload. Hide/fade are folded into alpha.
+ *
+ * Keyed by **layer id**, not the feature-state runtime: two layers with no explicit
+ * feature-state both resolve to the SAME `EMPTY_SHAPE_FEATURE_STATE_RUNTIME` singleton
+ * (as do two layers with identical feature-state), so a runtime-keyed cache holds one
+ * slot the layers overwrite each other in — a per-frame rebuild of both (million-
+ * element) buffers on every `getLayers()` (pan/hover).
+ *
+ * Keyed instead on the three identities the buffer's contents actually depend on —
+ * the feature-state runtime, the feature-id array (index → feature), and the default
+ * colour — nested as WeakMaps so nothing is retained once a layer's geometry is
+ * dropped. (A strong `Map` keyed by layer id would pin a million-element `Uint8Array`
+ * per discarded layer id forever.) Two layers whose three keys all match legitimately
+ * share one buffer: identical inputs mean identical bytes.
+ */
+const featureColorsCache = new WeakMap<
+  ShapeFeatureStateRuntime,
+  WeakMap<object, WeakMap<object, Uint8Array>>
+>();
+
+function getFeatureColors(
+  featureState: ShapeFeatureStateRuntime,
+  featureIds: readonly string[],
+  defaultColor: readonly number[],
+  colorForFeatureIndex: (index: number) => [number, number, number, number]
+): Uint8Array {
+  const idsKey = featureIds as unknown as object;
+  const colorKey = defaultColor as unknown as object;
+  let byIds = featureColorsCache.get(featureState);
+  if (!byIds) {
+    byIds = new WeakMap();
+    featureColorsCache.set(featureState, byIds);
+  }
+  let byColor = byIds.get(idsKey);
+  if (!byColor) {
+    byColor = new WeakMap();
+    byIds.set(idsKey, byColor);
+  }
+  const cached = byColor.get(colorKey);
+  if (cached) {
+    return cached;
+  }
+  const featureCount = featureIds.length;
+  const colors = new Uint8Array(featureCount * 4);
+  for (let f = 0; f < featureCount; f += 1) {
+    const c = colorForFeatureIndex(f);
+    colors[f * 4] = c[0];
+    colors[f * 4 + 1] = c[1];
+    colors[f * 4 + 2] = c[2];
+    colors[f * 4 + 3] = c[3];
+  }
+  byColor.set(colorKey, colors);
+  return colors;
+}
+
+/**
+ * Reconstruct a single feature's descriptor (including its polygon ring) from the
+ * binary buffers. Called only at pick/tooltip time — one feature, so the nested
+ * allocation the binary path avoids at load is negligible here.
+ */
+export function featureFromBinary(
+  binary: ShapesBinaryPolygonData,
+  index: number
+): ShapePolygonRenderDatum | undefined {
+  const featureId = binary.featureIds[index];
+  if (!Number.isInteger(index) || index < 0 || !featureId) {
+    return undefined;
+  }
+  const start = binary.startIndices[index];
+  const end = binary.startIndices[index + 1];
+  const ring: Array<[number, number]> = [];
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    for (let v = start; v < end; v += 1) {
+      ring.push([binary.positions[v * 2], binary.positions[v * 2 + 1]]);
+    }
+  }
+  const rowIndex = binary.rowIndexByFeatureIndex?.[index];
+  return {
+    featureId,
+    featureIndex: index,
+    polygon: [ring],
+    rowIndex: rowIndex !== undefined && rowIndex >= 0 ? rowIndex : undefined,
+  };
 }
 
 function resolveGeometryKind(renderData: ShapesRenderDataLike): ShapesGeometryKind {
@@ -404,6 +683,24 @@ export function buildShapesPrebuiltData(
     return { geometryKind, data: buildCircleRenderedFeatures(renderData, hiddenSet) };
   }
 
+  if (renderData.polygonBinary) {
+    // Binary path: no per-feature array is built at all — features are resolved by
+    // index. `hiddenFeatureIds` is deliberately NOT applied here: hidden features
+    // stay in the buffer (index alignment) and render transparent at colour time,
+    // so this prebuilt is independent of the hidden set.
+    return {
+      geometryKind: 'polygon',
+      data: [],
+      binary: {
+        positions: renderData.polygonBinary.positions,
+        startIndices: renderData.polygonBinary.startIndices,
+        featureIds: renderData.featureIds,
+        rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
+        tessellation: renderData.polygonBinary.tessellation,
+      },
+    };
+  }
+
   const data =
     renderData.kind === 'geoarrow-table'
       ? buildGeoarrowRenderedFeatures(renderData, hiddenSet)
@@ -435,6 +732,36 @@ function createPickHandler(
       coordinateSystem,
       rowIndex: object.rowIndex,
       object,
+      pickInfo,
+    });
+  };
+}
+
+function createBinaryPickHandler(
+  layerId: string,
+  elementKey: string,
+  coordinateSystem: string | null | undefined,
+  binary: ShapesBinaryPolygonData,
+  callback: ((event: ShapesLayerPickEvent) => void) | undefined
+) {
+  if (!callback) {
+    return undefined;
+  }
+  return (pickInfo: PickingInfo) => {
+    // Binary layers surface only a picked `index`; reconstruct the feature from it.
+    const feature =
+      typeof pickInfo.index === 'number' ? featureFromBinary(binary, pickInfo.index) : undefined;
+    if (!feature) {
+      return;
+    }
+    callback({
+      layerId,
+      elementKey,
+      featureId: feature.featureId,
+      featureIndex: feature.featureIndex,
+      coordinateSystem,
+      rowIndex: feature.rowIndex,
+      object: feature,
       pickInfo,
     });
   };
@@ -495,6 +822,9 @@ export function resolveShapeFeatureFromPick(
   }
   if (!prebuilt || typeof pickInfo.index !== 'number' || pickInfo.index < 0) {
     return undefined;
+  }
+  if (prebuilt.binary) {
+    return featureFromBinary(prebuilt.binary, pickInfo.index);
   }
   const datum = prebuilt.data[pickInfo.index];
   return isShapeFeatureRenderDatum(datum) ? datum : undefined;
@@ -566,8 +896,8 @@ function createPolygonDeckLayer(
   options: CreateShapesDeckLayerOptions
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
-  const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
-  const defaultStrokeColor = sublayer.defaultStrokeColor ?? defaultFillColor;
+  const defaultFillColor = sublayer.defaultFillColor ?? DEFAULT_SHAPE_FILL_COLOR;
+  const resolvedDefaultStroke = sublayer.defaultStrokeColor ?? deriveStrokeColor(defaultFillColor);
   const defaultStrokeWidth = sublayer.defaultStrokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
   const defaultStrokeWidthUnits =
     sublayer.defaultStrokeWidthUnits ?? DEFAULT_SHAPE_STROKE_WIDTH_UNITS;
@@ -588,21 +918,14 @@ function createPolygonDeckLayer(
         defaultFillColor,
         featureState
       ),
-    getLineColor: (d) =>
-      resolveFeatureColor(
-        d.featureId,
-        featureState.strokeColorByFeatureId,
-        featureState.fillColorByFeatureId,
-        defaultStrokeColor,
-        featureState
-      ),
+    getLineColor: (d) => resolveStrokeColor(d.featureId, featureState, resolvedDefaultStroke),
     getLineWidth: defaultStrokeWidth,
     lineWidthUnits: defaultStrokeWidthUnits,
     lineWidthMinPixels: defaultStrokeWidthMinPixels,
     lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
     updateTriggers: {
-      getFillColor: shapeFeatureColorUpdateTriggers(featureState, defaultFillColor),
-      getLineColor: shapeFeatureColorUpdateTriggers(featureState, defaultStrokeColor),
+      getFillColor: stableColorUpdateTrigger(featureState, defaultFillColor),
+      getLineColor: stableColorUpdateTrigger(featureState, resolvedDefaultStroke),
       getLineWidth: [defaultStrokeWidth],
     },
     filled: true,
@@ -627,6 +950,99 @@ function createPolygonDeckLayer(
   });
 }
 
+/**
+ * Render flat polygon geometry through a deck.gl `SolidPolygonLayer` in **binary
+ * mode** — the coordinates never leave their typed-array form, so there is no
+ * per-feature JS object and no per-vertex allocation.
+ *
+ * A single `FlatPolygonLayer` draws fill and outline together: the ring geometry is
+ * tessellated into triangles carrying a boundary edge-distance, and the fragment
+ * shader imputes an anti-aliased outline with `fwidth` — no separate outline layer
+ * (the `PathLayer` outline was the pan/zoom regression at ~2.7M shapes; it
+ * tessellated every ring into width-quads). The outline colour is a lighter
+ * derivation of the fill, computed in the shader, so adjacent shapes read as
+ * distinct.
+ *
+ * Feature-state is index-driven: colour is resolved once per feature and expanded to
+ * the tessellated vertices; hidden features become transparent (dropped in the
+ * shader), faded features get their alpha scaled. The per-vertex fill-colour buffer
+ * is memoised on the feature-state runtime, whose identity changes on any
+ * feature-state change — so deck re-uploads it exactly when it must, and never on a
+ * bare re-render (the hover/pan buffer-thrash fix). Static geometry (positions,
+ * edge-distances, picking colours) keeps a stable identity across all renders.
+ *
+ * NOTE: an explicit per-feature stroke override (`strokeColorByFeatureId`) is not yet
+ * honoured on this path — the outline is always the lightened fill. The object path
+ * still honours it; wiring it here is a follow-up.
+ */
+function createBinaryPolygonDeckLayers(
+  binary: ShapesBinaryPolygonData,
+  sublayer: SpatialShapesRuntimeSublayer,
+  options: CreateShapesDeckLayerOptions
+): Layer[] {
+  const featureState = normalizeShapeFeatureState(sublayer.featureState);
+  const defaultFillColor = sublayer.defaultFillColor ?? DEFAULT_SHAPE_FILL_COLOR;
+
+  const { positions, startIndices, featureIds } = binary;
+
+  // Prefer the topology tessellated off the main thread by the geometry worker; fall
+  // back to lazy main-thread tessellation only when the worker path didn't provide it.
+  const tess = binary.tessellation ?? getTessellation(positions, startIndices);
+  if (tess.triangleCount === 0) {
+    return [];
+  }
+
+  const fillColorAt = (index: number): [number, number, number, number] => {
+    const featureId = featureIds[index];
+    if (!featureId || featureState.hiddenFeatureIds.has(featureId)) {
+      return TRANSPARENT_RGBA;
+    }
+    return resolveFeatureColor(
+      featureId,
+      featureState.fillColorByFeatureId,
+      EMPTY_SHAPE_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
+      defaultFillColor,
+      featureState
+    );
+  };
+
+  const featureColors = getFeatureColors(featureState, featureIds, defaultFillColor, fillColorAt);
+
+  const layer = new FlatPolygonLayer({
+    id: options.id,
+    ringPositions: tess.ringPositions,
+    ringVertexCount: tess.ringVertexCount,
+    triangleData: tess.triangleData,
+    triangleCount: tess.triangleCount,
+    featureScale: tess.featureScale,
+    featureColors,
+    featureCount: featureIds.length,
+    strokeWidthPixels:
+      sublayer.defaultStrokeWidthMaxPixels ?? DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
+    opacity: options.opacity ?? 1,
+    modelMatrix: options.modelMatrix,
+    pickable: options.pickingEnabled ?? true,
+    autoHighlight: options.pickingEnabled ?? true,
+    highlightColor: [255, 255, 0, 128],
+    onHover: createBinaryPickHandler(
+      options.id,
+      sublayer.elementKey,
+      options.spatialCoordinateSystem,
+      binary,
+      options.onShapeHover
+    ),
+    onClick: createBinaryPickHandler(
+      options.id,
+      sublayer.elementKey,
+      options.spatialCoordinateSystem,
+      binary,
+      options.onShapeClick
+    ),
+  } as unknown as ConstructorParameters<typeof FlatPolygonLayer>[0]);
+
+  return [layer as unknown as Layer];
+}
+
 function createCircleDeckLayer(
   data: ShapeCircleRenderDatum[],
   geometryKind: 'circle' | 'point',
@@ -634,7 +1050,7 @@ function createCircleDeckLayer(
   options: CreateShapesDeckLayerOptions
 ): Layer {
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
-  const defaultFillColor = sublayer.defaultFillColor ?? [100, 100, 200, 180];
+  const defaultFillColor = sublayer.defaultFillColor ?? DEFAULT_SHAPE_FILL_COLOR;
   const radiusUnits = geometryKind === 'point' ? 'pixels' : 'common';
 
   return new ScatterplotLayer<ShapeCircleRenderDatum>({
@@ -650,7 +1066,7 @@ function createCircleDeckLayer(
         : base;
     },
     updateTriggers: {
-      getFillColor: shapeFeatureColorUpdateTriggers(featureState, defaultFillColor),
+      getFillColor: stableColorUpdateTrigger(featureState, defaultFillColor),
     },
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,
@@ -683,18 +1099,29 @@ function createCircleDeckLayer(
  *
  * Without `prebuilt` the function falls back to building the data inline, which
  * preserves backward compatibility for external callers and tests.
+ *
+ * The binary polygon path returns **two** layers (fill + outline); every other
+ * path returns one. Callers must accept `Layer | Layer[]` — deck's `LayersList`
+ * flattens nested arrays, so an array can be passed through unchanged.
  */
 export function createShapesDeckLayer(
   renderData: ShapesRenderDataLike,
   sublayer: SpatialShapesRuntimeSublayer,
   options: CreateShapesDeckLayerOptions,
   prebuilt?: ShapesPrebuiltData
-): Layer | null {
+): Layer | Layer[] | null {
   if ((options.visible ?? sublayer.visible ?? true) === false) {
     return null;
   }
 
   if (prebuilt) {
+    // Binary polygons first: their `data` is intentionally empty (features by
+    // index), so the length check below must not short-circuit them.
+    if (prebuilt.binary) {
+      return prebuilt.binary.featureIds.length === 0
+        ? null
+        : createBinaryPolygonDeckLayers(prebuilt.binary, sublayer, options);
+    }
     if (prebuilt.data.length === 0) return null;
     if (prebuilt.geometryKind === 'circle' || prebuilt.geometryKind === 'point') {
       return createCircleDeckLayer(
@@ -717,6 +1144,22 @@ export function createShapesDeckLayer(
       return null;
     }
     return createCircleDeckLayer(data, geometryKind, sublayer, options);
+  }
+
+  if (renderData.polygonBinary) {
+    return renderData.featureIds.length === 0
+      ? null
+      : createBinaryPolygonDeckLayers(
+          {
+            positions: renderData.polygonBinary.positions,
+            startIndices: renderData.polygonBinary.startIndices,
+            featureIds: renderData.featureIds,
+            rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
+            tessellation: renderData.polygonBinary.tessellation,
+          },
+          sublayer,
+          options
+        );
   }
 
   const data =

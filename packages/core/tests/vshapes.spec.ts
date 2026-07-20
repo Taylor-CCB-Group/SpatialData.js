@@ -85,33 +85,22 @@ describe('SpatialDataShapesSource', () => {
       schema: { fields: [{ name: 'geometry' }], metadata: new Map() },
       getChild: () => undefined,
     } as any);
-    vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
-      shape: [2, null],
-      data: [
-        [
-          [
-            [0, 0],
-            [1, 0],
-            [1, 1],
-            [0, 0],
-          ],
-        ],
-        [
-          [
-            [2, 2],
-            [3, 2],
-            [3, 3],
-            [2, 2],
-          ],
-        ],
-      ],
+    // The WKB decode is now a separable boundary (`loadFlatShapeGeometry`),
+    // exercised directly in shapesGeometryDecode.spec. Here we mock it to test the
+    // orchestration: feature-id alignment and the flat-polygon render shape.
+    vi.spyOn(source as any, 'loadFlatShapeGeometry').mockResolvedValue({
+      kind: 'polygon',
+      positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 0, 2, 2, 3, 2, 3, 3, 2, 2]),
+      startIndices: new Int32Array([0, 4, 8]),
+      featureCount: 2,
     });
 
     await expect(source.loadShapesRenderData('shapes/cells')).resolves.toMatchObject({
-      kind: 'wkb-parquet',
+      kind: 'flat-polygons',
       geometryKind: 'polygon',
       elementKey: 'cells',
       featureIds: ['cell-1', 'cell-2'],
+      polygonBinary: { startIndices: new Int32Array([0, 4, 8]) },
     });
   });
 
@@ -123,9 +112,11 @@ describe('SpatialDataShapesSource', () => {
 
     vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.2');
     vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['cell-1', 'cell-2']);
-    vi.spyOn(source, 'loadCircleShapes').mockResolvedValue({
-      shape: [2, 2],
-      data: [new Float32Array([0, 2]), new Float32Array([0, 2])],
+    vi.spyOn(source as any, 'loadFlatShapeGeometry').mockResolvedValue({
+      kind: 'point',
+      xs: new Float32Array([0, 2]),
+      ys: new Float32Array([0, 2]),
+      featureCount: 2,
     });
     vi.spyOn(source, 'loadNumeric').mockResolvedValue({
       shape: [2],
@@ -245,9 +236,11 @@ describe('SpatialDataShapesSource', () => {
 
     vi.spyOn(source, 'getShapesFormatVersion').mockResolvedValue('0.2');
     vi.spyOn(source, 'loadShapesIndex').mockResolvedValue(['landmark-a', 'landmark-b']);
-    vi.spyOn(source, 'loadCircleShapes').mockResolvedValue({
-      shape: [2, 2],
-      data: [new Float32Array([100, 200]), new Float32Array([50, 60])],
+    vi.spyOn(source as any, 'loadFlatShapeGeometry').mockResolvedValue({
+      kind: 'point',
+      xs: new Float32Array([100, 200]),
+      ys: new Float32Array([50, 60]),
+      featureCount: 2,
     });
     vi.spyOn(source, 'loadParquetTable').mockResolvedValue({
       numRows: 2,
@@ -298,26 +291,11 @@ describe('SpatialDataShapesSource', () => {
       schema: { fields: [{ name: 'geometry' }], metadata: new Map() },
       getChild: () => undefined,
     } as any);
-    vi.spyOn(source, 'loadPolygonShapes').mockResolvedValue({
-      shape: [2, null],
-      data: [
-        [
-          [
-            [0, 0],
-            [1, 0],
-            [1, 1],
-            [0, 0],
-          ],
-        ],
-        [
-          [
-            [2, 2],
-            [3, 2],
-            [3, 3],
-            [2, 2],
-          ],
-        ],
-      ],
+    vi.spyOn(source as any, 'loadFlatShapeGeometry').mockResolvedValue({
+      kind: 'polygon',
+      positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 0, 2, 2, 3, 2, 3, 3, 2, 2]),
+      startIndices: new Int32Array([0, 4, 8]),
+      featureCount: 2,
     });
 
     await expect(source.loadShapesRenderData('shapes/cells')).rejects.toThrow(

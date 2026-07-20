@@ -7,6 +7,8 @@ import {
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+  deriveStrokeColor,
+  featureFromBinary,
   type GeoarrowTableLike,
   isShapeFeatureStateRuntime,
   normalizeShapeFeatureState,
@@ -142,7 +144,7 @@ describe('createShapesDeckLayer', () => {
     ]);
   });
 
-  it('uses fill colours for outlines by default with zoom-scaled stroke defaults', () => {
+  it('derives a lighter outline from the fill by default with zoom-scaled stroke defaults', () => {
     const layer = createShapesDeckLayer(
       renderData,
       {
@@ -157,8 +159,8 @@ describe('createShapesDeckLayer', () => {
       { id: 'shapes-fill-stroke' }
     );
 
-    if (!layer) {
-      throw new Error('Expected shapes layer to render');
+    if (!layer || Array.isArray(layer)) {
+      throw new Error('Expected a single object-path shapes layer');
     }
     const props = layer.props as unknown as {
       data: Array<{ featureId: string }>;
@@ -179,8 +181,12 @@ describe('createShapesDeckLayer', () => {
     expect(props.updateTriggers.getLineColor).toHaveLength(5);
     expect(props.updateTriggers.getFillColor[0]).toBeInstanceOf(Map);
     expect(props.updateTriggers.getLineWidth).toEqual([1]);
-    expect(props.getLineColor(props.data[0])).toEqual([1, 2, 3, 180]);
-    expect(props.getLineColor(props.data[1])).toEqual([10, 20, 30, 180]);
+    // Outline = a lighter derivation of the fill, not the fill itself, so the
+    // boundary is visible. cell-1 has a per-feature fill; cell-2 uses the default.
+    expect(props.getLineColor(props.data[0])).toEqual(deriveStrokeColor([1, 2, 3, 180]));
+    expect(props.getLineColor(props.data[1])).toEqual(deriveStrokeColor([10, 20, 30, 180]));
+    // The derived outline is genuinely distinct from (lighter than) the fill.
+    expect(props.getLineColor(props.data[0])).not.toEqual([1, 2, 3, 180]);
   });
 
   it('allows callers to configure polygon stroke width behavior', () => {
@@ -451,6 +457,160 @@ describe('createShapesDeckLayer', () => {
       featureId: 'cell-2',
       featureIndex: 1,
     });
+  });
+});
+
+describe('binary (flat-polygons) render path', () => {
+  const binaryRenderData: ShapesRenderDataLike = {
+    kind: 'flat-polygons',
+    geometryKind: 'polygon',
+    elementKey: 'cells',
+    featureIds: ['cell-1', 'cell-2'],
+    polygonBinary: {
+      // Two triangles: feature 0 at the origin, feature 1 near (10,10).
+      positions: new Float32Array([0, 0, 1, 0, 0, 1, 10, 10, 11, 10, 10, 11]),
+      startIndices: new Int32Array([0, 3, 6]),
+    },
+    rowIndexByFeatureIndex: new Int32Array([5, 7]),
+  };
+
+  it('builds a binary prebuilt with no per-feature array', () => {
+    const prebuilt = buildShapesPrebuiltData(binaryRenderData, ['cell-2']);
+    expect(prebuilt.geometryKind).toBe('polygon');
+    // Hidden features are NOT excluded from the binary buffer (index alignment).
+    expect(prebuilt.data).toEqual([]);
+    expect(prebuilt.binary?.featureIds).toEqual(['cell-1', 'cell-2']);
+    expect(prebuilt.binary?.startIndices).toBe(binaryRenderData.polygonBinary?.startIndices);
+  });
+
+  it('renders a single vertex-pulling FlatPolygonLayer with topology + per-feature colour', () => {
+    const prebuilt = buildShapesPrebuiltData(binaryRenderData);
+    const layer = createShapesDeckLayer(
+      binaryRenderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+        defaultFillColor: [10, 20, 30, 255],
+        featureState: {
+          fillColorByFeatureId: { 'cell-1': [1, 2, 3, 255] },
+          hiddenFeatureIds: ['cell-2'],
+        },
+      },
+      { id: 'shapes-binary' },
+      prebuilt
+    );
+
+    // The binary path returns a single fill+outline FlatPolygonLayer; the shader pulls
+    // position + edge-distance from the topology, so there are no vertex attributes.
+    if (!Array.isArray(layer)) {
+      throw new Error('Expected the binary path to return a single-layer array');
+    }
+    expect(layer).toHaveLength(1);
+    const props = layer[0].props as any;
+
+    // Two triangular rings → 2 triangles, 6 shared ring vertices. Topology packs the
+    // feature index above the 3 boundary-flag bits; both triangles are all-boundary
+    // (each ring is itself a triangle), so flags = 0b111 = 7.
+    expect(props.triangleCount).toBe(2);
+    expect(props.ringVertexCount).toBe(6);
+    const td = props.triangleData as Uint32Array;
+    expect(td[3] >>> 3).toBe(0); // triangle 0 → feature 0
+    expect(td[3] & 7).toBe(7);
+    expect(td[7] >>> 3).toBe(1); // triangle 1 → feature 1
+    expect(td[7] & 7).toBe(7);
+
+    // Colour is a per-FEATURE buffer (2 features → 8 bytes), sampled by index in the
+    // shader — not expanded to vertices.
+    expect(props.featureCount).toBe(2);
+    const featureColors = props.featureColors as Uint8Array;
+    expect(featureColors).toHaveLength(2 * 4);
+    // Feature 0 (cell-1) → chosen fill colour; feature 1 (cell-2) hidden → transparent
+    // (kept, not dropped; the shader discards it).
+    expect(Array.from(featureColors.slice(0, 4))).toEqual([1, 2, 3, 255]);
+    expect(Array.from(featureColors.slice(4, 8))).toEqual([0, 0, 0, 0]);
+  });
+
+  it('reconstructs a picked feature (and its ring) by index', () => {
+    const prebuilt = buildShapesPrebuiltData(binaryRenderData);
+    const feature = resolveShapeFeatureFromPick({ index: 1 }, prebuilt);
+    expect(feature).toMatchObject({ featureId: 'cell-2', featureIndex: 1, rowIndex: 7 });
+    expect((feature as { polygon: number[][][] }).polygon).toEqual([
+      [
+        [10, 10],
+        [11, 10],
+        [10, 11],
+      ],
+    ]);
+    // Out-of-range index yields nothing rather than a bogus feature.
+    expect(featureFromBinary(prebuilt.binary!, 99)).toBeUndefined();
+  });
+
+  it('keeps geometry topology + per-feature colour buffers stable across renders', () => {
+    // The geometry textures are built from `triangleData`/`ringPositions`, whose
+    // identities NEVER change with feature-state — they upload once. The per-feature
+    // colour buffer is stable across bare re-renders (same runtime), so its texture is
+    // rebuilt only on a real feature-state change, never on hover/pan.
+    const featureState = normalizeShapeFeatureState(undefined); // EMPTY singleton
+    const sublayer = { kind: 'shapes', elementKey: 'cells', visible: true, featureState } as const;
+    const prebuilt = buildShapesPrebuiltData(binaryRenderData);
+
+    const first = createShapesDeckLayer(binaryRenderData, sublayer, { id: 'x' }, prebuilt);
+    const second = createShapesDeckLayer(binaryRenderData, sublayer, { id: 'x' }, prebuilt);
+    if (!Array.isArray(first) || !Array.isArray(second)) {
+      throw new Error('Expected the binary path to return a single-layer array');
+    }
+
+    // Stable topology buffer identities → geometry textures are not rebuilt.
+    expect((second[0].props as any).triangleData).toBe((first[0].props as any).triangleData);
+    expect((second[0].props as any).ringPositions).toBe((first[0].props as any).ringPositions);
+    // Stable per-feature colour buffer identity → no colour texture rebuild.
+    expect((second[0].props as any).featureColors).toBe((first[0].props as any).featureColors);
+  });
+
+  it('does not thrash the per-feature colour buffer between two layers sharing a runtime', () => {
+    // Two shapes layers, neither with an explicit featureState, both resolve to the
+    // SAME `EMPTY_SHAPE_FEATURE_STATE_RUNTIME` singleton. With different feature
+    // counts, a colour cache keyed only on the runtime holds one buffer and the two
+    // layers overwrite each other every `getLayers()` call — a per-frame rebuild of
+    // both million-element buffers during pan/hover. The buffer must instead stay
+    // stable per layer across bare re-renders.
+    const dataA = binaryRenderData; // 2 features
+    const dataB: ShapesRenderDataLike = {
+      kind: 'flat-polygons',
+      geometryKind: 'polygon',
+      elementKey: 'cellsB',
+      featureIds: ['b-1', 'b-2', 'b-3'],
+      polygonBinary: {
+        // Three triangular rings → 3 features.
+        // biome-ignore format: coordinate triples read clearer grouped
+        positions: new Float32Array([
+          0, 0, 1, 0, 0, 1,
+          10, 10, 11, 10, 10, 11,
+          20, 20, 21, 20, 20, 21,
+        ]),
+        startIndices: new Int32Array([0, 3, 6, 9]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([1, 2, 3]),
+    };
+    const sublayerA = { kind: 'shapes', elementKey: 'cells', visible: true } as const;
+    const sublayerB = { kind: 'shapes', elementKey: 'cellsB', visible: true } as const;
+    const prebuiltA = buildShapesPrebuiltData(dataA);
+    const prebuiltB = buildShapesPrebuiltData(dataB);
+
+    // Interleaved renders mimic two shapes layers built in one `getLayers()` pass,
+    // repeated each frame.
+    const a1 = createShapesDeckLayer(dataA, sublayerA, { id: 'A' }, prebuiltA) as any[];
+    const b1 = createShapesDeckLayer(dataB, sublayerB, { id: 'B' }, prebuiltB) as any[];
+    const a2 = createShapesDeckLayer(dataA, sublayerA, { id: 'A' }, prebuiltA) as any[];
+    const b2 = createShapesDeckLayer(dataB, sublayerB, { id: 'B' }, prebuiltB) as any[];
+
+    expect((a1[0].props as any).featureColors).toHaveLength(2 * 4);
+    expect((b1[0].props as any).featureColors).toHaveLength(3 * 4);
+    // Each layer keeps a stable colour buffer identity across re-renders — the other
+    // layer's render must not evict it.
+    expect((a2[0].props as any).featureColors).toBe((a1[0].props as any).featureColors);
+    expect((b2[0].props as any).featureColors).toBe((b1[0].props as any).featureColors);
   });
 });
 
