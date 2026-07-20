@@ -5,6 +5,7 @@ export {
   decodeParquetGeometryCappedInWorker,
   decodeParquetPartsInWorker,
   decodeParquetRowFeatureCodesInWorker,
+  decodeShapesGeometryInWorker,
   disablePointsWorker,
   enablePointsWorker,
   ensurePointsWorker,

@@ -9,20 +9,21 @@ SpatialCanvas hover/picking performance and Rules-of-React cleanup.
 Picking/tooltip performance:
 
 - New `hoverTooltipMode` prop (`'off' | 'simple' | 'aggregate'`, default
-  `'simple'`) on `SpatialCanvas` and `SpatialCanvasViewer`, with a matching
-  selector in the `SpatialCanvas` UI. `'simple'` resolves the tooltip from the
-  single top-most pick deck.gl already does for hover/highlight; `'aggregate'`
-  adds `pickMultipleObjects` GPU passes to include every layer under the cursor
-  (more expensive); `'off'` makes shape layers non-pickable entirely (no
-  autoHighlight, no picking-buffer render) — the cheapest mode. Replaces the
-  earlier boolean `aggregateHoverTooltips`.
-- Shape layers are made non-pickable (and `autoHighlight` disabled) while the
-  camera is being panned/zoomed, so deck.gl does not re-render the shape
-  geometry into the picking buffer during gestures. New `pickingEnabled` option
-  on the shapes layer (`@spatialdata/layers`) drives this.
+  `'aggregate'`) on `SpatialCanvas` and `SpatialCanvasViewer`, with a matching
+  selector in the `SpatialCanvas` UI. `'aggregate'` reports every feature under
+  the cursor across layers (`pickMultipleObjects` GPU passes); `'simple'`
+  resolves the single top-most pick deck.gl already does for hover/highlight;
+  `'off'` makes shape layers non-pickable entirely (no autoHighlight, no
+  picking-buffer render) — the cheapest mode. Replaces the earlier boolean
+  `aggregateHoverTooltips`.
+- Picking stays live through pan/zoom. The shapes layer keeps a `pickingEnabled`
+  option (`@spatialdata/layers`) that `'off'` mode uses to drop picking, but it
+  is no longer toggled by camera gestures — the `FlatPolygonLayer` pick pass is a
+  single cheap vertex-pulled draw, so no gesture gate is needed.
 - Hover tooltip resolution is suppressed while a pointer button is held (drag),
   and the per-missing-layer supplemental aggregation pick is collapsed into a
-  single batched pick.
+  single batched pick. The hover-tooltip machinery (pick → tooltip → portal) is a
+  single `useHoverFeatureTooltip` hook shared by both canvas surfaces.
 
 Rules-of-React fixes (eslint-plugin-react-hooks, `pnpm lint:react` now clean and
 the `react-lint` CI job is required): removed ref reads/writes during render and

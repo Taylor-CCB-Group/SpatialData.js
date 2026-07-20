@@ -495,10 +495,6 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
     });
     return renderData;
   }
-
-  async loadShapesInBounds(options: Parameters<SpatialDataShapesSource['loadShapesInBounds']>[1]) {
-    return this.vShapes.loadShapesInBounds(`shapes/${this.key}`, options);
-  }
 }
 
 // ============================================

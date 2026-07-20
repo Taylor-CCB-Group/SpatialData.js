@@ -31,7 +31,8 @@
     "@hms-dbmi/viv": "catalog:",
     "@math.gl/core": "catalog:",
     "@spatialdata/core": "workspace:*",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@luma.gl/engine": "^9.3.5"
   },
   "devDependencies": {
     "@deck.gl/core": "catalog:",

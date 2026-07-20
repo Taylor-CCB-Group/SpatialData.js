@@ -272,22 +272,38 @@ geometry, bounds, shape prebuilds, or feature-state runtimes.
 | Putting `featureState` wholesale in `updateTriggers` | Any new object identity invalidates all colour attributes |
 | Per-feature accessors for layer-wide opacity | Use deck `opacity` on the layer instead |
 
-### Direction: binary attributes (not implemented)
+### Shapes render path: vertex-pulling `FlatPolygonLayer`
 
-deck.gl's fastest path is **precomputed attribute buffers** (optionally built in
-a worker/WASM) passed via `data.attributes`, bypassing accessor calls entirely.
-Our shapes path still uses `PolygonLayer` / `ScatterplotLayer` with per-feature
-accessors for fill/stroke lookup by `featureId`. That is acceptable for current
-scale targets but is not the long-term ceiling.
+Circles/points still use `ScatterplotLayer` with per-feature colour accessors (their
+counts are modest). **Polygon** shapes — up to millions of features (Visium HD
+`square_002um` ≈ 2.7M) — render through a hand-rolled `FlatPolygonLayer`
+(`@spatialdata/layers`) instead of deck's `SolidPolygonLayer`/`PolygonLayer`, because
+accessor re-execution and a separate outline layer do not scale to that count.
 
-Future work (document-only for now):
+- **Non-blocking, off-thread decode + tessellation.** `VShapesSource` decodes the WKB
+  geometry column into flat buffers **and** tessellates it into render topology inside
+  the geometry worker (`shapesPolygonTessellate`), transferring both back zero-copy.
+  Shapes never gate first paint (`ShapesResolver.blockingResources = []`).
+- **Vertex pulling — no per-vertex attributes.** The layer draws an attribute-less
+  triangle list: `gl_VertexID` selects the triangle + corner, and the vertex shader
+  fetches the topology and shared ring positions from two data textures, computing each
+  vertex's position and a boundary edge-distance on the fly. This keeps geometry memory
+  to two shared textures instead of large de-indexed attribute buffers, and imputes an
+  anti-aliased outline with `fwidth` in the fragment shader — no separate outline layer.
+- **Feature state = "table column → buffer".** Colour-by-column, hide, and fade live in
+  a small **per-feature colour texture** indexed by feature; a feature-state change
+  re-uploads only that texture, never the (large) geometry textures. This is the reusable
+  primitive for column-driven encodings; picking colours are computed in-shader from the
+  feature index.
 
-1. Columnar fill/stroke colours aligned with `featureIds` / `rowIndexByFeatureIndex`
-2. Push colours into typed arrays when encodings change, not when opacity changes
-3. Optional worker/WASM attribute generation for multi-million feature sets
+Keep hot paths allocation-free across cosmetic renders: the geometry textures and the
+per-feature colour buffer keep stable identities, so deck re-uploads only when the
+geometry or the feature-state runtime actually changes.
 
-Until then, keep hot paths allocation-free across cosmetic renders and rebuild
-feature-state runtimes only when filtering or encodings actually change.
+Deferred: emitting texture-ready (padded) buffers from the worker to shrink the
+main-thread GPU-upload cost; a WGSL variant (WebGPU can use storage buffers instead of
+texture-packing); a true polygon SDF path. See
+[`docs/plans/shapes-nonblocking-tiled-loading.md`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/plans/shapes-nonblocking-tiled-loading.md).
 
 ## Shape/table annotation controls
 
@@ -302,12 +318,21 @@ When adding these controls, keep the visual encoding layer-specific: choosing
 one fill-colour column for a shapes layer must not affect another layer that
 renders the same shapes element.
 
-Fill-colour encodings should normally control both polygon fill and outline
-colour. Polygon outlines should use the shared shape stroke defaults from
-`@spatialdata/layers`: common-coordinate line width, `lineWidthMinPixels: 0`,
-and a small max-pixel clamp. That keeps outlines from dominating when many
-shapes become tiny on screen, while still allowing headless callers to override
-stroke width, units, and min/max pixel clamps per layer.
+The fill is the *specified* colour (a layer default or a data-column encoding);
+the outline is **derived** from it. `@spatialdata/layers` (`deriveStrokeColor`)
+lightens each feature's resolved fill for its outline, so adjacent shapes read as
+distinct — an outline the same colour as the fill is invisible at the thin default
+width, which is why shapes previously did not read as shapes. A genuine per-feature
+stroke override still wins over the derivation, so the vis layer must **not**
+pre-mirror the fill into `strokeColorByFeatureId` (that would look like an explicit
+override and defeat the derivation). On the object (`ScatterplotLayer`) path this is a
+per-feature accessor. On the polygon (`FlatPolygonLayer`) path the outline is **imputed
+in the fragment shader** from the per-vertex boundary edge-distance — no separate
+outline layer — and lightens the fill there; its width is capped to a fraction of each
+shape's on-screen size and fades out entirely for sub-pixel shapes, so it stays clear
+when zoomed in but never dominates (or aliases into moiré) when zoomed out. A genuine
+per-feature stroke override on the polygon path is a follow-up; today it always
+lightens the fill.
 
 ## See also
 

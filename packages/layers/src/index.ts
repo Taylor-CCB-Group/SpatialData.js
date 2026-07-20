@@ -115,6 +115,7 @@ export {
   buildShapeFeatureStateRuntime,
   buildShapesPrebuiltData,
   createShapesDeckLayer,
+  DEFAULT_SHAPE_FILL_COLOR,
   DEFAULT_SHAPE_STROKE_WIDTH,
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,

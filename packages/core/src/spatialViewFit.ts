@@ -150,6 +150,44 @@ export function boundsFromPolygons(
 }
 
 /**
+ * Axis-aligned bounds for flat interleaved polygon positions (`[x0, y0, x1, y1,
+ * …]`), the transferable geometry representation. A single pass over the buffer —
+ * no per-vertex JS objects to walk.
+ */
+export function boundsFromFlatPolygonPositions(
+  positions: ArrayLike<number>,
+  modelMatrix: Matrix4
+): AxisAlignedBounds | null {
+  const vertexCount = Math.floor(positions.length / 2);
+  if (vertexCount === 0) return null;
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let any = false;
+
+  for (let i = 0; i < vertexCount; i += 1) {
+    const x = positions[i * 2];
+    const y = positions[i * 2 + 1];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    try {
+      const p = modelMatrix.transformPoint([x, y, 0]);
+      if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) continue;
+      any = true;
+      minX = Math.min(minX, p[0]);
+      maxX = Math.max(maxX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxY = Math.max(maxY, p[1]);
+    } catch {
+      // ignore bad transform
+    }
+  }
+
+  return any ? { minX, minY, maxX, maxY } : null;
+}
+
+/**
  * Axis-aligned bounds for circle shapes (center + radius in store coordinates).
  */
 export function boundsFromCircles(

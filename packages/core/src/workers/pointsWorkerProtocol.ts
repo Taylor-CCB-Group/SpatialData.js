@@ -1,4 +1,5 @@
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
+import type { TessellatedPolygons } from '../shapesPolygonTessellate.js';
 import type { PointsColumnarData } from '../spatialViewFit.js';
 
 export type ParquetRowGroupBytesChunk = {
@@ -118,6 +119,16 @@ export type PointsWorkerRequest =
       mortonCodeColumnName: string;
       featureCodeColumnName?: string;
       featureCodes?: readonly number[];
+    }
+  | {
+      // Shapes geometry decode. The points worker is host to this too — see
+      // `shapesGeometryDecode.ts`. If this generality holds the worker should be
+      // renamed to a `parquet-worker`; deferred to avoid churning the points
+      // worktree twice.
+      type: 'decodeShapesGeometry';
+      parts: Uint8Array[];
+      geometryColumnName: string;
+      geometryKind: 'polygon' | 'circle' | 'point';
     };
 
 export type PointsWorkerColumnarResult = {
@@ -153,7 +164,16 @@ export type PointsWorkerResponse =
         | { kind: 'parquetTable'; tableIpc: Uint8Array }
         | { kind: 'catalog'; catalog: PointsFeatureCatalog }
         | { kind: 'rowFeatureCodes'; codes: Int32Array; numRows: number }
-        | { kind: 'featureCounts'; codes: Int32Array; counts: Uint32Array };
+        | { kind: 'featureCounts'; codes: Int32Array; counts: Uint32Array }
+        | {
+            kind: 'shapesGeometryPolygon';
+            positions: Float32Array;
+            startIndices: Int32Array;
+            featureCount: number;
+            /** Vertex-pulling render topology, tessellated in the worker. */
+            tessellation?: TessellatedPolygons;
+          }
+        | { kind: 'shapesGeometryPoint'; xs: Float32Array; ys: Float32Array; featureCount: number };
     }
   | { ok: false; error: string };
 

@@ -10,6 +10,7 @@ import type { Matrix4 } from '@math.gl/core';
 import type { ShapesElement, ShapesRenderData, SpatialFeatureTooltipData } from '@spatialdata/core';
 import {
   createShapesDeckLayer,
+  DEFAULT_SHAPE_FILL_COLOR,
   DEFAULT_SHAPE_STROKE_WIDTH,
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
@@ -78,13 +79,13 @@ export interface ShapesLayerRenderConfig {
  * Note: This requires the polygon data to be pre-loaded since deck.gl layers
  * are synchronous. The data loading should happen at a higher level.
  */
-export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | null {
+export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | Layer[] | null {
   const {
     id,
     modelMatrix,
     opacity,
     visible,
-    fillColor = [100, 100, 200, 180],
+    fillColor = DEFAULT_SHAPE_FILL_COLOR,
     strokeColor,
     strokeWidth = DEFAULT_SHAPE_STROKE_WIDTH,
     strokeWidthUnits = DEFAULT_SHAPE_STROKE_WIDTH_UNITS,

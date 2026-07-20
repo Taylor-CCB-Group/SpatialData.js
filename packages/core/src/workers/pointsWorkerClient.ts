@@ -1,5 +1,6 @@
 import { tableFromIPC } from 'apache-arrow';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
+import type { FlatShapeGeometry } from '../shapesGeometryDecode.js';
 import type { PointsColumnarData } from '../spatialViewFit.js';
 import {
   columnarDataFromWorkerResult,
@@ -147,6 +148,8 @@ function transferablesForRequest(request: PointsWorkerRequest): Transferable[] {
       return transferablesForParquetPayload(request.parts, request.rowGroups);
     case 'scanMortonRowGroupsInBounds':
       return transferablesForParquetPayload(undefined, request.rowGroups);
+    case 'decodeShapesGeometry':
+      return transferablesForParquetPayload(request.parts);
   }
   return [];
 }
@@ -399,6 +402,48 @@ export async function decodeGeometryWithFeaturesInWorker(
     ...(result.featureCodes ? { featureCodes: result.featureCodes } : {}),
     ...(result.featureCatalog ? { featureCatalog: result.featureCatalog } : {}),
   };
+}
+
+export type DecodeShapesGeometryInput = {
+  parts: Uint8Array[];
+  geometryColumnName: string;
+  geometryKind: 'polygon' | 'circle' | 'point';
+};
+
+/**
+ * Off-thread shapes geometry decode: parse the WKB geometry column into flat
+ * transferable buffers in the worker, so the CPU-heavy WKB parse never blocks the
+ * main thread. Returns `null` when the worker is disabled or there are no bytes —
+ * the caller falls back to the identical main-thread decode.
+ */
+export async function decodeShapesGeometryInWorker(
+  input: DecodeShapesGeometryInput
+): Promise<FlatShapeGeometry | null> {
+  ensurePointsWorker();
+  if (!isPointsWorkerEnabled() || input.parts.length === 0) {
+    return null;
+  }
+  const request: Extract<PointsWorkerRequest, { type: 'decodeShapesGeometry' }> = {
+    type: 'decodeShapesGeometry',
+    ...input,
+  };
+  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+    request,
+    transferablesForRequest(request)
+  );
+  if (result.kind === 'shapesGeometryPolygon') {
+    return {
+      kind: 'polygon',
+      positions: result.positions,
+      startIndices: result.startIndices,
+      featureCount: result.featureCount,
+      tessellation: result.tessellation,
+    };
+  }
+  if (result.kind === 'shapesGeometryPoint') {
+    return { kind: 'point', xs: result.xs, ys: result.ys, featureCount: result.featureCount };
+  }
+  throw new Error('Unexpected points worker response for decodeShapesGeometry');
 }
 
 export async function countFeatureCodesInWorker(

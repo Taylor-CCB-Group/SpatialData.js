@@ -13,6 +13,7 @@ import {
   type AxisAlignedBounds,
   attachTooltipElementContext,
   boundsFromCircles,
+  boundsFromFlatPolygonPositions,
   boundsFromImagePixelExtents,
   boundsFromPoints,
   boundsFromPolygons,
@@ -352,7 +353,14 @@ export function useLayerData(
     Map<string, { signature: string; value: RasterSelection[] }>
   >(new Map());
   const stableShapeFeatureStateRef = useRef<
-    Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>
+    Map<
+      string,
+      {
+        signature: string;
+        runtime: ShapeFeatureStateRuntime;
+        fillColorEntry: ShapeFillColorEntry | undefined;
+      }
+    >
   >(new Map());
 
   // Mirror the latest `layers` into a ref. This is read both by async loaders
@@ -794,6 +802,12 @@ export function useLayerData(
               ) {
                 return boundsFromCircles(renderData.circles, elem.transform);
               }
+              if (renderData.polygonBinary) {
+                return boundsFromFlatPolygonPositions(
+                  renderData.polygonBinary.positions,
+                  elem.transform
+                );
+              }
               if (!renderData.polygons?.length) return null;
               return boundsFromPolygons(renderData.polygons, elem.transform);
             }
@@ -912,7 +926,10 @@ export function useLayerData(
               ),
               pickingEnabled,
             });
-            if (layer) deckLayers.push(layer);
+            // The binary polygon path returns [fill, outline]; flatten so both
+            // reach deck as siblings (the outline draws over the fill).
+            if (Array.isArray(layer)) deckLayers.push(...layer);
+            else if (layer) deckLayers.push(layer);
           }
         } else if (config.type === 'points') {
           const element = elem.element as PointsElement;
@@ -1462,9 +1479,14 @@ export function useLayerData(
         if (config.type === 'labels') {
           return state.image === 'loading' && !hasRenderableLayerData(layerId);
         }
-        if (config.type === 'shapes' || config.type === 'points') {
+        if (config.type === 'points') {
           return state.geometry === 'loading' && !hasRenderableLayerData(layerId);
         }
+        // Shapes load non-blocking: geometry refines an already-painted canvas and
+        // never gates first paint (`ShapesResolver.blockingResources` is empty).
+        // `getLayers` skips a shapes layer until its geometry is ready, and the
+        // non-modal `isLoading` indicator covers the wait.
+        if (config.type === 'shapes') return false;
         return false;
       }),
     [layerLoadStates, layerOrder, layers, hasRenderableLayerData]

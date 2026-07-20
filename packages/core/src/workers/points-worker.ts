@@ -2,6 +2,8 @@ import { tableFromIPC, tableToIPC } from 'apache-arrow';
 import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
 import { buildFeatureCatalogFromColumns } from '../pointsFeatures.js';
 import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
+import { decodeShapesGeometryFlat } from '../shapesGeometryDecode.js';
+import { tessellateFlatPolygons } from '../shapesPolygonTessellate.js';
 import type {
   PointsWorkerMessage,
   PointsWorkerRequest,
@@ -444,6 +446,46 @@ function handleBuildFeatureCatalog(
   return { ok: true, result: { kind: 'catalog', catalog } };
 }
 
+async function handleDecodeShapesGeometry(
+  request: Extract<PointsWorkerRequest, { type: 'decodeShapesGeometry' }>
+): Promise<PointsWorkerResponse> {
+  const { readParquet } = await getParquetModule();
+  // Project only the geometry column: the feature index / row-index columns are
+  // cheap and stay on the main thread; the WKB parse is the expensive part.
+  const table = await decodeParquetPartsToTable(readParquet, request.parts, [
+    request.geometryColumnName,
+  ]);
+  const geometry = decodeShapesGeometryFlat(
+    table,
+    request.geometryColumnName,
+    request.geometryKind
+  );
+  if (geometry.kind === 'polygon') {
+    // Tessellate here, off the main thread, so the render topology transfers back
+    // ready to upload — no ~seconds-long main-thread tessellation on first paint.
+    const tessellation = tessellateFlatPolygons(geometry.positions, geometry.startIndices);
+    return {
+      ok: true,
+      result: {
+        kind: 'shapesGeometryPolygon',
+        positions: geometry.positions,
+        startIndices: geometry.startIndices,
+        featureCount: geometry.featureCount,
+        tessellation,
+      },
+    };
+  }
+  return {
+    ok: true,
+    result: {
+      kind: 'shapesGeometryPoint',
+      xs: geometry.xs,
+      ys: geometry.ys,
+      featureCount: geometry.featureCount,
+    },
+  };
+}
+
 async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorkerResponse> {
   switch (request.type) {
     case 'filterColumnarByFeatureCodes':
@@ -468,6 +510,8 @@ async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorker
       return handleScanParquetByFeatureCodes(request);
     case 'scanMortonRowGroupsInBounds':
       return handleScanMortonRowGroupsInBounds(request);
+    case 'decodeShapesGeometry':
+      return handleDecodeShapesGeometry(request);
     default: {
       const _exhaustive: never = request;
       return { ok: false, error: `Unknown request type: ${String(_exhaustive)}` };
@@ -507,6 +551,18 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
           transferables.push(response.result.codes.buffer);
         } else if (response.result.kind === 'featureCounts') {
           transferables.push(response.result.codes.buffer, response.result.counts.buffer);
+        } else if (response.result.kind === 'shapesGeometryPolygon') {
+          transferables.push(response.result.positions.buffer, response.result.startIndices.buffer);
+          const tess = response.result.tessellation;
+          if (tess) {
+            transferables.push(
+              tess.ringPositions.buffer,
+              tess.triangleData.buffer,
+              tess.featureScale.buffer
+            );
+          }
+        } else if (response.result.kind === 'shapesGeometryPoint') {
+          transferables.push(response.result.xs.buffer, response.result.ys.buffer);
         }
       }
       self.postMessage(reply, transferables);

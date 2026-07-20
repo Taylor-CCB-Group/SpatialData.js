@@ -27,24 +27,17 @@ const log = console;
 import type { Table as ArrowTable } from 'apache-arrow';
 import type { Vector } from 'apache-arrow/vector';
 import type { Chunk, NumberDataType, TypedArray as ZarrTypedArray } from 'zarrita';
-import type { SpatialBounds } from '../pointsTiling.js';
 import type { ShapesGeometryKind, ShapesRenderData } from '../shapes';
+import { decodeShapesGeometryFlat, type FlatShapeGeometry } from '../shapesGeometryDecode.js';
+import {
+  decodeShapesGeometryInWorker,
+  ensurePointsWorker,
+  isPointsWorkerEnabled,
+} from '../workers/index.js';
 import SpatialDataTableSource from './VTableSource';
 export type PolygonShape = Array<Array<[number, number]>>;
 //nb, not totally happy with this type.
 export type ZarrNumericArray = ZarrTypedArray<NumberDataType> | BigInt64Array | Array<number>;
-
-export interface ShapesInBoundsOptions {
-  bounds: SpatialBounds;
-  zoom?: number;
-  signal?: AbortSignal;
-  columns?: string[];
-}
-
-export type ShapesInBoundsResult = ShapesRenderData & {
-  bounds: SpatialBounds;
-  loadMode: 'full-filter';
-};
 
 // If the array path starts with table/something/rest
 // capture table/something.
@@ -76,12 +69,6 @@ function getParquetPath(arrPath?: string) {
     return `${elementPrefix}/shapes.parquet`;
   }
   throw new Error(`Cannot determine parquet path for shapes array path: ${arrPath}`);
-}
-
-function checkAbort(signal?: AbortSignal) {
-  if (signal?.aborted) {
-    throw new DOMException('The operation was aborted.', 'AbortError');
-  }
 }
 
 /**
@@ -453,18 +440,22 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     }
 
     const parquetPath = getParquetPath(elementPath);
-    // loadParquetTable caches the parsed Arrow table, so the three calls below
-    // (here, inside loadShapesIndex, inside loadPolygonShapes / loadCircleShapes)
-    // share one WASM decode.
-    const geometryTable = await this.loadParquetTable(parquetPath);
-    const geometryKind = inferShapesGeometryKindFromParquet(geometryTable);
+    const geometryColumnName = 'geometry';
+    const geometryKind = await this.inferShapesGeometryKindCheap(parquetPath);
+
+    // The WKB decode is the expensive part; run it off the main thread when the
+    // worker is enabled. The feature index rides alongside (a cheap column read),
+    // so both land together.
+    const [flat, featureIdsRaw] = await Promise.all([
+      this.loadFlatShapeGeometry(parquetPath, geometryColumnName, geometryKind),
+      this.loadShapesIndex(elementPath),
+    ]);
 
     if (geometryKind === 'circle' || geometryKind === 'point') {
-      const [featureIdsRaw, circleResult] = await Promise.all([
-        this.loadShapesIndex(elementPath),
-        this.loadCircleShapes(`${elementPath}/geometry`),
-      ]);
-      const [xs, ys] = circleResult.data;
+      if (flat.kind !== 'point') {
+        throw new Error(`Expected point geometry for ${elementPath} but decoded ${flat.kind}`);
+      }
+      const { xs, ys } = flat;
       const featureIds = featureIdsFromIndex(featureIdsRaw, xs.length);
       if (featureIds.length !== xs.length || featureIds.length !== ys.length) {
         throw new Error(
@@ -483,56 +474,84 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
         }
       }
 
-      // geometryTable is not retained in the return value for wkb-parquet paths:
-      // all geometry has been decoded into typed arrays above, and keeping a
-      // second copy of the full Arrow table would waste heap memory.
       return {
         kind: 'wkb-parquet',
         geometryKind,
         elementKey,
         featureIds,
         circles: { positions: [xs, ys], radii },
-        geometryColumnName: 'geometry',
+        geometryColumnName,
         rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
       };
     }
 
-    const [featureIdsRaw, polygonResult] = await Promise.all([
-      this.loadShapesIndex(elementPath),
-      this.loadPolygonShapes(`${elementPath}/geometry`),
-    ]);
-    const polygons = polygonResult.data;
-    const featureIds = featureIdsFromIndex(featureIdsRaw, polygons.length);
-    if (featureIds.length !== polygons.length) {
+    if (flat.kind !== 'polygon') {
+      throw new Error(`Expected polygon geometry for ${elementPath} but decoded ${flat.kind}`);
+    }
+    const featureIds = featureIdsFromIndex(featureIdsRaw, flat.featureCount);
+    if (featureIds.length !== flat.featureCount) {
       throw new Error(
-        `Feature id count (${featureIds.length}) did not match polygon count (${polygons.length}) for ${elementPath}`
+        `Feature id count (${featureIds.length}) did not match polygon count (${flat.featureCount}) for ${elementPath}`
       );
     }
 
-    // geometryTable is not retained for the same reason as the circle path above.
     return {
-      kind: 'wkb-parquet',
+      kind: 'flat-polygons',
       geometryKind: 'polygon',
       elementKey,
       featureIds,
-      polygons,
-      geometryColumnName: 'geometry',
+      polygonBinary: {
+        positions: flat.positions,
+        startIndices: flat.startIndices,
+        tessellation: flat.tessellation,
+      },
+      geometryColumnName,
       rowIndexByFeatureIndex: new Int32Array(featureIds.length).fill(-1),
     };
   }
 
-  async loadShapesInBounds(
-    elementPath: string,
-    options: ShapesInBoundsOptions
-  ): Promise<ShapesInBoundsResult> {
-    checkAbort(options.signal);
-    const renderData = await this.loadShapesRenderData(elementPath);
-    checkAbort(options.signal);
-    return {
-      ...renderData,
-      bounds: options.bounds,
-      loadMode: 'full-filter',
-    };
+  /**
+   * Infer polygon-vs-circle-vs-point from the parquet **schema** alone (field
+   * names + geopandas `geo` metadata), so the worker decode path never triggers a
+   * full main-thread table decode just to classify. Falls back to a full decode
+   * only when the store cannot serve schema-only reads.
+   */
+  private async inferShapesGeometryKindCheap(parquetPath: string): Promise<ShapesGeometryKind> {
+    const schemaTable = await this.loadParquetSchemaTable(parquetPath);
+    if (schemaTable) {
+      return inferShapesGeometryKindFromParquet(schemaTable);
+    }
+    const table = await this.loadParquetTable(parquetPath);
+    return inferShapesGeometryKindFromParquet(table);
+  }
+
+  /**
+   * Decode the geometry column into flat, transferable buffers — off the main
+   * thread when the points worker is enabled, else via the identical shared
+   * decode on the main thread. The worker copy is deliberate: `loadParquetBytes`
+   * caches its result, and transferring the buffer would detach the cache.
+   */
+  private async loadFlatShapeGeometry(
+    parquetPath: string,
+    geometryColumnName: string,
+    geometryKind: ShapesGeometryKind
+  ): Promise<FlatShapeGeometry> {
+    ensurePointsWorker();
+    if (isPointsWorkerEnabled()) {
+      const bytes = await this.loadParquetBytes(parquetPath);
+      if (bytes) {
+        const decoded = await decodeShapesGeometryInWorker({
+          parts: [bytes.slice()],
+          geometryColumnName,
+          geometryKind,
+        });
+        if (decoded) {
+          return decoded;
+        }
+      }
+    }
+    const table = await this.loadParquetTable(parquetPath);
+    return decodeShapesGeometryFlat(table, geometryColumnName, geometryKind);
   }
 
   /**

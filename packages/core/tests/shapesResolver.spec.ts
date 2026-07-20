@@ -216,9 +216,11 @@ describe('failure is PER-RESOURCE', () => {
     expect(resolver.getRenderData('cells')).toBeDefined();
   });
 
-  it('only geometry blocks a first paint — tooltip and fill colour never have', () => {
-    // Today this asymmetry is a kind-switch inside isBlocking. Here it is data.
-    expect(new ShapesResolver().blockingResources).toEqual(['geometry']);
+  it('nothing blocks a first paint — shapes load non-blocking', () => {
+    // Non-blocking pass: geometry refines an already-painted canvas rather than
+    // gating it, so `blockingResources` is empty *data* and `store.isBlocking`
+    // reports shapes as never-blocking with no special case.
+    expect(new ShapesResolver().blockingResources).toEqual([]);
   });
 });
 
