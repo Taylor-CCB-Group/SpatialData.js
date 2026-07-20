@@ -20,15 +20,7 @@
  */
 
 import type { DeckGLRef, PickingInfo } from 'deck.gl';
-import {
-  type ReactNode,
-  type RefObject,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { type ReactNode, type RefObject, useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   type FeatureTooltipResolver,
@@ -103,15 +95,20 @@ export function useHoverFeatureTooltip({
   const clearTooltip = useCallback(() => setHoverTooltip(null), []);
 
   // Tooltips active at all? Used both to gate resolution and to DROP any stored
-  // result on deactivation — hiding the portal alone would keep the last tooltip in
-  // state, so switching the mode back on would resurrect it at its stale position
-  // without a fresh hover.
+  // result when activation flips — hiding the portal alone would keep the last
+  // tooltip in state, so switching the mode off and back on would resurrect it at
+  // its stale position without a fresh hover.
+  //
+  // Adjusted during render (React's "adjusting state when a prop changes" pattern)
+  // rather than in an effect: `react-hooks/set-state-in-effect` rightly rejects the
+  // effect form, and this re-renders immediately with the corrected state instead of
+  // painting the stale tooltip for a frame first.
   const active = enabled && renderTooltip !== false;
-  useEffect(() => {
-    if (!active) {
-      setHoverTooltip(null);
-    }
-  }, [active]);
+  const [lastActive, setLastActive] = useState(active);
+  if (lastActive !== active) {
+    setLastActive(active);
+    setHoverTooltip(null);
+  }
 
   // The expensive part of hovering: pick the feature(s) under the cursor and
   // position the tooltip. Callers throttle by only invoking this per hover event.
