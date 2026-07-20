@@ -614,9 +614,15 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }
     const probe = (async () => {
       try {
+        // `no-store` is essential, not a nicety. These files are served with a
+        // long max-age, so once any whole-file read has populated the HTTP
+        // cache the browser answers suffix ranges itself and a cached probe
+        // reports success for a server that actually returns 416. The reader
+        // then works only until the entry is evicted, and panics after that.
+        // Probe the server so the decision is a property of the server alone.
         const [suffix, bounded] = await Promise.all([
-          fetch(url, { headers: { Range: 'bytes=-8' } }),
-          fetch(url, { headers: { Range: 'bytes=0-7' } }),
+          fetch(url, { headers: { Range: 'bytes=-8' }, cache: 'no-store' }),
+          fetch(url, { headers: { Range: 'bytes=0-7' }, cache: 'no-store' }),
         ]);
         // A 200 means the server ignored Range and sent the whole body; the
         // reader would then compute offsets against the wrong window.
