@@ -580,6 +580,63 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   /**
+   * Verify a server actually serves the range shapes the streaming reader needs,
+   * before handing it the URL.
+   *
+   * The reader fetches on its own and treats a refused range as unreachable: it
+   * panics with `RuntimeError: unreachable` AND leaves its promise unsettled, so
+   * the failure can be neither caught nor awaited. Probing first is the only way
+   * to decline cleanly instead of relying on the stall watchdog.
+   *
+   * It needs two shapes (observed by logging a real scan):
+   *   - `bytes=-N`  suffix ranges, to read the footer
+   *   - `bytes=A-B` bounded ranges, to read column chunks
+   *
+   * Suffix ranges are the fragile one — plenty of static servers answer 416.
+   * The rest of this class tolerates that by falling back to whole-file reads
+   * (see `loadParquetFooterBytesForPath`), which is why such a server otherwise
+   * looks healthy.
+   *
+   * Cached per origin: the answer is a property of the server, not the file.
+   */
+  private static readonly rangeProbeByOrigin = new Map<string, Promise<boolean>>();
+
+  protected serverSupportsStreamingRanges(url: string): Promise<boolean> {
+    let origin: string;
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      return Promise.resolve(false);
+    }
+    const cached = SpatialDataTableSource.rangeProbeByOrigin.get(origin);
+    if (cached) {
+      return cached;
+    }
+    const probe = (async () => {
+      try {
+        const [suffix, bounded] = await Promise.all([
+          fetch(url, { headers: { Range: 'bytes=-8' } }),
+          fetch(url, { headers: { Range: 'bytes=0-7' } }),
+        ]);
+        // A 200 means the server ignored Range and sent the whole body; the
+        // reader would then compute offsets against the wrong window.
+        if (suffix.status !== 206 || bounded.status !== 206) {
+          return false;
+        }
+        const [suffixBytes, boundedBytes] = await Promise.all([
+          suffix.arrayBuffer(),
+          bounded.arrayBuffer(),
+        ]);
+        return suffixBytes.byteLength === 8 && boundedBytes.byteLength === 8;
+      } catch {
+        return false;
+      }
+    })();
+    SpatialDataTableSource.rangeProbeByOrigin.set(origin, probe);
+    return probe;
+  }
+
+  /**
    * Fetch compressed row-group bytes via range read (no parquet decode on the caller thread).
    */
   protected async readParquetRowGroupBytesByGroupIndex(

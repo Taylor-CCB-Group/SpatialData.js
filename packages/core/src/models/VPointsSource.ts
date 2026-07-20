@@ -1406,6 +1406,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       partUrls.push(url);
     }
 
+    // Decline before the reader ever sees the URL: a server that refuses one of
+    // the range shapes it needs makes it panic unrecoverably rather than error.
+    if (!(await this.serverSupportsStreamingRanges(partUrls[0]))) {
+      return null;
+    }
+
     const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
     if (!ParquetFile) {
       return null;
