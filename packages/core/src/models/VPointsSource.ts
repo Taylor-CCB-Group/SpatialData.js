@@ -263,6 +263,15 @@ export function normalizeAxes(axes: Axis[]) {
 const pointsElementRegex = /^points\/([^/]*)$/;
 const pointsSubElementRegex = /^points\/([^/]*)\/(.*)$/;
 
+/**
+ * Rows per batch when streaming the feature column for the catalog.
+ *
+ * Larger than the upstream 1024 default: each batch costs an IPC round-trip, and
+ * at 1024 that overhead dominated (60 batches for 60k rows). 16k keeps partials
+ * frequent enough to look progressive while amortising the per-batch cost.
+ */
+const FEATURE_STREAM_BATCH_ROWS = 16_384;
+
 function getPointsElementPath(arrPath?: string) {
   if (arrPath) {
     const matches = arrPath.match(pointsSubElementRegex);
@@ -1114,12 +1123,19 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * immediately instead of showing "Loading features…" for the whole scan: the names
    * are what the list, swatches and selection need, and only the count column has to
    * wait.
+   *
+   * When the streaming scan applies it fires repeatedly *during* the name scan too,
+   * each time with a longer list, so the panel fills in rather than appearing at
+   * once. Codes are stable across those partials (see
+   * `listPointsFeaturesByStreamingScan`), so earlier entries never move.
    */
   async listPointsFeaturesWithCounts(
     elementPath: string,
     options?: { onPartialCatalog?: (catalog: PointsFeatureCatalog) => void }
   ): Promise<PointsFeatureCatalog | null> {
-    const catalog = await this.listPointsFeatures(elementPath);
+    const catalog = await this.listPointsFeatures(elementPath, {
+      onPartialCatalog: options?.onPartialCatalog,
+    });
     if (!catalog) {
       return null;
     }
@@ -1230,7 +1246,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return this.resolveParquetRowCount(parquetPath);
   }
 
-  async listPointsFeatures(elementPath: string): Promise<PointsFeatureCatalog | null> {
+  async listPointsFeatures(
+    elementPath: string,
+    options?: { onPartialCatalog?: (catalog: PointsFeatureCatalog) => void }
+  ): Promise<PointsFeatureCatalog | null> {
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const featureKey = zattrs.spatialdata_attrs?.feature_key;
     if (typeof featureKey !== 'string' || featureKey.length === 0) {
@@ -1263,7 +1282,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         parquetPath,
         featureKey,
         featureCodeColumnName,
-        hasMortonColumn
+        hasMortonColumn,
+        options?.onPartialCatalog
       );
     }
 
@@ -1286,6 +1306,105 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
   }
 
   /**
+   * Build the feature catalog by streaming ONLY the feature column(s) over range
+   * reads, publishing the catalog as it grows.
+   *
+   * This is the fast path for the oversized-dataset scan. The feature column is a
+   * tiny fraction of a points parquet (~4KB of an 8.8MB Xenium-style file, the
+   * rest being geometry and an unused dask index), so projecting it turns a
+   * whole-file download into a handful of range requests.
+   *
+   * Codes stay compatible with every other catalog build: both assign codes in
+   * first-seen row order, so a streamed prefix agrees with the whole-file scan on
+   * every code it has assigned so far. That is what makes the partial catalogs
+   * safe to render — a feature's code never changes as more rows arrive, so
+   * selections and swatches made against a partial stay valid.
+   *
+   * Returns null (rather than throwing) whenever the fast path does not apply, so
+   * the caller falls through to the byte-oriented scan.
+   */
+  private async listPointsFeaturesByStreamingScan(
+    parquetPath: string,
+    featureKey: string,
+    featureCodeColumnName: string | undefined,
+    hasMortonColumn: boolean,
+    columnNames: string[],
+    onPartialCatalog?: (catalog: PointsFeatureCatalog) => void
+  ): Promise<PointsFeatureCatalog | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    // Use the discovered parts rather than guessing paths: these are known to
+    // exist and are in row order, which the code assignment depends on.
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = datasetMetadata?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const partUrls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url) {
+        return null;
+      }
+      partUrls.push(url);
+    }
+
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      return null;
+    }
+
+    const { tableFromIPC } = await import('apache-arrow');
+    const {
+      accumulateFeatureCatalogFromTable,
+      featureCatalogFromCodeMap,
+      featureCatalogNeedsParquetFallback,
+    } = await import('../pointsFeatures.js');
+    const codeToName = new Map<number, string>();
+    const nameToCode = new Map<string, number>();
+    let publishedFeatureCount = 0;
+
+    for (const url of partUrls) {
+      const file = await ParquetFile.fromUrl(url);
+      const stream = await file.stream({
+        columns: columnNames,
+        batchSize: FEATURE_STREAM_BATCH_ROWS,
+      });
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          accumulateFeatureCatalogFromTable(
+            codeToName,
+            nameToCode,
+            tableFromIPC(value.intoIPCStream()),
+            featureKey,
+            featureCodeColumnName,
+            { skipMortonSentinels: hasMortonColumn }
+          );
+          // Only republish when the list actually grew; most batches add nothing
+          // once the common features have been seen.
+          if (onPartialCatalog && codeToName.size > publishedFeatureCount) {
+            publishedFeatureCount = codeToName.size;
+            onPartialCatalog(featureCatalogFromCodeMap(featureKey, codeToName));
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    if (featureCatalogNeedsParquetFallback(codeToName)) {
+      return null;
+    }
+    return featureCatalogFromCodeMap(featureKey, codeToName);
+  }
+
+  /**
    * Build a feature catalog for oversized datasets by scanning only feature
    * columns (row-group range reads when available), not x/y geometry.
    */
@@ -1293,7 +1412,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     parquetPath: string,
     featureKey: string,
     featureCodeColumnName: string | undefined,
-    hasMortonColumn: boolean
+    hasMortonColumn: boolean,
+    onPartialCatalog?: (catalog: PointsFeatureCatalog) => void
   ): Promise<PointsFeatureCatalog | null> {
     const columnNames = [featureKey];
     if (featureCodeColumnName) {
@@ -1301,6 +1421,27 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     if (hasMortonColumn) {
       columnNames.push(MORTON_CODE_2D_COLUMN);
+    }
+
+    // Fast path first: streaming reads only the feature column and can publish
+    // the list while it scans. Falls through on any non-applicable store/runtime.
+    try {
+      const streamed = await this.listPointsFeaturesByStreamingScan(
+        parquetPath,
+        featureKey,
+        featureCodeColumnName,
+        hasMortonColumn,
+        columnNames,
+        onPartialCatalog
+      );
+      if (streamed) {
+        return streamed;
+      }
+    } catch (error) {
+      console.warn(
+        `Streaming feature catalog scan failed for ${parquetPath}; falling back.`,
+        error
+      );
     }
 
     ensurePointsWorker();

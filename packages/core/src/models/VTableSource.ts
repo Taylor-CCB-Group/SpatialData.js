@@ -6,6 +6,7 @@ import {
   type ParquetModule,
   type ParquetRowGroupReadOptions,
   type ParquetWasmMetadata,
+  supportsParquetStreaming,
 } from '../parquetWasmLoader.js';
 import type { TableColumnData } from '../types';
 import type { DataSourceParams } from '../Vutils';
@@ -541,6 +542,41 @@ export default class SpatialDataTableSource extends AnnDataSource {
     return (
       typeof module.readMetadata === 'function' && typeof module.readParquetRowGroup === 'function'
     );
+  }
+
+  /**
+   * Absolute http(s) URL for a store-relative path, or null when the store is
+   * not URL-backed.
+   *
+   * The streaming parquet reader fetches on its own rather than through the
+   * store, so it only applies when the store resolves to a plain URL — the same
+   * capability-check shape as `store.getRange`. Custom, prefixed and in-memory
+   * stores return null here and keep the byte-oriented path.
+   */
+  protected resolveStoreUrl(path: string): string | null {
+    const base = (this.storeRoot.store as { url?: string | URL }).url;
+    if (base === undefined || base === null) {
+      return null;
+    }
+    try {
+      const baseHref = typeof base === 'string' ? base : base.href;
+      const rootHref = baseHref.endsWith('/') ? baseHref : `${baseHref}/`;
+      const resolved = new URL(path.replace(/^\/+/, ''), rootHref);
+      // The reader fetches directly; anything the browser will not range-read
+      // (file:, blob:, custom schemes) has to fall back.
+      return resolved.protocol === 'http:' || resolved.protocol === 'https:' ? resolved.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Whether the URL-backed streaming reader is usable for this store+runtime. */
+  protected async canStreamParquetByUrl(): Promise<boolean> {
+    if (!supportsParquetStreaming()) {
+      return false;
+    }
+    const module = await SpatialDataTableSource.parquetModulePromise;
+    return typeof module.ParquetFile?.fromUrl === 'function';
   }
 
   /**
