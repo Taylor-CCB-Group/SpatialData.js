@@ -408,6 +408,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       maxRows: number;
       totalRowCount: number;
       preloadTruncated: boolean;
+      /** Required alongside {@link featureCodeColumnName} for the decode to emit
+       * per-row codes at all — the worker gates code extraction on `featureKey`. */
+      featureKey?: string;
       featureCodeColumnName?: string;
       onProgress?: (progress: PointsLoadProgress) => void;
       signal?: AbortSignal;
@@ -447,7 +450,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         axisNames,
         columns: options.columns,
         maxRows: maxRows - filled,
-        ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+        // BOTH are required: the worker gates code extraction on `featureKey`, and
+        // `resolveRowFeatureCodesFromTable` then returns the code column directly —
+        // it never touches the (unprojected, dict-encoded) name column. Passing only
+        // `featureCodeColumnName` silently yields NO codes, which is a colourless
+        // element rather than a loud failure.
+        ...(featureCodeColumnName && options.featureKey
+          ? { featureCodeColumnName, featureKey: options.featureKey }
+          : {}),
       });
       if (!decoded) {
         // Worker unavailable: with nothing decoded yet the caller can still take the
@@ -549,17 +559,22 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             maxRows,
             totalRowCount: rowCount,
             preloadTruncated: truncatePreload,
+            ...(featureKey ? { featureKey } : {}),
             ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
             onProgress: options.onProgress,
             ...(options.signal ? { signal: options.signal } : {}),
           });
           // The streamed batch is the FINAL result only when nothing more is needed
-          // from the dictionary column: either there is no feature key at all, or an
-          // authoritative code column already supplied per-row codes. A dict-only
-          // element still needs its codes + catalog, so it falls through to the
-          // one-shot decode below — the streaming pass has already earned its keep
-          // by painting points early.
-          if (streamed && (!featureKey || featureCodeColumnName !== undefined)) {
+          // from the dictionary column: either the element has no feature key at all,
+          // or an authoritative code column ACTUALLY produced per-row codes. Checking
+          // `streamed.featureCodes` rather than merely "a code column exists" is
+          // deliberate: if the codes ever fail to come back, we degrade to the slower
+          // one-shot decode (correct, just not streamed) instead of settling a
+          // permanently colourless batch — the failure mode this guard exists for.
+          // A dict-only element always falls through, its early paint already banked.
+          const streamedIsComplete =
+            streamed !== null && (!featureKey || streamed.featureCodes !== undefined);
+          if (streamedIsComplete) {
             return streamed;
           }
         } catch (error) {
