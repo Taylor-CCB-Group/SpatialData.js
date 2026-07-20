@@ -439,15 +439,24 @@ const TRANSPARENT_RGBA: [number, number, number, number] = [0, 0, 0, 0];
 
 /** Shared ring positions + per-triangle topology for vertex pulling, memoised on the
  *  positions buffer (stable, resolver-owned) so tessellation runs once. */
-const tessellationCache = new WeakMap<Float32Array, TessellatedPolygons>();
+const tessellationCache = new WeakMap<Float32Array, WeakMap<Int32Array, TessellatedPolygons>>();
 
 function getTessellation(positions: Float32Array, startIndices: Int32Array): TessellatedPolygons {
-  const cached = tessellationCache.get(positions);
+  // Keyed on BOTH buffers: the topology depends on the offsets as much as the
+  // coordinates, so keying on `positions` alone would serve one element's topology
+  // for another that reuses the coordinate buffer with different offsets (wrong
+  // triangles, wrong picking indices).
+  let byStartIndices = tessellationCache.get(positions);
+  const cached = byStartIndices?.get(startIndices);
   if (cached) {
     return cached;
   }
   const tess = tessellateFlatPolygons(positions, startIndices);
-  tessellationCache.set(positions, tess);
+  if (!byStartIndices) {
+    byStartIndices = new WeakMap();
+    tessellationCache.set(positions, byStartIndices);
+  }
+  byStartIndices.set(startIndices, tess);
   return tess;
 }
 
@@ -461,35 +470,41 @@ function getTessellation(positions: Float32Array, startIndices: Int32Array): Tes
  * feature-state both resolve to the SAME `EMPTY_SHAPE_FEATURE_STATE_RUNTIME` singleton
  * (as do two layers with identical feature-state), so a runtime-keyed cache holds one
  * slot the layers overwrite each other in — a per-frame rebuild of both (million-
- * element) buffers on every `getLayers()` (pan/hover). The layer id is the stable
- * per-layer discriminator; the entry is reused only while all of (runtime, feature-id
- * array, default colour) keep their identity — the exact set the buffer's contents
- * depend on — so it stays stable across bare re-renders and rebuilds precisely when a
- * real change (feature-state, element swap, default-colour change) occurs.
+ * element) buffers on every `getLayers()` (pan/hover).
+ *
+ * Keyed instead on the three identities the buffer's contents actually depend on —
+ * the feature-state runtime, the feature-id array (index → feature), and the default
+ * colour — nested as WeakMaps so nothing is retained once a layer's geometry is
+ * dropped. (A strong `Map` keyed by layer id would pin a million-element `Uint8Array`
+ * per discarded layer id forever.) Two layers whose three keys all match legitimately
+ * share one buffer: identical inputs mean identical bytes.
  */
-interface FeatureColorsCacheEntry {
-  runtime: ShapeFeatureStateRuntime;
-  featureIds: readonly string[];
-  defaultColor: readonly number[];
-  colors: Uint8Array;
-}
-const featureColorsCache = new Map<string, FeatureColorsCacheEntry>();
+const featureColorsCache = new WeakMap<
+  ShapeFeatureStateRuntime,
+  WeakMap<object, WeakMap<object, Uint8Array>>
+>();
 
 function getFeatureColors(
-  layerId: string,
   featureState: ShapeFeatureStateRuntime,
   featureIds: readonly string[],
   defaultColor: readonly number[],
   colorForFeatureIndex: (index: number) => [number, number, number, number]
 ): Uint8Array {
-  const cached = featureColorsCache.get(layerId);
-  if (
-    cached &&
-    cached.runtime === featureState &&
-    cached.featureIds === featureIds &&
-    cached.defaultColor === defaultColor
-  ) {
-    return cached.colors;
+  const idsKey = featureIds as unknown as object;
+  const colorKey = defaultColor as unknown as object;
+  let byIds = featureColorsCache.get(featureState);
+  if (!byIds) {
+    byIds = new WeakMap();
+    featureColorsCache.set(featureState, byIds);
+  }
+  let byColor = byIds.get(idsKey);
+  if (!byColor) {
+    byColor = new WeakMap();
+    byIds.set(idsKey, byColor);
+  }
+  const cached = byColor.get(colorKey);
+  if (cached) {
+    return cached;
   }
   const featureCount = featureIds.length;
   const colors = new Uint8Array(featureCount * 4);
@@ -500,7 +515,7 @@ function getFeatureColors(
     colors[f * 4 + 2] = c[2];
     colors[f * 4 + 3] = c[3];
   }
-  featureColorsCache.set(layerId, { runtime: featureState, featureIds, defaultColor, colors });
+  byColor.set(colorKey, colors);
   return colors;
 }
 
@@ -991,13 +1006,7 @@ function createBinaryPolygonDeckLayers(
     );
   };
 
-  const featureColors = getFeatureColors(
-    options.id,
-    featureState,
-    featureIds,
-    defaultFillColor,
-    fillColorAt
-  );
+  const featureColors = getFeatureColors(featureState, featureIds, defaultFillColor, fillColorAt);
 
   const layer = new FlatPolygonLayer({
     id: options.id,

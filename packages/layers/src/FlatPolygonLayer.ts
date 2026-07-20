@@ -108,18 +108,30 @@ export class FlatPolygonLayer extends (Layer as any) {
       this.state.model?.destroy();
       this.state.model = this._getModel();
     }
+    // Invalidate on every prop the texture builders actually read — the counts size
+    // the textures, so a count change with a reused buffer would otherwise leave a
+    // stale texture (or stale dimensions) on the GPU.
     if (
       props.ringPositions !== oldProps.ringPositions ||
-      props.triangleData !== oldProps.triangleData
+      props.ringVertexCount !== oldProps.ringVertexCount ||
+      props.triangleData !== oldProps.triangleData ||
+      props.triangleCount !== oldProps.triangleCount ||
+      props.featureScale !== oldProps.featureScale ||
+      props.featureCount !== oldProps.featureCount
     ) {
       this._updateGeometryTextures();
     }
-    if (props.featureColors !== oldProps.featureColors) {
+    if (
+      props.featureColors !== oldProps.featureColors ||
+      props.featureCount !== oldProps.featureCount
+    ) {
       this._updateFeatureTexture();
     }
   }
 
   finalizeState(context: unknown): void {
+    // The model owns GPU resources too; textures alone are not the whole footprint.
+    this.state.model?.destroy();
     this.state.ringPosTexture?.destroy();
     this.state.triDataTexture?.destroy();
     this.state.featureScaleTexture?.destroy();

@@ -1,5 +1,6 @@
 import type { Vector } from 'apache-arrow/vector';
 import WKB from 'ol/format/WKB.js';
+import MultiPolygon from 'ol/geom/MultiPolygon.js';
 import Point from 'ol/geom/Point.js';
 import Polygon from 'ol/geom/Polygon.js';
 import { describe, expect, it } from 'vitest';
@@ -28,7 +29,7 @@ function toBytes(written: string | Uint8Array): Uint8Array {
   return bytes;
 }
 
-function wkbColumn(geometries: Array<Polygon | Point>): Vector {
+function wkbColumn(geometries: Array<Polygon | MultiPolygon | Point>): Vector {
   const wkb = new WKB();
   const buffers = geometries.map((g) => toBytes(wkb.writeGeometry(g)));
   return { toArray: () => buffers } as unknown as Vector;
@@ -73,6 +74,38 @@ describe('decodeWkbPolygonColumnFlat', () => {
     // Feature 1's first vertex is the square's first coordinate.
     expect(result.positions[triangleVerts * 2]).toBe(10);
     expect(result.positions[triangleVerts * 2 + 1]).toBe(10);
+  });
+
+  it('takes the first sub-polygon exterior ring of a MultiPolygon', () => {
+    // A MultiPolygon's coordinates nest one level deeper than a Polygon's:
+    // [[ring, …holes], …subPolygons]. Returning the first sub-polygon's RINGS array
+    // (rather than its exterior ring) fed arrays to `Number()` and emitted NaN.
+    const multi = new MultiPolygon([
+      [
+        [
+          [0, 0],
+          [2, 0],
+          [1, 2],
+          [0, 0],
+        ],
+      ],
+      [
+        [
+          [10, 10],
+          [12, 10],
+          [11, 12],
+          [10, 10],
+        ],
+      ],
+    ]);
+
+    const result = decodeWkbPolygonColumnFlat(wkbColumn([multi]));
+    expect(result.featureCount).toBe(1);
+    // Every coordinate is a real number — the NaN regression.
+    expect(Array.from(result.positions).every(Number.isFinite)).toBe(true);
+    // Exactly the FIRST sub-polygon's exterior ring; later sub-polygons are dropped.
+    expect(Array.from(result.positions)).toEqual([0, 0, 2, 0, 1, 2, 0, 0]);
+    expect(Array.from(result.startIndices)).toEqual([0, 4]);
   });
 });
 

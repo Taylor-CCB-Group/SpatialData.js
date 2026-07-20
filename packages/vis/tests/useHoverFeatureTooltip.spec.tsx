@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import type { DeckGLRef, PickingInfo } from 'deck.gl';
+import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SpatialFeatureTooltipData } from '../src/SpatialCanvas/SpatialFeatureTooltip.js';
 import { useHoverFeatureTooltip } from '../src/SpatialCanvas/useHoverFeatureTooltip.js';
@@ -17,7 +18,7 @@ const TOOLTIP: SpatialFeatureTooltipData = {
   items: [{ label: 'feature_id', value: 'cell-1' }],
 };
 
-const deckRef = { current: null } as unknown as React.RefObject<DeckGLRef | null>;
+const deckRef = createRef<DeckGLRef>();
 
 /** A picked, single-layer hover (aggregate off ⇒ no Deck instance needed). */
 const PICK = {
@@ -82,6 +83,27 @@ describe('useHoverFeatureTooltip', () => {
     // renderTooltip === false means the consumer draws its own tooltip: the hook
     // neither resolves nor portals one.
     expect(getFeatureTooltip).not.toHaveBeenCalled();
+    expect(result.current.tooltipPortal).toBeNull();
+  });
+
+  it('drops a resolved tooltip when disabled, so re-enabling does not resurrect it', () => {
+    const getFeatureTooltip = vi.fn(() => TOOLTIP);
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useHoverFeatureTooltip({ ...baseOptions(getFeatureTooltip), enabled }),
+      { initialProps: { enabled: true } }
+    );
+    result.current.containerRef.current = document.createElement('div');
+
+    act(() => result.current.resolveTooltip(PICK));
+    expect(result.current.tooltipPortal).not.toBeNull();
+
+    // Mode switched to 'off' — the stored result must be dropped, not just hidden.
+    rerender({ enabled: false });
+    expect(result.current.tooltipPortal).toBeNull();
+
+    // Back on WITHOUT a fresh hover: nothing should reappear at the stale position.
+    rerender({ enabled: true });
     expect(result.current.tooltipPortal).toBeNull();
   });
 

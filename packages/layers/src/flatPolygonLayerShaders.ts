@@ -156,7 +156,11 @@ void main(void) {
   edge *= smoothstep(OUTLINE_FADE_LO, OUTLINE_FADE_HI, shapePx);
 
   // Outline = a lighter derivation of the fill (fill is the specified colour), so
-  // adjacent shapes read as distinct. Matches the object path's deriveStrokeColor.
+  // adjacent shapes read as distinct — the same RULE as the object path's
+  // deriveStrokeColor, but deliberately NOT the same constants (that path uses
+  // 0.45 / 55-of-255). This outline is anti-aliased and width-capped per shape, so
+  // it needs more lift to read at the same strength; the values here were tuned
+  // against the rendered result. Don't "unify" them without re-checking on screen.
   vec3 strokeRgb = mix(vFillColor.rgb, vec3(1.0), STROKE_LIGHTEN);
   float strokeA = min(1.0, vFillColor.a + STROKE_ALPHA_LIFT);
   vec4 color = mix(vFillColor, vec4(strokeRgb, strokeA), edge);

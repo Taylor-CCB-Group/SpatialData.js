@@ -20,7 +20,15 @@
  */
 
 import type { DeckGLRef, PickingInfo } from 'deck.gl';
-import { type ReactNode, type RefObject, useCallback, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import {
   type FeatureTooltipResolver,
@@ -94,11 +102,22 @@ export function useHoverFeatureTooltip({
 
   const clearTooltip = useCallback(() => setHoverTooltip(null), []);
 
+  // Tooltips active at all? Used both to gate resolution and to DROP any stored
+  // result on deactivation — hiding the portal alone would keep the last tooltip in
+  // state, so switching the mode back on would resurrect it at its stale position
+  // without a fresh hover.
+  const active = enabled && renderTooltip !== false;
+  useEffect(() => {
+    if (!active) {
+      setHoverTooltip(null);
+    }
+  }, [active]);
+
   // The expensive part of hovering: pick the feature(s) under the cursor and
   // position the tooltip. Callers throttle by only invoking this per hover event.
   const resolveTooltip = useCallback(
     (info: PickingInfo) => {
-      if (!enabled || renderTooltip === false) {
+      if (!active) {
         setHoverTooltip(null);
         return;
       }
@@ -123,13 +142,13 @@ export function useHoverFeatureTooltip({
         clientY: (rect?.top ?? 0) + tooltip.y,
       });
     },
-    [enabled, aggregate, getFeatureTooltip, hoverPickLayerIds, renderTooltip, deckRef]
+    [active, aggregate, getFeatureTooltip, hoverPickLayerIds, deckRef]
   );
 
   const tooltipPortal = useMemo<ReactNode>(() => {
     const portalTarget =
       typeof document !== 'undefined' ? (tooltipContainer ?? document.body) : null;
-    if (!enabled || renderTooltip === false || !hoverTooltip || !portalTarget) {
+    if (!active || !hoverTooltip || !portalTarget) {
       return null;
     }
     return createPortal(
@@ -149,7 +168,7 @@ export function useHoverFeatureTooltip({
       ),
       portalTarget
     );
-  }, [enabled, renderTooltip, hoverTooltip, tooltipContainer]);
+  }, [active, renderTooltip, hoverTooltip, tooltipContainer]);
 
   return { containerRef, resolveTooltip, clearTooltip, tooltipPortal };
 }

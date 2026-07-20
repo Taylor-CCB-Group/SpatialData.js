@@ -22,6 +22,16 @@ const config = {
   fillColorByColumn: { columnName: 'colY', mode: 'category' },
 } as unknown as ShapesLayerConfig;
 
+/** The cache shape `getStableShapeFeatureStateRuntime` requires. */
+type RuntimeCache = Map<
+  string,
+  {
+    signature: string;
+    runtime: ShapeFeatureStateRuntime;
+    fillColorEntry: ShapeFillColorEntry | undefined;
+  }
+>;
+
 const entry = (
   fillColorByFeatureId: Record<string, [number, number, number, number]>
 ): ShapeFillColorEntry => ({
@@ -35,7 +45,7 @@ const entry = (
 
 describe('getStableShapeFeatureStateRuntime', () => {
   it('picks up new fill-colour data when the entry changes under an unchanged signature', () => {
-    const cache = new Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>();
+    const cache: RuntimeCache = new Map();
 
     // First: entry built from the PREVIOUS column's still-loaded rows.
     const stale = getStableShapeFeatureStateRuntime(
@@ -58,7 +68,7 @@ describe('getStableShapeFeatureStateRuntime', () => {
   });
 
   it('returns a stable runtime identity when the entry is unchanged (no buffer thrash)', () => {
-    const cache = new Map<string, { signature: string; runtime: ShapeFeatureStateRuntime }>();
+    const cache: RuntimeCache = new Map();
     const sameEntry = entry({ f1: [1, 2, 3, 255] });
     const a = getStableShapeFeatureStateRuntime('layer-1', config, sameEntry, cache);
     const b = getStableShapeFeatureStateRuntime('layer-1', config, sameEntry, cache);

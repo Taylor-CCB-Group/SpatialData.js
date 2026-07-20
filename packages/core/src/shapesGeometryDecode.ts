@@ -90,8 +90,18 @@ function exteriorRing(coordinateTree: unknown): ReadonlyArray<readonly [number, 
     return coordinateTree as ReadonlyArray<readonly [number, number]>;
   }
   if (Array.isArray(first) && Array.isArray(first[0])) {
-    // coordinateTree is an array of rings (MultiPolygon's first sub-polygon).
-    return first as ReadonlyArray<readonly [number, number]>;
+    // `first` is EITHER the exterior ring (Polygon: coords = [ring, …holes]) OR the
+    // first sub-polygon's rings (MultiPolygon: coords = [[ring, …holes], …polys]).
+    // Both shapes reach here, so one more level of nesting disambiguates them: a
+    // ring's first element is a coordinate pair (numbers); a sub-polygon's first
+    // element is itself a ring (arrays). Returning `first` for a MultiPolygon would
+    // hand back an array of rings, and the caller's `Number()` fill would emit NaN.
+    if (typeof first[0][0] === 'number') {
+      return first as ReadonlyArray<readonly [number, number]>;
+    }
+    if (Array.isArray(first[0][0])) {
+      return first[0] as ReadonlyArray<readonly [number, number]>;
+    }
   }
   return null;
 }
