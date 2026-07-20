@@ -1092,11 +1092,25 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return countFeatureCodesHistogram(rowCodes);
   }
 
-  async listPointsFeaturesWithCounts(elementPath: string): Promise<PointsFeatureCatalog | null> {
+  /**
+   * The authoritative feature catalog, in two steps: the NAME/CODE list (cheap) and
+   * then per-feature counts (a scan of every row group — the slow part).
+   *
+   * `onPartialCatalog` is called with the names-only catalog as soon as it is known,
+   * before the counts scan starts. That is what lets the feature panel list features
+   * immediately instead of showing "Loading features…" for the whole scan: the names
+   * are what the list, swatches and selection need, and only the count column has to
+   * wait.
+   */
+  async listPointsFeaturesWithCounts(
+    elementPath: string,
+    options?: { onPartialCatalog?: (catalog: PointsFeatureCatalog) => void }
+  ): Promise<PointsFeatureCatalog | null> {
     const catalog = await this.listPointsFeatures(elementPath);
     if (!catalog) {
       return null;
     }
+    options?.onPartialCatalog?.(catalog);
     try {
       const counts = await this.loadFeatureCounts(elementPath);
       return mergeFeatureCountsIntoCatalog(catalog, counts);

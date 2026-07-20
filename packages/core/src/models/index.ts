@@ -562,8 +562,12 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.vPoints.loadFeatureCounts(`points/${this.key}`);
   }
 
-  async listFeaturesWithCounts() {
-    return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`);
+  async listFeaturesWithCounts(options?: {
+    /** Called with the names-only catalog before the (slow) counts scan, so a panel
+     * can list features while counts are still loading. */
+    onPartialCatalog?: (catalog: PointsFeatureCatalog) => void;
+  }) {
+    return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`, options);
   }
 
   async getPointsTilingMetadata() {

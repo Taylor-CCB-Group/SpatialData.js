@@ -873,9 +873,11 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (!slot) return undefined;
     // Settled (preview or full) → the value (a catalog, or null for no feature_key).
     if (slot.isReady) return slot.value ?? null;
-    // Loading behind a preview, or a failed full-scan that retained one → keep
-    // showing it. Not-yet-previewed / failed-with-nothing → undefined (not loaded).
-    return slot.lastGood ?? undefined;
+    // Loading: prefer the in-flight PARTIAL (the full names/codes list, published
+    // before the slow counts scan) over an older preview — it is the more complete
+    // list, just without counts yet. Then a preview, or a failed full-scan that
+    // retained one. Nothing at all → undefined (not loaded).
+    return slot.partial ?? slot.lastGood ?? undefined;
   }
 
   /** True while a settled catalog does not yet exist AND one is on its way (either
@@ -986,8 +988,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // preview keeps showing while the full list loads. A rejection becomes a
     // `failed` (retryable) resolution, NOT a permanent null-settle: that is what
     // A4's retry() unsticks. The preview, if any, survives as the failed `stale`.
-    return slot.request('full', async () => {
-      const fullCatalog = await element.listFeaturesWithCounts();
+    return slot.request('full', async ({ emit }) => {
+      const fullCatalog = await element.listFeaturesWithCounts({
+        // Publish the names-only catalog the moment it is known, so the panel can
+        // list features (and colour them) while the per-feature counts scan — which
+        // walks every row group — is still running. `emit` is inert once superseded.
+        onPartialCatalog: (partial) => {
+          emit(partial);
+        },
+      });
       // The full-dataset catalog is authoritative. Re-express any resident row codes
       // in its space so the render's per-row codes match the panel's selection.
       this.reconcileRowCodes(entry, fullCatalog);

@@ -249,7 +249,11 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     setFeatureCodes([...current].sort((left, right) => left - right));
   };
 
-  if (catalogLoading) {
+  // Only block on loading when there is NOTHING to show. The catalog scan publishes
+  // the names/codes list before its (slow) per-feature counts pass, so once that
+  // partial arrives the list is usable — features can be seen, coloured and selected
+  // while the counts column is still filling in.
+  if (catalogLoading && !catalog) {
     return (
       <div style={panelStyle}>
         <div style={helperStyle}>Loading features…</div>
@@ -318,6 +322,10 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
         </span>
       </div>
       {catalogRefining ? <div style={helperStyle}>Loading the full feature list…</div> : null}
+      {catalogLoading && !catalogRefining ? (
+        // The list is already usable; only the per-feature counts are outstanding.
+        <div style={helperStyle}>Counting features…</div>
+      ) : null}
       {notLoadedCount > 0 ? (
         <div style={helperStyle}>
           {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'}{' '}
