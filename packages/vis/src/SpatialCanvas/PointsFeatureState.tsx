@@ -116,6 +116,9 @@ export interface PointsFeatureState {
   /** Truncation of what's on screen for the selection passed to the hook (so the
    * UI can show when raising the memory cap would load more). */
   truncation: ReturnType<PointsDataEngine['getActiveTruncation']>;
+  /** Running per-feature counts over the resident window (`code → rows`), available
+   * while the whole-dataset counts scan is still running. Partial by construction. */
+  residentFeatureCounts: ReturnType<PointsDataEngine['getResidentFeatureCounts']>;
   /** Stable callback — trigger the full-dataset catalog build (idempotent). */
   requestCatalog: () => void;
   /** Stable callback — set (or clear, with null) the hover-highlighted feature code
@@ -135,6 +138,7 @@ const EMPTY_POINTS_FEATURE_STATE: Omit<
   supportsOnDemandLoad: false,
   matchingLoadState: undefined,
   truncation: undefined,
+  residentFeatureCounts: undefined,
 };
 
 /**
@@ -178,6 +182,7 @@ export function usePointsFeatureState(featureCodes?: readonly number[]): PointsF
     matchingLoadState:
       hasSelection && scannable ? engine.getMatchingLoadState(key, featureCodes) : undefined,
     truncation: engine.getActiveTruncation(key, featureCodes),
+    residentFeatureCounts: engine.getResidentFeatureCounts(key),
     requestCatalog,
     setHighlightedFeature,
   };

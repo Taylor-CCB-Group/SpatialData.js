@@ -465,6 +465,19 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   /**
+   * Running per-feature point counts for the resident batch (`code → rows`),
+   * accumulated while the preload streamed. These are counts over the RESIDENT
+   * WINDOW, not the dataset — the authoritative dataset totals come from the catalog
+   * scan — but they are available almost immediately, so the panel can show stats
+   * instead of blanks while that scan runs. Reads the in-flight partial first so the
+   * numbers climb as points arrive.
+   */
+  getResidentFeatureCounts(key: string): ReadonlyMap<number, number> | undefined {
+    const entry = this.entries.get(key);
+    return entry?.preload.partial?.featureCodeCounts ?? entry?.preload.lastGood?.featureCodeCounts;
+  }
+
+  /**
    * The key (`${signature}#${cap}`) of the in-flight scan whose partial is streaming,
    * or `undefined` when no scan is loading. The Renderer Adapter uses it to tell a
    * *growing* partial (same scan, keep the resource identity, bump a revision) from a

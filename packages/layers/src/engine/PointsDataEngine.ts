@@ -207,6 +207,12 @@ export class PointsDataEngine {
     return this.resolver.getPreloadPartialBatch(key);
   }
 
+  /** Running per-feature counts over the resident window, available while the
+   * whole-dataset counts scan is still running. */
+  getResidentFeatureCounts(key: string): ReadonlyMap<number, number> | undefined {
+    return this.resolver.getResidentFeatureCounts(key);
+  }
+
   getStatus(key: string): PointsLoadStatus {
     return this.resolver.getStatus(key);
   }

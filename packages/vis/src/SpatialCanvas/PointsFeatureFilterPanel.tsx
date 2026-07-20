@@ -161,6 +161,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     loadedMatchingCodes,
     supportsOnDemandLoad,
     matchingLoadState,
+    residentFeatureCounts,
     requestCatalog,
     setHighlightedFeature,
   } = usePointsFeatureState(config.featureCodes);
@@ -177,6 +178,16 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   useEffect(() => () => setHighlightedFeature(null), [setHighlightedFeature]);
   const entries = useMemo(() => catalog?.entries ?? [], [catalog?.entries]);
   const hasCounts = entries.some((entry) => entry.count !== undefined);
+  // Authoritative dataset counts only arrive with the catalog's counts scan. Until
+  // then fall back to the running resident-window tally accumulated while the points
+  // streamed in — enough to populate and sort the column immediately. Partial values
+  // are marked with a leading "≥" so they are never mistaken for dataset totals.
+  const partialCounts = residentFeatureCounts;
+  const hasAnyCounts = hasCounts || (partialCounts?.size ?? 0) > 0;
+  const effectiveCount = (entry: { code: number; count?: number }): number | undefined =>
+    entry.count ?? partialCounts?.get(entry.code);
+  const countIsPartial = (entry: { code: number; count?: number }): boolean =>
+    entry.count === undefined && partialCounts?.get(entry.code) !== undefined;
   const allSelected = config.featureCodes === undefined;
   const noneSelected = config.featureCodes !== undefined && config.featureCodes.length === 0;
   const selectedCodes = allSelected
@@ -185,9 +196,11 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
 
   const sortedEntries = useMemo(() => {
     const list = [...entries];
-    if (hasCounts) {
+    const rank = (entry: { code: number; count?: number }): number =>
+      entry.count ?? partialCounts?.get(entry.code) ?? -1;
+    if (hasAnyCounts) {
       list.sort((left, right) => {
-        const countDiff = (right.count ?? -1) - (left.count ?? -1);
+        const countDiff = rank(right) - rank(left);
         if (countDiff !== 0) {
           return countDiff;
         }
@@ -197,7 +210,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
       list.sort((left, right) => left.name.localeCompare(right.name));
     }
     return list;
-  }, [entries, hasCounts]);
+  }, [entries, hasAnyCounts, partialCounts]);
 
   const visibleEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -318,7 +331,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
         <span style={helperStyle}>
           {' '}
           · {selectedCount}/{entries.length} selected
-          {hasCounts ? ' · sorted by count' : ''}
+          {hasAnyCounts ? (hasCounts ? ' · sorted by count' : ' · sorted by count so far') : ''}
         </span>
       </div>
       {catalogRefining ? <div style={helperStyle}>Loading the full feature list…</div> : null}
@@ -441,7 +454,19 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
                   ⟲
                 </button>
               ) : null}
-              {hasCounts ? <span style={countStyle}>{formatFeatureCount(entry.count)}</span> : null}
+              {hasAnyCounts ? (
+                <span
+                  style={countStyle}
+                  title={
+                    countIsPartial(entry)
+                      ? 'Points loaded so far (resident window) — dataset total still counting'
+                      : 'Points in the dataset'
+                  }
+                >
+                  {countIsPartial(entry) ? '≥' : ''}
+                  {formatFeatureCount(effectiveCount(entry))}
+                </span>
+              ) : null}
             </label>
           );
         })}

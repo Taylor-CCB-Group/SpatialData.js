@@ -432,15 +432,22 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // constraint that keeps `feature_name` off this path. Once false the stream
     // publishes NO codes, so the caller falls through to the one-shot decode.
     let codesComplete = codeBuffer !== undefined;
+    // Running per-feature tally. Free in I/O terms — the codes are already decoded —
+    // and O(rows) once overall, so a panel can show per-feature stats long before the
+    // whole-dataset counts scan finishes. Counts cover the streamed prefix only.
+    const codeCounts = new Map<number, number>();
 
-    // Views over the filled prefix — no copy, so emitting a partial is O(1).
+    // Views over the filled prefix — no copy, so emitting a partial is O(1). The
+    // tally is passed by reference and keeps growing; consumers read it per tick.
     const snapshot = (): PointsLoadResult => ({
       shape: [axisCount, filled] as [number, number],
       data: axisBuffers.map((buffer) => buffer.subarray(0, filled)),
       totalRowCount: options.totalRowCount,
       preloadTruncated: options.preloadTruncated,
       hasFeatureCodeColumn: featureCodeColumnName !== undefined,
-      ...(codeBuffer && codesComplete ? { featureCodes: codeBuffer.subarray(0, filled) } : {}),
+      ...(codeBuffer && codesComplete
+        ? { featureCodes: codeBuffer.subarray(0, filled), featureCodeCounts: new Map(codeCounts) }
+        : {}),
     });
 
     for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
@@ -495,6 +502,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         const chunkCodes = decoded.featureCodes;
         if (chunkCodes && chunkCodes.length >= rows) {
           codeBuffer.set(chunkCodes.subarray(0, rows), filled);
+          // Tally this chunk while its codes are hot, rather than re-walking the
+          // whole prefix on every progress tick.
+          for (let row = 0; row < rows; row += 1) {
+            const code = chunkCodes[row];
+            codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+          }
         } else {
           codesComplete = false;
         }
