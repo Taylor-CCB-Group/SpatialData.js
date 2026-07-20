@@ -1,6 +1,10 @@
 import type { Layer, UpdateParameters } from '@deck.gl/core';
 import { LayerExtension } from '@deck.gl/core';
-import { buildFeaturePalette, type FeatureColorOverrides } from './pointsFeatureColor.js';
+import {
+  buildFeaturePalette,
+  type FeatureColorOverrides,
+  featurePaletteWidth,
+} from './pointsFeatureColor.js';
 
 /** A luma texture, narrowed to the members this extension touches. */
 interface PaletteTexture {
@@ -132,9 +136,25 @@ export class PointsFeatureColorExtension extends LayerExtension {
         defaultValue: -1,
       },
     });
-    // A sampler with no binding is a draw error, so bind a 1×1 fallback immediately;
-    // `updateState` swaps in the real palette once its size/overrides are known.
-    pfcSetPaletteTexture(this, pfcBuildPaletteTexture(this, 1, null));
+    // Build from the ACTUAL props, not a hard-coded 1×1. This sublayer only mounts
+    // once there is a batch to draw, by which time the catalog is often already
+    // loaded — so `featureCodeSpaceSize` arrives at its final value here and never
+    // "changes" again. Seeding a 1×1 and waiting for a change left the palette one
+    // texel wide forever, and the shader clamps every code to texel 0: one flat
+    // colour for the whole layer. (`buildFeaturePalette` floors width at 1, so an
+    // unknown code space still yields a bindable fallback.)
+    const props = this.props as {
+      featureCodeSpaceSize?: number;
+      featureColorOverrides?: FeatureColorOverrides | null;
+    };
+    pfcSetPaletteTexture(
+      this,
+      pfcBuildPaletteTexture(
+        this,
+        props.featureCodeSpaceSize ?? 0,
+        props.featureColorOverrides ?? null
+      )
+    );
   }
 
   updateState(this: Layer, params: UpdateParameters<Layer>): void {
@@ -143,8 +163,14 @@ export class PointsFeatureColorExtension extends LayerExtension {
       featureColorOverrides?: FeatureColorOverrides | null;
     };
     const oldProps = params.oldProps as typeof props;
+    const state = this.state as { pfcPaletteTexture?: PaletteTexture };
+    // Reconcile against the texture we actually hold rather than against a prop
+    // transition: a width mismatch means the palette cannot colour every code, no
+    // matter which update did or didn't fire. Self-healing, so a missed transition
+    // degrades to a rebuild instead of a permanently wrong palette.
+    const neededWidth = featurePaletteWidth(props.featureCodeSpaceSize ?? 0);
     if (
-      props.featureCodeSpaceSize !== oldProps.featureCodeSpaceSize ||
+      state.pfcPaletteTexture?.width !== neededWidth ||
       props.featureColorOverrides !== oldProps.featureColorOverrides
     ) {
       pfcSetPaletteTexture(

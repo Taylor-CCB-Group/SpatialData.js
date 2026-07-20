@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFeaturePalette,
+  DEFAULT_FEATURE_PALETTE_WIDTH,
   featureCodeToCssColor,
   featureCodeToRgb,
+  featurePaletteWidth,
 } from '../src/pointsFeatureColor.js';
 
 describe('featureCodeToRgb', () => {
@@ -32,8 +34,9 @@ describe('featureCodeToRgb', () => {
 describe('buildFeaturePalette', () => {
   it('lays out one RGBA texel per code, defaulting to featureCodeToRgb', () => {
     const palette = buildFeaturePalette(3);
-    expect(palette.width).toBe(3);
-    expect(palette.data.length).toBe(3 * 4);
+    // Width is a floor, not the requested size — see DEFAULT_FEATURE_PALETTE_WIDTH.
+    expect(palette.width).toBe(DEFAULT_FEATURE_PALETTE_WIDTH);
+    expect(palette.data.length).toBe(DEFAULT_FEATURE_PALETTE_WIDTH * 4);
     for (let code = 0; code < 3; code += 1) {
       const [r, g, b] = featureCodeToRgb(code);
       const o = code * 4;
@@ -56,8 +59,23 @@ describe('buildFeaturePalette', () => {
     expect([palette.data[4], palette.data[5], palette.data[6]]).toEqual([r, g, b]);
   });
 
-  it('never produces a zero-width table (a 1×1 fallback keeps the sampler bindable)', () => {
-    expect(buildFeaturePalette(0).width).toBe(1);
-    expect(buildFeaturePalette(0).data.length).toBe(4);
+  it('covers a default code space even with NO catalog, so colour works before one loads', () => {
+    // The regression this pins: sizing the LUT from the catalog made it 1 texel wide
+    // until the catalog landed, and the shader clamps every code to texel 0 — the
+    // whole layer one flat colour for the entire load of a big element.
+    const palette = buildFeaturePalette(0);
+    expect(palette.width).toBe(DEFAULT_FEATURE_PALETTE_WIDTH);
+
+    // Distinct codes must get distinct texels with no catalog at all.
+    const texel = (code: number) => [...palette.data.slice(code * 4, code * 4 + 3)];
+    expect(texel(7)).toEqual([...featureCodeToRgb(7)]);
+    expect(texel(500)).not.toEqual(texel(7));
+  });
+
+  it('widens past the default when the catalog code space is larger', () => {
+    expect(buildFeaturePalette(10_000).width).toBe(10_000);
+    expect(featurePaletteWidth(10_000)).toBe(10_000);
+    // …and never narrows below the default for a small/unknown space.
+    expect(featurePaletteWidth(12)).toBe(DEFAULT_FEATURE_PALETTE_WIDTH);
   });
 });
