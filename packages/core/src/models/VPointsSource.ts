@@ -425,6 +425,13 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const axisBuffers = Array.from({ length: axisCount }, () => new Float32Array(maxRows));
     const codeBuffer = featureCodeColumnName ? new Int32Array(maxRows) : undefined;
     let filled = 0;
+    // Goes false the moment any chunk fails to supply one code PER ROW. Observed in
+    // practice: a per-row-group read of the code column can come back with just the
+    // column's distinct values (e.g. 4 codes for a 100k-row group in a feature-sorted
+    // file), because the row-group path mis-handles dictionary encoding — the same
+    // constraint that keeps `feature_name` off this path. Once false the stream
+    // publishes NO codes, so the caller falls through to the one-shot decode.
+    let codesComplete = codeBuffer !== undefined;
 
     // Views over the filled prefix — no copy, so emitting a partial is O(1).
     const snapshot = (): PointsLoadResult => ({
@@ -433,7 +440,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       totalRowCount: options.totalRowCount,
       preloadTruncated: options.preloadTruncated,
       hasFeatureCodeColumn: featureCodeColumnName !== undefined,
-      ...(codeBuffer ? { featureCodes: codeBuffer.subarray(0, filled) } : {}),
+      ...(codeBuffer && codesComplete ? { featureCodes: codeBuffer.subarray(0, filled) } : {}),
     });
 
     for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
@@ -480,8 +487,17 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             : Float32Array.from(Array.prototype.slice.call(column, 0, rows));
         axisBuffers[axis].set(values, filled);
       }
-      if (codeBuffer && decoded.featureCodes) {
-        codeBuffer.set(decoded.featureCodes.subarray(0, rows), filled);
+      if (codeBuffer) {
+        // A SHORT codes array is unusable, not partially usable: writing it would
+        // leave the remaining rows at 0 — a VALID feature code — so those points
+        // would be confidently mis-coloured rather than left uncoloured. Demand one
+        // code per row or discard codes for the whole stream.
+        const chunkCodes = decoded.featureCodes;
+        if (chunkCodes && chunkCodes.length >= rows) {
+          codeBuffer.set(chunkCodes.subarray(0, rows), filled);
+        } else {
+          codesComplete = false;
+        }
       }
       filled += rows;
       options.onProgress?.({
