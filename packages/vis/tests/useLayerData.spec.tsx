@@ -296,6 +296,11 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
       data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
       featureCodes: new Int32Array([0, 1, 0]),
       hasFeatureCodeColumn: true, // → supportsFeatureScan true right after preload
+      // Truncated on purpose: a matching scan is only planned when rows exist
+      // beyond the resident window. With a complete batch the resolver filters in
+      // memory and never scans, so there would be no matched batch to gate on.
+      preloadTruncated: true,
+      totalRowCount: 100,
     };
     const matchedForZero = {
       shape: [2, 2],
@@ -373,6 +378,10 @@ describe('useLayerData — selection show/hide + colour', () => {
       data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
       featureCodes: new Int32Array([0, 1, 0]),
       hasFeatureCodeColumn: true,
+      // See the note in scanPointsElement: a scan is only planned for a truncated
+      // resident batch, which is the situation these matched-vs-resident cases model.
+      preloadTruncated: true,
+      totalRowCount: 100,
     };
     const matchedForZero = {
       shape: [2, 2],

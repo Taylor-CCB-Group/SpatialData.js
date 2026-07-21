@@ -266,7 +266,14 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     }
 
     // Was `void engine.ensureMatchingFeaturesLoaded(...)` at useLayerData.ts:1375.
-    if (selectionActive && this.supportsFeatureScan(key)) {
+    //
+    // Only worth scanning when the resident batch might be MISSING matching rows.
+    // A complete (untruncated) preload already holds every row in the dataset, so
+    // the render path's in-memory filter returns exactly what a whole-dataset scan
+    // would — instantly, with no I/O. Scanning anyway re-read the entire file and
+    // showed "Loading selected features… 0 points so far" for a selection whose
+    // points were already in memory.
+    if (selectionActive && this.supportsFeatureScan(key) && !this.isResidentComplete(key)) {
       const signature = PointsResolver.matchingSignature(selection);
       tasks.push({
         id: `${key}#matching:${signature}:${cap}`,
@@ -566,6 +573,19 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       ...(data.featureCodes ? { featureCodes: sliceArray(data.featureCodes) } : {}),
       preloadTruncated: true,
     };
+  }
+
+  /**
+   * Whether the resident batch demonstrably holds EVERY row of the dataset.
+   *
+   * True only for a settled, untruncated preload — then any feature question can be
+   * answered by filtering what is already in memory, and a whole-dataset scan is
+   * pure waste. Deliberately false while the preload is still in flight or its
+   * state is unknown, so this only ever removes provably-unnecessary work.
+   */
+  private isResidentComplete(key: string): boolean {
+    const data = this.entries.get(key)?.preload.lastGood;
+    return data !== undefined && data.preloadTruncated !== true;
   }
 
   /** Whether the resident batch is in its final state for this cap. */

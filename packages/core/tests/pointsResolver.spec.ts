@@ -116,7 +116,11 @@ describe('plan() — pure, synchronous, starts nothing', () => {
 
   it('plans a matching scan only once the element is known to support one', async () => {
     const resolver = new PointsResolver();
-    const el = element();
+    // Truncated: rows exist beyond what is resident, so a scan can actually add
+    // something. (A complete batch is covered by the next test.)
+    const el = element({
+      loadPoints: vi.fn(async () => batch(4, { preloadTruncated: true, totalRowCount: 1_000 })),
+    });
     const config: PointsResolveConfig = { featureCodes: [0] };
 
     // Before anything loads we cannot know whether a scan is even possible.
@@ -125,6 +129,21 @@ describe('plan() — pure, synchronous, starts nothing', () => {
     await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
 
     expect(resolver.plan(ctx(el, config)).map((t) => t.resource)).toContain('matching');
+  });
+
+  it('plans no matching scan when the resident batch holds every row', async () => {
+    // A complete preload already contains every matching row, so the render path's
+    // in-memory filter is exact and a whole-dataset scan is pure waste. Scanning
+    // anyway made a selection on a fully-resident element sit on "Loading selected
+    // features… 0 points so far" while it re-read the entire file.
+    const resolver = new PointsResolver();
+    const el = element(); // batch(4), untruncated
+    const config: PointsResolveConfig = { featureCodes: [0] };
+
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
+
+    expect(resolver.plan(ctx(el, config)).map((t) => t.resource)).not.toContain('matching');
+    expect(el.loadPointsMatchingFeatureCodes).not.toHaveBeenCalled();
   });
 
   it('stops planning a preload once one is resident', async () => {

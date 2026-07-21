@@ -296,6 +296,55 @@ const PRELOAD_STREAM_BATCH_ROWS = 65_536;
  * asking the vector per row would materialise a JS string per point (~59s for 4M
  * rows) instead of once per distinct feature. See `resolveRowFeatureCodesFromTable`.
  */
+/**
+ * Add this batch's per-feature row counts into `counts`, resolving names through
+ * the already-populated `nameToCode`.
+ *
+ * Same dictionary-first approach as {@link appendFeatureCodesFromColumn}: read each
+ * chunk's distinct values once rather than materialising a string per row.
+ */
+function tallyFeatureCodesFromColumn(
+  column: Vector,
+  rows: number,
+  nameToCode: ReadonlyMap<string, number>,
+  counts: Map<number, number>
+): void {
+  let seen = 0;
+  let chunkStart = 0;
+  for (const chunk of column.data) {
+    if (seen >= rows) {
+      break;
+    }
+    const take = Math.min(chunk.length, rows - seen);
+    const dictionary = chunk.dictionary;
+    if (dictionary && chunk.nullCount === 0) {
+      const codeByIndex = new Int32Array(dictionary.length);
+      for (let index = 0; index < dictionary.length; index += 1) {
+        const name = dictionary.get(index);
+        codeByIndex[index] = name == null ? -1 : (nameToCode.get(String(name)) ?? -1);
+      }
+      const indices = chunk.values as ArrayLike<number>;
+      for (let row = 0; row < take; row += 1) {
+        const index = indices[row];
+        const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
+        if (code >= 0) {
+          counts.set(code, (counts.get(code) ?? 0) + 1);
+        }
+      }
+    } else {
+      for (let row = 0; row < take; row += 1) {
+        const value = column.get(chunkStart + row);
+        const code = value == null ? -1 : (nameToCode.get(String(value)) ?? -1);
+        if (code >= 0) {
+          counts.set(code, (counts.get(code) ?? 0) + 1);
+        }
+      }
+    }
+    seen += take;
+    chunkStart += chunk.length;
+  }
+}
+
 function appendFeatureCodesFromColumn(
   column: Vector,
   rows: number,
@@ -1458,6 +1507,13 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
     options?.onPartialCatalog?.(catalog);
+    // The streaming scan counts as it goes, so a catalog can arrive complete. Don't
+    // then run the counts scan: for a dictionary-only element it would return an
+    // empty map (it needs an integer code column) and merging that back would drop
+    // the counts we already have.
+    if (catalog.entries.some((entry) => entry.count !== undefined)) {
+      return catalog;
+    }
     try {
       const counts = await this.loadFeatureCounts(elementPath);
       return mergeFeatureCountsIntoCatalog(catalog, counts);
@@ -1614,13 +1670,26 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
 
-    return buildFeatureCatalogFromColumns(
+    const catalog = buildFeatureCatalogFromColumns(
       featureKey,
       nameColumn,
       codeColumn,
       mortonColumn,
       arrowTable.numRows
     );
+    // Count here too, for the same reason the streaming scan does: a
+    // dictionary-only element gets nothing from `loadFeatureCounts`, and this
+    // whole-table read has already decoded every row, so the counts are exact and
+    // free. Without this, an under-the-cap element like a 3.7M-row MERFISH
+    // `single_molecule` showed a feature list whose stats never arrived.
+    const counts = new Map<number, number>();
+    tallyFeatureCodesFromColumn(
+      nameColumn,
+      arrowTable.numRows,
+      featureCodeMapFromCatalog(catalog) ?? new Map(),
+      counts
+    );
+    return mergeFeatureCountsIntoCatalog(catalog, counts);
   }
 
   /**
@@ -1687,6 +1756,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     } = await import('../pointsFeatures.js');
     const codeToName = new Map<number, string>();
     const nameToCode = new Map<string, number>();
+    // Tally per feature while the column is already decoded. This is the ONLY place
+    // a dictionary-only element can get counts: `loadFeatureCounts` needs an integer
+    // code column and returns an empty map without one, which is why such elements
+    // showed feature stats that never settled. Costs no extra I/O — the rows are in
+    // hand — and covers the whole dataset because this scan reads every row.
+    const counts = new Map<number, number>();
     let publishedFeatureCount = 0;
 
     // The watchdog spans opening AND draining every part: a failed range request
@@ -1708,14 +1783,20 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
               break;
             }
             stall.progress();
+            const batch = tableFromIPC(value.intoIPCStream());
             accumulateFeatureCatalogFromTable(
               codeToName,
               nameToCode,
-              tableFromIPC(value.intoIPCStream()),
+              batch,
               featureKey,
               featureCodeColumnName,
               { skipMortonSentinels: hasMortonColumn }
             );
+            // After the accumulate above, every name in this batch has a code.
+            const featureColumn = batch.getChild(featureKey);
+            if (featureColumn) {
+              tallyFeatureCodesFromColumn(featureColumn, batch.numRows, nameToCode, counts);
+            }
             // Only republish when the list actually grew; most batches add
             // nothing once the common features have been seen.
             if (onPartialCatalog && codeToName.size > publishedFeatureCount) {
@@ -1747,7 +1828,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     if (featureCatalogNeedsParquetFallback(codeToName)) {
       return null;
     }
-    return featureCatalogFromCodeMap(featureKey, codeToName);
+    // Counts ride along: this scan read every row, so they are dataset-wide, and
+    // for a dictionary-only element nothing else can produce them.
+    return mergeFeatureCountsIntoCatalog(featureCatalogFromCodeMap(featureKey, codeToName), counts);
   }
 
   /**
