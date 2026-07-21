@@ -1879,7 +1879,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
           fullPartsForFallback: true,
-          includeRowGroups: true,
+          // Row groups are only usable here with an integer code column — the
+          // dictionary name column cannot be read that way. Asking for them
+          // anyway on a dict-only element fetched every row group AND every
+          // part: the whole dataset downloaded twice to use half of it.
+          includeRowGroups: featureCodeColumnName !== undefined,
+          // Both are handed to the worker: the row-group decode can still come
+          // back unusable, and parts are the fallback.
+          partsAlongsideRowGroups: true,
         });
         const catalog = await scanParquetFeatureCatalogInWorker({
           rowGroups:

@@ -731,6 +731,15 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
   /**
    * Row-group and part byte payloads for worker-side parquet decode.
+   *
+   * Part bytes are WHOLE FILES — for a points element that is the entire dataset
+   * (100MB+), so fetching them when the caller will not read them is the single
+   * most expensive mistake this class can make. Most callers pass either the row
+   * groups or the parts to the worker, never both, so parts are skipped by default
+   * once row groups are in hand. Only a caller that genuinely needs parts AS A
+   * FALLBACK ALONGSIDE row groups — i.e. it hands both to the worker because the
+   * row-group decode may come back unusable, i.e. a dictionary column — sets
+   * {@link partsAlongsideRowGroups}.
    */
   protected async readParquetWorkerPayload(
     parquetPath: string,
@@ -739,6 +748,13 @@ export default class SpatialDataTableSource extends AnnDataSource {
       fullPartsForFallback?: boolean;
       /** When false (default), only part bytes are fetched for worker decode. */
       includeRowGroups?: boolean;
+      /**
+       * Fetch whole-part bytes EVEN WHEN row groups were returned, because the
+       * caller passes both to the worker and cannot know in advance which it will
+       * need. Costs a full-dataset download — set it only when the row-group
+       * decode can genuinely fail to produce what the caller wants.
+       */
+      partsAlongsideRowGroups?: boolean;
     }
   ): Promise<{
     rowGroups: Array<{
@@ -753,6 +769,9 @@ export default class SpatialDataTableSource extends AnnDataSource {
     const rowGroups = canUseRowGroups
       ? await this.readParquetRowGroupsBytesCapped(parquetPath, options.maxRows)
       : [];
+    if (rowGroups.length > 0 && options.partsAlongsideRowGroups !== true) {
+      return { rowGroups, parts: [] };
+    }
     const partsMaxRows = options.fullPartsForFallback ? Number.POSITIVE_INFINITY : options.maxRows;
     const { parts } = await this.readParquetDatasetBytesCapped(parquetPath, partsMaxRows);
     return { rowGroups, parts };
