@@ -1,3 +1,4 @@
+import type { Vector } from 'apache-arrow';
 import { decodeIntStat, parseParquetFileMetaData } from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
@@ -273,6 +274,81 @@ const pointsSubElementRegex = /^points\/([^/]*)\/(.*)$/;
 const FEATURE_STREAM_BATCH_ROWS = 16_384;
 
 /**
+ * Rows per batch when streaming geometry + colour for the preload.
+ *
+ * Bigger than the catalog scan's batch: this path copies axis values per batch, so
+ * fewer, larger batches amortise that better, while still being small enough that
+ * the first coloured points land in tens of milliseconds.
+ */
+const PRELOAD_STREAM_BATCH_ROWS = 65_536;
+
+/**
+ * Assign a code to each row of one feature-column batch, appending into `codeBuffer`
+ * at `offset` and tallying into `codeCounts`.
+ *
+ * Codes are allocated on first sight via the shared `nameToCode`, so they stay
+ * stable for the whole stream — a gene coloured in batch 1 keeps its code in batch
+ * 62, and `codeToName` always describes the codes actually written. For a
+ * dictionary chunk that means dictionary order, not row order; the caller documents
+ * why that is fine.
+ *
+ * A DICTIONARY column resolves its values once per chunk and maps raw indices;
+ * asking the vector per row would materialise a JS string per point (~59s for 4M
+ * rows) instead of once per distinct feature. See `resolveRowFeatureCodesFromTable`.
+ */
+function appendFeatureCodesFromColumn(
+  column: Vector,
+  rows: number,
+  codeToName: Map<number, string>,
+  nameToCode: Map<string, number>,
+  codeBuffer: Int32Array,
+  codeCounts: Map<number, number>,
+  offset: number
+): void {
+  const codeFor = (name: string): number => {
+    let code = nameToCode.get(name);
+    if (code === undefined) {
+      code = nameToCode.size;
+      nameToCode.set(name, code);
+      codeToName.set(code, name);
+    }
+    return code;
+  };
+  let written = 0;
+  let chunkStart = 0;
+  for (const chunk of column.data) {
+    if (written >= rows) {
+      break;
+    }
+    const take = Math.min(chunk.length, rows - written);
+    const dictionary = chunk.dictionary;
+    if (dictionary && chunk.nullCount === 0) {
+      const codeByIndex = new Int32Array(dictionary.length);
+      for (let index = 0; index < dictionary.length; index += 1) {
+        const name = dictionary.get(index);
+        codeByIndex[index] = name == null ? -1 : codeFor(String(name));
+      }
+      const indices = chunk.values as ArrayLike<number>;
+      for (let row = 0; row < take; row += 1) {
+        const index = indices[row];
+        const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
+        codeBuffer[offset + written + row] = code;
+        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+      }
+    } else {
+      for (let row = 0; row < take; row += 1) {
+        const value = column.get(chunkStart + row);
+        const code = value == null ? -1 : codeFor(String(value));
+        codeBuffer[offset + written + row] = code;
+        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+      }
+    }
+    written += take;
+    chunkStart += chunk.length;
+  }
+}
+
+/**
  * How long a single streamed batch may take before the scan gives up and falls
  * back to the byte-oriented path.
  *
@@ -465,6 +541,164 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * Returns null when streaming isn't possible (no dataset metadata, no range
    * reads, worker disabled, nothing decoded) so the caller falls back to one-shot.
    */
+  /**
+   * Progressive preload that streams geometry AND colour together.
+   *
+   * The row-group preload below cannot read a DICTIONARY-typed `feature_name`, so
+   * for the common Xenium-style element (dict feature column, no integer code
+   * column) it streams geometry and publishes no codes at all — points appear
+   * quickly but stay flat until a whole separate decode settles the codes. This
+   * path removes that split: `ParquetFile.stream()` decodes dictionary columns
+   * correctly, so x/y and the feature column arrive in the same batches and every
+   * partial is already coloured.
+   *
+   * The returned `featureCodes` and `featureCatalog` are built from one shared
+   * name→code map, so they are consistent WITH EACH OTHER — which is the contract
+   * the resolver needs. They are NOT in the same code space as the full-dataset
+   * scan: codes here follow each chunk's dictionary order, while the scan assigns
+   * in row order, so the same gene generally gets a different number. That is
+   * expected for a dictionary-only element and is what `reconcileRowCodes` /
+   * `remapRowFeatureCodes` exist for — the resolver re-expresses these codes
+   * against the authoritative catalog once it settles, keyed off the catalog
+   * returned here. Returning the matching catalog is therefore load-bearing.
+   *
+   * Reading codes from the dictionary rather than per row also means the catalog is
+   * complete from the first batch (all 541 genes of a wild-type element at ~620ms),
+   * at the cost of possibly listing a gene whose rows are all beyond the cap.
+   *
+   * Measured on a 4M-row wild-type transcripts element: first coloured batch at
+   * ~40ms and all 4M rows coloured in ~350ms, against a row-group preload that
+   * reaches full geometry at ~11s and never colours.
+   *
+   * Returns null when the fast path does not apply (non-URL store, no suffix-range
+   * support, no streaming reader, nothing decoded) so the caller falls through.
+   */
+  private async streamPointsWithFeaturesByUrl(
+    parquetPath: string,
+    options: {
+      axisNames: string[];
+      featureKey: string;
+      maxRows: number;
+      totalRowCount: number;
+      preloadTruncated: boolean;
+      hasFeatureCodeColumn: boolean;
+      onProgress?: (progress: PointsLoadProgress) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<PointsLoadResult | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = dataset?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const partUrls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url || !(await this.serverSupportsStreamingRanges(url))) {
+        return null;
+      }
+      partUrls.push(url);
+    }
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      return null;
+    }
+
+    const { axisNames, featureKey, maxRows } = options;
+    const axisCount = axisNames.length;
+    const { tableFromIPC } = await import('apache-arrow');
+    const { featureCatalogFromCodeMap } = await import('../pointsFeatures.js');
+
+    // Preallocate once and append at a cursor; partials expose the filled prefix as
+    // subarray VIEWS so emitting progress stays O(1).
+    const axisBuffers = Array.from({ length: axisCount }, () => new Float32Array(maxRows));
+    const codeBuffer = new Int32Array(maxRows);
+    const codeToName = new Map<number, string>();
+    const nameToCode = new Map<string, number>();
+    const codeCounts = new Map<number, number>();
+    let filled = 0;
+
+    const snapshot = (): PointsLoadResult => ({
+      shape: [axisCount, filled] as [number, number],
+      data: axisBuffers.map((buffer) => buffer.subarray(0, filled)),
+      totalRowCount: options.totalRowCount,
+      preloadTruncated: options.preloadTruncated,
+      hasFeatureCodeColumn: options.hasFeatureCodeColumn,
+      featureCodes: codeBuffer.subarray(0, filled),
+      featureCatalog: featureCatalogFromCodeMap(featureKey, codeToName),
+      featureCodeCounts: new Map(codeCounts),
+    });
+
+    for (const [partIndex, url] of partUrls.entries()) {
+      if (filled >= maxRows) {
+        break;
+      }
+      const file = await ParquetFile.fromUrl(url);
+      const stream = await file.stream({
+        columns: [...axisNames, featureKey],
+        batchSize: PRELOAD_STREAM_BATCH_ROWS,
+      });
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          checkAbort(options.signal); // superseded → stop before the next batch
+          if (filled >= maxRows) {
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          const table = tableFromIPC(value.intoIPCStream());
+          const rows = Math.min(table.numRows, maxRows - filled);
+          if (rows <= 0) {
+            continue;
+          }
+          for (let axis = 0; axis < axisCount; axis += 1) {
+            const column = table.getChild(axisNames[axis]);
+            if (!column) {
+              continue;
+            }
+            const values = column.toArray() as ArrayLike<number>;
+            for (let row = 0; row < rows; row += 1) {
+              axisBuffers[axis][filled + row] = values[row];
+            }
+          }
+          const featureColumn = table.getChild(featureKey);
+          if (!featureColumn) {
+            // No feature column in the projection means this path cannot colour
+            // anything; hand back what we have and let the caller settle codes.
+            return filled > 0 ? snapshot() : null;
+          }
+          appendFeatureCodesFromColumn(
+            featureColumn,
+            rows,
+            codeToName,
+            nameToCode,
+            codeBuffer,
+            codeCounts,
+            filled
+          );
+          filled += rows;
+          options.onProgress?.({
+            // Unfiltered preload: every decoded row is kept, so scanned === matched.
+            scannedRows: filled,
+            matchedRows: filled,
+            partIndex,
+            partCount: partUrls.length,
+            partialResult: snapshot(),
+          });
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    return filled > 0 ? snapshot() : null;
+  }
+
   private async streamPointsGeometryByRowGroup(
     parquetPath: string,
     options: {
@@ -636,6 +870,34 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       columnNames.push(featureKey);
       if (featureCodeColumnName) {
         columnNames.push(featureCodeColumnName);
+      }
+    }
+
+    // Preferred progressive preload: stream geometry AND the feature column in the
+    // same batches, so points paint already coloured. Tried before the row-group
+    // path because that one cannot read a dictionary feature column at all — the
+    // case where colour otherwise waits for a whole separate decode. Needs no
+    // worker: the per-batch work is a dictionary lookup and a typed-array copy.
+    if (options.onProgress && featureKey) {
+      try {
+        const streamed = await this.streamPointsWithFeaturesByUrl(parquetPath, {
+          axisNames,
+          featureKey,
+          maxRows,
+          totalRowCount: rowCount,
+          preloadTruncated: truncatePreload,
+          hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+          onProgress: options.onProgress,
+          ...(options.signal ? { signal: options.signal } : {}),
+        });
+        if (streamed?.featureCodes !== undefined) {
+          return streamed;
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
+        console.warn(`Streaming points preload failed for ${elementPath}; falling back.`, error);
       }
     }
 

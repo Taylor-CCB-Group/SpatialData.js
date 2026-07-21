@@ -1,12 +1,4 @@
-import {
-  Dictionary,
-  Int16,
-
-  tableFromArrays,
-  Utf8,
-  Vector,
-  vectorFromArray,
-} from 'apache-arrow';
+import { Dictionary, Int16, tableFromArrays, Utf8, Vector, vectorFromArray } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import { resolveRowFeatureCodesFromTable } from '../src/pointsFeatures.js';
 
@@ -101,8 +93,14 @@ describe('resolveRowFeatureCodesFromTable', () => {
     // chunk need not be the same gene as index 0 in the next — a real 4M-row
     // transcripts column arrives as thousands of such chunks. Reading only the
     // first chunk's dictionary (as the old helper did) mislabels later rows.
-    const chunkA = vectorFromArray(['GENE_A', 'GENE_B'], new Dictionary(new Utf8(), new Int16(), 0));
-    const chunkB = vectorFromArray(['GENE_C', 'GENE_D'], new Dictionary(new Utf8(), new Int16(), 1));
+    const chunkA = vectorFromArray(
+      ['GENE_A', 'GENE_B'],
+      new Dictionary(new Utf8(), new Int16(), 0)
+    );
+    const chunkB = vectorFromArray(
+      ['GENE_C', 'GENE_D'],
+      new Dictionary(new Utf8(), new Int16(), 1)
+    );
     const column = new Vector([...chunkA.data, ...chunkB.data]);
     expect(column.data.length).toBe(2);
 
