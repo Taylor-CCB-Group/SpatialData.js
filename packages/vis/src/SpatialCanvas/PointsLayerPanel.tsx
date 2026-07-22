@@ -110,12 +110,12 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
         gap: 4,
       }}
     >
-      Point size ({(config.pointSize ?? 1).toFixed(1)})
+      Point size ({(config.pointSize ?? 1).toFixed(2)})
       <input
         type="range"
-        min={0.1}
+        min={0.01}
         max={12}
-        step={0.1}
+        step={0.01}
         value={config.pointSize ?? 1}
         onChange={(e) =>
           actions.updateLayer(config.id, {
