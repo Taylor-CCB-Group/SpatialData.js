@@ -116,6 +116,17 @@ interface PointsEntry {
   catalog: RequestSlot<CatalogPhase, PointsFeatureCatalog | null>;
   /** The catalog whose code space the {@link rowCodes} value is expressed in. */
   rowCodesCatalog?: PointsFeatureCatalog;
+  /**
+   * The resident-subset preview from the last geometry decode, held OUTSIDE the
+   * slot so it can be offered as a fallback without cancelling anything.
+   *
+   * `settle` aborts the in-flight request, so settling a preview on top of a
+   * running full scan destroys it. Keeping the preview here lets
+   * {@link PointsResolver.getFeatureCatalog} still show it instantly while the scan
+   * runs (or after one fails), which is the whole point of the preview, without the
+   * write that killed the scan.
+   */
+  previewCatalog?: PointsFeatureCatalog;
   /** True when the element has a file-backed feature code column (authoritative
    * codes; a real feature index). False for dictionary-only feature columns. */
   featureCodeColumn?: boolean;
@@ -716,9 +727,19 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       entry.residentCodes = undefined;
       entry.residentCodesSource = undefined;
       entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
-      if (data.featureCatalog !== undefined && entry.catalog.settledKey !== 'full') {
+      if (data.featureCatalog !== undefined) {
+        entry.previewCatalog = data.featureCatalog;
         // Instant resident-subset preview; the full-dataset scan may supersede it.
-        entry.catalog.settle('preview', data.featureCatalog);
+        // But `settle` ABORTS whatever the slot is running, so writing the preview
+        // while the full scan is in flight silently kills it — and nothing re-requests
+        // a catalog (`plan()` never emits a catalog task; only the panel's mount effect
+        // does), so the list stayed on partial "≥" counts until the panel remounted.
+        // The preview is a strict downgrade of a scan already under way; it stays
+        // available through `previewCatalog` instead.
+        const fullPending = entry.catalog.isLoading && entry.catalog.pendingKey === 'full';
+        if (entry.catalog.settledKey !== 'full' && !fullPending) {
+          entry.catalog.settle('preview', data.featureCatalog);
+        }
       }
       if (data.featureCodes !== undefined) {
         // Row codes fall out of this decode, aligned to the batch at exactly this cap.
@@ -902,15 +923,18 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   // --- Feature catalog --------------------------------------------------------
 
   getFeatureCatalog(key: string): PointsFeatureCatalog | null | undefined {
-    const slot = this.entries.get(key)?.catalog;
+    const entry = this.entries.get(key);
+    const slot = entry?.catalog;
     if (!slot) return undefined;
     // Settled (preview or full) → the value (a catalog, or null for no feature_key).
     if (slot.isReady) return slot.value ?? null;
     // Loading: prefer the in-flight PARTIAL (the full names/codes list, published
     // before the slow counts scan) over an older preview — it is the more complete
     // list, just without counts yet. Then a preview, or a failed full-scan that
-    // retained one. Nothing at all → undefined (not loaded).
-    return slot.partial ?? slot.lastGood ?? undefined;
+    // retained one; last, a preview the preload produced *underneath* a running scan,
+    // which is deliberately not settled into the slot (see `previewCatalog`).
+    // Nothing at all → undefined (not loaded).
+    return slot.partial ?? slot.lastGood ?? entry?.previewCatalog ?? undefined;
   }
 
   /** True while a settled catalog does not yet exist AND one is on its way (either
@@ -1021,7 +1045,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // preview keeps showing while the full list loads. A rejection becomes a
     // `failed` (retryable) resolution, NOT a permanent null-settle: that is what
     // A4's retry() unsticks. The preview, if any, survives as the failed `stale`.
-    return slot.request('full', async ({ emit }) => {
+    return slot.request('full', async ({ emit, signal }) => {
       const fullCatalog = await element.listFeaturesWithCounts({
         // Publish the names-only catalog the moment it is known, so the panel can
         // list features (and colour them) while the per-feature counts scan — which
@@ -1030,6 +1054,13 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
           emit(partial);
         },
       });
+      // R1: a superseded load must not write anything, least of all CROSS-SLOT state.
+      // The slot drops this return value, but `reconcileRowCodes` writes straight to
+      // `entry.rowCodes` — and `listFeaturesWithCounts` takes no signal, so a
+      // superseded scan runs to completion and lands here regardless. Remapping the
+      // rows into a catalog nobody is showing is precisely the split that drew every
+      // point in another gene's colour.
+      if (signal.aborted) return fullCatalog;
       // The full-dataset catalog is authoritative. Re-express any resident row codes
       // in its space so the render's per-row codes match the panel's selection.
       this.reconcileRowCodes(entry, fullCatalog);
