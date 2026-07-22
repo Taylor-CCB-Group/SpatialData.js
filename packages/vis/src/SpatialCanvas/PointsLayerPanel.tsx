@@ -98,9 +98,39 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   );
 }
 
+function PointSizeControl({ config }: { config: PointsLayerConfig }) {
+  const actions = useSpatialCanvasActions();
+  return (
+    <label
+      style={{
+        color: '#ccc',
+        fontSize: '12px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      Point size ({(config.pointSize ?? 1).toFixed(1)})
+      <input
+        type="range"
+        min={0.1}
+        max={12}
+        step={0.1}
+        value={config.pointSize ?? 1}
+        onChange={(e) =>
+          actions.updateLayer(config.id, {
+            pointSize: Number(e.target.value),
+          })
+        }
+      />
+    </label>    
+  )
+}
+
 export default function PointsLayerPanel({ config, engine, resolveTarget }: PointsLayerPanelProps) {
   return (
     <PointsFeatureStateProvider engine={engine} target={resolveTarget(config.id)}>
+      <PointSizeControl config={config} />
       <PointsMemoryCap config={config} />
       <ShowMatchingPoints config={config} />
       <PointsFeatureFilterPanel config={config} />
