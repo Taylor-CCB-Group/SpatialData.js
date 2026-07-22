@@ -13,6 +13,34 @@ export const DEFAULT_POINT_SIZE = 0.1;
 export const DEFAULT_POINT_RADIUS_MIN_PIXELS = 0.01;
 export const DEFAULT_POINT_RADIUS_MAX_PIXELS = 3;
 
+/**
+ * The uniform scale factor a model matrix applies to positions.
+ *
+ * Deck runs `modelMatrix` over POSITIONS but not over a `'common'`-unit radius, so
+ * the two disagree by exactly this factor. A SpatialData element's transform is
+ * whatever the writer chose — a Xenium element may scale by 4.7, while an element
+ * expressed in millimetres scales by 0.00012 — and without correction the same
+ * `pointSize` renders ~40000x differently between those two.
+ *
+ * Returns the geometric mean of the x and y basis lengths, so a mildly anisotropic
+ * transform gets a sensible single radius; 1 for a missing or degenerate matrix,
+ * which leaves sizing exactly as it was.
+ */
+export function modelMatrixUniformScale(matrix: Matrix4 | null | undefined): number {
+  if (!matrix) {
+    return 1;
+  }
+  // Column-major: column 0 is the x basis, column 1 the y basis.
+  const m = matrix as unknown as ArrayLike<number>;
+  if (typeof m[0] !== 'number') {
+    return 1;
+  }
+  const scaleX = Math.hypot(m[0] ?? 0, m[1] ?? 0, m[2] ?? 0);
+  const scaleY = Math.hypot(m[4] ?? 0, m[5] ?? 0, m[6] ?? 0);
+  const scale = Math.sqrt(scaleX * scaleY);
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
 export function zoomScaledPointSize(
   pointSize: number,
   zoom: number | null | undefined,
@@ -67,6 +95,13 @@ export function renderColumnarScatterLayer(
   const radiusUnits: 'common' | 'pixels' = isTile ? 'pixels' : 'common';
   const radiusMinPixels = props.pointRadiusMinPixels ?? DEFAULT_POINT_RADIUS_MIN_PIXELS;
   const radiusMaxPixels = props.pointRadiusMaxPixels ?? DEFAULT_POINT_RADIUS_MAX_PIXELS;
+  // `pointSize` means "this many units of the ELEMENT's own coordinate space".
+  // Deck transforms positions by `modelMatrix` but leaves a common-unit radius
+  // alone, so without folding the matrix scale in here the same pointSize renders
+  // wildly differently per element: an element with a 0.00012 mm affine drew points
+  // ~8000x too large for its data, swamping the view and shredding fill rate.
+  // Pixel-unit tiles are already viewport-relative and must not be rescaled.
+  const transformScale = isTile ? 1 : modelMatrixUniformScale(props.modelMatrix);
 
   // Feed deck GPU-ready binary attributes (interleaved positions) instead of a
   // per-object `getPosition` closure. The buffer is memoized on the batch, so a
@@ -107,7 +142,7 @@ export function renderColumnarScatterLayer(
     // the shader's `featureCode >= 0.0` guard falls through to the flat colour.
     getFeatureCode: -1,
     // getRadius: props.pointSize,
-    radiusScale: props.pointSize,
+    radiusScale: props.pointSize * transformScale,
     radiusUnits,
     radiusMinPixels,
     radiusMaxPixels,
