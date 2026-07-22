@@ -3,14 +3,14 @@ import { ScatterplotLayer } from 'deck.gl';
 import type { FeatureColorOverrides } from './pointsFeatureColor.js';
 import { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
-import { buildPointsAttributes } from './pointsRenderAttributes.js';
+import { buildPointsAttributes, buildPointsDeckData } from './pointsRenderAttributes.js';
 
 /** Orthographic zoom at which configured pointSize applies at full scale. */
 export const POINT_SIZE_ZOOM_REFERENCE = 0;
 /** Minimum radius multiplier when zoomed out (reduces fragment overdraw). */
 export const MIN_POINT_SIZE_SCALE = 0.15;
 export const DEFAULT_POINT_SIZE = 0.1;
-export const DEFAULT_POINT_RADIUS_MIN_PIXELS = 0.1;
+export const DEFAULT_POINT_RADIUS_MIN_PIXELS = 0.01;
 export const DEFAULT_POINT_RADIUS_MAX_PIXELS = 3;
 
 export function zoomScaledPointSize(
@@ -91,15 +91,10 @@ export function renderColumnarScatterLayer(
   return new ScatterplotLayer({
     id,
     coordinateSystem: 'cartesian',
-    data: {
-      length: attributes.length,
-      attributes: {
-        getPosition: { value: attributes.positions, size: 3 },
-        ...(colorByFeature
-          ? { getFeatureCode: { value: attributes.featureCodes as Float32Array, size: 1 } }
-          : {}),
-      },
-    },
+    // Memoized per (batch, use3d, colorByFeature): deck compares `data` by
+    // IDENTITY, so a fresh wrapper — even around identical buffers — invalidates
+    // every attribute and re-uploads the whole position buffer.
+    data: buildPointsDeckData(batch, props.use3d === true, colorByFeature),
     ...(props.tileBounds ? { bounds: props.tileBounds } : {}),
     extensions: [pointsFeatureColorExtension],
     // Sizes the colour LUT texture and supplies any per-feature overrides — read by
@@ -111,7 +106,8 @@ export function renderColumnarScatterLayer(
     // colouring; when it is withdrawn (colour off), deck reverts to this -1, so
     // the shader's `featureCode >= 0.0` guard falls through to the flat colour.
     getFeatureCode: -1,
-    getRadius: props.pointSize,
+    // getRadius: props.pointSize,
+    radiusScale: props.pointSize,
     radiusUnits,
     radiusMinPixels,
     radiusMaxPixels,
@@ -121,8 +117,8 @@ export function renderColumnarScatterLayer(
     pickable: true,
     autoHighlight: true,
     highlightColor: [255, 255, 0, 200],
-    updateTriggers: {
-      getRadius: [props.pointSize],
-    },
+    // updateTriggers: {
+    //   radiusScale: [props.pointSize],
+    // },
   });
 }
