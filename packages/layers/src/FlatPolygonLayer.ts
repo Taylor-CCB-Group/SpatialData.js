@@ -240,6 +240,9 @@ export class FlatPolygonLayer extends (Layer as any) {
       topology: 'triangle-list',
       bufferLayout: [],
       isInstanced: false,
+      // Hand-rolled Models do not inherit Deck's assembler automatically. It owns
+      // the DECKGL_FILTER_* hook declarations consumed by our shaders.
+      shaderAssembler: this.context.shaderAssembler,
     });
   }
 }
