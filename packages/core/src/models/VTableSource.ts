@@ -185,6 +185,18 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * `loadPolygonShapes` all target the same file).
    */
   parquetTableCache: Record<string, Promise<ArrowTable>>;
+  /**
+   * Remembers parquet part layout per path — single file vs. `part.N.parquet`
+   * directory, and the per-part metadata — so the probe sequence (see
+   * {@link loadParquetDatasetMetadata}) runs once, not on every one of the ~20
+   * calls a single points load makes. Only real datasets are held; nulls/failures
+   * are evicted.
+   */
+  parquetDatasetMetadataCache: Map<string, Promise<ParquetDatasetMetadata | null>>;
+  /** Part paths discovered by whole-file probing — the transport-independent
+   * fallback used when a store has no range support, so the layout is still
+   * resolved once rather than per call. */
+  parquetPartPathsCache: Map<string, Promise<string[]>>;
   /** Morton min/max per row group — avoids re-decoding row groups during bisect. */
   rowGroupColumnExtentCache: Map<string, { min: number | null; max: number | null }>;
   obsIndices: Record<string, Promise<string[]>>;
@@ -207,6 +219,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
     // TODO: change to column-specific storage.
     this.parquetTableBytes = {};
     this.parquetTableCache = {};
+    this.parquetDatasetMetadataCache = new Map();
+    this.parquetPartPathsCache = new Map();
     this.rowGroupColumnExtentCache = new Map();
 
     // Table-specific properties
@@ -281,13 +295,35 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * relative to the store root.
    * @returns The parquet file bytes.
    */
+  /**
+   * The candidate paths to try for "the parquet file at `parquetPath`", best
+   * first.
+   *
+   * Blind, the order has to be [directory, part.0] — you cannot know which it is
+   * without asking. But once the layout IS known, leading with the directory means
+   * a guaranteed-useless request every time: an HTML listing to be rejected by the
+   * magic check on a static server, a 500 on MDV. A PEEK at the resolved layout
+   * (never resolving it — see {@link loadParquetSchemaBytes}) lets a known
+   * multipart element go straight to its first real part.
+   */
+  private async orderedParquetCandidatePaths(parquetPath: string): Promise<string[]> {
+    const pending = this.parquetDatasetMetadataCache.get(parquetPath);
+    if (pending) {
+      const firstPartPath = (await pending)?.parts[0]?.path;
+      if (firstPartPath && firstPartPath !== parquetPath) {
+        return [firstPartPath];
+      }
+    }
+    return getParquetCandidatePaths(parquetPath);
+  }
+
   async loadParquetBytes(parquetPath: string) {
     if (this.parquetTableBytes[parquetPath]) {
       // Return the cached bytes.
       return this.parquetTableBytes[parquetPath];
     }
 
-    for (const candidatePath of getParquetCandidatePaths(parquetPath)) {
+    for (const candidatePath of await this.orderedParquetCandidatePaths(parquetPath)) {
       try {
         // Some servers return an HTML directory listing for multipart parquet
         // directories, so validate the bytes before caching or parsing them.
@@ -324,9 +360,27 @@ export default class SpatialDataTableSource extends AnnDataSource {
   async loadParquetSchemaBytes(parquetPath: string) {
     const { store } = this.storeRoot;
     if (store.getRange) {
+      // An ALREADY-resolved layout carries each part's footer bytes — exactly what
+      // this returns. Reuse them rather than re-walking the candidate paths: that
+      // walk probes the DIRECTORY path first every time, and this runs on every
+      // schema/column resolution, so it kept re-issuing the directory read (and
+      // MDV's 500) long after the layout was known.
+      //
+      // Deliberately a PEEK, not a call: resolving the layout from here would probe
+      // the whole part sequence, so an element whose footer `readMetadata` cannot
+      // parse (and which therefore has no layout) would pay for both walks instead
+      // of just this one.
+      const pending = this.parquetDatasetMetadataCache.get(parquetPath);
+      if (pending) {
+        const schemaBytes = (await pending)?.parts[0]?.schemaBytes;
+        if (schemaBytes) {
+          return schemaBytes;
+        }
+      }
+
       let lastError: Error | null = null;
 
-      for (const candidatePath of getParquetCandidatePaths(parquetPath)) {
+      for (const candidatePath of await this.orderedParquetCandidatePaths(parquetPath)) {
         try {
           const footerBytes = await this.loadParquetFooterBytesForPath(candidatePath);
           if (footerBytes) return footerBytes;
@@ -436,7 +490,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   protected async resolveParquetRowCount(parquetPath: string): Promise<number> {
-    // may be better to cache this? we get e.g. a lot of 404 requests for `points.parquet/points.4.parquet`
+    // The cached layout answers this outright on any range-capable store; the
+    // whole-file paths below are the fallback for stores without range support.
+    // (This is where the "lots of 404s for part.N" TODO lived — the enumeration is
+    // now shared and memoized rather than repeated per call.)
     const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
     if (datasetMetadata?.totalNumRows) {
       return datasetMetadata.totalNumRows;
@@ -447,23 +504,26 @@ export default class SpatialDataTableSource extends AnnDataSource {
       return directPart.metadata.fileMetadata().numRows();
     }
 
+    // Same part set the loop here used to rediscover: every probe involved goes
+    // through the magic-checked `loadParquetFileBytesAtPath`, so sharing the
+    // memoized discovery finds exactly what enumerating inline did.
+    const partPaths = await this.discoverMultipartPartPaths(parquetPath);
     let totalRows = 0;
     let foundPart = false;
-    for (let partIndex = 0; ; partIndex += 1) {
-      const partPath = `${parquetPath}/part.${partIndex}.parquet`;
+    for (const partPath of partPaths) {
       const part = await this.loadParquetPartMetadataFromFullFile(partPath);
       if (part) {
         foundPart = true;
         totalRows += part.metadata.fileMetadata().numRows();
         continue;
       }
+      // A part whose footer will not parse still contributes rows; fall back to
+      // counting a single column.
       const columnCount = await this.countRowsFromFullParquetFile(partPath);
       if (columnCount > 0) {
         foundPart = true;
         totalRows += columnCount;
-        continue;
       }
-      break;
     }
     if (foundPart) {
       return totalRows;
@@ -515,7 +575,63 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }
   }
 
-  async loadParquetDatasetMetadata(parquetPath: string): Promise<ParquetDatasetMetadata | null> {
+  /**
+   * Resolve whether `parquetPath` is a single parquet file or a directory of
+   * `part.N.parquet` files, plus the per-part metadata — remembering the answer.
+   *
+   * Part discovery costs real requests every time it runs: a probe of the
+   * directory path itself (which servers answer inconsistently — a 404, or the
+   * MDV 500, see {@link probeParquetPartMetadata}), plus one 404 past the final
+   * part to find the end of the sequence. For a read-only store the layout never
+   * changes, yet a single points load calls this ~20 times (row counts, tiling,
+   * row-group extents, the streaming reader, …), so uncached it repeated that
+   * whole probe sequence over and over — the trailing 404s and repeated directory
+   * 500s visible in the network tab.
+   *
+   * The promise is cached so concurrent callers share one probe, but only a real
+   * dataset is remembered: a `null` resolution or a rejection is evicted. Now that
+   * {@link probeParquetPartMetadata} turns a failed probe into `null` rather than a
+   * throw, a transient all-probes-failed must not be allowed to stick and
+   * permanently mark a real dataset as absent — and a genuine not-a-dataset path
+   * is cheap to re-probe.
+   */
+  loadParquetDatasetMetadata(parquetPath: string): Promise<ParquetDatasetMetadata | null> {
+    const cached = this.parquetDatasetMetadataCache.get(parquetPath);
+    if (cached) {
+      return cached;
+    }
+    const promise = this.loadParquetDatasetMetadataUncached(parquetPath).then(
+      (result) => {
+        if (result === null) {
+          this.evictIfCurrent(this.parquetDatasetMetadataCache, parquetPath, promise);
+        }
+        return result;
+      },
+      (error) => {
+        this.evictIfCurrent(this.parquetDatasetMetadataCache, parquetPath, promise);
+        throw error;
+      }
+    );
+    this.parquetDatasetMetadataCache.set(parquetPath, promise);
+    return promise;
+  }
+
+  /** Drop a cache entry only if it still holds `promise` — a later call that
+   * superseded it (e.g. after an eviction) must not be clobbered by an earlier
+   * promise's late resolution. */
+  private evictIfCurrent<V>(
+    cache: Map<string, Promise<V>>,
+    key: string,
+    promise: Promise<V>
+  ): void {
+    if (cache.get(key) === promise) {
+      cache.delete(key);
+    }
+  }
+
+  private async loadParquetDatasetMetadataUncached(
+    parquetPath: string
+  ): Promise<ParquetDatasetMetadata | null> {
     const { readMetadata } = await SpatialDataTableSource.parquetModulePromise;
     const { store } = this.storeRoot;
     if (!readMetadata || !store.getRange) {
@@ -909,17 +1025,63 @@ export default class SpatialDataTableSource extends AnnDataSource {
     return tablePromise;
   }
 
+  /**
+   * The `part.N.parquet` paths of a multipart directory, or `[]` for a single
+   * parquet file.
+   *
+   * This is the SECOND way the codebase derives "how many parts are there" —
+   * {@link loadParquetDatasetMetadata} is the first. They differ only in transport:
+   * that one range-reads footers (needs `store.getRange`), this one fetches whole
+   * files (works on any store), which is why both exist. But they answer the same
+   * question, so when the metadata already knows the layout this must not re-probe:
+   * it was enumerating `part.0`, `part.1`, … again — over WHOLE-FILE gets — even for
+   * an element the metadata had already identified as a single file, which is where
+   * the duplicate trailing 404s came from.
+   *
+   * Falls back to probing only when the metadata is unavailable (a store without
+   * range support), and memoizes that fallback too. An empty result is not cached,
+   * for the same reason a null dataset is not: it is indistinguishable from a
+   * transient failure to read part 0.
+   */
   private async discoverMultipartPartPaths(parquetPath: string): Promise<string[]> {
-    const partPaths: string[] = [];
-    for (let partIndex = 0; ; partIndex += 1) {
-      const partPath = `${parquetPath}/part.${partIndex}.parquet`;
-      const bytes = await this.loadParquetFileBytesAtPath(partPath);
-      if (!bytes) {
-        break;
-      }
-      partPaths.push(partPath);
+    // Cached, so this is free once any caller has resolved the layout.
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (dataset?.parts.length) {
+      // A single part AT the requested path means "not a directory" — the same
+      // answer the probe loop below reaches by finding no `part.0.parquet`.
+      const isSingleFile = dataset.parts.length === 1 && dataset.parts[0]?.path === parquetPath;
+      return isSingleFile ? [] : dataset.parts.map((part) => part.path);
     }
-    return partPaths;
+
+    const cached = this.parquetPartPathsCache.get(parquetPath);
+    if (cached) {
+      return cached;
+    }
+    const promise = (async () => {
+      const partPaths: string[] = [];
+      for (let partIndex = 0; ; partIndex += 1) {
+        const partPath = `${parquetPath}/part.${partIndex}.parquet`;
+        const bytes = await this.loadParquetFileBytesAtPath(partPath);
+        if (!bytes) {
+          break;
+        }
+        partPaths.push(partPath);
+      }
+      return partPaths;
+    })().then(
+      (partPaths) => {
+        if (partPaths.length === 0) {
+          this.evictIfCurrent(this.parquetPartPathsCache, parquetPath, promise);
+        }
+        return partPaths;
+      },
+      (error) => {
+        this.evictIfCurrent(this.parquetPartPathsCache, parquetPath, promise);
+        throw error;
+      }
+    );
+    this.parquetPartPathsCache.set(parquetPath, promise);
+    return promise;
   }
 
   private async loadMultipartParquetTableFromPartPaths(

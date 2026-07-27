@@ -57,6 +57,8 @@ PY`,
  * non-2xx that is not 404 becomes a throw).
  */
 function createDirectoryThrowsStore(root: string) {
+  /** Every path read, in order — the test's stand-in for the network tab. */
+  const reads: string[] = [];
   const isDirectory = async (relativePath: string): Promise<boolean> => {
     try {
       return (await stat(join(root, relativePath))).isDirectory();
@@ -65,6 +67,7 @@ function createDirectoryThrowsStore(root: string) {
     }
   };
   const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+    reads.push(relativePath);
     if (await isDirectory(relativePath)) {
       // The server would 500 here; the store turns that into a throw.
       throw new Error(`Unexpected response status 500 [Errno 21] Is a directory: ${relativePath}`);
@@ -77,6 +80,11 @@ function createDirectoryThrowsStore(root: string) {
   };
 
   return {
+    reads,
+    countReadsOf: (path: string) => reads.filter((read) => read === path).length,
+    clearReads: () => {
+      reads.length = 0;
+    },
     async get(path: string) {
       return readStoreBytes(path.startsWith('/') ? path.slice(1) : path);
     },
@@ -101,15 +109,14 @@ function createDirectoryThrowsStore(root: string) {
 describe('SpatialDataTableSource — directory path returns 500 (MDV/Flask)', () => {
   let fixtureRoot: string;
   let source: SpatialDataTableSource;
+  let store: ReturnType<typeof createDirectoryThrowsStore>;
   const parquetPath = 'points/transcripts/points.parquet';
 
   beforeAll(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), 'directory-500-parquet-'));
     await writeMultipartParquetFixture(join(fixtureRoot, parquetPath), [100, 50]);
-    source = new SpatialDataTableSource({
-      store: createDirectoryThrowsStore(fixtureRoot),
-      fileType: '.zarr',
-    });
+    store = createDirectoryThrowsStore(fixtureRoot);
+    source = new SpatialDataTableSource({ store, fileType: '.zarr' });
   }, 120_000);
 
   afterAll(async () => {
@@ -129,5 +136,104 @@ describe('SpatialDataTableSource — directory path returns 500 (MDV/Flask)', ()
   it('reads the full table across parts despite the directory 500', async () => {
     const table = await source.loadParquetTable(parquetPath);
     expect(table.numRows).toBe(150);
+  });
+
+  /**
+   * The layout of a read-only store never changes, but a single points load asks
+   * for it ~20 times (row counts, tiling, row-group extents, the streaming reader,
+   * …). Uncached, each of those repeated the whole probe sequence — which is what
+   * put a stream of repeated directory 500s and trailing 404s in the network tab.
+   */
+  describe('remembers the layout', () => {
+    const missingPart = `${parquetPath}/part.2.parquet`;
+
+    it('probes the directory and the end-of-sequence 404 exactly once', async () => {
+      // A COLD source: the shared one is already warm from the tests above (which
+      // is itself the behaviour under test, just not measurable from here).
+      const cold = new SpatialDataTableSource({
+        store: createDirectoryThrowsStore(fixtureRoot),
+        fileType: '.zarr',
+      });
+      const coldStore = (cold as unknown as { storeRoot: { store: typeof store } }).storeRoot.store;
+
+      const first = await cold.loadParquetDatasetMetadata(parquetPath);
+      const probesAfterFirst = coldStore.reads.length;
+      expect(probesAfterFirst).toBeGreaterThan(0);
+      for (let i = 0; i < 5; i += 1) {
+        await cold.loadParquetDatasetMetadata(parquetPath);
+      }
+
+      // The 500-ing directory path and the 404 past the last part: once each, ever.
+      expect(coldStore.countReadsOf(parquetPath)).toBe(1);
+      expect(coldStore.countReadsOf(missingPart)).toBe(1);
+      // Five further calls cost NOTHING — not merely fewer reads.
+      expect(coldStore.reads.length).toBe(probesAfterFirst);
+      expect(first?.parts).toHaveLength(2);
+    });
+
+    it('shares one probe between concurrent callers', async () => {
+      // The real trigger: many call sites fire at once during a points load, so a
+      // cache that only populated on settle would still stampede.
+      const fresh = new SpatialDataTableSource({
+        store: createDirectoryThrowsStore(fixtureRoot),
+        fileType: '.zarr',
+      });
+      const freshStore = (fresh as unknown as { storeRoot: { store: typeof store } }).storeRoot
+        .store;
+
+      const results = await Promise.all(
+        Array.from({ length: 6 }, () => fresh.loadParquetDatasetMetadata(parquetPath))
+      );
+
+      expect(freshStore.countReadsOf(parquetPath)).toBe(1);
+      expect(freshStore.countReadsOf(missingPart)).toBe(1);
+      // All callers get the same resolved layout.
+      for (const result of results) {
+        expect(result?.parts.map((part) => part.path)).toEqual([
+          `${parquetPath}/part.0.parquet`,
+          `${parquetPath}/part.1.parquet`,
+        ]);
+      }
+    });
+
+    it('does not re-probe parts when reading tables, which uses the other enumerator', async () => {
+      // `discoverMultipartPartPaths` derives the same layout by WHOLE-FILE reads
+      // (the fallback for stores without range support). It used to enumerate
+      // part.0, part.1, … independently — even for elements the metadata had
+      // already resolved — which is the second source of repeated 404s.
+      const cold = new SpatialDataTableSource({
+        store: createDirectoryThrowsStore(fixtureRoot),
+        fileType: '.zarr',
+      });
+      const coldStore = (cold as unknown as { storeRoot: { store: typeof store } }).storeRoot.store;
+
+      await cold.loadParquetTable(parquetPath);
+      await cold.loadParquetTable(parquetPath, ['x', 'y']);
+
+      expect(coldStore.countReadsOf(parquetPath)).toBe(1);
+      expect(coldStore.countReadsOf(missingPart)).toBe(1);
+    });
+
+    it('does not cache a miss, so a transient failure cannot mark a real dataset absent', async () => {
+      // `probeParquetPartMetadata` turns a failed probe into null rather than a
+      // throw, so an all-probes-failed run is indistinguishable from "no dataset
+      // here". Caching that would strand a real element behind one network blip.
+      const flaky = new SpatialDataTableSource({
+        store: createDirectoryThrowsStore(fixtureRoot),
+        fileType: '.zarr',
+      });
+      const absent = 'points/absent/points.parquet';
+
+      expect(await flaky.loadParquetDatasetMetadata(absent)).toBeNull();
+      const readsAfterMiss = (
+        flaky as unknown as { storeRoot: { store: typeof store } }
+      ).storeRoot.store.reads.filter((read) => read.startsWith('points/absent')).length;
+      expect(await flaky.loadParquetDatasetMetadata(absent)).toBeNull();
+      const readsAfterSecondMiss = (
+        flaky as unknown as { storeRoot: { store: typeof store } }
+      ).storeRoot.store.reads.filter((read) => read.startsWith('points/absent')).length;
+
+      expect(readsAfterSecondMiss).toBeGreaterThan(readsAfterMiss);
+    });
   });
 });
