@@ -5,6 +5,8 @@ import {
   decodeParquetRowGroupsToTable,
   extractGeometryColumnar,
   extractRowFeatureCodesFromTable,
+  Float32PointBuffer,
+  Int32PointBuffer,
   scanFeatureCatalogFromPayload,
   scanTableByFeatureCodes,
 } from '../src/workers/pointsWorkerScan.js';
@@ -154,9 +156,9 @@ describe('scanTableByFeatureCodes with featureCodeByName (dict-only)', () => {
       ['gene_b', 1],
       ['gene_c', 2],
     ]);
-    const xs: number[] = [];
-    const ys: number[] = [];
-    const codes: number[] = [];
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const codes = new Int32PointBuffer();
     const matched = scanTableByFeatureCodes({
       table,
       axisNames: ['x', 'y'],
@@ -167,14 +169,14 @@ describe('scanTableByFeatureCodes with featureCodeByName (dict-only)', () => {
       matchedRows: 0,
       xs,
       ys,
-      zs: [],
+      zs: new Float32PointBuffer(),
       codes,
       featureCodeByName,
     });
     expect(matched).toBe(2);
-    expect(xs).toEqual([11, 13]); // the two gene_c rows
-    expect(ys).toEqual([21, 23]);
-    expect(codes).toEqual([2, 2]); // authoritative codes retained
+    expect([...xs.toArray()]).toEqual([11, 13]); // the two gene_c rows
+    expect([...ys.toArray()]).toEqual([21, 23]);
+    expect([...codes.toArray()]).toEqual([2, 2]); // authoritative codes retained
   });
 
   it('matches nothing when no name→code map is supplied for dict-only data', () => {
@@ -183,7 +185,7 @@ describe('scanTableByFeatureCodes with featureCodeByName (dict-only)', () => {
       y: Float32Array.from([20, 21]),
       feature_name: ['gene_a', 'gene_c'],
     });
-    const xs: number[] = [];
+    const xs = new Float32PointBuffer();
     const matched = scanTableByFeatureCodes({
       table,
       axisNames: ['x', 'y'],
@@ -193,11 +195,11 @@ describe('scanTableByFeatureCodes with featureCodeByName (dict-only)', () => {
       memoryCap: 1_000,
       matchedRows: 0,
       xs,
-      ys: [],
-      zs: [],
+      ys: new Float32PointBuffer(),
+      zs: new Float32PointBuffer(),
     });
     expect(matched).toBe(0);
-    expect(xs).toEqual([]);
+    expect([...xs.toArray()]).toEqual([]);
   });
 });
 
@@ -266,9 +268,9 @@ describe('scanFeatureCatalogFromPayload', () => {
  */
 describe('scanTableByFeatureCodes over a multi-chunk table', () => {
   const scan = (table: Parameters<typeof scanTableByFeatureCodes>[0]['table']) => {
-    const xs: number[] = [];
-    const ys: number[] = [];
-    const codes: number[] = [];
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const codes = new Int32PointBuffer();
     const matched = scanTableByFeatureCodes({
       table,
       axisNames: ['x', 'y'],
@@ -279,10 +281,11 @@ describe('scanTableByFeatureCodes over a multi-chunk table', () => {
       matchedRows: 0,
       xs,
       ys,
-      zs: [],
+      zs: new Float32PointBuffer(),
       codes,
     });
-    return { matched, xs, ys, codes };
+    // Compare as plain arrays: the scan writes into typed buffers now.
+    return { matched, xs: [...xs.toArray()], ys: [...ys.toArray()], codes: [...codes.toArray()] };
   };
 
   const rows = (start: number, count: number) => ({
@@ -317,5 +320,60 @@ describe('scanTableByFeatureCodes over a multi-chunk table', () => {
     // or misread these.
     expect(fromChunked.xs.at(-1)).toBe(39);
     expect(fromChunked.ys.at(-1)).toBe(139);
+  });
+});
+
+/**
+ * The scans reserve an exact upper bound per chunk so pushes never reallocate.
+ * A hint is only a hint though — it can be absent, low, or (via bounds rejection)
+ * far too high — so growth has to stay correct. A buffer that silently truncated
+ * or mis-sized here would drop points with no error anywhere.
+ */
+describe('Float32PointBuffer', () => {
+  it('grows correctly with no reservation at all', () => {
+    const buffer = new Float32PointBuffer();
+    for (let i = 0; i < 5000; i += 1) {
+      buffer.push(i);
+    }
+    const out = buffer.toArray();
+    expect(out.length).toBe(5000);
+    expect(out[0]).toBe(0);
+    expect(out[4999]).toBe(4999);
+  });
+
+  it('grows past an under-estimate without losing earlier values', () => {
+    const buffer = new Float32PointBuffer();
+    buffer.reserve(4);
+    for (let i = 0; i < 100; i += 1) {
+      buffer.push(i);
+    }
+    expect([...buffer.toArray()]).toEqual(Array.from({ length: 100 }, (_v, i) => i));
+  });
+
+  it('trims an over-estimate to the filled prefix', () => {
+    const buffer = new Float32PointBuffer();
+    buffer.reserve(10_000); // e.g. a row group whose rows nearly all fail the bounds test
+    buffer.push(1);
+    buffer.push(2);
+    const out = buffer.toArray();
+    expect(out.length).toBe(2);
+    expect([...out]).toEqual([1, 2]);
+  });
+
+  it('accumulates across successive reservations, as a multi-chunk scan does', () => {
+    const buffer = new Float32PointBuffer();
+    buffer.reserve(3);
+    for (const value of [1, 2, 3]) buffer.push(value);
+    buffer.reserve(3); // next chunk: reserve is ADDITIONAL headroom, not a reset
+    for (const value of [4, 5, 6]) buffer.push(value);
+    expect([...buffer.toArray()]).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('keeps Int32 codes exact (no float rounding of large codes)', () => {
+    const buffer = new Int32PointBuffer();
+    buffer.reserve(2);
+    buffer.push(16_777_217); // not representable in float32
+    buffer.push(-1);
+    expect([...buffer.toArray()]).toEqual([16_777_217, -1]);
   });
 });

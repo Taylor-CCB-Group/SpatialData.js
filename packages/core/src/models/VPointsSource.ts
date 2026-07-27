@@ -2236,9 +2236,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
 
-    const xs: number[] = [];
-    const ys: number[] = [];
-    const zs: number[] = [];
+    // Dynamic, like the call site below: keeps the worker scan module out of the
+    // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
+    const { Float32PointBuffer, scanMortonTableInBounds } = await import(
+      '../workers/pointsWorkerScan.js'
+    );
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const zs = new Float32PointBuffer();
     const hasZ = metadata.axisNames.includes('z');
     const filterByFeature = allowedFeatureCodes !== null;
     const featureCodeColumnName =
@@ -2302,7 +2307,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (!table) {
         continue;
       }
-      const { scanMortonTableInBounds } = await import('../workers/pointsWorkerScan.js');
       scanMortonTableInBounds({
         table,
         rowGroupIndex: rowGroup,
@@ -2322,9 +2326,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     return {
-      data: hasZ
-        ? [new Float32Array(xs), new Float32Array(ys), new Float32Array(zs)]
-        : [new Float32Array(xs), new Float32Array(ys)],
+      data: hasZ ? [xs.toArray(), ys.toArray(), zs.toArray()] : [xs.toArray(), ys.toArray()],
       shape: [hasZ ? 3 : 2, xs.length],
       bounds: options.bounds,
       loadMode: 'row-groups',
