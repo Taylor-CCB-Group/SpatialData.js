@@ -252,3 +252,70 @@ describe('scanFeatureCatalogFromPayload', () => {
     ]);
   });
 });
+
+/**
+ * The scan reads coordinates by row index. `Vector.get(i)` makes that look like an
+ * array read, but on a MULTI-CHUNK vector — any table assembled from more than one
+ * record batch, which is the normal case for a multi-row-group or multi-part read —
+ * Arrow swaps in a `binarySearch` over chunk offsets per call. The scan now hoists
+ * each column into one flat typed array instead.
+ *
+ * These pin the thing that rewrite could plausibly break: chunk-boundary indexing.
+ * A row must resolve to the same coordinate whether the table arrived as one chunk
+ * or several, and matches must still be found in the later chunks.
+ */
+describe('scanTableByFeatureCodes over a multi-chunk table', () => {
+  const scan = (table: Parameters<typeof scanTableByFeatureCodes>[0]['table']) => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    const codes: number[] = [];
+    const matched = scanTableByFeatureCodes({
+      table,
+      axisNames: ['x', 'y'],
+      featureKey: 'feature_name',
+      featureCodeColumnName: 'feature_name_codes',
+      featureCodes: [1],
+      memoryCap: 1_000,
+      matchedRows: 0,
+      xs,
+      ys,
+      zs: [],
+      codes,
+    });
+    return { matched, xs, ys, codes };
+  };
+
+  const rows = (start: number, count: number) => ({
+    x: Float32Array.from({ length: count }, (_v, i) => start + i),
+    y: Float32Array.from({ length: count }, (_v, i) => 100 + start + i),
+    // Alternating codes, so every chunk holds both matches and non-matches.
+    feature_name: Array.from({ length: count }, (_v, i) => `gene_${(start + i) % 2}`),
+    feature_name_codes: Int32Array.from({ length: count }, (_v, i) => (start + i) % 2),
+  });
+
+  it('reads the same rows from a chunked table as from a contiguous one', () => {
+    const whole = tableFromArrays(rows(0, 40) as never);
+    // One record batch per source table — the shape a multi-row-group or
+    // multi-part read produces, and what makes the columns multi-chunk.
+    const chunked = tableFromArrays(rows(0, 20) as never).concat(
+      tableFromArrays(rows(20, 20) as never)
+    );
+    expect(chunked.numRows).toBe(40);
+    // Guard the premise: if this were single-chunk the test would prove nothing.
+    expect(chunked.getChild('x')?.data.length).toBeGreaterThan(1);
+
+    const fromWhole = scan(whole);
+    const fromChunked = scan(chunked);
+
+    expect(fromChunked.matched).toBe(fromWhole.matched);
+    expect(fromChunked.xs).toEqual(fromWhole.xs);
+    expect(fromChunked.ys).toEqual(fromWhole.ys);
+    expect(fromChunked.codes).toEqual(fromWhole.codes);
+    // And the values are actually right, not merely equal to each other: odd x.
+    expect(fromChunked.xs).toEqual(Array.from({ length: 20 }, (_v, i) => i * 2 + 1));
+    // Matches from the SECOND chunk are present — the chunk-offset bug would drop
+    // or misread these.
+    expect(fromChunked.xs.at(-1)).toBe(39);
+    expect(fromChunked.ys.at(-1)).toBe(139);
+  });
+});
