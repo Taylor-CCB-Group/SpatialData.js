@@ -96,6 +96,30 @@ Each notes *why* it's coupled to the state-model / decode rework.
   about this ambient stateful thing` (onProgress), `// given ongoing problems with
   agent debugging, inclined to more purity. Might consider using
   Effect?`, `// there will be various mutating side-effects on entry…`.
+
+  **Effect remains an open question, not a closed one.** Where an ADR or plan
+  reads as having ruled it out, that is "not now", not "decided against" —
+  revisit it on its merits when this item is picked up.
+
+  Evidence from the #89 review, which is the argument for this item stated in
+  defects rather than in taste. Four independent findings, one shape: *state
+  arriving out of step with the thing it describes.*
+
+  | Finding | The step it fell out of |
+  | --- | --- |
+  | Range probe cached a thrown fetch (`8d1a875`) | a failure outliving the request that caused it |
+  | Worker `fromUrl` cache kept a rejection (`8d1a875`) | same, one layer down |
+  | Matched batch drawn unfiltered without row codes (`615c926`) | codes vs the batch they align to |
+  | `loadAll()` landing after its loader was replaced (`57f77fd`) | a read vs the resource it read from |
+  | `rowCodes` readiness gate ignored the cap (this entry's sibling) | codes vs the window they mask |
+
+  Each was individually cheap to fix and none were found by the type system,
+  because in every case the stale value is the *correct type* — the cache, slot
+  or state field simply has no way to say "this is no longer about the thing you
+  are asking about". That is the property a principled effect/resource model
+  makes structural instead of a per-site discipline, and it is why the fixes
+  above are guards rather than a design change: five guards is evidence for D1,
+  not a substitute for it.
 - **D2 — Break up `useLayerData`.** The monolith the engine threads through; also
   the reason for the `'use no memo'` hatches (`PointsFeatureFilterPanel`,
   `ShowMatchingPoints`). A properly reactive state layer retires the hatches.

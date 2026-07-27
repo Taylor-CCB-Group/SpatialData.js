@@ -50,6 +50,12 @@ import { SnapshotCache } from './snapshotCache.js';
  * to the 4M default while `ensureLoaded` honoured the user's, misaligning the mask
  * against an 8M resident batch.
  *
+ * Keying the slot only makes the misalignment *representable*; {@link plan} is what
+ * acts on it. It gates on {@link hasRowFeatureCodesAtCap}, not on readiness — codes
+ * settled at 4M stay "ready" through a raise to 8M, so a readiness gate leaves a
+ * stale mask in place over the bigger batch and R5 survives in the one place that
+ * decides whether to fix it.
+ *
  * ## State model (Track A)
  *
  * All four resources — `preload`, `rowCodes`, `catalog`, `matching` — are
@@ -272,8 +278,22 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // regardless, but the dict-only fallback settles the codes through THIS task, so
     // the gate is what made dict-only "all features" render flat.
     const needsRowCodes = selectionActive || config.colorByFeature !== false;
-    if (needsRowCodes && !this.hasRowFeatureCodes(key)) {
-      tasks.push({ id: `${key}#rowCodes`, resource: 'rowCodes' });
+    // Codes are only a valid mask for the batch they were read at THE SAME CAP as
+    // (R5) — index i names point i only then. `isReady` does not say that: codes
+    // settled at 4M stay ready after a raise to 8M, so this gate never re-requested
+    // them and the mask silently addressed the wrong rows against the bigger batch.
+    // Ask at the cap they would actually be loaded at, and put it in the task id so
+    // a cap change re-dispatches instead of deduping.
+    const rowCodesCap = this.rowCodesCap(key);
+    // While a preload is in flight, hold off: its decode settles the codes at its
+    // own cap for free whenever the element carries a code column, and asking now
+    // would race a second full read of the feature column against it. If it settles
+    // WITHOUT codes (the dict-only fallback), the next plan pass sees them
+    // misaligned and asks then. A first load — no codes at all — never waits.
+    const preloadInFlight = this.entries.get(key)?.preload.isLoading === true;
+    const deferToPreload = this.hasRowFeatureCodes(key) && preloadInFlight;
+    if (needsRowCodes && !this.hasRowFeatureCodesAtCap(key, rowCodesCap) && !deferToPreload) {
+      tasks.push({ id: `${key}#rowCodes:${rowCodesCap}`, resource: 'rowCodes' });
     }
 
     // Was `void engine.ensureMatchingFeaturesLoaded(...)` at useLayerData.ts:1375.
@@ -677,6 +697,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
         entry.residentCodes = undefined;
         entry.residentCodesSource = undefined;
         const codes = entry.rowCodes.value;
+        // Deliberately conditional, and NOT re-keyed unconditionally on a shed.
+        // Codes shorter than the new window are already misaligned, and re-keying
+        // them to this cap would assert an alignment they do not have — the exact
+        // lie the slot key exists to prevent. Leaving the key stale is what makes
+        // the planning gate re-request them.
+        //
+        // `>` rather than `>=` is not a gap: codes are `min(rows, theirCap)` long, so
+        // whenever their key differs from their length the resident batch is at most
+        // that length too, and a shed below it makes the comparison strict anyway.
         if (codes && codes.length > memoryCap) {
           entry.rowCodes.settle(memoryCap, Array.prototype.slice.call(codes, 0, memoryCap));
         }
@@ -1074,9 +1103,27 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return this.entries.get(key)?.rowCodes.value;
   }
 
-  /** True once row codes have settled (even if the element has none). */
+  /** True once row codes have settled (even if the element has none). Says nothing
+   * about WHICH cap they were read at — see {@link hasRowFeatureCodesAtCap}. */
   hasRowFeatureCodes(key: string): boolean {
     return this.entries.get(key)?.rowCodes.isReady === true;
+  }
+
+  /**
+   * The cap {@link ensureRowFeatureCodes} would read the codes at — i.e. the
+   * resident batch's window. Kept beside it so the planning gate and the loader
+   * cannot disagree about which cap "aligned" means.
+   */
+  private rowCodesCap(key: string): number {
+    const preload = this.entries.get(key)?.preload;
+    return preload?.settledKey ?? preload?.pendingKey ?? DEFAULT_POINTS_MEMORY_CAP;
+  }
+
+  /** True once row codes have settled AT `memoryCap` — the only state in which they
+   * are a valid row-aligned mask for the resident batch at that cap. */
+  hasRowFeatureCodesAtCap(key: string, memoryCap: number): boolean {
+    const slot = this.entries.get(key)?.rowCodes;
+    return slot?.isReady === true && Object.is(slot.settledKey, memoryCap);
   }
 
   /**
