@@ -68,6 +68,15 @@ countless path is taken. Suspected to have become more likely when `be64b65` put
 the feature scan on that same probe, so it now runs earlier and more often —
 **unverified**.
 
+**Update (`8d1a875`).** Review on #89 identified the concrete mechanism, and it
+is the one suspected above: the probe cached a *thrown* fetch as if it were the
+server's answer, so a single failed request demoted the origin for the life of
+the page. The probe now caches only definitive answers (a 416, or a 200 that
+ignored `Range`); a thrown fetch evicts. That removes the most likely trigger,
+but it does **not** close this item — it makes the countless path rarer without
+making it recoverable. The permanence below is untouched, and any other route to
+the fallback still produces the same stuck panel.
+
 Two independent fixes, either of which removes the permanence:
 
 - Do not settle `'full'` for a catalog missing counts it should have — settle it
