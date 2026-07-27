@@ -8,7 +8,11 @@ import {
   filterBatchSignature,
   hasPreloadedRowFeatureCodes,
 } from './pointsFeatureCodes.js';
-import type { ColumnarNdarrayPointsBatch, PointsRenderResource } from './pointsLoader.js';
+import type {
+  ColumnarNdarrayPointsBatch,
+  PointsLoader,
+  PointsRenderResource,
+} from './pointsLoader.js';
 import { resolvePointsRenderStrategy } from './pointsRenderStrategies.js';
 import {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
@@ -178,6 +182,30 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     }
   }
 
+  /**
+   * What a `loadAll()` read was issued against. BOTH parts matter, for different
+   * races:
+   *
+   * - `revision` — the streaming overlay bumps it per chunk, so several reads can
+   *   be in flight at once. Today the adapter's `loadAll` snapshots the holder
+   *   synchronously and never awaits, so those resolve in call order and the last
+   *   writer is the newest; that is a property of one loader implementation, not
+   *   of the {@link PointsLoader} contract this method is written against.
+   * - `loader` — a loader swap (a cap raise) resets the batch state and starts a
+   *   fresh read, but an OLD read already in flight still resolves afterwards and
+   *   would write the previous loader's batch over it. A revision check alone does
+   *   not catch this: revisions are per-holder and can coincide across a swap.
+   */
+  private loadToken(): { loader: PointsLoader; revision: number | undefined } {
+    return { loader: this.props.resource.loader, revision: this.props.resourceRevision };
+  }
+
+  private isStaleLoad(token: { loader: PointsLoader; revision: number | undefined }): boolean {
+    return (
+      this.props.resource.loader !== token.loader || this.props.resourceRevision !== token.revision
+    );
+  }
+
   private async ensurePreloadedBatch(): Promise<void> {
     const { resource } = this.props;
     if (resource.loader.capabilities.kind !== 'preloaded-columnar') {
@@ -187,7 +215,11 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     if (existing) {
       return;
     }
+    const token = this.loadToken();
     const batch = await resource.loader.loadAll?.();
+    if (this.isStaleLoad(token)) {
+      return;
+    }
     if (batch?.format === 'columnar-ndarray') {
       this.setState({ preloadedBatch: batch });
       const awaitingRowCodes = featureFilterAwaitingRowCodes(
@@ -218,7 +250,13 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     if (resource.loader.capabilities.kind !== 'preloaded-columnar') {
       return;
     }
+    const token = this.loadToken();
     const batch = await resource.loader.loadAll?.();
+    // A newer revision (or a different loader) landed while this read was in
+    // flight; that read owns the state. See `loadToken`.
+    if (this.isStaleLoad(token)) {
+      return;
+    }
     if (batch?.format !== 'columnar-ndarray') {
       return;
     }
