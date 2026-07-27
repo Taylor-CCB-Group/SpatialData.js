@@ -295,6 +295,14 @@ async function scanStreamByFeatureCodes(
   let filePromise = streamFilesByUrl.get(url);
   if (!filePromise) {
     filePromise = ParquetFile.fromUrl(url);
+    // Cache the attempt, not the failure. Without this a single transient
+    // footer read poisons the URL for the life of the worker: every later scan
+    // awaits the same rejected promise and can never retry.
+    filePromise.catch(() => {
+      if (streamFilesByUrl.get(url) === filePromise) {
+        streamFilesByUrl.delete(url);
+      }
+    });
     streamFilesByUrl.set(url, filePromise);
   }
   const file = await filePromise;

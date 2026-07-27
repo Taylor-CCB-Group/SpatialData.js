@@ -309,9 +309,16 @@ export default class SpatialDataTableSource extends AnnDataSource {
   private async orderedParquetCandidatePaths(parquetPath: string): Promise<string[]> {
     const pending = this.parquetDatasetMetadataCache.get(parquetPath);
     if (pending) {
-      const firstPartPath = (await pending)?.parts[0]?.path;
-      if (firstPartPath && firstPartPath !== parquetPath) {
-        return [firstPartPath];
+      try {
+        const firstPartPath = (await pending)?.parts[0]?.path;
+        if (firstPartPath && firstPartPath !== parquetPath) {
+          return [firstPartPath];
+        }
+      } catch {
+        // A peek must never be load-bearing. The cached resolution rejects (and
+        // evicts itself) on a transient failure; that means "layout unknown", not
+        // "this path is broken" — fall back to the blind candidate order rather
+        // than throwing out of the caller's probe loop.
       }
     }
     return getParquetCandidatePaths(parquetPath);
@@ -372,9 +379,14 @@ export default class SpatialDataTableSource extends AnnDataSource {
       // of just this one.
       const pending = this.parquetDatasetMetadataCache.get(parquetPath);
       if (pending) {
-        const schemaBytes = (await pending)?.parts[0]?.schemaBytes;
-        if (schemaBytes) {
-          return schemaBytes;
+        try {
+          const schemaBytes = (await pending)?.parts[0]?.schemaBytes;
+          if (schemaBytes) {
+            return schemaBytes;
+          }
+        } catch {
+          // A rejected layout means "unknown", not "unresolvable": fall through to
+          // the candidate walk below rather than failing the whole resolution.
         }
       }
 
@@ -755,6 +767,13 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (cached) {
       return cached;
     }
+    // A *definitive* answer — the server replied and we read its status — is a
+    // property of the server and caches for the session. A thrown fetch is not
+    // an answer: caching it would let one blip (a dropped connection, a reload
+    // race, a momentarily unreachable server) demote every element on the origin
+    // to the whole-file path for the rest of the page's life, which reads as a
+    // non-deterministic "sometimes points/counts never settle".
+    let definitive = true;
     const probe = (async () => {
       try {
         // `no-store` is essential, not a nicety. These files are served with a
@@ -778,9 +797,15 @@ export default class SpatialDataTableSource extends AnnDataSource {
         ]);
         return suffixBytes.byteLength === 8 && boundedBytes.byteLength === 8;
       } catch {
+        definitive = false;
         return false;
       }
     })();
+    probe.then(() => {
+      if (!definitive && SpatialDataTableSource.rangeProbeByOrigin.get(origin) === probe) {
+        SpatialDataTableSource.rangeProbeByOrigin.delete(origin);
+      }
+    });
     SpatialDataTableSource.rangeProbeByOrigin.set(origin, probe);
     return probe;
   }
