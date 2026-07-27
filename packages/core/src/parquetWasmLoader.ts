@@ -71,13 +71,22 @@ export interface ParquetModule {
  * unreachable`) and the panic escapes try/catch, so it cannot be probed
  * defensively — it must be gated on the runtime up front. Tests and any SSR
  * path therefore keep the byte-oriented reads.
+ *
+ * The reader itself needs only `fetch` and WASM, both of which a Worker has.
+ * `window` was standing in for "is a browser" and so excluded workers by
+ * accident, which forced the streaming scan to decode on the main thread. Accept
+ * a worker scope explicitly instead: `WorkerGlobalScope` is the reliable probe
+ * across classic and module workers (`importScripts` is absent from the latter).
  */
 export function supportsParquetStreaming(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof fetch === 'function' &&
-    !(typeof process !== 'undefined' && process.versions?.node != null)
-  );
+  if (typeof fetch !== 'function') {
+    return false;
+  }
+  if (typeof process !== 'undefined' && process.versions?.node != null) {
+    return false;
+  }
+  const scope = globalThis as { WorkerGlobalScope?: unknown };
+  return typeof window !== 'undefined' || scope.WorkerGlobalScope !== undefined;
 }
 
 function normalizeParquetModule(module: unknown): ParquetModule {

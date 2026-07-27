@@ -1,5 +1,9 @@
 import { tableFromIPC, tableToIPC } from 'apache-arrow';
-import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
+import {
+  getParquetModule,
+  type ParquetModule,
+  type ParquetWasmFile,
+} from '../parquetWasmLoader.js';
 import { buildFeatureCatalogFromColumns } from '../pointsFeatures.js';
 import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
 import { decodeShapesGeometryFlat } from '../shapesGeometryDecode.js';
@@ -256,6 +260,88 @@ async function handleScanParquetFeatureCounts(
   };
 }
 
+/** Cached per URL: `fromUrl` reads the footer, and one scan issues several
+ * requests against the same file as it walks row-group windows. */
+const streamFilesByUrl = new Map<string, Promise<ParquetWasmFile>>();
+
+/**
+ * Stream variant of the feature scan, running IN THE WORKER.
+ *
+ * The byte-oriented path has the caller range-read whole row groups — every
+ * column — because parquet-wasm cannot fetch individual column chunks. This asks
+ * `ParquetFile.stream` for just the projected columns, so the projection reaches
+ * the network, and keeps the decode off the main thread (which the URL-streaming
+ * scan could not do while `supportsParquetStreaming` required `window`).
+ *
+ * One request covers a row-group window chosen by the caller, so progress stays
+ * granular without the protocol needing streamed responses.
+ */
+async function scanStreamByFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
+  input: {
+    matchedRows: number;
+    xs: Float32PointBuffer;
+    ys: Float32PointBuffer;
+    zs: Float32PointBuffer;
+    codes: Int32PointBuffer;
+    scannedRows: number;
+  }
+): Promise<{ matchedRows: number; scannedRows: number }> {
+  const url = request.streamUrl as string;
+  const { ParquetFile } = await getParquetModule();
+  if (!ParquetFile) {
+    throw new Error('ParquetFile.stream is unavailable in the points worker');
+  }
+  let filePromise = streamFilesByUrl.get(url);
+  if (!filePromise) {
+    filePromise = ParquetFile.fromUrl(url);
+    streamFilesByUrl.set(url, filePromise);
+  }
+  const file = await filePromise;
+  const featureCodeByName = request.featureCodeEntries
+    ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
+    : undefined;
+
+  const stream = await file.stream({
+    ...(request.streamColumns?.length ? { columns: request.streamColumns } : {}),
+    ...(request.streamRowGroups?.length ? { rowGroups: request.streamRowGroups } : {}),
+    batchSize: 65_536,
+  });
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      if (input.matchedRows >= request.memoryCap) {
+        break;
+      }
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      const table = tableFromIPC(value.intoIPCStream());
+      input.scannedRows += table.numRows;
+      input.matchedRows = scanTableByFeatureCodes({
+        table,
+        axisNames: request.axisNames,
+        featureKey: request.featureKey,
+        ...(request.featureCodeColumnName
+          ? { featureCodeColumnName: request.featureCodeColumnName }
+          : {}),
+        featureCodes: request.featureCodes,
+        memoryCap: request.memoryCap,
+        matchedRows: input.matchedRows,
+        xs: input.xs,
+        ys: input.ys,
+        zs: input.zs,
+        codes: input.codes,
+        ...(featureCodeByName ? { featureCodeByName } : {}),
+      });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
+}
+
 async function scanPayloadByFeatureCodes(
   parquetModule: ParquetModule,
   request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
@@ -269,6 +355,9 @@ async function scanPayloadByFeatureCodes(
   }
 ): Promise<{ matchedRows: number; scannedRows: number }> {
   const _hasZ = request.axisNames.includes('z');
+  if (request.streamUrl) {
+    return scanStreamByFeatureCodes(request, input);
+  }
   const columns = [
     ...request.axisNames,
     request.featureKey,

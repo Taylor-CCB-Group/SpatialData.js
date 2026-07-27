@@ -1132,7 +1132,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * Whether the URL-streaming scan applies: a URL-backed store whose server
    * actually serves the range shapes the reader needs, for every part.
    */
-  private async canStreamMatchingScan(parquetPath: string): Promise<string[] | null> {
+  private async canStreamMatchingScan(
+    parquetPath: string
+  ): Promise<{ urls: string[]; rowGroupCounts: number[] } | null> {
     if (!(await this.canStreamParquetByUrl())) {
       return null;
     }
@@ -1149,7 +1151,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
       urls.push(url);
     }
-    return urls;
+    return { urls, rowGroupCounts: dataset?.numRowGroupsByPart ?? [] };
   }
 
   /**
@@ -1178,6 +1180,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    */
   private async *streamMatchingFeatureCodesByChunk(
     partUrls: string[],
+    rowGroupCounts: number[],
     options: {
       axisNames: string[];
       axisCount: number;
@@ -1242,6 +1245,66 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         partCount: partUrls.length,
       });
     };
+
+    // Preferred: stream IN THE WORKER, so the decode stays off the main thread.
+    // One request per row-group window keeps progress granular without the worker
+    // protocol needing streamed responses — each response is simply a chunk.
+    if (isPointsWorkerEnabled() && rowGroupCounts.length === partUrls.length) {
+      const featureCodeEntries = options.featureCodeByName
+        ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
+        : undefined;
+      const ROW_GROUPS_PER_REQUEST = 2;
+      for (const [partIndex, url] of partUrls.entries()) {
+        const groupCount = rowGroupCounts[partIndex] ?? 0;
+        for (let start = 0; start < groupCount; start += ROW_GROUPS_PER_REQUEST) {
+          checkAbort(options.abort); // superseded → stop before the next request
+          if (matchedRows >= options.memoryCap) {
+            break;
+          }
+          const window: number[] = [];
+          for (let g = start; g < Math.min(start + ROW_GROUPS_PER_REQUEST, groupCount); g += 1) {
+            window.push(g);
+          }
+          const partial = await scanParquetByFeatureCodesInWorker({
+            streamUrl: url,
+            streamRowGroups: window,
+            streamColumns: options.columnNames,
+            axisNames: options.axisNames,
+            featureKey: options.featureKey,
+            ...(options.featureCodeColumnName
+              ? { featureCodeColumnName: options.featureCodeColumnName }
+              : {}),
+            featureCodes: options.featureCodes,
+            memoryCap: options.memoryCap - matchedRows,
+            ...(featureCodeEntries ? { featureCodeEntries } : {}),
+          });
+          if (!partial) {
+            // Worker went away mid-scan: keep what matched rather than discard it.
+            break;
+          }
+          scannedRows += partial.scannedRows;
+          if (partial.matchedRows > 0) {
+            matchedRows += partial.matchedRows;
+            const chunk = toColumnarPointsChunk(partial.data, options.axisCount);
+            accumulatedChunks.push(chunk);
+            yield pointsScanChunkProgress(accumulatedChunks, chunk, {
+              scannedRows,
+              matchedRows,
+              totalRowCount: options.totalRowCount,
+              memoryCap: options.memoryCap,
+              partIndex,
+              partCount: partUrls.length,
+            });
+          }
+        }
+      }
+      return {
+        totalRowCount: options.totalRowCount,
+        axisNames: options.axisNames,
+        scannedRows,
+        matchedRows,
+      };
+    }
 
     for (const [partIndex, url] of partUrls.entries()) {
       if (matchedRows >= options.memoryCap) {
@@ -1375,18 +1438,22 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // that do not answer the range shapes the reader needs.
     const streamablePartUrls = await this.canStreamMatchingScan(parquetPath);
     if (streamablePartUrls) {
-      return yield* this.streamMatchingFeatureCodesByChunk(streamablePartUrls, {
-        axisNames,
-        axisCount,
-        featureKey,
-        ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
-        featureCodes: options.featureCodes,
-        ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
-        columnNames,
-        memoryCap: options.memoryCap,
-        totalRowCount,
-        ...(options.abort ? { abort: options.abort } : {}),
-      });
+      return yield* this.streamMatchingFeatureCodesByChunk(
+        streamablePartUrls.urls,
+        streamablePartUrls.rowGroupCounts,
+        {
+          axisNames,
+          axisCount,
+          featureKey,
+          ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+          featureCodes: options.featureCodes,
+          ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
+          columnNames,
+          memoryCap: options.memoryCap,
+          totalRowCount,
+          ...(options.abort ? { abort: options.abort } : {}),
+        }
+      );
     }
 
     let matchedRows = 0;

@@ -18,7 +18,9 @@ function sourceWithStore(store: unknown) {
 }
 
 type Internals = {
-  canStreamMatchingScan: (path: string) => Promise<string[] | null>;
+  canStreamMatchingScan: (
+    path: string
+  ) => Promise<{ urls: string[]; rowGroupCounts: number[] } | null>;
   canStreamParquetByUrl: () => Promise<boolean>;
   loadParquetDatasetMetadata: (path: string) => Promise<unknown>;
   resolveStoreUrl: (path: string) => string | null;
@@ -28,6 +30,8 @@ type Internals = {
 const parquetPath = 'points/transcripts/points.parquet';
 const twoParts = {
   parts: [{ path: `${parquetPath}/part.0.parquet` }, { path: `${parquetPath}/part.1.parquet` }],
+  // Row-group counts ride along so the worker path can window its requests.
+  numRowGroupsByPart: [3, 2],
 };
 
 function harness(over: Partial<Internals> = {}) {
@@ -48,10 +52,13 @@ function harness(over: Partial<Internals> = {}) {
 describe('feature scan — streaming gate', () => {
   it('streams when every part resolves to a range-capable URL', async () => {
     const internals = harness();
-    await expect(internals.canStreamMatchingScan(parquetPath)).resolves.toEqual([
-      `http://example.test/${parquetPath}/part.0.parquet`,
-      `http://example.test/${parquetPath}/part.1.parquet`,
-    ]);
+    await expect(internals.canStreamMatchingScan(parquetPath)).resolves.toEqual({
+      urls: [
+        `http://example.test/${parquetPath}/part.0.parquet`,
+        `http://example.test/${parquetPath}/part.1.parquet`,
+      ],
+      rowGroupCounts: [3, 2],
+    });
   });
 
   it('declines when the reader is unavailable in this runtime', async () => {
