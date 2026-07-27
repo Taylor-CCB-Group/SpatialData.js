@@ -9,6 +9,12 @@
       "port": 5173
     },
     {
+      "name": "vis-demo-alt",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@spatialdata/vis", "dev:demo", "--port", "5180", "--strictPort"],
+      "port": 5180
+    },
+    {
       "name": "docs",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "docs", "dev"],

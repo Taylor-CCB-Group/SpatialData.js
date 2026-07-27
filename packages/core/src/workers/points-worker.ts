@@ -336,6 +336,9 @@ async function handleScanParquetByFeatureCodes(
 ): Promise<PointsWorkerResponse> {
   const parquetModule = await getParquetModule();
   const hasZ = request.axisNames.includes('z');
+  // what if we know how long we expect these to be, because we already have feature catalog stats?
+  // we should be able to avoid pushing to change size of these arrays millions of times.
+  // request currently includes `featureCodeEntries`, which could potentially have counts.
   const xs: number[] = [];
   const ys: number[] = [];
   const zs: number[] = [];
