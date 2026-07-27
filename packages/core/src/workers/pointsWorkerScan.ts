@@ -445,6 +445,14 @@ export function scanMortonTableInBounds(input: {
   if (!xValues || !yValues) {
     return;
   }
+  // A filter this scan cannot honour must match NOTHING, not everything. The
+  // predicate below used to carry the column check as a conjunct, so a missing
+  // code column made it false for every row and the caller got the whole chunk
+  // back — one gene requested, 4M points drawn, and no error anywhere. An empty
+  // result is also wrong, but it is wrong visibly.
+  if (filterByFeature && !featureCodeValues) {
+    return;
+  }
   // Hoisted: `Table.numRows` is not a field but
   // `data.reduce((n, d) => n + d.length, 0)` — a closure allocation and a walk of
   // every chunk. As a loop CONDITION that ran per row. See `scanTableByFeatureCodes`.
@@ -468,8 +476,10 @@ export function scanMortonTableInBounds(input: {
     }
     if (
       filterByFeature &&
-      featureCodeValues &&
-      !rowMatchesFeatureCode(featureCodeValues[rowIndex], allowedFeatureCodes)
+      !rowMatchesFeatureCode(
+        (featureCodeValues as ArrayLike<number>)[rowIndex],
+        allowedFeatureCodes
+      )
     ) {
       continue;
     }
