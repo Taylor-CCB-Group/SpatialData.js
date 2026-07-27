@@ -4,7 +4,7 @@
 "@spatialdata/vis": patch
 ---
 
-Points: name-based feature selection, and a much faster feature scan.
+Points: feature selection now works on large elements, and persists by name.
 
 **Selections persist as feature names.** `PointsLayerConfig.featureNames` is the
 durable, serializable form and what the UI writes. Codes are app-assigned for a
@@ -14,13 +14,15 @@ column), so a stored code could silently come back meaning a different feature.
 both are present. `resolveFeatureSelectionCodes` / `featureNamesForCodes` are
 exported from `@spatialdata/core` for converting between the two.
 
-**Feature scan is 3-4x faster.** It now reads through
+**The feature scan now completes on large elements.** Previously, selecting a
+feature on a multi-million-row element frequently never resolved — the scan
+plateaued part-way through and the layer sat there. It now reads through
 `ParquetFile.stream({ columns, rowGroups })`, which fetches per column chunk, so
 the projection reaches the network instead of pulling whole row groups — all 12
 columns of a Xenium `transcripts` to use three. The scan runs in the points
-worker, keeping the parquet decode off the main thread. Selecting one gene from a
-12.1M-row element went from ~3.2-7.8s to ~1.0s, with main-thread time roughly a
-third of what the pre-streaming path cost.
+worker, keeping the parquet decode off the main thread. Selecting one gene from a 12.1M-row element now
+settles in ~1.0s, with main-thread time roughly a third of what the pre-streaming
+path cost.
 
 Also fixed along the way: a full-dataset catalog scan being silently cancelled by
 the resident preview settling underneath it (leaving counts stuck and colours
