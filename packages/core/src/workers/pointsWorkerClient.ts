@@ -506,6 +506,11 @@ export async function scanParquetFeatureCountsInWorker(
 }
 
 export type ScanParquetByFeatureCodesInput = ParquetWorkerPayload & {
+  /** Stream variant: the worker fetches only the projected columns from this URL
+   * (see the protocol type). Mutually exclusive with `parts`/`rowGroups`. */
+  streamUrl?: string;
+  streamRowGroups?: number[];
+  streamColumns?: string[];
   axisNames: string[];
   featureKey: string;
   featureCodeColumnName?: string;
@@ -526,7 +531,7 @@ export async function scanParquetByFeatureCodesInWorker(
   if (!isPointsWorkerEnabled()) {
     return null;
   }
-  if (!input.parts?.length && !input.rowGroups?.length) {
+  if (!input.parts?.length && !input.rowGroups?.length && !input.streamUrl) {
     return null;
   }
   const request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }> = {

@@ -73,7 +73,7 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   // read is engine-backed and updates on notify; the compiler would otherwise
   // memoize this line's JSX and never repaint it as the scan progresses.
   'use no memo';
-  const { truncation: t } = usePointsFeatureState(config.featureCodes);
+  const { truncation: t } = usePointsFeatureState(config);
   if (!t) return null;
   // Report the batch held in memory (always true), NOT a per-selection matched
   // count: t.loaded is the covered-batch size, which overstates the selection
@@ -98,9 +98,39 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   );
 }
 
+function PointSizeControl({ config }: { config: PointsLayerConfig }) {
+  const actions = useSpatialCanvasActions();
+  return (
+    <label
+      style={{
+        color: '#ccc',
+        fontSize: '12px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      Point size ({(config.pointSize ?? 1).toFixed(2)})
+      <input
+        type="range"
+        min={0.01}
+        max={12}
+        step={0.01}
+        value={config.pointSize ?? 1}
+        onChange={(e) =>
+          actions.updateLayer(config.id, {
+            pointSize: Number(e.target.value),
+          })
+        }
+      />
+    </label>
+  );
+}
+
 export default function PointsLayerPanel({ config, engine, resolveTarget }: PointsLayerPanelProps) {
   return (
     <PointsFeatureStateProvider engine={engine} target={resolveTarget(config.id)}>
+      <PointSizeControl config={config} />
       <PointsMemoryCap config={config} />
       <ShowMatchingPoints config={config} />
       <PointsFeatureFilterPanel config={config} />

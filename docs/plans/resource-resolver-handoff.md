@@ -1,7 +1,8 @@
 # Resource Resolver — implementation handoff
 
-**Status:** Step 0 + Step 1 **landed** — see [Progress](#progress-2026-07-15). Step 2
-(Tracks A / B / C) and Step 3 (Renderer Adapter cleanup) remain.
+**Status:** Step 0 + Step 1 **landed**; **Step 2 Track A (points state model) landed**
+— see [Progress](#progress-2026-07-15). Step 2 Tracks B / C and Step 3 (Renderer
+Adapter cleanup) remain.
 **Decisions:** [ADR 0004 — Resource Resolver Owned By Core](../adr/0004-resource-resolver-owned-by-core.md), [ADR 0005 — Memory Accounting Before Management](../adr/0005-memory-accounting-before-management.md)
 **Supersedes:** [layer-data-engine-decomposition.md](layer-data-engine-decomposition.md)
 **Vocabulary:** [CONTEXT.md](../../CONTEXT.md) — *Resource Resolver, Renderer Adapter, Spatial Entry, Resolution, Spatial Entry Error, Entry Notice, Encoded/Decoded Tier, Resource Ceiling*
@@ -29,10 +30,29 @@ Read the two ADRs first. This document is sequencing, not rationale.
     `pointsEngine.ensureMatchingFeaturesLoaded` / `ensureRowFeatureCodes` calls in
     `getLayers` stay put (they migrate into `plan()` under Track A), so the points
     reconcile context carries only the memory cap.
-- **Remaining:** Step 2 Tracks A (points state model / `RequestSlot` / races R1–R5),
-  B (shapes loader seam + tooltip ping-pong), C (memory, ADR 0005 rungs 1–3); Step 3
-  (Renderer Adapter `project()`/`render()`, `'use no memo'` removal, dead-surface
-  cleanup). None started.
+- **Step 2 Track A — points state model: landed** (branch
+  `claude/points-implementation-stages`, commits A1–A8). All four points resources —
+  `preload`, `rowCodes`, `catalog`, `matching` — are now `RequestSlot`s (one tested
+  dedup/supersede/settle primitive, keyed so everything a request depends on is in the
+  key). **Races R1/R2/R3/R5 closed** with fail-before/pass-after tests. Failures are
+  structured, **retryable** `SpatialEntryError`s with a `retry()` API (the stuck
+  full-catalog-scan fix) — retryable meaning a request that FAILED. A catalog that
+  settles successfully but without counts (the dict-only fallback) is not a failure
+  and `retry()` does not repair it; see the "feature counts can settle permanently
+  absent" entry in the punchlist. Cancellation is threaded to the scan generator (D8;
+  supersede/evict abort it between chunks). The render-phase engine kicks are
+  **migrated into `plan()`** — `getLayers` is now pure reads, driven by the reconcile
+  effect. The streaming-overlay **flash is fixed** (D10) via a scan-stable partial
+  resource + `resourceRevision`. The Effect-vs-plain spike ran and **plain won**
+  (recorded above). `PointsResolver`'s public surface is unchanged; the 855-line
+  `pointsDataEngine` regression net stays green (a few failure/cap-alignment cases
+  flipped to the new behaviour). 573 tests green repo-wide.
+  - **Pending browser verification:** the D10 no-flash behaviour is proven headlessly
+    (adapter resource-identity + revision) but its *visual* confirmation needs a
+    running app with a large streaming Xenium `transcripts` scan.
+- **Remaining:** Step 2 Tracks B (shapes loader seam + tooltip ping-pong), C (memory,
+  ADR 0005 rungs 1–3); Step 3 (Renderer Adapter `project()`/`render()`, `'use no memo'`
+  removal, dead-surface cleanup; retire the `PointsDataEngine` facade). Not started.
 
 ---
 
@@ -175,6 +195,27 @@ implementation; nothing leaks into a public signature (ADR 0004 §7 — `core` i
 unless it wins on *all three* of — supersession correctness under two concurrent
 scans; interruption that actually reaches the worker; fewer lines to set up a race in
 a test. A tie means the plain slot wins.
+
+> **Spike outcome (Track A step A8): plain wins. Effect not adopted.** Run
+> empirically — `effect@3.22` added as a `core` devDependency, both slots implemented
+> and driven through the same two-concurrent-scan supersession race
+> (`packages/core/tests/matchingSlotEffectSpike.spec.ts`), then both removed per
+> "delete the loser". Against the three criteria:
+> 1. **Supersession correctness — tie.** Both drop the superseded scan's result; the
+>    plain slot by record identity (`this.current !== record`), Effect by
+>    `Fiber.interrupt`.
+> 2. **Interruption reaches the worker — tie.** Both abort the scan's `AbortSignal`
+>    (the seam A5 threads to the generator). The plain slot aborts its own
+>    `AbortController` *synchronously*; Effect runs the `Effect.async` canceler via
+>    `runFork(Fiber.interrupt(...))`, needing a runtime tick to propagate.
+> 3. **Lines to set up a race — plain wins.** Plain: two synchronous `request()`
+>    calls, assert immediately. Effect: an `Effect.async` + canceler + `runFork` slot
+>    (~15 extra lines) *and* an awaited runtime tick before every assertion; plus a
+>    multi-second import cost on a package whose ethos is zero runtime deps.
+>
+> Effect ties two and loses one, so by the agreed rule the plain `RequestSlot` wins.
+> The `RequestSlot` seam is deliberately shaped so a future reconsideration (e.g. if
+> `tgpu-htj2k`'s dependency-free stance is renegotiated) is a swap, not a rewrite.
 
 ---
 

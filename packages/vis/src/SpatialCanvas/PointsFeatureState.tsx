@@ -22,6 +22,7 @@
  * consumers read `pointsEngine` + `resolvePointsTarget` off the renderer-hook
  * result, wrap a subtree in this provider, and consume `usePointsFeatureState`.
  */
+import { resolveFeatureSelectionCodes } from '@spatialdata/core';
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
 import {
   createContext,
@@ -94,6 +95,12 @@ function usePointsFeatureContext(): PointsFeatureStateContextValue {
   return value;
 }
 
+/** A layer's feature-filter selection: durable names, or already-resolved codes. */
+export interface PointsFeatureSelection {
+  featureNames?: readonly string[] | undefined;
+  featureCodes?: readonly number[] | undefined;
+}
+
 export interface PointsFeatureState {
   /** The feature catalog: `undefined` until requested/settled, `null` when the
    * element has no `feature_key`, else the catalog. */
@@ -116,11 +123,20 @@ export interface PointsFeatureState {
   /** Truncation of what's on screen for the selection passed to the hook (so the
    * UI can show when raising the memory cap would load more). */
   truncation: ReturnType<PointsDataEngine['getActiveTruncation']>;
+  /** Running per-feature counts over the resident window (`code → rows`), available
+   * while the whole-dataset counts scan is still running. Partial by construction. */
+  residentFeatureCounts: ReturnType<PointsDataEngine['getResidentFeatureCounts']>;
   /** Stable callback — trigger the full-dataset catalog build (idempotent). */
   requestCatalog: () => void;
+  /** Stable callback — set (or clear, with null) the hover-highlighted feature code
+   * for this layer, so its points are emphasised on the canvas. */
+  setHighlightedFeature: (featureCode: number | null) => void;
 }
 
-const EMPTY_POINTS_FEATURE_STATE: Omit<PointsFeatureState, 'requestCatalog'> = {
+const EMPTY_POINTS_FEATURE_STATE: Omit<
+  PointsFeatureState,
+  'requestCatalog' | 'setHighlightedFeature'
+> = {
   catalog: undefined,
   catalogLoading: false,
   catalogRefining: false,
@@ -129,6 +145,7 @@ const EMPTY_POINTS_FEATURE_STATE: Omit<PointsFeatureState, 'requestCatalog'> = {
   supportsOnDemandLoad: false,
   matchingLoadState: undefined,
   truncation: undefined,
+  residentFeatureCounts: undefined,
 };
 
 /**
@@ -138,7 +155,9 @@ const EMPTY_POINTS_FEATURE_STATE: Omit<PointsFeatureState, 'requestCatalog'> = {
  * (the active selection — pass `config.featureCodes`), plus a stable
  * `requestCatalog`.
  */
-export function usePointsFeatureState(featureCodes?: readonly number[]): PointsFeatureState {
+export function usePointsFeatureState(
+  selection?: readonly number[] | PointsFeatureSelection
+): PointsFeatureState {
   'use no memo';
   const { engine, target, subscribe, getVersion } = usePointsFeatureContext();
   // Reactivity: re-render this component on every engine mutation. The returned
@@ -147,12 +166,27 @@ export function usePointsFeatureState(featureCodes?: readonly number[]): PointsF
   const requestCatalog = useCallback(() => {
     if (target) void engine.ensureFeatureCatalog(target);
   }, [engine, target]);
+  const setHighlightedFeature = useCallback(
+    (featureCode: number | null) => {
+      if (target) engine.setHighlightedFeature(target.key, featureCode);
+    },
+    [engine, target]
+  );
 
   if (!target) {
-    return { ...EMPTY_POINTS_FEATURE_STATE, requestCatalog };
+    return { ...EMPTY_POINTS_FEATURE_STATE, requestCatalog, setHighlightedFeature };
   }
   const key = target.key;
   const scannable = engine.supportsFeatureScan(key);
+  // A selection persists as NAMES, so resolve it here against the catalog this
+  // hook is already reading — callers pass their config and keep working in codes.
+  // An array is still accepted as already-resolved codes.
+  const featureCodes = Array.isArray(selection)
+    ? selection
+    : resolveFeatureSelectionCodes(
+        (selection ?? {}) as PointsFeatureSelection,
+        engine.getFeatureCatalog(key)
+      );
   const hasSelection = !!featureCodes && featureCodes.length > 0;
   return {
     catalog: engine.getFeatureCatalog(key),
@@ -166,6 +200,8 @@ export function usePointsFeatureState(featureCodes?: readonly number[]): PointsF
     matchingLoadState:
       hasSelection && scannable ? engine.getMatchingLoadState(key, featureCodes) : undefined,
     truncation: engine.getActiveTruncation(key, featureCodes),
+    residentFeatureCounts: engine.getResidentFeatureCounts(key),
     requestCatalog,
+    setHighlightedFeature,
   };
 }

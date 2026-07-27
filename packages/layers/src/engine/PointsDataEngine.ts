@@ -5,7 +5,15 @@ import {
   PointsResolver,
 } from '@spatialdata/core';
 import { PointsRendererAdapter } from '../adapters/PointsRendererAdapter.js';
+import type { FeatureColorOverrides } from '../pointsFeatureColor.js';
 import type { PointsRenderResource } from '../pointsLoader.js';
+
+/** Per-feature colour overrides as authored in layer config: keyed by feature NAME
+ * (robust to the code remapping between a resident-preview and the full catalog),
+ * resolved to codes at render time by {@link PointsDataEngine.getFeatureColorOverrideMap}. */
+export type FeatureColorOverridesByName = Readonly<
+  Record<string, readonly [number, number, number]>
+>;
 
 /**
  * `PointsDataEngine` — now a **facade** over `PointsResolver` (`core`) and
@@ -59,6 +67,24 @@ export type PointsDataEngineCallbacks = PointsResolverCallbacks;
 export class PointsDataEngine {
   private readonly resolver: PointsResolver;
   private readonly adapter = new PointsRendererAdapter();
+  /** Memo for {@link getFeatureCodeSpaceSize}, invalidated by catalog identity. */
+  private readonly codeSpaceMemo = new Map<
+    string,
+    { catalog: PointsFeatureCatalog | null | undefined; size: number }
+  >();
+  /** Per-element hover-highlighted feature code (runtime-only UI state), or -1 for
+   * none. Lives here — not in core — because it is a render concern the feature panel
+   * writes and the render path reads through this one shared engine. */
+  private readonly highlightByKey = new Map<string, number>();
+  /** Memo for {@link getFeatureColorOverrideMap}, invalidated by config + catalog. */
+  private readonly overrideMapMemo = new Map<
+    string,
+    {
+      source: FeatureColorOverridesByName | undefined;
+      catalog: PointsFeatureCatalog | null | undefined;
+      map: FeatureColorOverrides | null;
+    }
+  >();
 
   constructor(callbacks: PointsDataEngineCallbacks = {}) {
     this.resolver = new PointsResolver(callbacks);
@@ -97,13 +123,41 @@ export class PointsDataEngine {
     return this.adapter.getMatchingResource(element, key, this.resolver.getMatchedBatch(key));
   }
 
-  /** Render resource for the in-flight scan's growing partial buffer. */
+  /** Render resource for the in-flight scan's growing partial buffer. Identity is
+   * stable for the scan's lifetime (D10); {@link getMatchingPartialRevision} bumps
+   * as it grows. */
   getMatchingPartialResource(element: PointsElement, key: string): PointsRenderResource | null {
     return this.adapter.getMatchingPartialResource(
       element,
       key,
-      this.resolver.getPartialBatch(key)
+      this.resolver.getPartialBatch(key),
+      this.resolver.getPartialScanKey(key)
     );
+  }
+
+  /** The growing partial's revision — a `PointsLayer` `resourceRevision` prop, so the
+   * `__partial` sublayer re-reads the grown buffer without a per-chunk teardown. */
+  getMatchingPartialRevision(key: string): number {
+    return this.adapter.getMatchingPartialRevision(key);
+  }
+
+  /**
+   * The BASE layer's stable render resource for a chosen batch (matched-if-covered
+   * else resident — the caller decides). Identity is fixed for the element; the batch
+   * swaps under it (see {@link getBaseRevision}), so the base never tears down across
+   * resident↔matched↔streaming transitions.
+   */
+  getBaseResource(
+    element: PointsElement,
+    key: string,
+    batch: PointsLoadResult | undefined
+  ): PointsRenderResource | null {
+    return this.adapter.getBaseResource(element, key, batch);
+  }
+
+  /** The base resource's revision — a `PointsLayer` `resourceRevision` prop. */
+  getBaseRevision(key: string): number {
+    return this.adapter.getBaseRevision(key);
   }
 
   // --- Lifecycle (resolver-owned) ---------------------------------------------
@@ -140,6 +194,23 @@ export class PointsDataEngine {
 
   getData(key: string): PointsLoadResult | undefined {
     return this.resolver.getData(key);
+  }
+
+  /** The last-good matched-selection batch (whole-dataset scan result). */
+  getMatchedBatch(key: string): PointsLoadResult | undefined {
+    return this.resolver.getMatchedBatch(key);
+  }
+
+  /** The in-flight preload's growing geometry (D3) — drawn before the first full
+   * window settles so a cold load paints progressively. */
+  getPreloadPartialBatch(key: string): PointsLoadResult | undefined {
+    return this.resolver.getPreloadPartialBatch(key);
+  }
+
+  /** Running per-feature counts over the resident window, available while the
+   * whole-dataset counts scan is still running. */
+  getResidentFeatureCounts(key: string): ReadonlyMap<number, number> | undefined {
+    return this.resolver.getResidentFeatureCounts(key);
   }
 
   getStatus(key: string): PointsLoadStatus {
@@ -185,6 +256,98 @@ export class PointsDataEngine {
     return this.resolver.getFeatureCatalog(key);
   }
 
+  /**
+   * The feature-code space size — `maxCode + 1` across the catalog, i.e. the width the
+   * colour LUT must cover so every point's code indexes a real texel. 0 until a catalog
+   * loads. Memoised on catalog identity (the resolver replaces it, never mutates), so
+   * this is O(entries) only when the catalog changes — cheap enough for the per-frame
+   * `getLayers`.
+   */
+  getFeatureCodeSpaceSize(key: string): number {
+    const catalog = this.resolver.getFeatureCatalog(key);
+    const cached = this.codeSpaceMemo.get(key);
+    if (cached && cached.catalog === catalog) {
+      return cached.size;
+    }
+    let size = 0;
+    if (catalog) {
+      for (const entry of catalog.entries) {
+        if (entry.code + 1 > size) {
+          size = entry.code + 1;
+        }
+      }
+    }
+    this.codeSpaceMemo.set(key, { catalog, size });
+    return size;
+  }
+
+  /**
+   * Resolve config's by-NAME colour overrides to the `code → rgb` map the LUT builder
+   * wants, using the current catalog's name↔code mapping. Returns null when there are
+   * no overrides (or no catalog yet) — the palette then falls back to all defaults.
+   *
+   * Keyed by name on purpose: a feature's code can differ between the resident-preview
+   * catalog and the authoritative full one, but its name does not, so an override
+   * authored against a name lands on the right feature once the catalog settles.
+   * Memoised on (config identity, catalog identity) so the map — and thus the palette
+   * texture downstream — keeps a stable identity across the per-frame `getLayers`.
+   */
+  getFeatureColorOverrideMap(
+    key: string,
+    overridesByName: FeatureColorOverridesByName | undefined
+  ): FeatureColorOverrides | null {
+    const catalog = this.resolver.getFeatureCatalog(key);
+    const cached = this.overrideMapMemo.get(key);
+    if (cached && cached.source === overridesByName && cached.catalog === catalog) {
+      return cached.map;
+    }
+    let map: Map<number, readonly [number, number, number]> | null = null;
+    if (overridesByName && catalog) {
+      const codeByName = new Map<string, number>();
+      for (const entry of catalog.entries) {
+        codeByName.set(entry.name, entry.code);
+      }
+      const resolved = new Map<number, readonly [number, number, number]>();
+      for (const [name, rgb] of Object.entries(overridesByName)) {
+        const code = codeByName.get(name);
+        if (code !== undefined) {
+          resolved.set(code, rgb);
+        }
+      }
+      // Null (not an empty map) when nothing resolved, so callers fall back to the
+      // all-default palette and the identity check stays meaningful.
+      if (resolved.size > 0) {
+        map = resolved;
+      }
+    }
+    this.overrideMapMemo.set(key, { source: overridesByName, catalog, map });
+    return map;
+  }
+
+  /** The hover-highlighted feature code for an element, or -1 for none. Read by the
+   * render path (drives the `highlightFeatureCode` uniform). */
+  getHighlightedFeature(key: string): number {
+    return this.highlightByKey.get(key) ?? -1;
+  }
+
+  /**
+   * Set (or clear, with null) the hover-highlighted feature for an element and notify
+   * subscribers so the panel and the render path repaint. Called from the feature
+   * list's row hover. A no-op when unchanged, so mousemove churn is cheap.
+   */
+  setHighlightedFeature(key: string, featureCode: number | null): void {
+    const next = featureCode ?? -1;
+    if (this.getHighlightedFeature(key) === next) {
+      return;
+    }
+    if (next < 0) {
+      this.highlightByKey.delete(key);
+    } else {
+      this.highlightByKey.set(key, next);
+    }
+    this.resolver.notify();
+  }
+
   isFeatureCatalogLoading(key: string): boolean {
     return this.resolver.isFeatureCatalogLoading(key);
   }
@@ -213,16 +376,27 @@ export class PointsDataEngine {
     return this.resolver.hasRowFeatureCodes(key);
   }
 
+  /** Re-run any failed resources of an element (e.g. a stuck full-catalog scan). */
+  retry(key: string): Promise<void> {
+    return this.resolver.retry(key);
+  }
+
   // --- Lifecycle --------------------------------------------------------------
 
   /** Drop an element from both halves — the data AND the resources built from it. */
   evict(key: string): void {
     this.resolver.evict(key);
     this.adapter.evict(key);
+    this.codeSpaceMemo.delete(key);
+    this.overrideMapMemo.delete(key);
+    this.highlightByKey.delete(key);
   }
 
   dispose(): void {
     this.resolver.dispose();
     this.adapter.dispose();
+    this.codeSpaceMemo.clear();
+    this.overrideMapMemo.clear();
+    this.highlightByKey.clear();
   }
 }

@@ -226,7 +226,7 @@ describe('partial render resource — getMatchingPartialResource', () => {
     await pending;
   });
 
-  it('CHANGES identity when the scan grows the buffer — and only then', async () => {
+  it('HOLDS identity when the scan grows the buffer, bumping a revision instead (D10)', async () => {
     const engine = new PointsDataEngine();
     const scan = deferred<PointsLoadResult>();
     const first = batch(2);
@@ -253,17 +253,20 @@ describe('partial render resource — getMatchingPartialResource', () => {
 
     const atFirstChunk = engine.getMatchingPartialResource(element, 'pts');
     expect(atFirstChunk).not.toBeNull();
+    const revisionBefore = engine.getMatchingPartialRevision('pts');
 
-    // A new chunk grows the buffer. The memo keys on the partial's IDENTITY, so
-    // this must produce a new resource — otherwise the overlay stops filling in.
+    // A new chunk grows the buffer. D10: the resource identity is held STABLE for the
+    // scan (so PointsLayer does not tear the overlay down per chunk) and the revision
+    // bumps instead — the composite re-reads the grown buffer on that prop change.
     emit({ matchedRows: 5, scannedRows: 30, partialResult: grown });
     const atSecondChunk = engine.getMatchingPartialResource(element, 'pts');
 
-    expect(atSecondChunk).not.toBeNull();
-    expect(atSecondChunk).not.toBe(atFirstChunk);
+    expect(atSecondChunk).toBe(atFirstChunk); // SAME resource — no teardown
+    expect(engine.getMatchingPartialRevision('pts')).toBe(revisionBefore + 1);
 
-    // ...and is then stable again until the next chunk.
+    // Stable across reads until the next growth.
     expect(engine.getMatchingPartialResource(element, 'pts')).toBe(atSecondChunk);
+    expect(engine.getMatchingPartialRevision('pts')).toBe(revisionBefore + 1);
 
     scan.resolve(grown);
     await pending;
@@ -289,5 +292,54 @@ describe('partial render resource — getMatchingPartialResource', () => {
 
     expect(engine.getMatchingPartialResource(element, 'pts')).toBeNull();
     expect(engine.getMatchingResource(element, 'pts')).not.toBeNull();
+  });
+});
+
+describe('base render resource — getBaseResource (P2)', () => {
+  // The base layer's "current best view" evolves resident → resident-filtered →
+  // matched over an element's life. Each is a different batch; the old code drew
+  // them from two different resources under one layer id, so every swap changed the
+  // loader identity and PointsLayer hard-reset — the base flicker. getBaseResource
+  // holds ONE identity per element and swaps the backing batch, bumping a revision.
+  function makeElement(key: string) {
+    return {
+      key,
+      loadPoints: vi.fn(async () => batch(4)),
+    } as unknown as PointsElement;
+  }
+
+  it('holds identity across a resident↔matched batch swap, bumping the revision', () => {
+    const engine = new PointsDataEngine();
+    const element = makeElement('pts');
+    const resident = batch(4);
+    const matched = batch(2);
+
+    const first = engine.getBaseResource(element, 'pts', resident);
+    expect(first).not.toBeNull();
+    expect(engine.getBaseRevision('pts')).toBe(0);
+
+    // Same batch, repeated reads (pan frames) → same resource, no revision bump.
+    expect(engine.getBaseResource(element, 'pts', resident)).toBe(first);
+    expect(engine.getBaseRevision('pts')).toBe(0);
+
+    // Swap to the matched batch (a scan settled and now covers) → SAME resource
+    // identity (no teardown), revision bumped so PointsLayer re-reads.
+    const afterSwap = engine.getBaseResource(element, 'pts', matched);
+    expect(afterSwap).toBe(first);
+    expect(engine.getBaseRevision('pts')).toBe(1);
+
+    // Stable again until the next swap.
+    expect(engine.getBaseResource(element, 'pts', matched)).toBe(first);
+    expect(engine.getBaseRevision('pts')).toBe(1);
+  });
+
+  it('is null (and clears) when there is no batch', () => {
+    const engine = new PointsDataEngine();
+    const element = makeElement('pts');
+    engine.getBaseResource(element, 'pts', batch(4));
+    expect(engine.getBaseResource(element, 'pts', undefined)).toBeNull();
+    // Rebuilt fresh afterwards (revision resets).
+    expect(engine.getBaseResource(element, 'pts', batch(4))).not.toBeNull();
+    expect(engine.getBaseRevision('pts')).toBe(0);
   });
 });

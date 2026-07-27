@@ -76,10 +76,13 @@ describe('plan() — pure, synchronous, starts nothing', () => {
     expect(el.loadPointsMatchingFeatureCodes).not.toHaveBeenCalled();
   });
 
-  it('plans a preload for a fresh entry', () => {
+  it('plans a preload for a fresh entry, plus rowCodes (colour is on by default)', () => {
     const tasks = new PointsResolver().plan(ctx(element()));
 
-    expect(tasks.map((t) => t.resource)).toEqual(['preload']);
+    // Colour-by-feature is on by default, so the per-row codes are planned alongside
+    // the preload — for a code-column dataset they fall out of the preload decode (the
+    // rowCodes task is then a no-op); for a dict-only dataset the task settles them.
+    expect(tasks.map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
   });
 
   it('puts the memory cap IN the task id, so a cap change supersedes rather than dedups', () => {
@@ -94,21 +97,30 @@ describe('plan() — pure, synchronous, starts nothing', () => {
     expect(at4m?.id).toContain('4000000');
   });
 
-  it('plans rowCodes only when a filter or colour-by-feature needs them', () => {
+  it('plans rowCodes by default (colour is on by default), skipping only when colour is off and nothing is selected', () => {
     const resolver = new PointsResolver();
     const resources = (config: PointsResolveConfig) =>
       resolver.plan(ctx(element(), config)).map((t) => t.resource);
 
-    expect(resources({})).not.toContain('rowCodes');
+    // Colour-by-feature is on by default, so the codes load without any explicit flag.
+    expect(resources({})).toContain('rowCodes');
     expect(resources({ colorByFeature: true })).toContain('rowCodes');
     expect(resources({ featureCodes: [0] })).toContain('rowCodes');
+    // A live filter still needs the codes even with colour explicitly off.
+    expect(resources({ featureCodes: [0], colorByFeature: false })).toContain('rowCodes');
+    // Colour explicitly off AND nothing selected: no code consumer, so skip the load.
+    expect(resources({ colorByFeature: false })).not.toContain('rowCodes');
     // An empty selection is "no filter", not "filter to nothing".
-    expect(resources({ featureCodes: [] })).not.toContain('rowCodes');
+    expect(resources({ featureCodes: [], colorByFeature: false })).not.toContain('rowCodes');
   });
 
   it('plans a matching scan only once the element is known to support one', async () => {
     const resolver = new PointsResolver();
-    const el = element();
+    // Truncated: rows exist beyond what is resident, so a scan can actually add
+    // something. (A complete batch is covered by the next test.)
+    const el = element({
+      loadPoints: vi.fn(async () => batch(4, { preloadTruncated: true, totalRowCount: 1_000 })),
+    });
     const config: PointsResolveConfig = { featureCodes: [0] };
 
     // Before anything loads we cannot know whether a scan is even possible.
@@ -117,6 +129,21 @@ describe('plan() — pure, synchronous, starts nothing', () => {
     await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
 
     expect(resolver.plan(ctx(el, config)).map((t) => t.resource)).toContain('matching');
+  });
+
+  it('plans no matching scan when the resident batch holds every row', async () => {
+    // A complete preload already contains every matching row, so the render path's
+    // in-memory filter is exact and a whole-dataset scan is pure waste. Scanning
+    // anyway made a selection on a fully-resident element sit on "Loading selected
+    // features… 0 points so far" while it re-read the entire file.
+    const resolver = new PointsResolver();
+    const el = element(); // batch(4), untruncated
+    const config: PointsResolveConfig = { featureCodes: [0] };
+
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'layer-p', element: el });
+
+    expect(resolver.plan(ctx(el, config)).map((t) => t.resource)).not.toContain('matching');
+    expect(el.loadPointsMatchingFeatureCodes).not.toHaveBeenCalled();
   });
 
   it('stops planning a preload once one is resident', async () => {
@@ -263,7 +290,13 @@ describe('snapshot() — per-resource resolutions, identity-stable', () => {
     const snapshot = resolver.snapshot(ctx(el));
 
     expect(Resolution.isReady(snapshot.resources.preload as never)).toBe(true);
-    expect(Resolution.readyValue(snapshot.resources.catalog as never)).toBeNull();
+    // A4: a failed full-catalog scan is a retryable `failed`, not a permanent
+    // null-settle — and it must not blank the healthy preload beside it.
+    const catalog = snapshot.resources.catalog;
+    expect(Resolution.isFailed(catalog as never)).toBe(true);
+    if (catalog.status === 'failed') {
+      expect(catalog.error.retryable).toBe(true);
+    }
   });
 
   it('carries `stale` through a cap raise, so the old batch keeps drawing', async () => {
@@ -373,5 +406,283 @@ describe('SpatialEntryStore — the reconcile loop', () => {
     await s.reconcile([ctx(element())]);
 
     expect(s.getVersion()).toBeGreaterThan(before);
+  });
+});
+
+describe('Track A — races closed by the slot keys', () => {
+  /** An element whose preload settlements you control per memory cap. */
+  function deferredPreloadElement() {
+    const release = new Map<number, (value: PointsLoadResult) => void>();
+    const loadPoints = vi.fn(
+      (opts: { memoryCap: number; signal?: AbortSignal }) =>
+        new Promise<PointsLoadResult>((resolve, reject) => {
+          release.set(opts.memoryCap, resolve);
+          opts.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        })
+    );
+    const loadRowFeatureCodes = vi.fn(async () => new Int32Array([0, 1, 0, 1]));
+    const el = {
+      key: 'transcripts',
+      loadPoints,
+      loadRowFeatureCodes,
+      listFeaturesWithCounts: vi.fn(async () => null),
+    } as unknown as PointsElement;
+    return { el, loadPoints, loadRowFeatureCodes, release };
+  }
+
+  const target = (el: PointsElement) => ({ key: 'transcripts', layerId: 'L', element: el });
+
+  it('R1: a cap drag 4M→8M→4M does not wipe the live load, so a redundant request dedups', async () => {
+    // The old bug: superseding 4M→8M→4M left the *first* 4M load's `finally` to run
+    // with `entry.memoryCap === 4M` (the final cap), so it cleared the LIVE final
+    // load's markers. A subsequent 4M request then failed to dedup and kicked a
+    // SECOND concurrent decode. Record-identity supersession forbids this.
+    const resolver = new PointsResolver();
+    const { el, loadPoints, release } = deferredPreloadElement();
+
+    const p4a = resolver.ensureLoaded(target(el), 4_000_000); // decode #1 (4M)
+    const p8 = resolver.ensureLoaded(target(el), 8_000_000); //  decode #2 (8M), aborts #1
+    const p4b = resolver.ensureLoaded(target(el), 4_000_000); // decode #3 (4M), aborts #2
+
+    // Let the superseded first 4M load's rejection + continuation run — this is where
+    // the old `finally` wiped the live load's markers.
+    await p4a;
+
+    // A redundant 4M request must dedup to the live decode #3, NOT start a fourth.
+    const p4c = resolver.ensureLoaded(target(el), 4_000_000);
+    expect(loadPoints).toHaveBeenCalledTimes(3);
+
+    release.get(4_000_000)?.(batch(4));
+    await Promise.all([p4b, p4c]);
+    expect(resolver.getData('transcripts')?.shape[1]).toBe(4);
+    await Promise.allSettled([p8]);
+  });
+
+  it('R5: row codes are read at the resident preload cap, not the 4M default', async () => {
+    // The old bug: `ensureRowFeatureCodes` took no cap, so it read 4M rows while an
+    // 8M preload was resident → index i in the codes named a different row than
+    // point i in the batch → a corrupted filter mask. Keying the rowCodes slot on the
+    // preload's cap is the fix.
+    const resolver = new PointsResolver();
+    const { el, loadRowFeatureCodes, release } = deferredPreloadElement();
+
+    // Preload in flight at 8M (pendingKey = 8M).
+    const preload = resolver.ensureLoaded(target(el), 8_000_000);
+    // Filter toggled mid-preload → the codes must be read at the SAME 8M window.
+    await resolver.ensureRowFeatureCodes(target(el));
+
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryCap: 8_000_000 })
+    );
+    release.get(8_000_000)?.(batch(8));
+    await preload;
+  });
+
+  /** An element whose feature-index scans you settle per call. */
+  function deferredScanElement() {
+    const calls: Array<{
+      featureCodes: number[];
+      memoryCap: number;
+      resolve: (result: PointsLoadResult) => void;
+    }> = [];
+    const loadPointsMatchingFeatureCodes = vi.fn(
+      (opts: { featureCodes: readonly number[]; memoryCap: number }) =>
+        new Promise<PointsLoadResult>((resolve) => {
+          calls.push({ featureCodes: [...opts.featureCodes], memoryCap: opts.memoryCap, resolve });
+        })
+    );
+    const el = {
+      key: 'transcripts',
+      loadPoints: vi.fn(async () => batch(4)), // hasFeatureCodeColumn: true → authoritative
+      loadPointsMatchingFeatureCodes,
+    } as unknown as PointsElement;
+    return { el, loadPointsMatchingFeatureCodes, calls };
+  }
+
+  it('R2: a superseded scan cannot corrupt the reselected one ({0,1}→{2}→{0,1})', async () => {
+    // The old bug: rapid selection changes left two scans with the SAME signature
+    // running concurrently (the first, and the reselected third), both writing the
+    // one shared matchingLoading marker — so the superseded first scan's `finally`
+    // could clobber the live third's result. Record-identity supersession forbids it.
+    const resolver = new PointsResolver();
+    const { el, loadPointsMatchingFeatureCodes, calls } = deferredScanElement();
+    const t = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(t);
+
+    resolver.ensureMatchingFeaturesLoaded(t, [0, 1]); // scan A
+    resolver.ensureMatchingFeaturesLoaded(t, [2]); //    scan B (supersedes A)
+    const pC = resolver.ensureMatchingFeaturesLoaded(t, [0, 1]); // scan C (supersedes B)
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(3);
+
+    const resultA = batch(9, { featureCodes: new Int32Array([0, 1, 0, 1, 0, 1, 0, 1, 0]) });
+    const resultC = batch(3, { featureCodes: new Int32Array([0, 1, 0]) });
+    // The superseded first scan settles FIRST — in the old engine this is where it
+    // wrote resultA over the live scan's marker.
+    calls[0].resolve(resultA);
+    await Promise.resolve();
+    // The live reselected scan settles.
+    calls[2].resolve(resultC);
+    await pC;
+
+    expect(resolver.getMatchedBatch('transcripts')).toBe(resultC);
+    calls[1].resolve(batch(1)); // drain the superseded {2} scan
+  });
+
+  it('R3: raising the cap during a scan supersedes it, not served by the smaller one', async () => {
+    // The old bug: a cap raise for the same selection was "covered" by the in-flight
+    // smaller scan and deduped to it, so the extra rows were never fetched. The cap
+    // is in the slot key, so it supersedes.
+    const resolver = new PointsResolver();
+    const { el, loadPointsMatchingFeatureCodes, calls } = deferredScanElement();
+    const t = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(t, 4_000_000);
+
+    resolver.ensureMatchingFeaturesLoaded(t, [0], 4_000_000); // scan at 4M
+    const p8 = resolver.ensureMatchingFeaturesLoaded(t, [0], 8_000_000); // raise → supersede
+
+    expect(loadPointsMatchingFeatureCodes).toHaveBeenCalledTimes(2);
+    expect(calls[1]?.memoryCap).toBe(8_000_000);
+
+    calls[1].resolve(batch(6));
+    await p8;
+    calls[0].resolve(batch(3)); // drain the superseded 4M scan
+  });
+});
+
+describe('Track A — retryable failures', () => {
+  it('a failed full-catalog scan is retryable, and retry() re-runs it', async () => {
+    const resolver = new PointsResolver();
+    let attempts = 0;
+    const el = element({
+      listFeaturesWithCounts: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('scan failed');
+        return { featureKey: 'feature_name', entries: [{ code: 0, name: 'GeneA' }] };
+      }),
+    });
+    const t = { key: 'transcripts', layerId: 'L', element: el };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await resolver.ensureFeatureCatalog(t);
+    const failed = resolver.snapshot(ctx(el)).resources.catalog;
+    expect(Resolution.isFailed(failed as never)).toBe(true);
+    if (failed.status === 'failed') expect(failed.error.retryable).toBe(true);
+    // The old code marked it permanently complete; here the value is simply not loaded.
+    expect(resolver.getFeatureCatalog('transcripts')).toBeUndefined();
+
+    await resolver.retry('transcripts');
+    expect(resolver.getFeatureCatalog('transcripts')).toEqual({
+      featureKey: 'feature_name',
+      entries: [{ code: 0, name: 'GeneA' }],
+    });
+    expect(Resolution.isReady(resolver.snapshot(ctx(el)).resources.catalog as never)).toBe(true);
+  });
+});
+
+describe('Track A — cancellation reaches the scan (D8)', () => {
+  /** An element whose in-flight scan never settles, capturing the signal it sees. */
+  function neverSettlingScanElement() {
+    const signals: AbortSignal[] = [];
+    const el = {
+      key: 'transcripts',
+      loadPoints: vi.fn(async () => batch(4)),
+      loadPointsMatchingFeatureCodes: vi.fn(
+        (opts: { signal?: AbortSignal }) =>
+          new Promise<PointsLoadResult>(() => {
+            if (opts.signal) signals.push(opts.signal);
+          })
+      ),
+    } as unknown as PointsElement;
+    return { el, signals };
+  }
+
+  const target = (el: PointsElement) => ({ key: 'transcripts', layerId: 'L', element: el });
+
+  it('supersede aborts the previous scan’s signal — cancellation reaches the element', async () => {
+    const resolver = new PointsResolver();
+    const { el, signals } = neverSettlingScanElement();
+    await resolver.ensureLoaded(target(el));
+
+    resolver.ensureMatchingFeaturesLoaded(target(el), [0]); // scan A
+    expect(signals[0]?.aborted).toBe(false);
+    resolver.ensureMatchingFeaturesLoaded(target(el), [1]); // scan B supersedes A
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
+  it('evict aborts an in-flight scan', async () => {
+    const resolver = new PointsResolver();
+    const { el, signals } = neverSettlingScanElement();
+    await resolver.ensureLoaded(target(el));
+
+    resolver.ensureMatchingFeaturesLoaded(target(el), [0]);
+    expect(signals[0]?.aborted).toBe(false);
+    resolver.evict('transcripts');
+    expect(signals[0]?.aborted).toBe(true);
+  });
+});
+
+describe('progressive preload (D3)', () => {
+  // The fix for "a cold wild-type transcripts load shows nothing for ages": the
+  // preload publishes its growing geometry so the base can paint while the rest
+  // decodes, instead of only after the whole capped window lands.
+  it('exposes the growing geometry as a preload partial, then settles the full batch', async () => {
+    // An element whose loadPoints streams two chunks before resolving.
+    const el = element({
+      loadPoints: vi.fn(
+        async (options: {
+          onProgress?: (p: {
+            scannedRows: number;
+            matchedRows: number;
+            partIndex: number;
+            partCount: number;
+            partialResult: PointsLoadResult;
+          }) => void;
+        }) => {
+          options.onProgress?.({
+            scannedRows: 2,
+            matchedRows: 2,
+            partIndex: 0,
+            partCount: 2,
+            partialResult: batch(2),
+          });
+          options.onProgress?.({
+            scannedRows: 4,
+            matchedRows: 4,
+            partIndex: 1,
+            partCount: 2,
+            partialResult: batch(4),
+          });
+          return batch(4);
+        }
+      ),
+    });
+    const resolver = new PointsResolver();
+    const seen: number[] = [];
+    resolver.subscribe(() => {
+      const partial = resolver.getPreloadPartialBatch('transcripts');
+      if (partial) seen.push(partial.shape[1] ?? 0);
+    });
+
+    const pending = resolver.ensureLoaded({ key: 'transcripts', layerId: 'l', element: el });
+    // Partials are published while the load is still in flight — that IS the feature.
+    expect(resolver.getPreloadPartialBatch('transcripts')?.shape[1]).toBe(4);
+    await pending;
+
+    // Once settled, the resident batch takes over and equals the one-shot result.
+    expect(resolver.getData('transcripts')?.shape[1]).toBe(4);
+    // At least one growing partial was observed before the settle.
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('passes an onProgress through to the element so streaming can happen at all', async () => {
+    const el = element();
+    const resolver = new PointsResolver();
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'l', element: el });
+
+    expect(el.loadPoints).toHaveBeenCalledWith(
+      expect.objectContaining({ onProgress: expect.any(Function) })
+    );
   });
 });

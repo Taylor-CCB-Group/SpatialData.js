@@ -32,4 +32,27 @@ describe('PointsFeatureColorExtension', () => {
     expect(mainEnd).toContain('featureCode >= 0.0');
     expect(mainEnd).toContain('vFillColor');
   });
+
+  it('samples the colour from the pfcPalette LUT (not a procedural formula)', () => {
+    const mainEnd = shaders.inject['vs:#main-end'];
+    expect(mainEnd).toContain('texelFetch(pfcPalette');
+    // The palette module must declare the sampler + the width used to clamp the index.
+    const paletteModule = (shaders.modules as Array<{ name: string; vs: string }>).find(
+      (m) => m.name === 'pfcColor'
+    );
+    expect(paletteModule?.vs).toContain('sampler2D pfcPalette');
+    expect(paletteModule?.vs).toContain('paletteWidth');
+  });
+
+  it('declares the LUT-sizing and override props so deck tracks them', () => {
+    // Without these on the extension's defaultProps, deck would not diff them and the
+    // texture would never rebuild when the code space or overrides change.
+    expect(PointsFeatureColorExtension.defaultProps.featureCodeSpaceSize).toEqual({
+      type: 'number',
+      value: 0,
+    });
+    expect(PointsFeatureColorExtension.defaultProps.featureColorOverrides).toMatchObject({
+      type: 'object',
+    });
+  });
 });

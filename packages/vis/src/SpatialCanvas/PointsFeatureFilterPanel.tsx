@@ -1,19 +1,73 @@
-import { featureCodeToCssColor } from '@spatialdata/layers';
+import { featureNamesForCodes, resolveFeatureSelectionCodes } from '@spatialdata/core';
+import { featureCodeToRgb } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSpatialCanvasActions } from './context';
 import { describeFeatureRowState, featureRowOpacity } from './featureRowState';
 import { usePointsFeatureState } from './PointsFeatureState';
 import type { PointsLayerConfig } from './types';
 
 // we need a pass on how we manage styles
-const swatchStyle: CSSProperties = {
-  width: 10,
-  height: 10,
-  borderRadius: 2,
+
+// The colour swatch IS the picker: this span's background shows the feature's
+// effective colour, and a transparent native colour input overlays it. `inline-block`
+// + `box-sizing: border-box` make the 12×12 size hold regardless of flex context and
+// keep the 1px border inside the box (an inline span would ignore width/height, and a
+// content-box border would overflow — the layout bug this replaces).
+const colorSwatchStyle: CSSProperties = {
+  position: 'relative',
+  display: 'inline-block',
+  boxSizing: 'border-box',
+  width: 12,
+  height: 12,
   flexShrink: 0,
+  borderRadius: 2,
   border: '1px solid rgba(255, 255, 255, 0.25)',
 };
+
+const colorSwatchOverriddenStyle: CSSProperties = {
+  borderColor: '#6cb6ff',
+  boxShadow: '0 0 0 1px #6cb6ff',
+};
+
+const colorInputStyle: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  margin: 0,
+  padding: 0,
+  border: 'none',
+  opacity: 0,
+  cursor: 'pointer',
+  appearance: 'none',
+  WebkitAppearance: 'none',
+};
+
+const resetOverrideStyle: CSSProperties = {
+  color: '#888',
+  fontSize: '11px',
+  padding: '0 3px',
+  border: '1px solid #444',
+  borderRadius: 3,
+  background: '#222',
+  cursor: 'pointer',
+  flexShrink: 0,
+};
+
+const hex2 = (value: number): string =>
+  Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0');
+
+/** `[r,g,b]` (0–255) → `#rrggbb` for a native colour input's value. */
+function rgbToHex([r, g, b]: readonly [number, number, number]): string {
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+}
+
+/** `#rrggbb` → `[r,g,b]` (0–255). */
+function hexToRgb(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
 
 const panelStyle: CSSProperties = {
   display: 'flex',
@@ -108,8 +162,10 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     loadedMatchingCodes,
     supportsOnDemandLoad,
     matchingLoadState,
+    residentFeatureCounts,
     requestCatalog,
-  } = usePointsFeatureState(config.featureCodes);
+    setHighlightedFeature,
+  } = usePointsFeatureState(config);
 
   const [searchQuery, setSearchQuery] = useState('');
   // Request the full-dataset catalog whenever this panel is shown for a layer.
@@ -118,19 +174,38 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   useEffect(() => {
     requestCatalog();
   }, [requestCatalog]);
+  // Clear any lingering hover highlight when the panel unmounts (or its layer
+  // changes), so an emphasis doesn't stick after the pointer is long gone.
+  useEffect(() => () => setHighlightedFeature(null), [setHighlightedFeature]);
   const entries = useMemo(() => catalog?.entries ?? [], [catalog?.entries]);
   const hasCounts = entries.some((entry) => entry.count !== undefined);
-  const allSelected = config.featureCodes === undefined;
-  const noneSelected = config.featureCodes !== undefined && config.featureCodes.length === 0;
+  // Authoritative dataset counts only arrive with the catalog's counts scan. Until
+  // then fall back to the running resident-window tally accumulated while the points
+  // streamed in — enough to populate and sort the column immediately. Partial values
+  // are marked with a leading "≥" so they are never mistaken for dataset totals.
+  const partialCounts = residentFeatureCounts;
+  const hasAnyCounts = hasCounts || (partialCounts?.size ?? 0) > 0;
+  const effectiveCount = (entry: { code: number; count?: number }): number | undefined =>
+    entry.count ?? partialCounts?.get(entry.code);
+  const countIsPartial = (entry: { code: number; count?: number }): boolean =>
+    entry.count === undefined && partialCounts?.get(entry.code) !== undefined;
+  // The selection persists as NAMES (see `PointsLayerConfig.featureNames`), but the
+  // rest of this panel — checkboxes, greying, the engine reads — works in codes.
+  // Resolve once here against the catalog we are already rendering.
+  const selection = resolveFeatureSelectionCodes(config, catalog);
+  const allSelected = selection === undefined;
+  const noneSelected = selection !== undefined && selection.length === 0;
   const selectedCodes = allSelected
     ? new Set(entries.map((entry) => entry.code))
-    : new Set(config.featureCodes ?? []);
+    : new Set(selection ?? []);
 
   const sortedEntries = useMemo(() => {
     const list = [...entries];
-    if (hasCounts) {
+    const rank = (entry: { code: number; count?: number }): number =>
+      entry.count ?? partialCounts?.get(entry.code) ?? -1;
+    if (hasAnyCounts) {
       list.sort((left, right) => {
-        const countDiff = (right.count ?? -1) - (left.count ?? -1);
+        const countDiff = rank(right) - rank(left);
         if (countDiff !== 0) {
           return countDiff;
         }
@@ -140,7 +215,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
       list.sort((left, right) => left.name.localeCompare(right.name));
     }
     return list;
-  }, [entries, hasCounts]);
+  }, [entries, hasAnyCounts, partialCounts]);
 
   const visibleEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -150,31 +225,92 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     return sortedEntries.filter((entry) => entry.name.toLowerCase().includes(query));
   }, [sortedEntries, searchQuery]);
 
-  const setFeatureCodes = (nextCodes: number[] | undefined) => {
-    updateLayer(layerId, { featureCodes: nextCodes });
+  // Write NAMES, and clear any legacy `featureCodes` so the two cannot disagree —
+  // `featureNames` wins when both are set, and a stale code list left behind in a
+  // saved config is exactly the confusion this change exists to remove.
+  const setSelectedCodes = (nextCodes: number[] | undefined) => {
+    updateLayer(layerId, {
+      featureNames: nextCodes ? featureNamesForCodes(nextCodes, catalog) : undefined,
+      featureCodes: undefined,
+    });
+  };
+
+  // Per-feature colour overrides, keyed by feature NAME (survives code remapping).
+  const colorOverrides = config.featureColorOverrides;
+  const effectiveRgb = (name: string, code: number): [number, number, number] =>
+    colorOverrides?.[name] ?? featureCodeToRgb(code);
+  // `<input type="color">` fires change continuously while the picker is dragged,
+  // and each commit is a layer-config write → new palette → deck layer update, on a
+  // layer that can be holding millions of points. Coalesce to one write per frame:
+  // the canvas still previews live (which is the whole point of the control), but
+  // the work is bounded by the display rather than by event rate.
+  // The pending value is the FULL next overrides map, not one entry: successive
+  // edits inside a frame accumulate into it, so two features recoloured before the
+  // frame fires both survive, and the merge base is taken at schedule time — no ref
+  // read during render, and no dependence on which render created the handler.
+  const pendingColorRef = useRef<Record<string, [number, number, number]> | null>(null);
+  const colorFrameRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (colorFrameRef.current !== null) {
+        cancelAnimationFrame(colorFrameRef.current);
+      }
+    },
+    []
+  );
+  const setColorOverride = (name: string, rgb: [number, number, number]) => {
+    pendingColorRef.current = { ...(pendingColorRef.current ?? colorOverrides ?? {}), [name]: rgb };
+    if (colorFrameRef.current !== null) {
+      return;
+    }
+    colorFrameRef.current = requestAnimationFrame(() => {
+      colorFrameRef.current = null;
+      const pending = pendingColorRef.current;
+      pendingColorRef.current = null;
+      if (pending) {
+        updateLayer(layerId, { featureColorOverrides: pending });
+      }
+    });
+  };
+  const clearColorOverride = (name: string) => {
+    // A coalesced write may still be queued for this feature. It carries the whole
+    // map, so letting it land after the clear would put the override straight back.
+    if (pendingColorRef.current && name in pendingColorRef.current) {
+      delete pendingColorRef.current[name];
+    }
+    if (!colorOverrides || !(name in colorOverrides)) {
+      return;
+    }
+    const next = { ...colorOverrides };
+    delete next[name];
+    updateLayer(layerId, {
+      featureColorOverrides: Object.keys(next).length > 0 ? next : undefined,
+    });
   };
 
   const toggleFeature = (code: number, checked: boolean) => {
-    const current = new Set(
-      allSelected ? entries.map((entry) => entry.code) : (config.featureCodes ?? [])
-    );
+    const current = new Set(allSelected ? entries.map((entry) => entry.code) : (selection ?? []));
     if (checked) {
       current.add(code);
     } else {
       current.delete(code);
     }
     if (current.size === 0) {
-      setFeatureCodes([]);
+      setSelectedCodes([]);
       return;
     }
     if (current.size === entries.length) {
-      setFeatureCodes(undefined);
+      setSelectedCodes(undefined);
       return;
     }
-    setFeatureCodes([...current].sort((left, right) => left - right));
+    setSelectedCodes([...current].sort((left, right) => left - right));
   };
 
-  if (catalogLoading) {
+  // Only block on loading when there is NOTHING to show. The catalog scan publishes
+  // the names/codes list before its (slow) per-feature counts pass, so once that
+  // partial arrives the list is usable — features can be seen, coloured and selected
+  // while the counts column is still filling in.
+  if (catalogLoading && !catalog) {
     return (
       <div style={panelStyle}>
         <div style={helperStyle}>Loading features…</div>
@@ -239,10 +375,14 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
         <span style={helperStyle}>
           {' '}
           · {selectedCount}/{entries.length} selected
-          {hasCounts ? ' · sorted by count' : ''}
+          {hasAnyCounts ? (hasCounts ? ' · sorted by count' : ' · sorted by count so far') : ''}
         </span>
       </div>
       {catalogRefining ? <div style={helperStyle}>Loading the full feature list…</div> : null}
+      {catalogLoading && !catalogRefining ? (
+        // The list is already usable; only the per-feature counts are outstanding.
+        <div style={helperStyle}>Counting features…</div>
+      ) : null}
       {notLoadedCount > 0 ? (
         <div style={helperStyle}>
           {notLoadedCount} of {entries.length} feature{entries.length === 1 ? '' : 's'}{' '}
@@ -266,7 +406,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           checked={allSelected}
           onChange={(event) => {
             if (event.target.checked) {
-              setFeatureCodes(undefined);
+              setSelectedCodes(undefined);
             }
           }}
         />
@@ -278,7 +418,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           checked={noneSelected}
           onChange={(event) => {
             if (event.target.checked) {
-              setFeatureCodes([]);
+              setSelectedCodes([]);
             }
           }}
         />
@@ -300,6 +440,8 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
             entry.count !== undefined ? ` · ${entry.count.toLocaleString()} pts` : '';
           // Multi-line diagnostic: the human state + reason, then the raw signals
           // that drove the decision (what made this row grey / not grey).
+          const overridden = colorOverrides?.[entry.name] !== undefined;
+          const rgb = effectiveRgb(entry.name, entry.code);
           const title =
             `${entry.name} · code ${entry.code}${countStr}\n` +
             `${state.label}: ${state.reason}\n` +
@@ -310,21 +452,65 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
               key={entry.code}
               style={{ ...checkboxLabelStyle, opacity: featureRowOpacity(state) }}
               title={title}
+              onMouseEnter={() => setHighlightedFeature(entry.code)}
+              onMouseLeave={() => setHighlightedFeature(null)}
             >
               <input
                 type="checkbox"
                 checked={selected}
                 onChange={(event) => toggleFeature(entry.code, event.target.checked)}
               />
+              {/* Swatch = colour picker: this span's background is the effective
+                  colour and a transparent colour input overlays it. Interactive content
+                  inside the label, so operating it does not toggle the checkbox. */}
               <span
-                aria-hidden
-                style={{ ...swatchStyle, background: featureCodeToCssColor(entry.code) }}
-              />
+                style={{
+                  ...colorSwatchStyle,
+                  background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
+                  ...(overridden ? colorSwatchOverriddenStyle : {}),
+                }}
+                title={`${entry.name} colour${overridden ? ' (overridden)' : ''}`}
+              >
+                <input
+                  type="color"
+                  aria-label={`${entry.name} colour`}
+                  value={rgbToHex(rgb)}
+                  style={colorInputStyle}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setColorOverride(entry.name, hexToRgb(event.target.value))}
+                />
+              </span>
               <span>
                 {entry.name}
                 {state.greyed ? ' ·' : ''}
               </span>
-              {hasCounts ? <span style={countStyle}>{formatFeatureCount(entry.count)}</span> : null}
+              {overridden ? (
+                <button
+                  type="button"
+                  style={resetOverrideStyle}
+                  title="Reset to default colour"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    clearColorOverride(entry.name);
+                  }}
+                >
+                  ⟲
+                </button>
+              ) : null}
+              {hasAnyCounts ? (
+                <span
+                  style={countStyle}
+                  title={
+                    countIsPartial(entry)
+                      ? 'Points loaded so far (resident window) — dataset total still counting'
+                      : 'Points in the dataset'
+                  }
+                >
+                  {countIsPartial(entry) ? '≥' : ''}
+                  {formatFeatureCount(effectiveCount(entry))}
+                </span>
+              ) : null}
             </label>
           );
         })}

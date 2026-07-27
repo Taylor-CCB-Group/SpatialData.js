@@ -16,7 +16,11 @@ export type { ImageLayerContextValue } from './ImageLayerContext';
 export { ImageLayerContextProvider, useImageLayerContext } from './ImageLayerContext';
 export type { SpatialCanvasProps } from './index';
 export { layerConfig } from './layerConfig';
-export type { PointsFeatureState, PointsFeatureStateProviderProps } from './PointsFeatureState';
+export type {
+  PointsFeatureSelection,
+  PointsFeatureState,
+  PointsFeatureStateProviderProps,
+} from './PointsFeatureState';
 // Reactive points feature state. Headless (panel-less) consumers read
 // `pointsEngine` + `resolvePointsTarget` off the renderer-hook result, wrap a
 // subtree in <PointsFeatureStateProvider>, and consume the usePoints* hooks.

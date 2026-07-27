@@ -42,6 +42,51 @@ state model, not by patching mutations here.
 
 ---
 
+## Known open — feature counts can settle permanently absent
+
+Observed intermittently on a 12.1M-row Xenium `transcripts`: the feature panel
+sticks on "sorted by count so far" and never reaches authoritative counts.
+**Remounting the panel does not clear it**, which distinguishes it from the
+preview-vs-full supersession bug fixed in `46d5b89`.
+
+Mechanism (read from code; not yet reproduced deterministically):
+
+1. `listPointsFeatures` tries `listPointsFeaturesByStreamingScan` first, which
+   tallies counts as it scans, and falls back on any failure.
+2. The fallback does not tally. `listPointsFeaturesWithCounts` then calls
+   `loadFeatureCounts`, which needs an integer code column — so for a
+   **dictionary-only** element (Xenium `transcripts`, merfish `cell_type`) it
+   returns an empty map and the catalog settles with no counts.
+3. `PointsResolver.ensureFeatureCatalog` short-circuits on
+   `slot.settledKey === 'full'`, so that countless catalog is never re-requested.
+   The failure is therefore permanent for the session, and remount-immune.
+
+The non-determinism plausibly comes from `serverSupportsStreamingRanges`, a live
+two-request probe memoised per ORIGIN in a static map: if it loses a race or is
+throttled once, the whole origin is marked unservable for the session and the
+countless path is taken. Suspected to have become more likely when `be64b65` put
+the feature scan on that same probe, so it now runs earlier and more often —
+**unverified**.
+
+**Update (`8d1a875`).** Review on #89 identified the concrete mechanism, and it
+is the one suspected above: the probe cached a *thrown* fetch as if it were the
+server's answer, so a single failed request demoted the origin for the life of
+the page. The probe now caches only definitive answers (a 416, or a 200 that
+ignored `Range`); a thrown fetch evicts. That removes the most likely trigger,
+but it does **not** close this item — it makes the countless path rarer without
+making it recoverable. The permanence below is untouched, and any other route to
+the fallback still produces the same stuck panel.
+
+Two independent fixes, either of which removes the permanence:
+
+- Do not settle `'full'` for a catalog missing counts it should have — settle it
+  under an upgradable phase so a retry is possible. Makes it self-healing.
+- Make the fallback path tally counts for dict-only elements, so falling back is
+  a performance difference rather than a correctness one.
+
+Deliberately not fixed blind: forcing `serverSupportsStreamingRanges` to false
+should give a deterministic reproduction to fix against first.
+
 ## Defer-to-redesign
 
 Each notes *why* it's coupled to the state-model / decode rework.
@@ -51,6 +96,30 @@ Each notes *why* it's coupled to the state-model / decode rework.
   about this ambient stateful thing` (onProgress), `// given ongoing problems with
   agent debugging, inclined to more purity. Might consider using
   Effect?`, `// there will be various mutating side-effects on entry…`.
+
+  **Effect remains an open question, not a closed one.** Where an ADR or plan
+  reads as having ruled it out, that is "not now", not "decided against" —
+  revisit it on its merits when this item is picked up.
+
+  Evidence from the #89 review, which is the argument for this item stated in
+  defects rather than in taste. Four independent findings, one shape: *state
+  arriving out of step with the thing it describes.*
+
+  | Finding | The step it fell out of |
+  | --- | --- |
+  | Range probe cached a thrown fetch (`8d1a875`) | a failure outliving the request that caused it |
+  | Worker `fromUrl` cache kept a rejection (`8d1a875`) | same, one layer down |
+  | Matched batch drawn unfiltered without row codes (`615c926`) | codes vs the batch they align to |
+  | `loadAll()` landing after its loader was replaced (`57f77fd`) | a read vs the resource it read from |
+  | `rowCodes` readiness gate ignored the cap (this entry's sibling) | codes vs the window they mask |
+
+  Each was individually cheap to fix and none were found by the type system,
+  because in every case the stale value is the *correct type* — the cache, slot
+  or state field simply has no way to say "this is no longer about the thing you
+  are asking about". That is the property a principled effect/resource model
+  makes structural instead of a per-site discipline, and it is why the fixes
+  above are guards rather than a design change: five guards is evidence for D1,
+  not a substitute for it.
 - **D2 — Break up `useLayerData`.** The monolith the engine threads through; also
   the reason for the `'use no memo'` hatches (`PointsFeatureFilterPanel`,
   `ShowMatchingPoints`). A properly reactive state layer retires the hatches.
@@ -70,15 +139,22 @@ Each notes *why* it's coupled to the state-model / decode rework.
   one worker; the engine keys by element and assumes single-demand-per-element.
   Multi-layer sharing / a work queue belongs with the engine redesign.
 - **D7 — GeoArrow encoding.** Unexplored; a decode-path spike, not this PR.
-- **D8 — Streaming cancellation semantics.** The generators have no `AbortSignal`
-  threaded to the worker, and an abandoned manual `.next()` loop won't clean up.
-  Fine while consumers drain; design it with the new state layer.
+- **D8 — Streaming cancellation semantics.** *Partly addressed on the Track A
+  branch:* an `AbortSignal` is threaded to the scan generator, so supersede/evict
+  abort it between chunks. What remains is the general case this entry was written
+  about — the signal does not reach the WORKER, and an abandoned manual `.next()`
+  loop still won't clean up. Design the rest with the new state layer.
 - **D9 — Remove `'use no memo'` hatches (stable-snapshot option).** Give the
   engine stable-identity snapshot accessors so `useSyncExternalStore` tracks the
   value directly and the compiler stops needing an opt-out. Part of D1/D2.
-- **D10 — Progressive-overlay visibility logic + flashing.** F1 fixed the
+- **D10 — Progressive-overlay visibility logic + flashing.** *The flashing is
+  fixed on the Track A branch* — a scan-stable partial resource plus
+  `resourceRevision` means the overlay updates in place instead of being torn down
+  per chunk. The rest of this entry stands: the stable-growing-GPU-buffer work
+  below is still the destination, and it is shared with D3. Historical description
+  of the flash follows. F1 fixed the
   deselected-feature-lingering slice, but *which* points show during a partial
-  load still has logic problems, and it **flashes badly**: every notify rebuilds
+  load still has logic problems, and it **flashed badly**: every notify rebuilt
   the partial buffer into a fresh `PointsRenderResource` (new identity each
   chunk), so deck tears down and recreates the `__partial` layer per step instead
   of updating it in place. The real fix is a stable growing GPU buffer (preallocate

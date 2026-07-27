@@ -109,13 +109,15 @@ describe('SpatialDataPointsSource feature catalog', () => {
   });
 
   it('lists distinct feature names and codes across multipart parquet', async () => {
+    // Under the preload cap → whole-table read, which tallies as it decodes:
+    // gene_a x2, gene_b x2, gene_c x1 across the two parts.
     const catalog = await source.listPointsFeatures('points/transcripts');
     expect(catalog).toEqual({
       featureKey: 'feature_name',
       entries: [
-        { code: 0, name: 'gene_a' },
-        { code: 1, name: 'gene_b' },
-        { code: 2, name: 'gene_c' },
+        { code: 0, name: 'gene_a', count: 2 },
+        { code: 1, name: 'gene_b', count: 2 },
+        { code: 2, name: 'gene_c', count: 1 },
       ],
     });
   });
@@ -177,6 +179,8 @@ PY`,
       'resolveParquetRowCount' as keyof SpatialDataPointsSource
     ).mockResolvedValue(5_000_000);
 
+    // Oversized → the byte-oriented feature-column scan, which does not tally
+    // (only the streaming scan and the whole-table read do).
     const catalog = await dictSource.listPointsFeatures('points/dict_large');
     expect(catalog?.entries).toEqual([
       { code: 0, name: 'gene_a' },
@@ -252,15 +256,15 @@ PY`,
 
     const catalog = await dictSource.listPointsFeatures('points/dict_with_codes');
     expect(catalog?.entries).toEqual([
-      { code: 0, name: 'TP53' },
-      { code: 1, name: 'ABCC11' },
+      { code: 0, name: 'TP53', count: 1 },
+      { code: 1, name: 'ABCC11', count: 2 },
     ]);
 
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_with_codes');
     expect([...featureCodes!]).toEqual([1, 0, 1]);
   });
 
-  it('omits counts for dictionary-only feature columns without explicit code mapping', async () => {
+  it('counts dictionary-only feature columns from the catalog build, not loadFeatureCounts', async () => {
     const elementDir = join(fixtureRoot, 'points', 'dict_counts_untrusted');
     await mkdir(elementDir, { recursive: true });
     execSync(
@@ -297,14 +301,21 @@ PY`,
       },
     });
 
+    // `loadFeatureCounts` still declines: it derives codes independently of the
+    // catalog, and for a dictionary-only element those codes are app-assigned, so
+    // its counts could be keyed to a DIFFERENT code space than the catalog they
+    // would be merged into. That guard stays.
     const counts = await dictSource.loadFeatureCounts('points/dict_counts_untrusted');
     expect(counts.size).toBe(0);
 
+    // The catalog build counts as it decodes instead, keyed by the very map it
+    // assigns codes from, so the counts cannot disagree with the entries they sit
+    // on. Rows are ABCC11, TP53, TP53, EGFR.
     const catalog = await dictSource.listPointsFeaturesWithCounts('points/dict_counts_untrusted');
     expect(catalog?.entries).toEqual([
-      { code: 0, name: 'ABCC11' },
-      { code: 1, name: 'TP53' },
-      { code: 2, name: 'EGFR' },
+      { code: 0, name: 'ABCC11', count: 1 },
+      { code: 1, name: 'TP53', count: 2 },
+      { code: 2, name: 'EGFR', count: 1 },
     ]);
   });
 
@@ -398,11 +409,12 @@ PY`,
       },
     });
 
+    // Counts follow the row codes below: ABCC11 x2, TP53 x3, EGFR x1.
     const catalog = await dictSource.listPointsFeatures('points/dict_local_indices');
     expect(catalog?.entries).toEqual([
-      { code: 0, name: 'ABCC11' },
-      { code: 1, name: 'TP53' },
-      { code: 2, name: 'EGFR' },
+      { code: 0, name: 'ABCC11', count: 2 },
+      { code: 1, name: 'TP53', count: 3 },
+      { code: 2, name: 'EGFR', count: 1 },
     ]);
 
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_local_indices');

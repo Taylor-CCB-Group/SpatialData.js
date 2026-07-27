@@ -85,6 +85,13 @@ export function columnarBatchFromPointData(
     bounds: options?.bounds,
     loadMode: options?.loadMode,
     pointCount,
+    // Both `PointData` and the batch declare row-aligned codes, and the batch's
+    // doc says they are carried through — so silently dropping them here made
+    // every caller that passed them (see `buildGrowingResource`) look correct
+    // while the field vanished. Inert today only because the render path
+    // re-supplies codes from props; a caller relying on the declared contract
+    // would get flat colour with nothing to point at.
+    ...(data.featureCodes ? { featureCodes: data.featureCodes } : {}),
   };
 }
 

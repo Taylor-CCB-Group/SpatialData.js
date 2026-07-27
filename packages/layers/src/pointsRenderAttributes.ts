@@ -21,8 +21,26 @@ export interface PointsRenderAttributes {
   featureCodes?: Float32Array;
 }
 
+/**
+ * The `data` prop handed to deck: a length plus binary attribute descriptors.
+ *
+ * Deck compares `props.data` BY IDENTITY. A fresh object here — even one wrapping
+ * the very same buffers — sets `dataChanged` and invalidates every attribute, so
+ * the whole position buffer is re-uploaded. Memoizing the buffers is not enough;
+ * the wrapper has to be stable too.
+ */
+export interface PointsDeckData {
+  length: number;
+  attributes: {
+    getPosition: { value: Float32Array; size: number };
+    getFeatureCode?: { value: Float32Array; size: number };
+  };
+}
+
 interface CacheEntry extends PointsRenderAttributes {
   use3d: boolean;
+  /** Memoized `data` wrappers, one per colour mode (the attribute set differs). */
+  deckData: { colored?: PointsDeckData; plain?: PointsDeckData };
 }
 
 const cache = new WeakMap<ColumnarNdarrayPointsBatch, CacheEntry>();
@@ -62,7 +80,44 @@ export function buildPointsAttributes(
     featureCodes = codes instanceof Float32Array ? codes : Float32Array.from(codes);
   }
 
-  const entry: CacheEntry = { length, positions, featureCodes, use3d };
+  const entry: CacheEntry = { length, positions, featureCodes, use3d, deckData: {} };
   cache.set(batch, entry);
   return entry;
+}
+
+/**
+ * The deck `data` prop for a batch — the SAME object on every call for a given
+ * (batch, use3d, colorByFeature).
+ *
+ * Rebuilding it per render made deck treat the layer's data as new and re-upload
+ * every binary attribute, so an unrelated prop change (point size, opacity, a
+ * hover) cost a full position re-upload: ~80ms of `bufferSubData` for a 3.7M-point
+ * element, ~44MB of positions. Neither `getRadius` vs `radiusScale` nor the
+ * `updateTriggers` entry mattered, because `dataChanged` invalidates everything
+ * regardless of triggers.
+ */
+export function buildPointsDeckData(
+  batch: ColumnarNdarrayPointsBatch,
+  use3d: boolean,
+  colorByFeature: boolean
+): PointsDeckData {
+  const attributes = buildPointsAttributes(batch, use3d);
+  const entry = cache.get(batch);
+  const codes = colorByFeature ? attributes.featureCodes : undefined;
+  const slot = codes ? 'colored' : 'plain';
+  const cached = entry?.deckData[slot];
+  if (cached) {
+    return cached;
+  }
+  const data: PointsDeckData = {
+    length: attributes.length,
+    attributes: {
+      getPosition: { value: attributes.positions, size: 3 },
+      ...(codes ? { getFeatureCode: { value: codes, size: 1 } } : {}),
+    },
+  };
+  if (entry) {
+    entry.deckData[slot] = data;
+  }
+  return data;
 }

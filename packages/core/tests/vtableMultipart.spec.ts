@@ -122,3 +122,61 @@ describe('SpatialDataTableSource multipart parquet reads', () => {
     expect(table.getChild('y')?.length).toBe(120);
   });
 });
+
+/**
+ * Row-group chunks are handed to the points worker with their buffers TRANSFERRED
+ * (zero-copy), which detaches them in this thread. `schemaBytes` used to be a live
+ * reference into the cached dataset metadata, so the first transfer detached the
+ * CACHE — and the next row group posted an already-detached buffer:
+ *
+ *   DataCloneError: ArrayBuffer at index 0 is already detached
+ *
+ * which aborted the progressive preload and dropped the element onto the
+ * whole-file fallback. A chunk must therefore own its bytes outright.
+ */
+describe('row-group chunks own their bytes', () => {
+  let fixtureRoot: string;
+  let source: SpatialDataTableSource;
+  const parquetPath = 'points/transcripts/points.parquet';
+
+  beforeAll(async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), 'rowgroup-ownership-'));
+    await writeMultipartParquetFixture(join(fixtureRoot, parquetPath), [100, 50]);
+    source = new SpatialDataTableSource({
+      store: createFilesystemStore(fixtureRoot),
+      fileType: '.zarr',
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('does not hand out the cached footer buffer, so transferring one chunk cannot detach the next', async () => {
+    const internals = source as unknown as {
+      readParquetRowGroupBytesByGroupIndex: (
+        path: string,
+        index: number
+      ) => Promise<{ schemaBytes: Uint8Array; rowGroupBytes: Uint8Array } | null>;
+    };
+
+    const first = await internals.readParquetRowGroupBytesByGroupIndex(parquetPath, 0);
+    expect(first).not.toBeNull();
+
+    // Exactly what the worker client does: transfer the buffer away.
+    structuredClone(first?.schemaBytes.buffer, {
+      transfer: [first?.schemaBytes.buffer as ArrayBuffer],
+    });
+    expect(first?.schemaBytes.buffer.detached).toBe(true);
+
+    // The next read must still be usable — both for a later row group and for a
+    // repeat of the same one.
+    const second = await internals.readParquetRowGroupBytesByGroupIndex(parquetPath, 0);
+    expect(second?.schemaBytes.buffer.detached).toBe(false);
+    expect(second?.schemaBytes.length).toBeGreaterThan(0);
+
+    // And the underlying metadata is intact for the NEXT consumer too.
+    const dataset = await source.loadParquetDatasetMetadata(parquetPath);
+    expect(dataset?.parts[0]?.schemaBytes.buffer.detached).toBe(false);
+  });
+});

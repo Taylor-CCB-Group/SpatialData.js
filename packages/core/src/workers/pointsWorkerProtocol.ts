@@ -101,6 +101,21 @@ export type PointsWorkerRequest =
       type: 'scanParquetByFeatureCodes';
       parts?: Uint8Array[];
       rowGroups?: ParquetRowGroupBytesChunk[];
+      /**
+       * Stream variant: fetch and decode only the projected columns from this URL,
+       * in the worker, instead of the caller shipping whole row-group BYTES.
+       *
+       * `parts`/`rowGroups` carry every column of a row group, because
+       * parquet-wasm cannot fetch individual column chunks; `ParquetFile.stream`
+       * issues its own ranged fetches per column chunk, so the projection reaches
+       * the network. The caller decides whether the URL is servable (see
+       * `canStreamMatchingScan`) and passes a row-group window per request so
+       * progress stays granular without the protocol needing streamed responses.
+       */
+      streamUrl?: string;
+      streamRowGroups?: number[];
+      /** Projected columns for the stream variant: axes + the feature column. */
+      streamColumns?: string[];
       axisNames: string[];
       featureKey: string;
       featureCodeColumnName?: string;

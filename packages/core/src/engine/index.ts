@@ -21,6 +21,8 @@ export type {
   PointsResolverCallbacks,
 } from './PointsResolver.js';
 export { PointsResolver } from './PointsResolver.js';
+export type { RequestSlotOptions, SlotLoadContext, SlotLoader } from './RequestSlot.js';
+export { RequestSlot } from './RequestSlot.js';
 export type { ResolutionProgress } from './resolution.js';
 // `Resolution` is both the type and its constructor namespace — one export carries both.
 export { fromResult, Resolution } from './resolution.js';

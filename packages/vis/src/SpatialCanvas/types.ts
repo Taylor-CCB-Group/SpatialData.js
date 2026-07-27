@@ -113,12 +113,32 @@ export interface PointsLayerConfig extends BaseLayerConfig {
    */
   colorByFeature?: boolean;
   /**
-   * Feature-filter selection by Feature Code. `undefined` means "all features
-   * shown" (no filter); an array restricts the drawn points to those codes. This
-   * is serializable Stack-Entry state (persists in a saved config), distinct from
-   * the runtime-only Feature Highlight added in MVP step 3.
+   * Feature-filter selection by feature NAME — the durable, serializable form,
+   * and what the UI writes. `undefined` means "all features shown" (no filter);
+   * an array restricts the drawn points to those features.
+   *
+   * Names rather than codes because for a dictionary-only element (a Xenium
+   * `transcripts` has `feature_name` and no code column) the codes are
+   * APP-ASSIGNED — a first-seen index from whichever catalog scan ran — so a
+   * stored code can come back meaning a different gene. Names are also readable
+   * in a saved config. Takes precedence over {@link featureCodes}; resolved
+   * against the settled catalog by `resolveFeatureSelectionCodes`.
+   */
+  featureNames?: string[];
+  /**
+   * Feature-filter selection by Feature Code. Retained for runtime use and for
+   * configs written before {@link featureNames} existed, which takes precedence.
+   * Prefer names for anything that is persisted — see the note there.
    */
   featureCodes?: number[];
+  /**
+   * Per-feature colour overrides, keyed by feature NAME (not code): `{ "EPCAM":
+   * [220, 30, 30] }` draws that gene in that RGB instead of its default categorical
+   * colour. Keyed by name so an override survives the code remapping between the
+   * resident-preview catalog and the full one. Absent features keep their default.
+   * Serializable Stack-Entry state.
+   */
+  featureColorOverrides?: Record<string, [number, number, number]>;
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

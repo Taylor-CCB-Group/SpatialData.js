@@ -21,6 +21,7 @@ import {
   getTooltipSignature,
   type LabelsElement,
   type PointsElement,
+  resolveFeatureSelectionCodes,
   resolvePointsMemoryCap,
   resolveTooltipItems,
   type ShapesElement,
@@ -34,6 +35,7 @@ import {
 import {
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  featureFilterAwaitingRowCodes,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
@@ -376,7 +378,11 @@ export function useLayerData(
   layersRef.current = layers;
 
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
-  const [, setLoadedDataRevision] = useState(0);
+  // Bumped on every resolver settle. The reconcile effect depends on it so that an
+  // async settle (e.g. the preload landing, which flips `supportsFeatureScan`) re-runs
+  // planning — this is what lets the row-codes and feature-index scan be planned from
+  // the commit phase (Track A) instead of kicked imperatively during render.
+  const [loadedDataRevision, setLoadedDataRevision] = useState(0);
 
   const notifyLoadedDataChanged = useCallback(() => {
     setLoadedDataRevision((revision) => revision + 1);
@@ -549,6 +555,11 @@ export function useLayerData(
   // system switch that makes a previously unavailable element resolvable. The map is
   // memoised on `availableElements`, so this adds no per-render churn.
   useEffect(() => {
+    // Bare reference: `loadedDataRevision` is a re-trigger, not a value we read. A
+    // resolver settle (the preload landing flips `supportsFeatureScan`) must replan so
+    // the scan/row-codes tasks get emitted; touching it here declares that dependency
+    // honestly to exhaustive-deps. The plan/load dedup makes the extra runs convergent.
+    void loadedDataRevision;
     const contexts: AnyResolveContext[] = [];
     for (const layerId of layerOrder) {
       const config = layers[layerId];
@@ -586,21 +597,38 @@ export function useLayerData(
           transform: elem.transform,
         });
       } else if (elem.type === 'points' && config.type === 'points') {
-        // Only the preload is planned here; row-codes and the feature-index scan
-        // stay on the render-phase engine calls in `getLayers` (Track A), so the
-        // config deliberately carries just the memory cap.
+        // The full points config drives planning (Track A): `plan()` emits the
+        // preload, and — once the preload makes a scan possible — the row-codes and
+        // feature-index scan tasks from `featureCodes`/`colorByFeature`. These used
+        // to be kicked imperatively from `getLayers` during render.
         contexts.push({
           entryId: layerId,
           elementKey: elem.key,
           kind: 'points',
           element: elem.element,
-          config: { pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap) },
+          config: {
+            pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap),
+            // Names are the durable selection; resolve them against the settled
+            // catalog so everything downstream keeps working in codes.
+            ...(() => {
+              const codes = resolveFeatureSelectionCodes(
+                config,
+                pointsEngine.getFeatureCatalog(elem.key)
+              );
+              return codes ? { featureCodes: codes } : {};
+            })(),
+            ...(config.colorByFeature ? { colorByFeature: true } : {}),
+          },
           transform: elem.transform,
         });
       }
     }
     void store.reconcile(contexts);
-  }, [layers, layerOrder, store, elementMapValue]);
+    // `pointsEngine` is the stable useState value, so this adds no churn; it is in
+    // the list because the name→code resolution above reads its catalog. The catalog
+    // ARRIVING is covered by `loadedDataRevision` (bumped on every resolver settle),
+    // which is what re-resolves a name selection that could not be resolved yet.
+  }, [layers, layerOrder, store, elementMapValue, loadedDataRevision, pointsEngine]);
 
   // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
 
@@ -919,17 +947,33 @@ export function useLayerData(
           }
         } else if (config.type === 'points') {
           const element = elem.element as PointsElement;
-          const featureCodes = config.featureCodes;
+          const featureCodes = resolveFeatureSelectionCodes(
+            config,
+            pointsEngine.getFeatureCatalog(elem.key)
+          );
           const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
+          // Sizes the colour LUT so every point's feature code indexes a real texel.
+          const featureCodeSpaceSize = pointsEngine.getFeatureCodeSpaceSize(elem.key);
+          // Resolve config's by-name colour overrides to a stable code→rgb map for the
+          // LUT (identity-stable so the palette texture is not rebuilt every frame).
+          const featureColorOverrides = pointsEngine.getFeatureColorOverrideMap(
+            elem.key,
+            config.featureColorOverrides
+          );
+          // Hover highlight (runtime): emphasise the hovered feature's points, -1 (no
+          // highlight) otherwise. Held on the engine — the shared external store the
+          // feature panel writes to and this render path reads — so it needs no store /
+          // renderStack plumbing. A uniform, so it costs nothing per frame.
+          const highlightFeatureCode = pointsEngine.getHighlightedFeature(elem.key);
 
-          // Feature-index render scan: when a selection is active, load the WHOLE
-          // dataset's matching points (footer stats skip the row groups a selected
-          // feature can't live in), so features outside the resident preload window
-          // still render. The scan is idempotent per selection; kicking it here is a
-          // no-op once resident/in-flight. On settle it notifies → re-render → the
-          // matched resource appears below. `getMatchingResource` returns the LAST
-          // completed matched batch, so a selection change keeps showing the prior
-          // selection's points until the new scan settles (no blank mid-scan).
+          // Feature-index render scan: when a selection is active, the WHOLE
+          // dataset's matching points are loaded (footer stats skip the row groups a
+          // selected feature can't live in), so features outside the resident preload
+          // window still render. The scan is PLANNED from the reconcile effect (Track
+          // A) — `getLayers` only READS its result here. `getMatchingResource`
+          // returns the LAST completed matched batch, so a selection change keeps
+          // showing the prior selection's points until the new scan settles (no blank
+          // mid-scan).
           //
           // Gated on scan capability: an authoritative code column (footer stats
           // skip row groups) OR a dictionary-only element with a catalog loaded —
@@ -939,81 +983,115 @@ export function useLayerData(
           // catalog loads (no shared code space) there is nothing to match names
           // against, so it falls through to resident in-memory filtering.
           const canFeatureScan = pointsEngine.supportsFeatureScan(elem.key);
-          let matchingResource: PointsRenderResource | null = null;
           let partialResource: PointsRenderResource | null = null;
-          if (selectionActive && canFeatureScan) {
-            void pointsEngine.ensureMatchingFeaturesLoaded(
-              { key: elem.key, layerId, element },
-              featureCodes,
-              resolvePointsMemoryCap(config.pointsMemoryCap)
-            );
-            matchingResource = pointsEngine.getMatchingResource(element, elem.key);
-            // The in-flight scan's growing buffer (all matched chunks so far), drawn
-            // as an extra overlay sub-layer below so the base (resident preview /
-            // prior matched batch) stays visible while points progressively fill in.
+          // The selected genes the LAST-GOOD scan already covers. This is the pivot of
+          // the show/hide policy: the whole-dataset matched batch survives a selection
+          // change as `stale`, so `covered` is the previous scan's genes. Intersecting
+          // it with the CURRENT selection gives exactly the genes we may safely draw
+          // from that batch — never a deselected gene (that would be bug B: a gene shown
+          // when it shouldn't be), and never dropping a still-wanted gene the scan
+          // already has (bug A: a wanted gene vanishing when the selection grows).
+          let coveredSelection: readonly number[] | undefined;
+          if (selectionActive && canFeatureScan && featureCodes !== undefined) {
+            const covered = pointsEngine.getLoadedMatchingFeatureCodes(elem.key);
+            coveredSelection =
+              covered !== undefined ? featureCodes.filter((code) => covered.has(code)) : [];
             partialResource = pointsEngine.getMatchingPartialResource(element, elem.key);
           }
 
-          if (matchingResource) {
-            // The matched batch covers the selection (or a superset of it, when the
-            // selection just shrank). Pass the batch's per-row codes + the current
-            // selection so the layer filters IN MEMORY down to the selected codes —
-            // this is what makes removing a feature a free filter instead of a
-            // re-scan. When the selection equals what was scanned, skip the filter
-            // (render the batch whole); the batch's own codes still drive colour.
-            const matchedRowCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
-            const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
-            const filterMatched = featureCodes !== undefined && featureCodes.length < coveredSize;
+          // Choose the base batch: the whole-dataset matched batch whenever it covers
+          // ANY still-wanted gene (drawn filtered to that covered subset), else the
+          // resident preload. Growing [A]→[A,B] keeps A on screen from the matched batch
+          // while B's scan streams in via the overlay, instead of blinking A out to the
+          // resident window. Both flow through ONE stable base resource
+          // (`getBaseResource`) whose backing batch swaps under it — so the base never
+          // tears down as the view evolves resident↔matched (the base flicker). An empty
+          // matched batch (a scan that matched nothing) falls back to resident.
+          const matchedCandidate =
+            coveredSelection && coveredSelection.length > 0
+              ? pointsEngine.getMatchedBatch(elem.key)
+              : undefined;
+          // The filter that would have to be applied to draw the matched batch: a
+          // strict subset of what the scan covers means genes in the batch must be
+          // held back.
+          const matchedRowCodes = matchedCandidate
+            ? pointsEngine.getMatchingRowFeatureCodes(elem.key)
+            : undefined;
+          const matchedCoveredSize =
+            pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
+          const matchedFilter =
+            coveredSelection !== undefined && coveredSelection.length < matchedCoveredSize
+              ? coveredSelection
+              : undefined;
+          // ...but `PointsLayer` cannot apply a feature filter without row-aligned
+          // codes, and its strategy resolves that case by drawing the batch WHOLE.
+          // Handing it a filter it will decline is therefore not a no-op — it
+          // surfaces every gene the scan covered, including the one just deselected.
+          // Gate on the layer's OWN predicate (imported, not re-derived, so the two
+          // cannot drift) and fall back to the resident base, which filters in memory.
+          const matchedBatch = featureFilterAwaitingRowCodes(matchedFilter, matchedRowCodes)
+            ? undefined
+            : matchedCandidate;
+          const useMatched = matchedBatch !== undefined && (matchedBatch.shape[1] ?? 0) > 0;
+          // Falling back to the in-flight preload's growing buffer (D3) is what makes a
+          // COLD load paint progressively: until the first full window settles there is
+          // no resident batch, and the base would otherwise draw nothing. It flows
+          // through the same stable base resource, so the growth is a revision bump —
+          // no teardown, no flicker.
+          const baseBatch = useMatched
+            ? matchedBatch
+            : (pointsEngine.getData(elem.key) ?? pointsEngine.getPreloadPartialBatch(elem.key));
+
+          // Colour-by-feature is ON BY DEFAULT (opt-out via `colorByFeature: false`), so
+          // thread the per-row codes whenever colour is not explicitly disabled — the
+          // "all features" view (no selection) needs them too, or it draws flat.
+          const wantsRowCodes = config.colorByFeature !== false || featureCodes !== undefined;
+          let basePreloadedCodes: ArrayLike<number> | undefined;
+          let baseFilter: readonly number[] | undefined;
+          if (useMatched) {
+            basePreloadedCodes = matchedRowCodes;
+            // Filter the whole-dataset batch to the still-wanted covered subset unless
+            // the selection is exactly the scanned set (then render it whole). The batch
+            // only holds covered genes, so this can only ever DROP a deselected gene —
+            // never surface an unselected one. That holds because the gate above
+            // guarantees the filter is applicable; without it the drop silently
+            // becomes a no-op and the deselected gene stays on screen.
+            baseFilter = matchedFilter;
+          } else {
+            // Row codes drive both the in-memory filter (resident → selection) and
+            // colour-by-feature. The row-codes LOAD is planned from the reconcile
+            // effect (Track A), not kicked here.
+            basePreloadedCodes = wantsRowCodes
+              ? pointsEngine.getRowFeatureCodes(elem.key)
+              : undefined;
+            baseFilter = featureCodes;
+          }
+
+          const baseResource = pointsEngine.getBaseResource(element, elem.key, baseBatch);
+          if (baseResource) {
             deckLayers.push(
               new PointsLayer({
                 id: layerId,
-                resource: matchingResource,
+                resource: baseResource,
+                // Stable resource; the revision bumps when the base batch is swapped
+                // (resident↔matched↔streaming) so the composite re-reads without a
+                // teardown — no base flicker on selection change or scan settle.
+                resourceRevision: pointsEngine.getBaseRevision(elem.key),
                 modelMatrix: elem.transform,
                 opacity: config.opacity,
                 visible: config.visible,
+                // Legacy renderPointsLayer defaulted radius to 1px; preserve that for
+                // parity (the composite's own default is smaller).
                 pointSize: config.pointSize ?? 1,
-                ...(filterMatched ? { featureCodes } : {}),
-                ...(matchedRowCodes ? { preloadedFeatureCodes: matchedRowCodes } : {}),
+                ...(baseFilter ? { featureCodes: baseFilter } : {}),
+                ...(basePreloadedCodes ? { preloadedFeatureCodes: basePreloadedCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                featureCodeSpaceSize,
+                ...(featureColorOverrides ? { featureColorOverrides } : {}),
+                highlightFeatureCode,
               })
             );
-          } else {
-            // Resident batch: the default view (no selection), and an instant preview
-            // of the resident subset while the feature-index scan is still running.
-            // The engine returns a STABLE render resource (memoized by signature), so
-            // re-running getLayers every pan/zoom frame reuses the same loader
-            // identity and the composite does not reset its batch (no flashing).
-            const resource = pointsEngine.getResource(element, elem.key);
-            if (resource) {
-              const filterActive = featureCodes !== undefined;
-              // Row codes are needed to filter by feature AND to colour by feature.
-              // Colour-by-feature applies even with no filter ("all features"), so
-              // load/pass the codes whenever either is on — not just when filtering.
-              const needsRowCodes = filterActive || config.colorByFeature === true;
-              if (needsRowCodes && !pointsEngine.hasRowFeatureCodes(elem.key)) {
-                void pointsEngine.ensureRowFeatureCodes({ key: elem.key, layerId, element });
-              }
-              const preloadedFeatureCodes = needsRowCodes
-                ? pointsEngine.getRowFeatureCodes(elem.key)
-                : undefined;
-              deckLayers.push(
-                new PointsLayer({
-                  id: layerId,
-                  resource,
-                  modelMatrix: elem.transform,
-                  opacity: config.opacity,
-                  visible: config.visible,
-                  // Legacy renderPointsLayer defaulted radius to 1px; preserve that
-                  // for parity (the composite's own default is smaller).
-                  pointSize: config.pointSize ?? 1,
-                  ...(config.color ? { color: config.color } : {}),
-                  ...(config.colorByFeature ? { colorByFeature: true } : {}),
-                  ...(featureCodes ? { featureCodes } : {}),
-                  ...(preloadedFeatureCodes ? { preloadedFeatureCodes } : {}),
-                })
-              );
-            }
           }
 
           // Overlay the in-flight scan's growing buffer as a SEPARATE sub-layer on
@@ -1028,6 +1106,9 @@ export function useLayerData(
               new PointsLayer({
                 id: `${layerId}__partial`,
                 resource: partialResource,
+                // Stable resource across chunks; the revision bumps as the buffer
+                // grows so the overlay re-reads without a per-chunk teardown (D10).
+                resourceRevision: pointsEngine.getMatchingPartialRevision(elem.key),
                 modelMatrix: elem.transform,
                 opacity: config.opacity,
                 visible: config.visible,
@@ -1036,6 +1117,9 @@ export function useLayerData(
                 ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                featureCodeSpaceSize,
+                ...(featureColorOverrides ? { featureColorOverrides } : {}),
+                highlightFeatureCode,
               })
             );
           }

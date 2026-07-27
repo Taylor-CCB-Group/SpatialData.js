@@ -4,6 +4,7 @@ import { DEFAULT_POINTS_MEMORY_CAP } from '../pointsLimits.js';
 import type { PointsLoadProgress, PointsLoadResult } from '../pointsLoadOptions.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
 import type { EntryNotice } from './errors.js';
+import { RequestSlot } from './RequestSlot.js';
 import { Resolution } from './resolution.js';
 import type { EntryResources, ResolveContext, ResolveTask, ResourceResolver } from './resolver.js';
 import { SnapshotCache } from './snapshotCache.js';
@@ -42,11 +43,30 @@ import { SnapshotCache } from './snapshotCache.js';
  * rows in *file order*, so index i in the codes array names the feature of point i
  * in the batch.
  *
- * **The memory cap must reach both calls identically or the filter mask is
- * misaligned.** It currently does not: `ensureRowFeatureCodes` takes no cap and so
- * falls back to the 4M default while `ensureLoaded` honours the user's. That is
- * race R5, and it is Track A's to fix — this commit is a re-housing, and
- * deliberately preserves the behaviour, bug and all.
+ * **The memory cap reaches both calls identically** — that is what keeps the mask
+ * aligned. The `preload` and `rowCodes` slots are both keyed on the memory cap, and
+ * `ensureRowFeatureCodes` reads the codes at the preload's cap (its slot key). This
+ * closes race R5 (Track A): the old `ensureRowFeatureCodes` took no cap and fell back
+ * to the 4M default while `ensureLoaded` honoured the user's, misaligning the mask
+ * against an 8M resident batch.
+ *
+ * Keying the slot only makes the misalignment *representable*; {@link plan} is what
+ * acts on it. It gates on {@link hasRowFeatureCodesAtCap}, not on readiness — codes
+ * settled at 4M stay "ready" through a raise to 8M, so a readiness gate leaves a
+ * stale mask in place over the bigger batch and R5 survives in the one place that
+ * decides whether to fix it.
+ *
+ * ## State model (Track A)
+ *
+ * All four resources — `preload`, `rowCodes`, `catalog`, `matching` — are
+ * {@link RequestSlot}s: one tested dedup/supersede/settle primitive, keyed so that
+ * everything a request depends on is in the key. Supersession is by record identity,
+ * never value — a superseded load cannot write anything. The keys ARE the race fixes:
+ * `preload`/`rowCodes` on the memory cap (R1, R5); `matching` on
+ * `` `${signature}#${cap}` `` (R2 dedups a re-selected covered scan, R3 supersedes on
+ * a cap raise). A failed slot holds a structured, **retryable** `SpatialEntryError`
+ * that {@link retry} re-runs — which is what unsticks the previously-permanent
+ * full-catalog-scan failure.
  */
 
 export type PointsLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -72,49 +92,74 @@ export interface PointsResolveConfig {
 }
 
 interface PointsEntry {
-  data?: PointsLoadResult;
-  /** Memory cap (max resident rows) the current `data`/`loading` was requested
-   * with. A change means the resident window must reload — see `ensureLoaded`. */
-  memoryCap?: number;
-  /** Aborts the in-flight preload when it is superseded (a cap change), so a
-   * stale load doesn't run its expensive main-thread fallback to completion. */
-  loadAbort?: AbortController;
-  status: PointsLoadStatus;
-  loading?: Promise<void>;
-  /** Feature catalog: `undefined` while unloaded, `null` once settled for an
-   * element with no `feature_key`, else the catalog. `catalogLoaded` disambiguates
-   * "not yet requested" from "settled as null". */
-  catalog?: PointsFeatureCatalog | null;
-  catalogLoaded?: boolean;
-  catalogLoading?: Promise<void>;
-  /** True once the full-dataset catalog scan (`listFeaturesWithCounts`) has
-   * replaced any resident-subset preview. */
-  catalogComplete?: boolean;
-  /** Per-row feature codes aligned to the resident batch (see class doc). */
-  rowCodes?: ArrayLike<number>;
-  rowCodesLoaded?: boolean;
-  rowCodesLoading?: Promise<void>;
-  /** The catalog whose code space {@link rowCodes} are expressed in. */
+  /**
+   * Resident geometry preload, keyed by memory cap. The key IS the cap: a cap
+   * change supersedes (reload), an identical cap dedups, and a lowered cap is served
+   * by an in-memory shed (`settle`) rather than a fetch. Record-identity
+   * supersession is what closes R1 (a superseded reload can no longer wipe the live
+   * one's markers). Its `stale` retention is the atomic swap — the previous batch
+   * stays on screen until the larger one settles.
+   */
+  preload: RequestSlot<number, PointsLoadResult>;
+  /**
+   * Per-row feature codes aligned to the resident batch (see class doc), **keyed by
+   * memory cap**. Keying on the cap is the R5 fix: the codes are read at the same
+   * window as the geometry, so index i in the codes names the feature of point i in
+   * the batch. `V` is `ArrayLike<number> | undefined` because an element with no
+   * codes settles `ready(undefined)` — a settled fact, not an absence.
+   */
+  rowCodes: RequestSlot<number, ArrayLike<number> | undefined>;
+  /**
+   * Feature catalog, two-phase, as a {@link RequestSlot} keyed `'preview' | 'full'`.
+   * The resident-subset **preview** falls out of the geometry preload's decode
+   * (`settle('preview', …)`); the authoritative **full** scan
+   * (`listFeaturesWithCounts`) supersedes it (`request('full', …)`), retaining the
+   * preview as `stale` so it keeps showing while the full list loads. A settled value
+   * is the catalog, or `null` for an element with no `feature_key` — a fact, not an
+   * absence. A failed full scan is `failed` + **retryable** (Track A step A4): it no
+   * longer settles permanently, so {@link retry} can re-run it.
+   */
+  catalog: RequestSlot<CatalogPhase, PointsFeatureCatalog | null>;
+  /** The catalog whose code space the {@link rowCodes} value is expressed in. */
   rowCodesCatalog?: PointsFeatureCatalog;
+  /**
+   * The resident-subset preview from the last geometry decode, held OUTSIDE the
+   * slot so it can be offered as a fallback without cancelling anything.
+   *
+   * `settle` aborts the in-flight request, so settling a preview on top of a
+   * running full scan destroys it. Keeping the preview here lets
+   * {@link PointsResolver.getFeatureCatalog} still show it instantly while the scan
+   * runs (or after one fails), which is the whole point of the preview, without the
+   * write that killed the scan.
+   */
+  previewCatalog?: PointsFeatureCatalog;
   /** True when the element has a file-backed feature code column (authoritative
    * codes; a real feature index). False for dictionary-only feature columns. */
   featureCodeColumn?: boolean;
-  /** Memoized distinct codes in {@link rowCodes}, invalidated by identity. Note
-   * this is a DATA memo (a Set), not a render resource — it stays in core. */
+  /** Memoized distinct codes in the resident {@link rowCodes}, invalidated by
+   * identity. A DATA memo (a Set), not a render resource — it stays in core. */
   residentCodes?: ReadonlySet<number>;
   residentCodesSource?: ArrayLike<number>;
-  /** Whole-dataset points for the active selection, keyed by the selected-codes
-   * `signature` so a selection change rebuilds it. */
-  matching?: { signature: string; result: PointsLoadResult };
-  /** In-flight feature-index scan, with progressive counts from `onProgress`. */
-  matchingLoading?: {
-    signature: string;
-    promise: Promise<void>;
-    matchedRows: number;
-    scannedRows: number;
-    partialResult?: PointsLoadResult;
-  };
+  /**
+   * Whole-dataset points for the active selection — the feature-index scan — as a
+   * {@link RequestSlot}. Keyed by `` `${signature}#${cap}` ``: the selected-codes
+   * signature closes R2 (re-selecting a covered selection dedups to the live scan),
+   * and the cap closes R3 (raising the cap supersedes rather than reusing the smaller
+   * scan). The value carries its `signature` so coverage checks can read it, and the
+   * streaming `partial` is the scan's growing buffer.
+   */
+  matching: RequestSlot<string, MatchingValue>;
 }
+
+/** A settled or in-flight matched batch, tagged with the selection it covers. */
+interface MatchingValue {
+  readonly signature: string;
+  readonly result: PointsLoadResult;
+}
+
+/** The two catalog phases: the instant resident-subset preview, then the
+ * authoritative full-dataset scan that supersedes it. */
+type CatalogPhase = 'preview' | 'full';
 
 /** Public snapshot of a selection's feature-index load, for the filter panel. */
 export interface PointsMatchingLoadState {
@@ -140,6 +185,63 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
 
   constructor(callbacks: PointsResolverCallbacks = {}) {
     this.callbacks = callbacks;
+  }
+
+  /** Get the entry for `key`, creating it (with its slots) on first touch. */
+  private ensureEntry(key: string): PointsEntry {
+    let entry = this.entries.get(key);
+    if (!entry) {
+      const onChange = () => this.notify();
+      entry = {
+        preload: new RequestSlot<number, PointsLoadResult>({
+          context: {
+            elementKey: key,
+            kind: 'points',
+            resource: 'preload',
+            fallback: 'load-failed',
+          },
+          onChange,
+          // The resident batch stays on screen through a reload (stale retention),
+          // so only its settle is a re-render — matching the pre-slot notify count.
+          notifyOnLoading: false,
+        }),
+        rowCodes: new RequestSlot<number, ArrayLike<number> | undefined>({
+          context: {
+            elementKey: key,
+            kind: 'points',
+            resource: 'rowCodes',
+            fallback: 'decode-failed',
+          },
+          onChange,
+          notifyOnLoading: false,
+        }),
+        matching: new RequestSlot<string, MatchingValue>({
+          context: {
+            elementKey: key,
+            kind: 'points',
+            resource: 'matching',
+            fallback: 'decode-failed',
+          },
+          onChange,
+          // The scan reports progress and a growing partial the panel/overlay draw,
+          // so its loading transitions and streamed partials ARE re-renders.
+          notifyOnLoading: true,
+        }),
+        catalog: new RequestSlot<CatalogPhase, PointsFeatureCatalog | null>({
+          context: {
+            elementKey: key,
+            kind: 'points',
+            resource: 'catalog',
+            fallback: 'decode-failed',
+          },
+          onChange,
+          // The full-list scan shows a spinner; its loading transition is a re-render.
+          notifyOnLoading: true,
+        }),
+      };
+      this.entries.set(key, entry);
+    }
+    return entry;
   }
 
   // --- ResourceResolver -------------------------------------------------------
@@ -168,13 +270,41 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     const selectionActive = selection !== undefined && selection.length > 0;
 
     // Was `void engine.ensureRowFeatureCodes(...)` at useLayerData.ts:1425.
-    const needsRowCodes = selectionActive || config.colorByFeature === true;
-    if (needsRowCodes && !this.hasRowFeatureCodes(key)) {
-      tasks.push({ id: `${key}#rowCodes`, resource: 'rowCodes' });
+    // Colour-by-feature is ON BY DEFAULT in the renderer (opt-out via
+    // `colorByFeature: false`), so the per-row codes must load whenever colour is not
+    // explicitly disabled — not only on an active selection. Gating on
+    // `=== true` left the "all features" view (no selection, no explicit flag) with no
+    // codes, so it drew flat. A dataset with a code column carries codes on the batch
+    // regardless, but the dict-only fallback settles the codes through THIS task, so
+    // the gate is what made dict-only "all features" render flat.
+    const needsRowCodes = selectionActive || config.colorByFeature !== false;
+    // Codes are only a valid mask for the batch they were read at THE SAME CAP as
+    // (R5) — index i names point i only then. `isReady` does not say that: codes
+    // settled at 4M stay ready after a raise to 8M, so this gate never re-requested
+    // them and the mask silently addressed the wrong rows against the bigger batch.
+    // Ask at the cap they would actually be loaded at, and put it in the task id so
+    // a cap change re-dispatches instead of deduping.
+    const rowCodesCap = this.rowCodesCap(key);
+    // While a preload is in flight, hold off: its decode settles the codes at its
+    // own cap for free whenever the element carries a code column, and asking now
+    // would race a second full read of the feature column against it. If it settles
+    // WITHOUT codes (the dict-only fallback), the next plan pass sees them
+    // misaligned and asks then. A first load — no codes at all — never waits.
+    const preloadInFlight = this.entries.get(key)?.preload.isLoading === true;
+    const deferToPreload = this.hasRowFeatureCodes(key) && preloadInFlight;
+    if (needsRowCodes && !this.hasRowFeatureCodesAtCap(key, rowCodesCap) && !deferToPreload) {
+      tasks.push({ id: `${key}#rowCodes:${rowCodesCap}`, resource: 'rowCodes' });
     }
 
     // Was `void engine.ensureMatchingFeaturesLoaded(...)` at useLayerData.ts:1375.
-    if (selectionActive && this.supportsFeatureScan(key)) {
+    //
+    // Only worth scanning when the resident batch might be MISSING matching rows.
+    // A complete (untruncated) preload already holds every row in the dataset, so
+    // the render path's in-memory filter returns exactly what a whole-dataset scan
+    // would — instantly, with no I/O. Scanning anyway re-read the entire file and
+    // showed "Loading selected features… 0 points so far" for a selection whose
+    // points were already in memory.
+    if (selectionActive && this.supportsFeatureScan(key) && !this.isResidentComplete(key)) {
       const signature = PointsResolver.matchingSignature(selection);
       tasks.push({
         id: `${key}#matching:${signature}:${cap}`,
@@ -252,51 +382,48 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   private preloadResolution(key: string): Resolution<PointsLoadResult> {
-    const entry = this.entries.get(key);
-    if (!entry) return Resolution.idle();
-    switch (entry.status) {
-      case 'ready':
-        return entry.data ? Resolution.ready(entry.data) : Resolution.idle();
-      case 'loading':
-        // `stale` is what keeps the old batch on screen through a cap raise —
-        // the atomic swap the old engine described as "no blank".
-        return Resolution.loading(entry.data !== undefined ? { stale: entry.data } : {});
-      case 'error':
-        // Step 1 preserves today's behaviour: the engine console.errors and leaves
-        // status 'error' with no structured error value. Wiring SpatialEntryError
-        // through these paths is Track A's `retryable` work.
-        return Resolution.idle();
-      default:
-        return Resolution.idle();
-    }
+    // The slot IS the resolution — built at mutation time, returned by identity.
+    // A `loading` carries the previous batch as `stale` (the atomic swap, no blank);
+    // a rejected load is now a structured `failed` (Track A wired the error through).
+    return this.entries.get(key)?.preload.resolution ?? Resolution.idle();
   }
 
   private catalogResolution(key: string): Resolution<PointsFeatureCatalog | null> {
-    const entry = this.entries.get(key);
-    if (!entry) return Resolution.idle();
-    if (entry.catalogLoaded) return Resolution.ready(entry.catalog ?? null);
-    return this.isFeatureCatalogLoading(key) ? Resolution.loading() : Resolution.idle();
+    const slot = this.entries.get(key)?.catalog;
+    if (!slot) return Resolution.idle();
+    // The catalog rides the geometry preload, so surface a running preload as the
+    // catalog loading too — a spinner, not an "idle" gap before the preview arrives.
+    if (slot.resolution.status === 'idle' && this.entries.get(key)?.preload.isLoading) {
+      return Resolution.loading();
+    }
+    return slot.resolution;
   }
 
   private rowCodesResolution(key: string): Resolution<ArrayLike<number> | undefined> {
-    const entry = this.entries.get(key);
-    if (!entry) return Resolution.idle();
-    if (entry.rowCodesLoaded) return Resolution.ready(entry.rowCodes);
-    return entry.rowCodesLoading ? Resolution.loading() : Resolution.idle();
+    return this.entries.get(key)?.rowCodes.resolution ?? Resolution.idle();
   }
 
   private matchingResolution(key: string): Resolution<PointsLoadResult> {
-    const entry = this.entries.get(key);
-    if (!entry) return Resolution.idle();
-    const loading = entry.matchingLoading;
-    if (loading) {
-      return Resolution.loading({
-        ...(loading.partialResult !== undefined ? { partial: loading.partialResult } : {}),
-        ...(entry.matching !== undefined ? { stale: entry.matching.result } : {}),
-        progress: { done: loading.matchedRows, scanned: loading.scannedRows },
-      });
+    // Unwrap the slot's Resolution<MatchingValue> into Resolution<PointsLoadResult>
+    // — the resource surface is the batch, the signature is internal bookkeeping.
+    // Built on a snapshot-cache miss (once per version), so a fresh identity is fine.
+    const slot = this.entries.get(key)?.matching;
+    if (!slot) return Resolution.idle();
+    const r = slot.resolution;
+    switch (r.status) {
+      case 'ready':
+        return Resolution.ready(r.value.result);
+      case 'loading':
+        return Resolution.loading({
+          ...(r.partial !== undefined ? { partial: r.partial.result } : {}),
+          ...(r.stale !== undefined ? { stale: r.stale.result } : {}),
+          ...(r.progress !== undefined ? { progress: r.progress } : {}),
+        });
+      case 'failed':
+        return Resolution.failed(r.error, r.stale?.result);
+      default:
+        return Resolution.idle();
     }
-    return entry.matching ? Resolution.ready(entry.matching.result) : Resolution.idle();
   }
 
   private notices(key: string, featureCodes: readonly number[] | undefined): EntryNotice[] {
@@ -332,7 +459,10 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return this.version;
   }
 
-  private notify(): void {
+  /** Bump the version and re-run subscribers. Public so a facade holding derived
+   * render state (e.g. the hover highlight in `PointsDataEngine`) can request a
+   * repaint without a data mutation. */
+  notify(): void {
     this.version += 1;
     for (const listener of this.listeners) {
       listener();
@@ -342,31 +472,88 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   // --- Reads ------------------------------------------------------------------
 
   hasData(key: string): boolean {
-    return this.entries.get(key)?.data !== undefined;
+    return this.entries.get(key)?.preload.lastGood !== undefined;
   }
 
   /** The resident preload batch. One of the three inputs the Renderer Adapter memoises. */
   getData(key: string): PointsLoadResult | undefined {
-    return this.entries.get(key)?.data;
+    // `lastGood`, not `value`: through a cap-raise reload the previous batch is
+    // retained as `stale` and stays the drawable resident batch until the new one settles.
+    return this.entries.get(key)?.preload.lastGood;
   }
 
-  /** The settled matched-selection batch. Input to the adapter's matched memo. */
+  /** The last-good matched-selection batch (survives a new scan as `stale`). Input
+   * to the adapter's matched memo. */
   getMatchedBatch(key: string): PointsLoadResult | undefined {
-    return this.entries.get(key)?.matching?.result;
+    return this.entries.get(key)?.matching.lastGood?.result;
   }
 
   /** The in-flight scan's growing buffer. Input to the adapter's partial memo. */
   getPartialBatch(key: string): PointsLoadResult | undefined {
-    return this.entries.get(key)?.matchingLoading?.partialResult;
+    return this.entries.get(key)?.matching.partial?.result;
+  }
+
+  /**
+   * The in-flight PRELOAD's growing geometry (D3) — what the base draws before the
+   * first full window settles, so a cold load paints progressively instead of
+   * staying blank. Undefined once the preload settles (`getData` takes over).
+   */
+  getPreloadPartialBatch(key: string): PointsLoadResult | undefined {
+    return this.entries.get(key)?.preload.partial;
+  }
+
+  /**
+   * Running per-feature point counts for the resident batch (`code → rows`),
+   * accumulated while the preload streamed. These are counts over the RESIDENT
+   * WINDOW, not the dataset — the authoritative dataset totals come from the catalog
+   * scan — but they are available almost immediately, so the panel can show stats
+   * instead of blanks while that scan runs. Reads the in-flight partial first so the
+   * numbers climb as points arrive.
+   */
+  getResidentFeatureCounts(key: string): ReadonlyMap<number, number> | undefined {
+    const entry = this.entries.get(key);
+    return entry?.preload.partial?.featureCodeCounts ?? entry?.preload.lastGood?.featureCodeCounts;
+  }
+
+  /**
+   * The key (`${signature}#${cap}`) of the in-flight scan whose partial is streaming,
+   * or `undefined` when no scan is loading. The Renderer Adapter uses it to tell a
+   * *growing* partial (same scan, keep the resource identity, bump a revision) from a
+   * *new* scan (fresh resource) — the D10 flash fix.
+   */
+  getPartialScanKey(key: string): string | undefined {
+    const slot = this.entries.get(key)?.matching;
+    return slot?.isLoading ? slot.pendingKey : undefined;
   }
 
   getStatus(key: string): PointsLoadStatus {
-    return this.entries.get(key)?.status ?? 'idle';
+    const resolution = this.entries.get(key)?.preload.resolution;
+    switch (resolution?.status) {
+      case 'loading':
+        return 'loading';
+      case 'ready':
+        return 'ready';
+      case 'failed':
+        return 'error';
+      default:
+        return 'idle';
+    }
   }
 
   /** Order-independent cache key for a selected-codes set. */
   private static matchingSignature(featureCodes: readonly number[]): string {
     return [...featureCodes].sort((left, right) => left - right).join(',');
+  }
+
+  /** The matching slot key — signature AND cap, so both R2 and R3 are decided by it. */
+  private static matchingKey(signature: string, memoryCap: number): string {
+    return `${signature}#${memoryCap}`;
+  }
+
+  /** Split a matching slot key back into its signature and cap. */
+  private static parseMatchingKey(key: string): { signature: string; memoryCap: number } {
+    const hash = key.lastIndexOf('#');
+    return { signature: key.slice(0, hash), memoryCap: Number(key.slice(hash + 1)) };
   }
 
   /** Feature codes a matched batch/scan covers, parsed from its signature. */
@@ -419,22 +606,32 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     };
   }
 
+  /**
+   * Whether the resident batch demonstrably holds EVERY row of the dataset.
+   *
+   * True only for a settled, untruncated preload — then any feature question can be
+   * answered by filtering what is already in memory, and a whole-dataset scan is
+   * pure waste. Deliberately false while the preload is still in flight or its
+   * state is unknown, so this only ever removes provably-unnecessary work.
+   */
+  private isResidentComplete(key: string): boolean {
+    const data = this.entries.get(key)?.preload.lastGood;
+    return data !== undefined && data.preloadTruncated !== true;
+  }
+
   /** Whether the resident batch is in its final state for this cap. */
   isLoadedWithCap(key: string, memoryCap: number): boolean {
-    const entry = this.entries.get(key);
-    if (entry?.data === undefined) {
+    const data = this.entries.get(key)?.preload.lastGood;
+    if (data === undefined) {
       return false;
     }
-    return (
-      PointsResolver.batchAdequateForCap(entry.data, memoryCap) &&
-      (entry.data.shape[1] ?? 0) <= memoryCap
-    );
+    return PointsResolver.batchAdequateForCap(data, memoryCap) && (data.shape[1] ?? 0) <= memoryCap;
   }
 
   getResidentTruncation(
     key: string
   ): { truncated: boolean; loaded: number; total?: number } | undefined {
-    const data = this.entries.get(key)?.data;
+    const data = this.entries.get(key)?.preload.lastGood;
     if (!data) {
       return undefined;
     }
@@ -458,10 +655,11 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (!entry) {
       return undefined;
     }
-    if (featureCodes && featureCodes.length > 0 && entry.matching) {
-      const covered = PointsResolver.coveredCodes(entry.matching.signature);
+    const matched = entry.matching.lastGood;
+    if (featureCodes && featureCodes.length > 0 && matched) {
+      const covered = PointsResolver.coveredCodes(matched.signature);
       if (covered.size > 0 && featureCodes.every((code) => covered.has(code))) {
-        const result = entry.matching.result;
+        const result = matched.result;
         return {
           truncated: result.preloadTruncated === true,
           loaded: result.shape[1] ?? 0,
@@ -485,91 +683,115 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
   ): Promise<void> {
     const { key, layerId, element } = target;
-    const existing = this.entries.get(key);
-    // (1) Existing data covers this cap without a reload.
-    if (
-      existing?.data !== undefined &&
-      PointsResolver.batchAdequateForCap(existing.data, memoryCap)
-    ) {
-      if (existing.loading) {
-        existing.loadAbort?.abort();
-        existing.loading = undefined;
-        existing.loadAbort = undefined;
-      }
-      existing.memoryCap = memoryCap;
-      // Cap lowered below what's resident → shed the excess in memory (no re-fetch).
-      if ((existing.data.shape[1] ?? 0) > memoryCap) {
-        existing.data = PointsResolver.sliceResidentBatch(existing.data, memoryCap);
-        existing.residentCodes = undefined;
-        existing.residentCodesSource = undefined;
-        if (existing.rowCodes && existing.rowCodes.length > memoryCap) {
-          existing.rowCodes = Array.prototype.slice.call(existing.rowCodes, 0, memoryCap);
-        }
-        this.notify();
-      }
-      return Promise.resolve();
-    }
-    // (2) A load for this exact cap is already in flight → dedup.
-    if (existing?.loading && existing.memoryCap === memoryCap) {
-      return existing.loading;
-    }
+    const entry = this.ensureEntry(key);
+    const slot = entry.preload;
+    const resident = slot.lastGood;
 
-    const entry: PointsEntry = existing ?? { status: 'idle' };
-    entry.loadAbort?.abort();
-    entry.memoryCap = memoryCap;
-    const abort = new AbortController();
-    entry.loadAbort = abort;
-    entry.status = 'loading';
-    this.entries.set(key, entry);
-    this.callbacks.onStatus?.(layerId, 'loading');
-
-    const loading = (async () => {
-      try {
-        // Read the feature column with the geometry so the filter's catalog and
-        // per-row codes come from this one decode. The catalog here reflects only
-        // the *resident* batch — an instant preview the full-dataset scan may
-        // still supersede.
-        const data = await element.loadPoints({
-          includeFeatureCodes: true,
-          memoryCap,
-          signal: abort.signal,
-        });
-        if (abort.signal.aborted || entry.memoryCap !== memoryCap) {
-          return;
-        }
-        entry.data = data;
+    // (1) The resident batch already covers this cap — no reload.
+    if (resident !== undefined && PointsResolver.batchAdequateForCap(resident, memoryCap)) {
+      if ((resident.shape[1] ?? 0) > memoryCap) {
+        // Cap lowered below what's resident → shed the excess IN MEMORY (no re-fetch),
+        // to a new key so a later raise supersedes. `settle` also cancels any
+        // in-flight reload for a different cap.
+        slot.settle(memoryCap, PointsResolver.sliceResidentBatch(resident, memoryCap));
         entry.residentCodes = undefined;
         entry.residentCodesSource = undefined;
-        entry.status = 'ready';
-        entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
-        if (data.featureCatalog !== undefined && !entry.catalogComplete) {
-          entry.catalog = data.featureCatalog;
-          entry.catalogLoaded = true;
+        const codes = entry.rowCodes.value;
+        // Deliberately conditional, and NOT re-keyed unconditionally on a shed.
+        // Codes shorter than the new window are already misaligned, and re-keying
+        // them to this cap would assert an alignment they do not have — the exact
+        // lie the slot key exists to prevent. Leaving the key stale is what makes
+        // the planning gate re-request them.
+        //
+        // `>` rather than `>=` is not a gap: codes are `min(rows, theirCap)` long, so
+        // whenever their key differs from their length the resident batch is at most
+        // that length too, and a shed below it makes the comparison strict anyway.
+        if (codes && codes.length > memoryCap) {
+          entry.rowCodes.settle(memoryCap, Array.prototype.slice.call(codes, 0, memoryCap));
         }
-        if (data.featureCodes !== undefined) {
-          entry.rowCodes = data.featureCodes;
-          entry.rowCodesLoaded = true;
-          entry.rowCodesCatalog = data.featureCatalog;
-          this.reconcileRowCodes(entry);
-        }
-        this.callbacks.onStatus?.(layerId, 'ready');
-      } catch (error) {
-        // Aborted (cap changed) or superseded → not a real error; stay quiet.
-        if (abort.signal.aborted || entry.memoryCap !== memoryCap) {
-          return;
-        }
-        entry.status = 'error';
-        this.callbacks.onStatus?.(layerId, 'error');
-        console.error(`Failed to load points for ${layerId}:`, error);
-      } finally {
-        if (entry.memoryCap === memoryCap) {
-          entry.loading = undefined;
-          entry.loadAbort = undefined;
-        }
-        this.notify();
+      } else if (slot.isLoading) {
+        // Resident already adequate but a reload for another cap is running → cancel
+        // it and keep the resident batch.
+        slot.settle(memoryCap, resident);
       }
-    })();
-    entry.loading = loading;
+      return slot.pending ?? Promise.resolve();
+    }
+
+    // (2)(3) Reload at this cap. The slot dedups an identical in-flight request and
+    // supersedes one for a different cap (R1: a superseded reload cannot write the
+    // live one's state). The previous batch stays on screen as `stale` until the new
+    // one settles — the atomic swap.
+    const before = slot.pending;
+    // Repaint granularity for the progressive preload: emitting every row group would
+    // re-render far more often than the eye needs on a multi-million-row load.
+    const PRELOAD_NOTIFY_STEP = 250_000;
+    let lastNotifiedRows = 0;
+    const loading = slot.request(memoryCap, async ({ emit, signal }) => {
+      // Read the feature column with the geometry so the filter's catalog and per-row
+      // codes come from this one decode. The catalog here reflects only the *resident*
+      // batch — an instant preview the full-dataset scan may still supersede.
+      const data = await element.loadPoints({
+        includeFeatureCodes: true,
+        memoryCap,
+        signal,
+        // Progressive preload (D3): publish the growing geometry so the base layer
+        // paints points as they decode instead of staying blank until the whole
+        // window lands. `emit` is inert once this request is superseded.
+        onProgress: (progress) => {
+          const silent = progress.matchedRows - lastNotifiedRows < PRELOAD_NOTIFY_STEP;
+          if (!silent) {
+            lastNotifiedRows = progress.matchedRows;
+          }
+          emit(
+            progress.partialResult,
+            { done: progress.matchedRows, scanned: progress.scannedRows },
+            { silent }
+          );
+        },
+      });
+      // Superseded mid-flight (a newer cap won): drop the derived cross-slot writes
+      // and let the slot ignore the return. Writing catalog/row codes from a stale
+      // load is exactly the corruption R1/R5 were.
+      if (signal.aborted) return data;
+      entry.residentCodes = undefined;
+      entry.residentCodesSource = undefined;
+      entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
+      if (data.featureCatalog !== undefined) {
+        entry.previewCatalog = data.featureCatalog;
+        // Instant resident-subset preview; the full-dataset scan may supersede it.
+        // But `settle` ABORTS whatever the slot is running, so writing the preview
+        // while the full scan is in flight silently kills it — and nothing re-requests
+        // a catalog (`plan()` never emits a catalog task; only the panel's mount effect
+        // does), so the list stayed on partial "≥" counts until the panel remounted.
+        // The preview is a strict downgrade of a scan already under way; it stays
+        // available through `previewCatalog` instead.
+        const fullPending = entry.catalog.isLoading && entry.catalog.pendingKey === 'full';
+        if (entry.catalog.settledKey !== 'full' && !fullPending) {
+          entry.catalog.settle('preview', data.featureCatalog);
+        }
+      }
+      if (data.featureCodes !== undefined) {
+        // Row codes fall out of this decode, aligned to the batch at exactly this cap.
+        entry.rowCodes.settle(memoryCap, data.featureCodes);
+        entry.rowCodesCatalog = data.featureCatalog;
+        this.reconcileRowCodes(entry, this.getFeatureCatalog(key));
+      }
+      return data;
+    });
+
+    // Mirror the old onStatus contract precisely: 'loading' when a NEW load starts
+    // (not on dedup), then 'ready'/'error' for the load that actually settles this
+    // cap. A superseded or aborted load reports nothing.
+    if (loading !== before) {
+      this.callbacks.onStatus?.(layerId, 'loading');
+      void loading.then(() => {
+        if (slot.isReady && Object.is(slot.settledKey, memoryCap)) {
+          this.callbacks.onStatus?.(layerId, 'ready');
+        } else if (slot.isFailed) {
+          this.callbacks.onStatus?.(layerId, 'error');
+        }
+      });
+    }
     return loading;
   }
 
@@ -581,176 +803,185 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
   ): Promise<void> {
     const { key, element } = target;
-    const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
-    this.entries.set(key, entry);
+    const entry = this.ensureEntry(key);
+    const slot = entry.matching;
     const signature = PointsResolver.matchingSignature(featureCodes);
     const isCoveredBy = (sig: string): boolean => {
       const covered = PointsResolver.coveredCodes(sig);
       return featureCodes.every((code) => covered.has(code));
     };
-    // A loaded batch already covers this selection AND still satisfies the cap →
-    // reuse it; the layer filters down. No scan.
+
+    // (1) A last-good batch already covers this selection AND still satisfies the
+    //     cap → reuse it; the layer filters down in memory. No scan. Coverage is a
+    //     subset relation, richer than the slot's exact-key dedup, so it stays here.
+    const lastGood = slot.lastGood;
     if (
-      entry.matching &&
-      isCoveredBy(entry.matching.signature) &&
-      PointsResolver.batchAdequateForCap(entry.matching.result, memoryCap)
+      lastGood &&
+      isCoveredBy(lastGood.signature) &&
+      PointsResolver.batchAdequateForCap(lastGood.result, memoryCap)
     ) {
-      entry.matchingLoading = undefined;
-      return Promise.resolve();
-    }
-    // An in-flight scan will cover this selection once it settles → wait for it.
-    if (entry.matchingLoading && isCoveredBy(entry.matchingLoading.signature)) {
-      return entry.matchingLoading.promise;
+      // A now-unneeded scan may be in flight (the selection just shrank) → cancel it
+      // and keep the covering batch resident.
+      if (slot.isLoading) {
+        slot.settle(PointsResolver.matchingKey(lastGood.signature, memoryCap), lastGood);
+      }
+      return slot.pending ?? Promise.resolve();
     }
 
+    // (2) An in-flight scan at this cap will cover this selection once it settles →
+    //     wait for it. This is R2: re-selecting a covered selection mid-scan must not
+    //     start a second scan corrupting the first.
+    if (slot.isLoading && slot.pendingKey !== undefined) {
+      const pending = PointsResolver.parseMatchingKey(slot.pendingKey);
+      if (pending.memoryCap === memoryCap && isCoveredBy(pending.signature)) {
+        return slot.pending ?? Promise.resolve();
+      }
+    }
+
+    // (3) A new scan. The key carries the cap, so raising it supersedes rather than
+    //     being served by the smaller scan (R3).
+    const scanKey = PointsResolver.matchingKey(signature, memoryCap);
     const PROGRESS_NOTIFY_STEP = 5_000;
     let lastNotifiedMatched = 0;
-    const onProgress = (progress: PointsLoadProgress): void => {
-      const loading = entry.matchingLoading;
-      if (!loading || loading.signature !== signature) {
-        return;
-      }
-      loading.matchedRows = progress.matchedRows;
-      loading.scannedRows = progress.scannedRows;
-      loading.partialResult = progress.partialResult;
-      if (progress.matchedRows - lastNotifiedMatched >= PROGRESS_NOTIFY_STEP) {
-        lastNotifiedMatched = progress.matchedRows;
-        this.notify(); // runs during the async scan, not render — safe to notify sync
-      }
-    };
-
-    const promise = (async () => {
-      try {
-        // Dict-only elements have no file-backed code column, so the scan must
-        // resolve each row's feature_name against the same catalog the selection
-        // was made in. The core call ignores this for indexed elements.
-        const featureCodeByName =
-          entry.featureCodeColumn === true ? undefined : featureCodeMapFromCatalog(entry.catalog);
-        const result = await element.loadPointsMatchingFeatureCodes({
-          featureCodes,
-          memoryCap,
-          onProgress,
-          ...(featureCodeByName ? { featureCodeByName } : {}),
-        });
-        // Apply only if this is still the latest requested scan. Keeping the
-        // previous `matching` batch until the current one is ready is what lets
-        // the render keep showing the prior selection instead of blanking.
-        if (entry.matchingLoading?.signature === signature) {
-          entry.matching = { signature, result };
+    return slot.request(scanKey, async ({ emit, signal }) => {
+      // Dict-only elements have no file-backed code column, so the scan must resolve
+      // each row's feature_name against the same catalog the selection was made in.
+      // The core call ignores this for indexed elements.
+      const featureCodeByName =
+        entry.featureCodeColumn === true
+          ? undefined
+          : featureCodeMapFromCatalog(this.getFeatureCatalog(key));
+      const onProgress = (progress: PointsLoadProgress): void => {
+        // Keep the partial buffer fresh on EVERY tick (its identity drives the
+        // overlay resource), but only NOTIFY every PROGRESS_NOTIFY_STEP matched rows
+        // — the render granularity the old engine used. `emit` is dropped by the slot
+        // once this scan is superseded.
+        const silent = progress.matchedRows - lastNotifiedMatched < PROGRESS_NOTIFY_STEP;
+        if (!silent) {
+          lastNotifiedMatched = progress.matchedRows;
         }
-      } catch (error) {
-        console.error(`Failed feature-index scan for ${target.layerId}:`, error);
-      } finally {
-        if (entry.matchingLoading?.signature === signature) {
-          entry.matchingLoading = undefined;
-        }
-        this.notify();
-      }
-    })();
-    entry.matchingLoading = { signature, promise, matchedRows: 0, scannedRows: 0 };
-    // No queueMicrotask here, and none needed: nothing kicks a scan from render
-    // any more. `plan()` is pure and returns a task; the store calls `load()` from
-    // a commit-phase effect. The old engine's `queueMicrotask(() => this.notify())`
-    // existed solely to defend against a synchronous notify during render, and the
-    // phase separation makes that unreachable by construction.
-    this.notify();
-    return promise;
+        emit(
+          { signature, result: progress.partialResult },
+          { done: progress.matchedRows, scanned: progress.scannedRows },
+          { silent }
+        );
+      };
+      const result = await element.loadPointsMatchingFeatureCodes({
+        featureCodes,
+        memoryCap,
+        onProgress,
+        signal, // superseded scan aborts between row-group chunks
+        ...(featureCodeByName ? { featureCodeByName } : {}),
+      });
+      return { signature, result };
+    });
   }
 
   /** Whether the feature-index scan for this exact selection is in flight. */
   isMatchingLoading(key: string, featureCodes: readonly number[]): boolean {
-    const entry = this.entries.get(key);
-    return entry?.matchingLoading?.signature === PointsResolver.matchingSignature(featureCodes);
+    const slot = this.entries.get(key)?.matching;
+    if (!slot?.isLoading || slot.pendingKey === undefined) {
+      return false;
+    }
+    return (
+      PointsResolver.parseMatchingKey(slot.pendingKey).signature ===
+      PointsResolver.matchingSignature(featureCodes)
+    );
   }
 
   getMatchingLoadState(
     key: string,
     featureCodes: readonly number[]
   ): PointsMatchingLoadState | undefined {
-    const entry = this.entries.get(key);
-    if (!entry) {
+    const slot = this.entries.get(key)?.matching;
+    if (!slot) {
       return undefined;
     }
     const signature = PointsResolver.matchingSignature(featureCodes);
-    const loading = entry.matchingLoading;
-    if (loading?.signature === signature) {
-      return {
-        loading: true,
-        matchedRows: loading.matchedRows,
-        scannedRows: loading.scannedRows,
-        settled: false,
-      };
+
+    // A scan for exactly this selection is in flight.
+    if (slot.isLoading && slot.pendingKey !== undefined) {
+      const pending = PointsResolver.parseMatchingKey(slot.pendingKey);
+      if (pending.signature === signature) {
+        const progress =
+          slot.resolution.status === 'loading' ? slot.resolution.progress : undefined;
+        return {
+          loading: true,
+          matchedRows: progress?.done ?? 0,
+          scannedRows: progress?.scanned ?? 0,
+          settled: false,
+        };
+      }
     }
-    const matching = entry.matching;
-    if (!matching) {
+
+    const matched = slot.lastGood;
+    if (!matched) {
       return undefined;
     }
-    if (matching.signature === signature) {
-      return {
-        loading: false,
-        matchedRows: matching.result.shape[1] ?? 0,
-        scannedRows: matching.result.shape[1] ?? 0,
-        settled: true,
-      };
+    const rows = matched.result.shape[1] ?? 0;
+    if (matched.signature === signature) {
+      return { loading: false, matchedRows: rows, scannedRows: rows, settled: true };
     }
     // A larger loaded batch covers this selection — served from memory, no scan.
-    const covered = PointsResolver.coveredCodes(matching.signature);
+    const covered = PointsResolver.coveredCodes(matched.signature);
     if (covered.size > 0 && featureCodes.every((code) => covered.has(code))) {
-      return {
-        loading: false,
-        matchedRows: matching.result.shape[1] ?? 0,
-        scannedRows: matching.result.shape[1] ?? 0,
-        settled: true,
-        covered: true,
-      };
+      return { loading: false, matchedRows: rows, scannedRows: rows, settled: true, covered: true };
     }
     return undefined;
   }
 
-  /** The feature codes the settled matched batch covers. */
+  /** The feature codes the last-good matched batch covers. */
   getLoadedMatchingFeatureCodes(key: string): ReadonlySet<number> | undefined {
-    const matching = this.entries.get(key)?.matching;
-    if (!matching) {
+    const matched = this.entries.get(key)?.matching.lastGood;
+    if (!matched) {
       return undefined;
     }
-    return PointsResolver.coveredCodes(matching.signature);
+    return PointsResolver.coveredCodes(matched.signature);
   }
 
-  /** Per-row feature codes of the settled matched batch, row-aligned with it. */
+  /** Per-row feature codes of the last-good matched batch, row-aligned with it. */
   getMatchingRowFeatureCodes(key: string): ArrayLike<number> | undefined {
-    return this.entries.get(key)?.matching?.result.featureCodes;
+    return this.entries.get(key)?.matching.lastGood?.result.featureCodes;
   }
 
   /** Per-row feature codes of the in-flight scan's partial buffer. */
   getMatchingPartialRowFeatureCodes(key: string): ArrayLike<number> | undefined {
-    return this.entries.get(key)?.matchingLoading?.partialResult?.featureCodes;
+    return this.entries.get(key)?.matching.partial?.result.featureCodes;
   }
 
   // --- Feature catalog --------------------------------------------------------
 
   getFeatureCatalog(key: string): PointsFeatureCatalog | null | undefined {
     const entry = this.entries.get(key);
-    return entry?.catalogLoaded ? (entry.catalog ?? null) : undefined;
+    const slot = entry?.catalog;
+    if (!slot) return undefined;
+    // Settled (preview or full) → the value (a catalog, or null for no feature_key).
+    if (slot.isReady) return slot.value ?? null;
+    // Loading: prefer the in-flight PARTIAL (the full names/codes list, published
+    // before the slow counts scan) over an older preview — it is the more complete
+    // list, just without counts yet. Then a preview, or a failed full-scan that
+    // retained one; last, a preview the preload produced *underneath* a running scan,
+    // which is deliberately not settled into the slot (see `previewCatalog`).
+    // Nothing at all → undefined (not loaded).
+    return slot.partial ?? slot.lastGood ?? entry?.previewCatalog ?? undefined;
   }
 
+  /** True while a settled catalog does not yet exist AND one is on its way (either
+   * the full-list scan or the geometry preload that carries the preview). */
   isFeatureCatalogLoading(key: string): boolean {
     const entry = this.entries.get(key);
-    if (!entry || entry.catalogLoaded) {
-      return false;
-    }
-    // The catalog rides the geometry preload, so a running geometry load counts as
-    // the catalog loading too — a spinner, not a premature "load feature list" prompt.
-    return entry.catalogLoading !== undefined || entry.loading !== undefined;
+    if (!entry) return false;
+    const slot = entry.catalog;
+    // A settled preview or full catalog is "loaded"; the full scan behind a preview
+    // is *refining*, not loading (see isFeatureCatalogRefining).
+    if (slot.isReady || slot.lastGood !== undefined) return false;
+    return slot.isLoading || entry.preload.isLoading;
   }
 
   /** True while the full-dataset scan runs behind an instant resident-subset preview. */
   isFeatureCatalogRefining(key: string): boolean {
-    const entry = this.entries.get(key);
-    return (
-      entry?.catalogLoaded === true &&
-      entry.catalogComplete !== true &&
-      entry.catalogLoading !== undefined
-    );
+    const slot = this.entries.get(key)?.catalog;
+    return slot?.isLoading === true && slot.pendingKey === 'full' && slot.lastGood !== undefined;
   }
 
   /** True when the element has a file-backed feature code column (globally authoritative). */
@@ -769,24 +1000,33 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (!entry) {
       return false;
     }
-    return entry.featureCodeColumn === true || (entry.catalogLoaded === true && !!entry.catalog);
+    const catalog = this.getFeatureCatalog(key);
+    return entry.featureCodeColumn === true || (catalog !== undefined && catalog !== null);
   }
 
   /**
-   * Re-express `rowCodes` in the current catalog's code space when it was derived
-   * against an older one (resident preview → full-dataset upgrade). No-op for
-   * authoritative file-backed codes, which are identical across builds.
+   * Re-express `rowCodes` in a catalog's code space when they were derived against an
+   * older one (resident preview → full-dataset upgrade). No-op for authoritative
+   * file-backed codes, which are identical across builds. `target` is passed
+   * explicitly because it may not yet be the settled catalog (the full scan calls
+   * this with its result before returning it to its slot).
    */
-  private reconcileRowCodes(entry: PointsEntry): void {
+  private reconcileRowCodes(
+    entry: PointsEntry,
+    target: PointsFeatureCatalog | null | undefined
+  ): void {
     if (entry.featureCodeColumn === true) {
       return;
     }
     const source = entry.rowCodesCatalog;
-    const target = entry.catalog;
-    if (!entry.rowCodes || !source || !target || source === target) {
+    const codes = entry.rowCodes.value;
+    if (codes === undefined || !source || !target || source === target) {
       return;
     }
-    entry.rowCodes = remapRowFeatureCodes(entry.rowCodes, source, target);
+    // Re-express the resident codes in-place under the same cap key — the row window
+    // is unchanged, only the code space is.
+    const cap = entry.rowCodes.settledKey ?? DEFAULT_POINTS_MEMORY_CAP;
+    entry.rowCodes.settle(cap, remapRowFeatureCodes(codes, source, target));
     entry.rowCodesCatalog = target;
     entry.residentCodes = undefined;
     entry.residentCodesSource = undefined;
@@ -799,7 +1039,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   getResidentFeatureCodes(key: string): ReadonlySet<number> | undefined {
     const entry = this.entries.get(key);
-    const rowCodes = entry?.rowCodes;
+    const rowCodes = entry?.rowCodes.value;
     if (!entry || rowCodes === undefined) {
       return undefined;
     }
@@ -821,91 +1061,137 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   ensureFeatureCatalog(target: PointsLoadTarget): Promise<void> {
     const { key, element } = target;
-    const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
-    this.entries.set(key, entry);
-    if (entry.catalogComplete) {
+    const entry = this.ensureEntry(key);
+    const slot = entry.catalog;
+    // Already the authoritative full catalog, or a full scan already in flight → done.
+    if (slot.settledKey === 'full') {
       return Promise.resolve();
     }
-    if (entry.catalogLoading) {
-      return entry.catalogLoading;
+    if (slot.isLoading && slot.pendingKey === 'full') {
+      return slot.pending ?? Promise.resolve();
     }
-
-    const loading = (async () => {
-      try {
-        const fullCatalog = await element.listFeaturesWithCounts();
-        entry.catalog = fullCatalog;
-        // The full-dataset catalog is authoritative. Re-express any resident row
-        // codes in its code space so the render's per-row codes match the panel's
-        // selection and swatches.
-        this.reconcileRowCodes(entry);
-      } catch (error) {
-        // Keep any resident preview catalog on failure rather than blanking it.
-        if (!entry.catalogLoaded) entry.catalog = null;
-        console.error(`Failed to build points feature catalog for ${target.layerId}:`, error);
-      } finally {
-        entry.catalogLoaded = true;
-        entry.catalogComplete = true;
-        entry.catalogLoading = undefined;
-        this.notify();
-      }
-    })();
-    entry.catalogLoading = loading;
-    this.notify(); // surface the loading transition to the panel
-    return loading;
+    // Request 'full' — supersedes any 'preview', retaining it as `stale` so the
+    // preview keeps showing while the full list loads. A rejection becomes a
+    // `failed` (retryable) resolution, NOT a permanent null-settle: that is what
+    // A4's retry() unsticks. The preview, if any, survives as the failed `stale`.
+    return slot.request('full', async ({ emit, signal }) => {
+      const fullCatalog = await element.listFeaturesWithCounts({
+        // Publish the names-only catalog the moment it is known, so the panel can
+        // list features (and colour them) while the per-feature counts scan — which
+        // walks every row group — is still running. `emit` is inert once superseded.
+        onPartialCatalog: (partial) => {
+          emit(partial);
+        },
+      });
+      // R1: a superseded load must not write anything, least of all CROSS-SLOT state.
+      // The slot drops this return value, but `reconcileRowCodes` writes straight to
+      // `entry.rowCodes` — and `listFeaturesWithCounts` takes no signal, so a
+      // superseded scan runs to completion and lands here regardless. Remapping the
+      // rows into a catalog nobody is showing is precisely the split that drew every
+      // point in another gene's colour.
+      if (signal.aborted) return fullCatalog;
+      // The full-dataset catalog is authoritative. Re-express any resident row codes
+      // in its space so the render's per-row codes match the panel's selection.
+      this.reconcileRowCodes(entry, fullCatalog);
+      return fullCatalog;
+    });
   }
 
   // --- Row feature codes ------------------------------------------------------
 
   getRowFeatureCodes(key: string): ArrayLike<number> | undefined {
-    return this.entries.get(key)?.rowCodes;
+    return this.entries.get(key)?.rowCodes.value;
   }
 
-  /** True once row codes have settled (even if the element has none). */
+  /** True once row codes have settled (even if the element has none). Says nothing
+   * about WHICH cap they were read at — see {@link hasRowFeatureCodesAtCap}. */
   hasRowFeatureCodes(key: string): boolean {
-    return this.entries.get(key)?.rowCodesLoaded === true;
+    return this.entries.get(key)?.rowCodes.isReady === true;
+  }
+
+  /**
+   * The cap {@link ensureRowFeatureCodes} would read the codes at — i.e. the
+   * resident batch's window. Kept beside it so the planning gate and the loader
+   * cannot disagree about which cap "aligned" means.
+   */
+  private rowCodesCap(key: string): number {
+    const preload = this.entries.get(key)?.preload;
+    return preload?.settledKey ?? preload?.pendingKey ?? DEFAULT_POINTS_MEMORY_CAP;
+  }
+
+  /** True once row codes have settled AT `memoryCap` — the only state in which they
+   * are a valid row-aligned mask for the resident batch at that cap. */
+  hasRowFeatureCodesAtCap(key: string, memoryCap: number): boolean {
+    const slot = this.entries.get(key)?.rowCodes;
+    return slot?.isReady === true && Object.is(slot.settledKey, memoryCap);
   }
 
   /**
    * Idempotently load the row feature codes for the resident batch.
    *
-   * NOTE (R5): this takes no memory cap, so core falls back to the 4M default
-   * while `ensureLoaded` honours the user's — misaligning the filter mask against
-   * an 8M resident batch. Preserved verbatim here; it is Track A's to fix.
+   * **R5 fix:** the codes are read at the resident preload's cap — its slot key — so
+   * index i in the codes names the feature of point i in the batch. Reading them at a
+   * different window (the old 4M default while the preload honoured an 8M cap) is
+   * exactly the mask misalignment R5 was. Normally the codes fall out of the geometry
+   * decode (`ensureLoaded`) and this is a no-op; it is the fallback for a codeless
+   * preload or a filter toggled before the codes were resident.
    */
   ensureRowFeatureCodes(target: PointsLoadTarget): Promise<void> {
     const { key, element } = target;
-    const entry = this.entries.get(key) ?? { status: 'idle' as PointsLoadStatus };
-    this.entries.set(key, entry);
-    if (entry.rowCodesLoaded) {
-      return Promise.resolve();
+    const entry = this.ensureEntry(key);
+    const slot = entry.rowCodes;
+    const cap = entry.preload.settledKey ?? entry.preload.pendingKey ?? DEFAULT_POINTS_MEMORY_CAP;
+    // Already aligned at this cap (typically settled by the preload decode) → no-op.
+    if (slot.isReady && Object.is(slot.settledKey, cap)) {
+      return slot.pending ?? Promise.resolve();
     }
-    if (entry.rowCodesLoading) {
-      return entry.rowCodesLoading;
-    }
+    return slot.request(cap, async ({ signal }) => {
+      const catalog = this.getFeatureCatalog(key);
+      const codes = await element.loadRowFeatureCodes({
+        featureCatalog: catalog,
+        memoryCap: cap,
+        signal,
+      });
+      if (signal.aborted) return codes;
+      // These codes were just built against `catalog`, so their code space IS the
+      // current one — no remap here. A *later* catalog upgrade re-expresses them via
+      // `ensureFeatureCatalog` → `reconcileRowCodes`, which reads the settled value.
+      entry.rowCodesCatalog = catalog ?? undefined;
+      return codes;
+    });
+  }
 
-    const loading = (async () => {
-      try {
-        const catalog = this.getFeatureCatalog(key);
-        entry.rowCodes = await element.loadRowFeatureCodes({ featureCatalog: catalog });
-        entry.rowCodesCatalog = catalog ?? undefined;
-        this.reconcileRowCodes(entry);
-      } catch (error) {
-        entry.rowCodes = undefined;
-        console.error(`Failed to load points row feature codes for ${target.layerId}:`, error);
-      } finally {
-        entry.rowCodesLoaded = true;
-        entry.rowCodesLoading = undefined;
-        this.notify();
-      }
-    })();
-    entry.rowCodesLoading = loading;
-    return loading;
+  // --- Retry ------------------------------------------------------------------
+
+  /**
+   * Re-run any **failed** resources of an element. This is what unsticks the
+   * permanently-settled catalog scan (ADR 0004 §3): a failed full-catalog scan is a
+   * `failed` slot, not a null-settle, so `retry()` re-runs its loader. Idle/loading/
+   * ready slots are untouched. Returns once every retried load settles.
+   */
+  retry(key: string): Promise<void> {
+    const entry = this.entries.get(key);
+    if (!entry) return Promise.resolve();
+    const pending = [entry.preload, entry.catalog, entry.rowCodes, entry.matching]
+      .filter((slot) => slot.isFailed)
+      .map((slot) => slot.retry())
+      .filter((promise): promise is Promise<void> => promise !== undefined);
+    return Promise.all(pending).then(() => undefined);
   }
 
   // --- Lifecycle --------------------------------------------------------------
 
   /** Drop an element from the cache. Catalog and row codes live in the same entry. */
   evict(key: string): void {
+    const entry = this.entries.get(key);
+    if (entry) {
+      // Abort any in-flight load so a superseded/evicted scan stops decoding rather
+      // than running to completion into a dropped result.
+      entry.preload.reset();
+      entry.rowCodes.reset();
+      entry.catalog.reset();
+      entry.matching.reset();
+    }
     const existed = this.entries.delete(key);
     this.snapshots.evictByElement(key);
     // Notify so external-store consumers drop the now-stale snapshot immediately,
@@ -914,6 +1200,12 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   dispose(): void {
+    for (const entry of this.entries.values()) {
+      entry.preload.reset();
+      entry.rowCodes.reset();
+      entry.catalog.reset();
+      entry.matching.reset();
+    }
     this.entries.clear();
     this.snapshots.clear();
     this.listeners.clear();

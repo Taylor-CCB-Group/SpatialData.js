@@ -1,5 +1,9 @@
 import { tableFromIPC, tableToIPC } from 'apache-arrow';
-import { getParquetModule, type ParquetModule } from '../parquetWasmLoader.js';
+import {
+  getParquetModule,
+  type ParquetModule,
+  type ParquetWasmFile,
+} from '../parquetWasmLoader.js';
 import { buildFeatureCatalogFromColumns } from '../pointsFeatures.js';
 import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
 import { decodeShapesGeometryFlat } from '../shapesGeometryDecode.js';
@@ -16,7 +20,9 @@ import {
   decodeParquetPayloadToTable,
   extractGeometryColumnar,
   extractRowFeatureCodesFromTable,
+  Float32PointBuffer,
   histogramToSortedArrays,
+  Int32PointBuffer,
   scanFeatureCatalogFromPayload,
   scanMortonTableInBounds,
   scanTableByFeatureCodes,
@@ -254,19 +260,112 @@ async function handleScanParquetFeatureCounts(
   };
 }
 
+/** Cached per URL: `fromUrl` reads the footer, and one scan issues several
+ * requests against the same file as it walks row-group windows. */
+const streamFilesByUrl = new Map<string, Promise<ParquetWasmFile>>();
+
+/**
+ * Stream variant of the feature scan, running IN THE WORKER.
+ *
+ * The byte-oriented path has the caller range-read whole row groups — every
+ * column — because parquet-wasm cannot fetch individual column chunks. This asks
+ * `ParquetFile.stream` for just the projected columns, so the projection reaches
+ * the network, and keeps the decode off the main thread (which the URL-streaming
+ * scan could not do while `supportsParquetStreaming` required `window`).
+ *
+ * One request covers a row-group window chosen by the caller, so progress stays
+ * granular without the protocol needing streamed responses.
+ */
+async function scanStreamByFeatureCodes(
+  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
+  input: {
+    matchedRows: number;
+    xs: Float32PointBuffer;
+    ys: Float32PointBuffer;
+    zs: Float32PointBuffer;
+    codes: Int32PointBuffer;
+    scannedRows: number;
+  }
+): Promise<{ matchedRows: number; scannedRows: number }> {
+  const url = request.streamUrl as string;
+  const { ParquetFile } = await getParquetModule();
+  if (!ParquetFile) {
+    throw new Error('ParquetFile.stream is unavailable in the points worker');
+  }
+  let filePromise = streamFilesByUrl.get(url);
+  if (!filePromise) {
+    filePromise = ParquetFile.fromUrl(url);
+    // Cache the attempt, not the failure. Without this a single transient
+    // footer read poisons the URL for the life of the worker: every later scan
+    // awaits the same rejected promise and can never retry.
+    filePromise.catch(() => {
+      if (streamFilesByUrl.get(url) === filePromise) {
+        streamFilesByUrl.delete(url);
+      }
+    });
+    streamFilesByUrl.set(url, filePromise);
+  }
+  const file = await filePromise;
+  const featureCodeByName = request.featureCodeEntries
+    ? new Map(request.featureCodeEntries.map((entry) => [entry.name, entry.code]))
+    : undefined;
+
+  const stream = await file.stream({
+    ...(request.streamColumns?.length ? { columns: request.streamColumns } : {}),
+    ...(request.streamRowGroups?.length ? { rowGroups: request.streamRowGroups } : {}),
+    batchSize: 65_536,
+  });
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      if (input.matchedRows >= request.memoryCap) {
+        break;
+      }
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      const table = tableFromIPC(value.intoIPCStream());
+      input.scannedRows += table.numRows;
+      input.matchedRows = scanTableByFeatureCodes({
+        table,
+        axisNames: request.axisNames,
+        featureKey: request.featureKey,
+        ...(request.featureCodeColumnName
+          ? { featureCodeColumnName: request.featureCodeColumnName }
+          : {}),
+        featureCodes: request.featureCodes,
+        memoryCap: request.memoryCap,
+        matchedRows: input.matchedRows,
+        xs: input.xs,
+        ys: input.ys,
+        zs: input.zs,
+        codes: input.codes,
+        ...(featureCodeByName ? { featureCodeByName } : {}),
+      });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { matchedRows: input.matchedRows, scannedRows: input.scannedRows };
+}
+
 async function scanPayloadByFeatureCodes(
   parquetModule: ParquetModule,
   request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
   input: {
     matchedRows: number;
-    xs: number[];
-    ys: number[];
-    zs: number[];
-    codes: number[];
+    xs: Float32PointBuffer;
+    ys: Float32PointBuffer;
+    zs: Float32PointBuffer;
+    codes: Int32PointBuffer;
     scannedRows: number;
   }
 ): Promise<{ matchedRows: number; scannedRows: number }> {
   const _hasZ = request.axisNames.includes('z');
+  if (request.streamUrl) {
+    return scanStreamByFeatureCodes(request, input);
+  }
   const columns = [
     ...request.axisNames,
     request.featureKey,
@@ -336,10 +435,13 @@ async function handleScanParquetByFeatureCodes(
 ): Promise<PointsWorkerResponse> {
   const parquetModule = await getParquetModule();
   const hasZ = request.axisNames.includes('z');
-  const xs: number[] = [];
-  const ys: number[] = [];
-  const zs: number[] = [];
-  const codes: number[] = [];
+  // Typed accumulators, reserved per chunk against an exact upper bound inside the
+  // scan (see `TypedPointBuffer`): no boxing, no growth copies, and no final
+  // `Float32Array.from` of a `number[]` holding both representations at once.
+  const xs = new Float32PointBuffer();
+  const ys = new Float32PointBuffer();
+  const zs = new Float32PointBuffer();
+  const codes = new Int32PointBuffer();
   const { matchedRows, scannedRows } = await scanPayloadByFeatureCodes(parquetModule, request, {
     matchedRows: 0,
     xs,
@@ -348,10 +450,10 @@ async function handleScanParquetByFeatureCodes(
     codes,
     scannedRows: 0,
   });
-  const outX = Float32Array.from(xs);
-  const outY = Float32Array.from(ys);
-  const outZ = hasZ ? Float32Array.from(zs) : undefined;
-  const outCodes = codes.length > 0 ? Int32Array.from(codes) : undefined;
+  const outX = xs.toArray();
+  const outY = ys.toArray();
+  const outZ = hasZ ? zs.toArray() : undefined;
+  const outCodes = codes.length > 0 ? codes.toArray() : undefined;
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,
@@ -383,9 +485,9 @@ async function handleScanMortonRowGroupsInBounds(
     request.mortonCodeColumnName,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
   ];
-  const xs: number[] = [];
-  const ys: number[] = [];
-  const zs: number[] = [];
+  const xs = new Float32PointBuffer();
+  const ys = new Float32PointBuffer();
+  const zs = new Float32PointBuffer();
   for (const chunk of request.rowGroups) {
     const table = tableFromIPC(
       parquetModule
@@ -407,9 +509,9 @@ async function handleScanMortonRowGroupsInBounds(
       zs,
     });
   }
-  const outX = Float32Array.from(xs);
-  const outY = Float32Array.from(ys);
-  const outZ = hasZ ? Float32Array.from(zs) : undefined;
+  const outX = xs.toArray();
+  const outY = ys.toArray();
+  const outZ = hasZ ? zs.toArray() : undefined;
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,

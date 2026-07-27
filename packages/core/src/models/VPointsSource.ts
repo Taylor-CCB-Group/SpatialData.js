@@ -1,3 +1,4 @@
+import type { Vector } from 'apache-arrow';
 import { decodeIntStat, parseParquetFileMetaData } from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
@@ -209,6 +210,7 @@ import {
   extractSentinelBoundingBox,
   featureCodeAllowSet,
   filterPointsToBounds,
+  isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
   mortonIntervalsForBounds,
   type PointsFeatureCatalog,
@@ -262,6 +264,209 @@ export function normalizeAxes(axes: Axis[]) {
 
 const pointsElementRegex = /^points\/([^/]*)$/;
 const pointsSubElementRegex = /^points\/([^/]*)\/(.*)$/;
+
+/**
+ * Rows per batch when streaming the feature column for the catalog.
+ *
+ * Larger than the upstream 1024 default: each batch costs an IPC round-trip, and
+ * at 1024 that overhead dominated (60 batches for 60k rows). 16k keeps partials
+ * frequent enough to look progressive while amortising the per-batch cost.
+ */
+const FEATURE_STREAM_BATCH_ROWS = 16_384;
+
+/**
+ * Rows per batch when streaming geometry + colour for the preload.
+ *
+ * Bigger than the catalog scan's batch: this path copies axis values per batch, so
+ * fewer, larger batches amortise that better, while still being small enough that
+ * the first coloured points land in tens of milliseconds.
+ */
+const PRELOAD_STREAM_BATCH_ROWS = 65_536;
+
+/**
+ * Assign a code to each row of one feature-column batch, appending into `codeBuffer`
+ * at `offset` and tallying into `codeCounts`.
+ *
+ * Codes are allocated on first sight via the shared `nameToCode`, so they stay
+ * stable for the whole stream — a gene coloured in batch 1 keeps its code in batch
+ * 62, and `codeToName` always describes the codes actually written. For a
+ * dictionary chunk that means dictionary order, not row order; the caller documents
+ * why that is fine.
+ *
+ * A DICTIONARY column resolves its values once per chunk and maps raw indices;
+ * asking the vector per row would materialise a JS string per point (~59s for 4M
+ * rows) instead of once per distinct feature. See `resolveRowFeatureCodesFromTable`.
+ */
+/**
+ * Add this batch's per-feature row counts into `counts`, resolving names through
+ * the already-populated `nameToCode`.
+ *
+ * Same dictionary-first approach as {@link appendFeatureCodesFromColumn}: read each
+ * chunk's distinct values once rather than materialising a string per row.
+ */
+/** Exported for test only — not re-exported from the package index. */
+export function tallyFeatureCodesFromColumn(
+  column: Vector,
+  rows: number,
+  nameToCode: ReadonlyMap<string, number>,
+  counts: Map<number, number>,
+  /** The element's morton column when it is tiled. Every catalog builder this is
+   * paired with is told to skip the sentinel rows; walking them here instead would
+   * let the counts and the entries of the SAME catalog disagree. Only the first
+   * four rows can be sentinels, so this costs four boxed reads. */
+  mortonColumn?: Vector | null
+): void {
+  const isSentinelRow = (rowIndex: number): boolean =>
+    mortonColumn != null && rowIndex < 4 && isMortonSentinelValue(mortonColumn.get(rowIndex));
+  let seen = 0;
+  let chunkStart = 0;
+  for (const chunk of column.data) {
+    if (seen >= rows) {
+      break;
+    }
+    const take = Math.min(chunk.length, rows - seen);
+    const dictionary = chunk.dictionary;
+    if (dictionary && chunk.nullCount === 0) {
+      const codeByIndex = new Int32Array(dictionary.length);
+      for (let index = 0; index < dictionary.length; index += 1) {
+        const name = dictionary.get(index);
+        codeByIndex[index] = name == null ? -1 : (nameToCode.get(String(name)) ?? -1);
+      }
+      const indices = chunk.values as ArrayLike<number>;
+      for (let row = 0; row < take; row += 1) {
+        if (isSentinelRow(chunkStart + row)) {
+          continue;
+        }
+        const index = indices[row];
+        const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
+        if (code >= 0) {
+          counts.set(code, (counts.get(code) ?? 0) + 1);
+        }
+      }
+    } else {
+      for (let row = 0; row < take; row += 1) {
+        if (isSentinelRow(chunkStart + row)) {
+          continue;
+        }
+        const value = column.get(chunkStart + row);
+        const code = value == null ? -1 : (nameToCode.get(String(value)) ?? -1);
+        if (code >= 0) {
+          counts.set(code, (counts.get(code) ?? 0) + 1);
+        }
+      }
+    }
+    seen += take;
+    chunkStart += chunk.length;
+  }
+}
+
+function appendFeatureCodesFromColumn(
+  column: Vector,
+  rows: number,
+  codeToName: Map<number, string>,
+  nameToCode: Map<string, number>,
+  codeBuffer: Int32Array,
+  codeCounts: Map<number, number>,
+  offset: number
+): void {
+  const codeFor = (name: string): number => {
+    let code = nameToCode.get(name);
+    if (code === undefined) {
+      code = nameToCode.size;
+      nameToCode.set(name, code);
+      codeToName.set(code, name);
+    }
+    return code;
+  };
+  let written = 0;
+  let chunkStart = 0;
+  for (const chunk of column.data) {
+    if (written >= rows) {
+      break;
+    }
+    const take = Math.min(chunk.length, rows - written);
+    const dictionary = chunk.dictionary;
+    if (dictionary && chunk.nullCount === 0) {
+      const codeByIndex = new Int32Array(dictionary.length);
+      for (let index = 0; index < dictionary.length; index += 1) {
+        const name = dictionary.get(index);
+        codeByIndex[index] = name == null ? -1 : codeFor(String(name));
+      }
+      const indices = chunk.values as ArrayLike<number>;
+      for (let row = 0; row < take; row += 1) {
+        const index = indices[row];
+        const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
+        codeBuffer[offset + written + row] = code;
+        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+      }
+    } else {
+      for (let row = 0; row < take; row += 1) {
+        const value = column.get(chunkStart + row);
+        const code = value == null ? -1 : codeFor(String(value));
+        codeBuffer[offset + written + row] = code;
+        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+      }
+    }
+    written += take;
+    chunkStart += chunk.length;
+  }
+}
+
+/**
+ * How long a single streamed batch may take before the scan gives up and falls
+ * back to the byte-oriented path.
+ *
+ * The streaming reader has two failure modes that cannot be caught normally: a
+ * failed range request mid-stream leaves `read()` pending forever (no error, no
+ * rejection), and a wasm panic surfaces as an async `RuntimeError` that escapes
+ * try/catch, again leaving the read unsettled. Neither is recoverable by
+ * inspection, so progress is bounded instead: no batch within this window means
+ * abandon the stream rather than strand every consumer waiting on the catalog.
+ *
+ * Generous because a legitimate first batch over a slow link has been measured
+ * near 3s; this is an abnormal-condition backstop, not a latency budget.
+ */
+const FEATURE_STREAM_STALL_TIMEOUT_MS = 15_000;
+
+/**
+ * A no-progress watchdog for the whole streaming attempt.
+ *
+ * It must cover opening the file and the stream, not only the reads: an HTTP
+ * error mid-stream panics the reader during setup as readily as during a read,
+ * and in both cases the promise simply never settles. Guarding `read()` alone
+ * leaves `fromUrl()`/`stream()` able to hang forever.
+ *
+ * `progress()` is called whenever a batch lands, so a legitimately long scan
+ * keeps running while a truly stalled one is abandoned.
+ */
+function createStallGuard(timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reject: ((error: Error) => void) | undefined;
+  let settled = false;
+  const promise = new Promise<never>((_resolve, rejectFn) => {
+    reject = rejectFn;
+  });
+  const arm = () => {
+    clearTimeout(timer);
+    if (settled) {
+      return;
+    }
+    timer = setTimeout(() => {
+      settled = true;
+      reject?.(new Error(`Parquet feature stream made no progress for ${timeoutMs}ms`));
+    }, timeoutMs);
+  };
+  arm();
+  return {
+    /** Rejects once the watchdog trips; never resolves. */
+    promise,
+    progress: arm,
+    dispose: () => {
+      settled = true;
+      clearTimeout(timer);
+    },
+  };
+}
 
 function getPointsElementPath(arrPath?: string) {
   if (arrPath) {
@@ -378,6 +583,311 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    *  shape: [number, number],
    * }>} A promise for a zarr array containing the data.
    */
+  /**
+   * Progressive geometry preload (D3): decode the capped window ONE ROW GROUP AT A
+   * TIME, emitting a growing partial after each, so points appear while the rest
+   * decodes instead of only after a single multi-second whole-part decode. This is
+   * the fix for "wild-type transcripts show nothing for ages".
+   *
+   * Only the axes (and an authoritative INTEGER feature-code column, when the
+   * dataset has one) are read here. That restriction is the whole design:
+   * `readParquetRowGroup` mis-decodes DICTIONARY-encoded columns, so the
+   * `feature_name` dict column can never be read this way — but plain float axes and
+   * a plain int code column are safe. So a dataset WITH a code column streams fully
+   * COLOURED from the first chunk, while a dict-only dataset streams flat and has
+   * its codes/catalog settled afterwards by the one-shot whole-part decode.
+   *
+   * The accumulator is preallocated at `maxRows` and appended at an offset cursor;
+   * each partial exposes the filled prefix as `subarray` VIEWS, so a progress tick
+   * is free — no re-concatenation (contrast {@link pointsScanChunkProgress}, which
+   * re-copies the whole buffer per chunk and is O(chunks²)).
+   *
+   * Returns null when streaming isn't possible (no dataset metadata, no range
+   * reads, worker disabled, nothing decoded) so the caller falls back to one-shot.
+   */
+  /**
+   * Progressive preload that streams geometry AND colour together.
+   *
+   * The row-group preload below cannot read a DICTIONARY-typed `feature_name`, so
+   * for the common Xenium-style element (dict feature column, no integer code
+   * column) it streams geometry and publishes no codes at all — points appear
+   * quickly but stay flat until a whole separate decode settles the codes. This
+   * path removes that split: `ParquetFile.stream()` decodes dictionary columns
+   * correctly, so x/y and the feature column arrive in the same batches and every
+   * partial is already coloured.
+   *
+   * The returned `featureCodes` and `featureCatalog` are built from one shared
+   * name→code map, so they are consistent WITH EACH OTHER — which is the contract
+   * the resolver needs. They are NOT in the same code space as the full-dataset
+   * scan: codes here follow each chunk's dictionary order, while the scan assigns
+   * in row order, so the same gene generally gets a different number. That is
+   * expected for a dictionary-only element and is what `reconcileRowCodes` /
+   * `remapRowFeatureCodes` exist for — the resolver re-expresses these codes
+   * against the authoritative catalog once it settles, keyed off the catalog
+   * returned here. Returning the matching catalog is therefore load-bearing.
+   *
+   * Reading codes from the dictionary rather than per row also means the catalog is
+   * complete from the first batch (all 541 genes of a wild-type element at ~620ms),
+   * at the cost of possibly listing a gene whose rows are all beyond the cap.
+   *
+   * Measured on a 4M-row wild-type transcripts element: first coloured batch at
+   * ~40ms and all 4M rows coloured in ~350ms, against a row-group preload that
+   * reaches full geometry at ~11s and never colours.
+   *
+   * Returns null when the fast path does not apply (non-URL store, no suffix-range
+   * support, no streaming reader, nothing decoded) so the caller falls through.
+   */
+  private async streamPointsWithFeaturesByUrl(
+    parquetPath: string,
+    options: {
+      axisNames: string[];
+      featureKey: string;
+      maxRows: number;
+      totalRowCount: number;
+      preloadTruncated: boolean;
+      hasFeatureCodeColumn: boolean;
+      onProgress?: (progress: PointsLoadProgress) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<PointsLoadResult | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = dataset?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const partUrls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url || !(await this.serverSupportsStreamingRanges(url))) {
+        return null;
+      }
+      partUrls.push(url);
+    }
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      return null;
+    }
+
+    const { axisNames, featureKey, maxRows } = options;
+    const axisCount = axisNames.length;
+    const { tableFromIPC } = await import('apache-arrow');
+    const { featureCatalogFromCodeMap } = await import('../pointsFeatures.js');
+
+    // Preallocate once and append at a cursor; partials expose the filled prefix as
+    // subarray VIEWS so emitting progress stays O(1).
+    const axisBuffers = Array.from({ length: axisCount }, () => new Float32Array(maxRows));
+    const codeBuffer = new Int32Array(maxRows);
+    const codeToName = new Map<number, string>();
+    const nameToCode = new Map<string, number>();
+    const codeCounts = new Map<number, number>();
+    let filled = 0;
+
+    const snapshot = (): PointsLoadResult => ({
+      shape: [axisCount, filled] as [number, number],
+      data: axisBuffers.map((buffer) => buffer.subarray(0, filled)),
+      totalRowCount: options.totalRowCount,
+      preloadTruncated: options.preloadTruncated,
+      hasFeatureCodeColumn: options.hasFeatureCodeColumn,
+      featureCodes: codeBuffer.subarray(0, filled),
+      featureCatalog: featureCatalogFromCodeMap(featureKey, codeToName),
+      featureCodeCounts: new Map(codeCounts),
+    });
+
+    for (const [partIndex, url] of partUrls.entries()) {
+      if (filled >= maxRows) {
+        break;
+      }
+      const file = await ParquetFile.fromUrl(url);
+      const stream = await file.stream({
+        columns: [...axisNames, featureKey],
+        batchSize: PRELOAD_STREAM_BATCH_ROWS,
+      });
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          checkAbort(options.signal); // superseded → stop before the next batch
+          if (filled >= maxRows) {
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          const table = tableFromIPC(value.intoIPCStream());
+          const rows = Math.min(table.numRows, maxRows - filled);
+          if (rows <= 0) {
+            continue;
+          }
+          for (let axis = 0; axis < axisCount; axis += 1) {
+            const column = table.getChild(axisNames[axis]);
+            if (!column) {
+              continue;
+            }
+            const values = column.toArray() as ArrayLike<number>;
+            for (let row = 0; row < rows; row += 1) {
+              axisBuffers[axis][filled + row] = values[row];
+            }
+          }
+          const featureColumn = table.getChild(featureKey);
+          if (!featureColumn) {
+            // No feature column in the projection means this path cannot colour
+            // anything; hand back what we have and let the caller settle codes.
+            return filled > 0 ? snapshot() : null;
+          }
+          appendFeatureCodesFromColumn(
+            featureColumn,
+            rows,
+            codeToName,
+            nameToCode,
+            codeBuffer,
+            codeCounts,
+            filled
+          );
+          filled += rows;
+          options.onProgress?.({
+            // Unfiltered preload: every decoded row is kept, so scanned === matched.
+            scannedRows: filled,
+            matchedRows: filled,
+            partIndex,
+            partCount: partUrls.length,
+            partialResult: snapshot(),
+          });
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    return filled > 0 ? snapshot() : null;
+  }
+
+  private async streamPointsGeometryByRowGroup(
+    parquetPath: string,
+    options: {
+      axisNames: string[];
+      columns: string[];
+      maxRows: number;
+      totalRowCount: number;
+      preloadTruncated: boolean;
+      /** Required alongside {@link featureCodeColumnName} for the decode to emit
+       * per-row codes at all — the worker gates code extraction on `featureKey`. */
+      featureKey?: string;
+      featureCodeColumnName?: string;
+      onProgress?: (progress: PointsLoadProgress) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<PointsLoadResult | null> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.totalNumRowGroups <= 0) {
+      return null;
+    }
+    const { axisNames, maxRows, featureCodeColumnName } = options;
+    const axisCount = axisNames.length;
+    const axisBuffers = Array.from({ length: axisCount }, () => new Float32Array(maxRows));
+    const codeBuffer = featureCodeColumnName ? new Int32Array(maxRows) : undefined;
+    let filled = 0;
+    // Goes false the moment any chunk fails to supply one code PER ROW. Observed in
+    // practice: a per-row-group read of the code column can come back with just the
+    // column's distinct values (e.g. 4 codes for a 100k-row group in a feature-sorted
+    // file), because the row-group path mis-handles dictionary encoding — the same
+    // constraint that keeps `feature_name` off this path. Once false the stream
+    // publishes NO codes, so the caller falls through to the one-shot decode.
+    let codesComplete = codeBuffer !== undefined;
+    // Running per-feature tally. Free in I/O terms — the codes are already decoded —
+    // and O(rows) once overall, so a panel can show per-feature stats long before the
+    // whole-dataset counts scan finishes. Counts cover the streamed prefix only.
+    const codeCounts = new Map<number, number>();
+
+    // Views over the filled prefix — no copy, so emitting a partial is O(1). The
+    // tally is passed by reference and keeps growing; consumers read it per tick.
+    const snapshot = (): PointsLoadResult => ({
+      shape: [axisCount, filled] as [number, number],
+      data: axisBuffers.map((buffer) => buffer.subarray(0, filled)),
+      totalRowCount: options.totalRowCount,
+      preloadTruncated: options.preloadTruncated,
+      hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+      ...(codeBuffer && codesComplete
+        ? { featureCodes: codeBuffer.subarray(0, filled), featureCodeCounts: new Map(codeCounts) }
+        : {}),
+    });
+
+    for (let rowGroupIndex = 0; rowGroupIndex < dataset.totalNumRowGroups; rowGroupIndex += 1) {
+      checkAbort(options.signal); // superseded → stop before the next range read
+      if (filled >= maxRows) {
+        break;
+      }
+      const chunk = await this.readParquetRowGroupBytesByGroupIndex(parquetPath, rowGroupIndex);
+      if (!chunk) {
+        return filled > 0 ? snapshot() : null;
+      }
+      const decoded = await decodeParquetGeometryCappedInWorker({
+        rowGroups: [chunk],
+        axisNames,
+        columns: options.columns,
+        maxRows: maxRows - filled,
+        // BOTH are required: the worker gates code extraction on `featureKey`, and
+        // `resolveRowFeatureCodesFromTable` then returns the code column directly —
+        // it never touches the (unprojected, dict-encoded) name column. Passing only
+        // `featureCodeColumnName` silently yields NO codes, which is a colourless
+        // element rather than a loud failure.
+        ...(featureCodeColumnName && options.featureKey
+          ? { featureCodeColumnName, featureKey: options.featureKey }
+          : {}),
+      });
+      if (!decoded) {
+        // Worker unavailable: with nothing decoded yet the caller can still take the
+        // one-shot path; mid-stream we keep what we have rather than discard it.
+        return filled > 0 ? snapshot() : null;
+      }
+      const decodedRows = decoded.shape[1] ?? decoded.data[0]?.length ?? 0;
+      const rows = Math.min(decodedRows, maxRows - filled);
+      if (rows <= 0) {
+        continue;
+      }
+      for (let axis = 0; axis < axisCount; axis += 1) {
+        const column = decoded.data[axis];
+        if (!column) {
+          continue;
+        }
+        const values =
+          column instanceof Float32Array
+            ? column.subarray(0, rows)
+            : Float32Array.from(Array.prototype.slice.call(column, 0, rows));
+        axisBuffers[axis].set(values, filled);
+      }
+      if (codeBuffer) {
+        // A SHORT codes array is unusable, not partially usable: writing it would
+        // leave the remaining rows at 0 — a VALID feature code — so those points
+        // would be confidently mis-coloured rather than left uncoloured. Demand one
+        // code per row or discard codes for the whole stream.
+        const chunkCodes = decoded.featureCodes;
+        if (chunkCodes && chunkCodes.length >= rows) {
+          codeBuffer.set(chunkCodes.subarray(0, rows), filled);
+          // Tally this chunk while its codes are hot, rather than re-walking the
+          // whole prefix on every progress tick.
+          for (let row = 0; row < rows; row += 1) {
+            const code = chunkCodes[row];
+            codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+          }
+        } else {
+          codesComplete = false;
+        }
+      }
+      filled += rows;
+      options.onProgress?.({
+        // Unfiltered preload: every decoded row is kept, so scanned === matched.
+        scannedRows: filled,
+        matchedRows: filled,
+        partIndex: rowGroupIndex,
+        partCount: dataset.totalNumRowGroups,
+        partialResult: snapshot(),
+      });
+    }
+    return filled > 0 ? snapshot() : null;
+  }
+
   async loadPoints(
     elementPath: string,
     options: PointsLoadOptions = {}
@@ -427,8 +937,76 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
 
+    // Preferred progressive preload: stream geometry AND the feature column in the
+    // same batches, so points paint already coloured. Tried before the row-group
+    // path because that one cannot read a dictionary feature column at all — the
+    // case where colour otherwise waits for a whole separate decode. Needs no
+    // worker: the per-batch work is a dictionary lookup and a typed-array copy.
+    if (options.onProgress && featureKey) {
+      try {
+        const streamed = await this.streamPointsWithFeaturesByUrl(parquetPath, {
+          axisNames,
+          featureKey,
+          maxRows,
+          totalRowCount: rowCount,
+          preloadTruncated: truncatePreload,
+          hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+          onProgress: options.onProgress,
+          ...(options.signal ? { signal: options.signal } : {}),
+        });
+        if (streamed?.featureCodes !== undefined) {
+          return streamed;
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
+        console.warn(`Streaming points preload failed for ${elementPath}; falling back.`, error);
+      }
+    }
+
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
+      // Progressive preload (D3), when the caller asked for progress and the store
+      // supports row-group range reads. Streams the axes — plus an authoritative
+      // integer code column when the dataset has one, so those datasets stream
+      // COLOURED rather than colour-later.
+      if (options.onProgress && (await this.canLoadParquetRowGroups())) {
+        try {
+          const streamed = await this.streamPointsGeometryByRowGroup(parquetPath, {
+            axisNames,
+            columns: [...axisNames, ...(featureCodeColumnName ? [featureCodeColumnName] : [])],
+            maxRows,
+            totalRowCount: rowCount,
+            preloadTruncated: truncatePreload,
+            ...(featureKey ? { featureKey } : {}),
+            ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+            onProgress: options.onProgress,
+            ...(options.signal ? { signal: options.signal } : {}),
+          });
+          // The streamed batch is the FINAL result only when nothing more is needed
+          // from the dictionary column: either the element has no feature key at all,
+          // or an authoritative code column ACTUALLY produced per-row codes. Checking
+          // `streamed.featureCodes` rather than merely "a code column exists" is
+          // deliberate: if the codes ever fail to come back, we degrade to the slower
+          // one-shot decode (correct, just not streamed) instead of settling a
+          // permanently colourless batch — the failure mode this guard exists for.
+          // A dict-only element always falls through, its early paint already banked.
+          const streamedIsComplete =
+            streamed !== null && (!featureKey || streamed.featureCodes !== undefined);
+          if (streamedIsComplete) {
+            return streamed;
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            throw error;
+          }
+          console.warn(
+            `Progressive points preload failed for ${elementPath}; falling back to a single decode.`,
+            error
+          );
+        }
+      }
       try {
         if (featureKey) {
           // Off-thread the codes-with-geometry decode: fetch whole row-group (or
@@ -565,6 +1143,244 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return parts.length > 0 ? { parts } : null;
   }
 
+  /**
+   * Whether the URL-streaming scan applies: a URL-backed store whose server
+   * actually serves the range shapes the reader needs, for every part.
+   */
+  private async canStreamMatchingScan(
+    parquetPath: string
+  ): Promise<{ urls: string[]; rowGroupCounts: number[] } | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = dataset?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const urls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url || !(await this.serverSupportsStreamingRanges(url))) {
+        return null;
+      }
+      urls.push(url);
+    }
+    return { urls, rowGroupCounts: dataset?.numRowGroupsByPart ?? [] };
+  }
+
+  /**
+   * Feature scan over `ParquetFile.stream({ columns, rowGroups })`.
+   *
+   * The row-group path this replaces range-reads `rowGroup.fileOffset()` for
+   * `compressedSize()` — the WHOLE row group, every column — because parquet-wasm
+   * cannot fetch individual column chunks (docs/parquet-wasm-limitations.md);
+   * column projection only happens later, at decode time, once the bytes are
+   * already down the wire. On a Xenium `transcripts` element that means fetching
+   * and decompressing all 12 columns (cell_id, transcript_id, fov_name, qv, …) for
+   * every one of 12.1M rows to use three of them: x, y and the feature column.
+   * Profiling a single-gene selection put ~30% of the wall clock in those reads and
+   * ~50% in the WASM decode of them.
+   *
+   * `stream()` issues its own ranged fetches per COLUMN CHUNK, so the projection
+   * reaches the network. This is the same reader the preload already uses
+   * ({@link streamPointsWithFeaturesByUrl}); the scan differs only in filtering
+   * each batch and yielding progress.
+   *
+   * Decoding moves to this thread rather than the worker — `stream()` is
+   * browser-main-thread only today (`supportsParquetStreaming` requires `window`).
+   * That is tolerable because the work arrives in `PRELOAD_STREAM_BATCH_ROWS`
+   * batches, so it is many short tasks rather than one long one; the byte-oriented
+   * worker path remains for stores this cannot serve.
+   */
+  private async *streamMatchingFeatureCodesByChunk(
+    partUrls: string[],
+    rowGroupCounts: number[],
+    options: {
+      axisNames: string[];
+      axisCount: number;
+      featureKey: string;
+      featureCodeColumnName?: string;
+      featureCodes: readonly number[];
+      featureCodeByName?: ReadonlyMap<string, number>;
+      columnNames: string[];
+      memoryCap: number;
+      totalRowCount: number;
+      abort?: AbortSignal;
+    }
+  ) {
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      // `canStreamMatchingScan` already checked for this; belt and braces, since
+      // silently yielding nothing here would look like "the gene has no points".
+      throw new Error('ParquetFile.stream is unavailable for the feature scan.');
+    }
+    const { tableFromIPC } = await import('apache-arrow');
+    const { Float32PointBuffer, Int32PointBuffer, scanTableByFeatureCodes } = await import(
+      '../workers/pointsWorkerScan.js'
+    );
+
+    let matchedRows = 0;
+    let scannedRows = 0;
+    const accumulatedChunks: ColumnarPointsChunk[] = [];
+    // Batches are small (65k rows), so flushing one chunk per batch would push
+    // hundreds of chunks through `pointsScanChunkProgress`, whose re-concat is
+    // quadratic in CHUNK COUNT — fine for the ~9 the row-group path produces, not
+    // for hundreds. Accumulate across batches and flush on this stride instead.
+    const FLUSH_SCANNED_ROWS = 1_000_000;
+    let xs = new Float32PointBuffer();
+    let ys = new Float32PointBuffer();
+    let zs = new Float32PointBuffer();
+    let codes = new Int32PointBuffer();
+    let pendingMatched = 0;
+    let scannedAtLastFlush = 0;
+
+    const hasZ = options.axisNames.includes('z');
+    const flush = (partIndex: number) => {
+      const data: ArrayLike<number>[] = hasZ
+        ? [xs.toArray(), ys.toArray(), zs.toArray()]
+        : [xs.toArray(), ys.toArray()];
+      const chunk = toColumnarPointsChunk(
+        { shape: [options.axisCount, pendingMatched], data, featureCodes: codes.toArray() },
+        options.axisCount
+      );
+      accumulatedChunks.push(chunk);
+      xs = new Float32PointBuffer();
+      ys = new Float32PointBuffer();
+      zs = new Float32PointBuffer();
+      codes = new Int32PointBuffer();
+      pendingMatched = 0;
+      scannedAtLastFlush = scannedRows;
+      return pointsScanChunkProgress(accumulatedChunks, chunk, {
+        scannedRows,
+        matchedRows,
+        totalRowCount: options.totalRowCount,
+        memoryCap: options.memoryCap,
+        partIndex,
+        partCount: partUrls.length,
+      });
+    };
+
+    // Preferred: stream IN THE WORKER, so the decode stays off the main thread.
+    // One request per row-group window keeps progress granular without the worker
+    // protocol needing streamed responses — each response is simply a chunk.
+    if (isPointsWorkerEnabled() && rowGroupCounts.length === partUrls.length) {
+      const featureCodeEntries = options.featureCodeByName
+        ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
+        : undefined;
+      const ROW_GROUPS_PER_REQUEST = 2;
+      for (const [partIndex, url] of partUrls.entries()) {
+        const groupCount = rowGroupCounts[partIndex] ?? 0;
+        for (let start = 0; start < groupCount; start += ROW_GROUPS_PER_REQUEST) {
+          checkAbort(options.abort); // superseded → stop before the next request
+          if (matchedRows >= options.memoryCap) {
+            break;
+          }
+          const window: number[] = [];
+          for (let g = start; g < Math.min(start + ROW_GROUPS_PER_REQUEST, groupCount); g += 1) {
+            window.push(g);
+          }
+          const partial = await scanParquetByFeatureCodesInWorker({
+            streamUrl: url,
+            streamRowGroups: window,
+            streamColumns: options.columnNames,
+            axisNames: options.axisNames,
+            featureKey: options.featureKey,
+            ...(options.featureCodeColumnName
+              ? { featureCodeColumnName: options.featureCodeColumnName }
+              : {}),
+            featureCodes: options.featureCodes,
+            memoryCap: options.memoryCap - matchedRows,
+            ...(featureCodeEntries ? { featureCodeEntries } : {}),
+          });
+          if (!partial) {
+            // Worker went away mid-scan: keep what matched rather than discard it.
+            break;
+          }
+          scannedRows += partial.scannedRows;
+          if (partial.matchedRows > 0) {
+            matchedRows += partial.matchedRows;
+            const chunk = toColumnarPointsChunk(partial.data, options.axisCount);
+            accumulatedChunks.push(chunk);
+            yield pointsScanChunkProgress(accumulatedChunks, chunk, {
+              scannedRows,
+              matchedRows,
+              totalRowCount: options.totalRowCount,
+              memoryCap: options.memoryCap,
+              partIndex,
+              partCount: partUrls.length,
+            });
+          }
+        }
+      }
+      return {
+        totalRowCount: options.totalRowCount,
+        axisNames: options.axisNames,
+        scannedRows,
+        matchedRows,
+      };
+    }
+
+    for (const [partIndex, url] of partUrls.entries()) {
+      if (matchedRows >= options.memoryCap) {
+        break;
+      }
+      const file = await ParquetFile.fromUrl(url);
+      const stream = await file.stream({
+        columns: options.columnNames,
+        batchSize: PRELOAD_STREAM_BATCH_ROWS,
+      });
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          checkAbort(options.abort); // superseded → stop before the next batch
+          if (matchedRows >= options.memoryCap) {
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          const table = tableFromIPC(value.intoIPCStream());
+          scannedRows += table.numRows;
+          const before = matchedRows;
+          matchedRows = scanTableByFeatureCodes({
+            table,
+            axisNames: options.axisNames,
+            featureKey: options.featureKey,
+            ...(options.featureCodeColumnName
+              ? { featureCodeColumnName: options.featureCodeColumnName }
+              : {}),
+            featureCodes: options.featureCodes,
+            memoryCap: options.memoryCap,
+            matchedRows,
+            xs,
+            ys,
+            zs,
+            codes,
+            ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
+          });
+          pendingMatched += matchedRows - before;
+          if (pendingMatched > 0 && scannedRows - scannedAtLastFlush >= FLUSH_SCANNED_ROWS) {
+            yield flush(partIndex);
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      if (pendingMatched > 0) {
+        yield flush(partIndex); // part boundary: don't carry matches across files
+      }
+    }
+
+    return {
+      totalRowCount: options.totalRowCount,
+      axisNames: options.axisNames,
+      scannedRows,
+      matchedRows,
+    };
+  }
+
   async *loadPointsMatchingFeatureCodesByChunk(
     elementPath: string,
     options: {
@@ -581,9 +1397,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
   ) {
     ensurePointsWorker();
+    checkAbort(options.abort);
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
-    // if (options.abort?.aborted) return;
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
     const normAxes = normalizeAxes(axes);
     const axisNames = normAxes.map((axis: { name: string }) => axis.name);
@@ -631,6 +1447,30 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
         : undefined;
 
+    // Preferred path: let the reader fetch only the projected columns (see
+    // `streamMatchingFeatureCodesByChunk`). Falls through to the byte-oriented
+    // worker path below for stores it cannot serve — non-URL stores, and servers
+    // that do not answer the range shapes the reader needs.
+    const streamablePartUrls = await this.canStreamMatchingScan(parquetPath);
+    if (streamablePartUrls) {
+      return yield* this.streamMatchingFeatureCodesByChunk(
+        streamablePartUrls.urls,
+        streamablePartUrls.rowGroupCounts,
+        {
+          axisNames,
+          axisCount,
+          featureKey,
+          ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+          featureCodes: options.featureCodes,
+          ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
+          columnNames,
+          memoryCap: options.memoryCap,
+          totalRowCount,
+          ...(options.abort ? { abort: options.abort } : {}),
+        }
+      );
+    }
+
     let matchedRows = 0;
     let scannedRows = 0;
     // Growing buffer of every matched chunk so far — `pointsScanChunkProgress`
@@ -665,6 +1505,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       const canSkipRowGroups = rowGroupExtents.length === datasetRowGroups;
 
       for (let rowGroupIndex = 0; rowGroupIndex < datasetRowGroups; rowGroupIndex += 1) {
+        // A superseded scan aborts here, between row groups — the at-most-one-chunk
+        // bound on wasted decode. Throws AbortError, which the resolver's slot reads
+        // as a non-event.
+        checkAbort(options.abort);
         if (matchedRows >= options.memoryCap) {
           break;
         }
@@ -678,9 +1522,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         if (!chunk) {
           continue;
         }
-        // the memoryCap could work by the consumer choosing not to exhaust the stream
-        // (although that wouldn't help to pass last worker invocation a smaller chunk size)
-        // we should be passing abort to worker
+        // Cancellation is enforced between chunks (checkAbort above), not inside the
+        // worker: each worker call decodes ONE row group — a single, uninterruptible
+        // WASM decode — so an abort can at most skip the NEXT chunk, which is what the
+        // loop-top check does. There is no queue of pending worker requests to drain
+        // (chunks are awaited serially), so a worker-side cancel message would buy
+        // nothing here; revisit only if one request ever spans many row groups.
         const partial = await scanParquetByFeatureCodesInWorker({
           rowGroups: [chunk],
           axisNames,
@@ -717,6 +1564,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
 
       for (let partIndex = 0; partIndex < partPaths.length; partIndex += 1) {
+        checkAbort(options.abort); // superseded → stop before the next part's decode
         const partPath = partPaths[partIndex];
         if (matchedRows >= options.memoryCap) {
           break;
@@ -766,15 +1614,21 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
        * code space the selection was made in. When absent for a dict-only
        * element the scan cannot match by name and returns nothing. */
       featureCodeByName?: ReadonlyMap<string, number>;
+      /** Aborts the scan between row-group chunks when it is superseded. */
+      signal?: AbortSignal;
     }
   ): Promise<PointsLoadResult> {
-    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, options);
+    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, {
+      ...options,
+      abort: options.signal,
+    });
     // Each `progress.partialResult` is already the full accumulated buffer, so the
     // last one IS the whole matched batch — no need to re-accumulate/concat here.
     // Final totals come from the generator's return value (authoritative: it also
     // counts rows scanned after the last match, which the last partial can't see).
     let latest: PointsLoadResult | undefined;
     while (true) {
+      checkAbort(options.signal);
       const next = await chunkGenerator.next();
       if (next.done) {
         const { totalRowCount, scannedRows, matchedRows, axisNames } = next.value;
@@ -904,10 +1758,38 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return countFeatureCodesHistogram(rowCodes);
   }
 
-  async listPointsFeaturesWithCounts(elementPath: string): Promise<PointsFeatureCatalog | null> {
-    const catalog = await this.listPointsFeatures(elementPath);
+  /**
+   * The authoritative feature catalog, in two steps: the NAME/CODE list (cheap) and
+   * then per-feature counts (a scan of every row group — the slow part).
+   *
+   * `onPartialCatalog` is called with the names-only catalog as soon as it is known,
+   * before the counts scan starts. That is what lets the feature panel list features
+   * immediately instead of showing "Loading features…" for the whole scan: the names
+   * are what the list, swatches and selection need, and only the count column has to
+   * wait.
+   *
+   * When the streaming scan applies it fires repeatedly *during* the name scan too,
+   * each time with a longer list, so the panel fills in rather than appearing at
+   * once. Codes are stable across those partials (see
+   * `listPointsFeaturesByStreamingScan`), so earlier entries never move.
+   */
+  async listPointsFeaturesWithCounts(
+    elementPath: string,
+    options?: { onPartialCatalog?: (catalog: PointsFeatureCatalog) => void }
+  ): Promise<PointsFeatureCatalog | null> {
+    const catalog = await this.listPointsFeatures(elementPath, {
+      onPartialCatalog: options?.onPartialCatalog,
+    });
     if (!catalog) {
       return null;
+    }
+    options?.onPartialCatalog?.(catalog);
+    // The streaming scan counts as it goes, so a catalog can arrive complete. Don't
+    // then run the counts scan: for a dictionary-only element it would return an
+    // empty map (it needs an integer code column) and merging that back would drop
+    // the counts we already have.
+    if (catalog.entries.some((entry) => entry.count !== undefined)) {
+      return catalog;
     }
     try {
       const counts = await this.loadFeatureCounts(elementPath);
@@ -929,8 +1811,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     options: {
       memoryCap?: number;
       featureCatalog?: PointsFeatureCatalog | null;
+      signal?: AbortSignal;
     } = {}
   ): Promise<ArrayLike<number> | undefined> {
+    checkAbort(options.signal);
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { spatialdata_attrs: spatialDataAttrs } = zattrs;
@@ -1013,7 +1897,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return this.resolveParquetRowCount(parquetPath);
   }
 
-  async listPointsFeatures(elementPath: string): Promise<PointsFeatureCatalog | null> {
+  async listPointsFeatures(
+    elementPath: string,
+    options?: { onPartialCatalog?: (catalog: PointsFeatureCatalog) => void }
+  ): Promise<PointsFeatureCatalog | null> {
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const featureKey = zattrs.spatialdata_attrs?.feature_key;
     if (typeof featureKey !== 'string' || featureKey.length === 0) {
@@ -1046,7 +1933,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         parquetPath,
         featureKey,
         featureCodeColumnName,
-        hasMortonColumn
+        hasMortonColumn,
+        options?.onPartialCatalog
       );
     }
 
@@ -1059,13 +1947,177 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
 
-    return buildFeatureCatalogFromColumns(
+    const catalog = buildFeatureCatalogFromColumns(
       featureKey,
       nameColumn,
       codeColumn,
       mortonColumn,
       arrowTable.numRows
     );
+    // Count here too, for the same reason the streaming scan does: a
+    // dictionary-only element gets nothing from `loadFeatureCounts`, and this
+    // whole-table read has already decoded every row, so the counts are exact and
+    // free. Without this, an under-the-cap element like a 3.7M-row MERFISH
+    // `single_molecule` showed a feature list whose stats never arrived.
+    const counts = new Map<number, number>();
+    tallyFeatureCodesFromColumn(
+      nameColumn,
+      arrowTable.numRows,
+      // `?? new Map()` is not dead: `featureCodeMapFromCatalog` is typed
+      // `Map | undefined` for its null-catalog callers, and nothing narrows it here.
+      featureCodeMapFromCatalog(catalog) ?? new Map(),
+      counts,
+      mortonColumn
+    );
+    return mergeFeatureCountsIntoCatalog(catalog, counts);
+  }
+
+  /**
+   * Build the feature catalog by streaming ONLY the feature column(s) over range
+   * reads, publishing the catalog as it grows.
+   *
+   * This is the fast path for the oversized-dataset scan. The feature column is a
+   * tiny fraction of a points parquet (~4KB of an 8.8MB Xenium-style file, the
+   * rest being geometry and an unused dask index), so projecting it turns a
+   * whole-file download into a handful of range requests.
+   *
+   * Codes stay compatible with every other catalog build: both assign codes in
+   * first-seen row order, so a streamed prefix agrees with the whole-file scan on
+   * every code it has assigned so far. That is what makes the partial catalogs
+   * safe to render — a feature's code never changes as more rows arrive, so
+   * selections and swatches made against a partial stay valid.
+   *
+   * Returns null (rather than throwing) whenever the fast path does not apply, so
+   * the caller falls through to the byte-oriented scan.
+   */
+  private async listPointsFeaturesByStreamingScan(
+    parquetPath: string,
+    featureKey: string,
+    featureCodeColumnName: string | undefined,
+    hasMortonColumn: boolean,
+    columnNames: string[],
+    onPartialCatalog?: (catalog: PointsFeatureCatalog) => void
+  ): Promise<PointsFeatureCatalog | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    // Use the discovered parts rather than guessing paths: these are known to
+    // exist and are in row order, which the code assignment depends on.
+    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = datasetMetadata?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const partUrls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url) {
+        return null;
+      }
+      partUrls.push(url);
+    }
+
+    // Decline before the reader ever sees the URL: a server that refuses one of
+    // the range shapes it needs makes it panic unrecoverably rather than error.
+    if (!(await this.serverSupportsStreamingRanges(partUrls[0]))) {
+      return null;
+    }
+
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      return null;
+    }
+
+    const { tableFromIPC } = await import('apache-arrow');
+    const {
+      accumulateFeatureCatalogFromTable,
+      featureCatalogFromCodeMap,
+      featureCatalogNeedsParquetFallback,
+    } = await import('../pointsFeatures.js');
+    const codeToName = new Map<number, string>();
+    const nameToCode = new Map<string, number>();
+    // Tally per feature while the column is already decoded. This is the ONLY place
+    // a dictionary-only element can get counts: `loadFeatureCounts` needs an integer
+    // code column and returns an empty map without one, which is why such elements
+    // showed feature stats that never settled. Costs no extra I/O — the rows are in
+    // hand — and covers the whole dataset because this scan reads every row.
+    const counts = new Map<number, number>();
+    let publishedFeatureCount = 0;
+
+    // The watchdog spans opening AND draining every part: a failed range request
+    // can panic the reader at any of those points, and the panic never settles
+    // the promise it came from.
+    const stall = createStallGuard(FEATURE_STREAM_STALL_TIMEOUT_MS);
+    const scanAllParts = async () => {
+      for (const url of partUrls) {
+        const file = await ParquetFile.fromUrl(url);
+        const stream = await file.stream({
+          columns: columnNames,
+          batchSize: FEATURE_STREAM_BATCH_ROWS,
+        });
+        const reader = stream.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            stall.progress();
+            const batch = tableFromIPC(value.intoIPCStream());
+            accumulateFeatureCatalogFromTable(
+              codeToName,
+              nameToCode,
+              batch,
+              featureKey,
+              featureCodeColumnName,
+              { skipMortonSentinels: hasMortonColumn }
+            );
+            // After the accumulate above, every name in this batch has a code.
+            const featureColumn = batch.getChild(featureKey);
+            if (featureColumn) {
+              tallyFeatureCodesFromColumn(
+                featureColumn,
+                batch.numRows,
+                nameToCode,
+                counts,
+                // Same flag the accumulate above uses, so counts and entries agree.
+                hasMortonColumn ? batch.getChild(MORTON_CODE_2D_COLUMN) : null
+              );
+            }
+            // Only republish when the list actually grew; most batches add
+            // nothing once the common features have been seen.
+            if (onPartialCatalog && codeToName.size > publishedFeatureCount) {
+              publishedFeatureCount = codeToName.size;
+              onPartialCatalog(featureCatalogFromCodeMap(featureKey, codeToName));
+            }
+          }
+        } finally {
+          // Best-effort: after a wasm panic the reader may itself be unusable,
+          // and cancel() can hang exactly like read() does — never await it.
+          void reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      }
+    };
+
+    try {
+      await Promise.race([scanAllParts(), stall.promise]);
+    } catch (error) {
+      // Includes the watchdog tripping. Returning null keeps the contract with
+      // the caller: fall through to the byte-oriented scan rather than surface
+      // a half-built catalog.
+      console.warn(`Streaming feature catalog scan abandoned for ${parquetPath}:`, error);
+      return null;
+    } finally {
+      stall.dispose();
+    }
+
+    if (featureCatalogNeedsParquetFallback(codeToName)) {
+      return null;
+    }
+    // Counts ride along: this scan read every row, so they are dataset-wide, and
+    // for a dictionary-only element nothing else can produce them.
+    return mergeFeatureCountsIntoCatalog(featureCatalogFromCodeMap(featureKey, codeToName), counts);
   }
 
   /**
@@ -1076,7 +2128,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     parquetPath: string,
     featureKey: string,
     featureCodeColumnName: string | undefined,
-    hasMortonColumn: boolean
+    hasMortonColumn: boolean,
+    onPartialCatalog?: (catalog: PointsFeatureCatalog) => void
   ): Promise<PointsFeatureCatalog | null> {
     const columnNames = [featureKey];
     if (featureCodeColumnName) {
@@ -1086,13 +2139,41 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       columnNames.push(MORTON_CODE_2D_COLUMN);
     }
 
+    // Fast path first: streaming reads only the feature column and can publish
+    // the list while it scans. Falls through on any non-applicable store/runtime.
+    try {
+      const streamed = await this.listPointsFeaturesByStreamingScan(
+        parquetPath,
+        featureKey,
+        featureCodeColumnName,
+        hasMortonColumn,
+        columnNames,
+        onPartialCatalog
+      );
+      if (streamed) {
+        return streamed;
+      }
+    } catch (error) {
+      console.warn(
+        `Streaming feature catalog scan failed for ${parquetPath}; falling back.`,
+        error
+      );
+    }
+
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
           fullPartsForFallback: true,
-          includeRowGroups: true,
+          // Row groups are only usable here with an integer code column — the
+          // dictionary name column cannot be read that way. Asking for them
+          // anyway on a dict-only element fetched every row group AND every
+          // part: the whole dataset downloaded twice to use half of it.
+          includeRowGroups: featureCodeColumnName !== undefined,
+          // Both are handed to the worker: the row-group decode can still come
+          // back unusable, and parts are the fallback.
+          partsAlongsideRowGroups: true,
         });
         const catalog = await scanParquetFeatureCatalogInWorker({
           rowGroups:
@@ -1442,9 +2523,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
 
-    const xs: number[] = [];
-    const ys: number[] = [];
-    const zs: number[] = [];
+    // Dynamic, like the call site below: keeps the worker scan module out of the
+    // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
+    const { Float32PointBuffer, scanMortonTableInBounds } = await import(
+      '../workers/pointsWorkerScan.js'
+    );
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const zs = new Float32PointBuffer();
     const hasZ = metadata.axisNames.includes('z');
     const filterByFeature = allowedFeatureCodes !== null;
     const featureCodeColumnName =
@@ -1508,7 +2594,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (!table) {
         continue;
       }
-      const { scanMortonTableInBounds } = await import('../workers/pointsWorkerScan.js');
       scanMortonTableInBounds({
         table,
         rowGroupIndex: rowGroup,
@@ -1528,9 +2613,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     return {
-      data: hasZ
-        ? [new Float32Array(xs), new Float32Array(ys), new Float32Array(zs)]
-        : [new Float32Array(xs), new Float32Array(ys)],
+      data: hasZ ? [xs.toArray(), ys.toArray(), zs.toArray()] : [xs.toArray(), ys.toArray()],
       shape: [hasZ ? 3 : 2, xs.length],
       bounds: options.bounds,
       loadMode: 'row-groups',

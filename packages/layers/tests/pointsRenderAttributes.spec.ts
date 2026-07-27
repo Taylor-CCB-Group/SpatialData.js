@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnarNdarrayPointsBatch } from '../src/pointsLoader.js';
-import { buildPointsAttributes } from '../src/pointsRenderAttributes.js';
+import { buildPointsAttributes, buildPointsDeckData } from '../src/pointsRenderAttributes.js';
 
 function batch(overrides: Partial<ColumnarNdarrayPointsBatch>): ColumnarNdarrayPointsBatch {
   return {
@@ -46,5 +46,44 @@ describe('buildPointsAttributes', () => {
     expect(buildPointsAttributes(b, false).positions).toBe(first.positions);
     // A different use3d flag invalidates the cached entry.
     expect(buildPointsAttributes(b, true).positions).not.toBe(first.positions);
+  });
+});
+
+describe('buildPointsDeckData — identity stability', () => {
+  // Deck compares `props.data` by identity: a fresh wrapper marks the data as
+  // changed and re-uploads every binary attribute. On a 3.7M-point element that
+  // was ~80ms of bufferSubData whenever an unrelated prop (point size, opacity)
+  // changed, because the wrapper was rebuilt on every render.
+  it('returns the SAME object for repeated calls on one batch', () => {
+    const b = batch({});
+    const first = buildPointsDeckData(b, false, false);
+    const second = buildPointsDeckData(b, false, false);
+    expect(second).toBe(first);
+    expect(second.attributes.getPosition.value).toBe(first.attributes.getPosition.value);
+  });
+
+  it('keeps separate stable wrappers per colour mode', () => {
+    const b = batch({ featureCodes: new Float32Array([0, 1, 0]) });
+    const colored = buildPointsDeckData(b, false, true);
+    const plain = buildPointsDeckData(b, false, false);
+
+    expect(colored).not.toBe(plain);
+    expect(colored.attributes.getFeatureCode?.value).toBeInstanceOf(Float32Array);
+    expect(plain.attributes.getFeatureCode).toBeUndefined();
+    // …and each stays stable across repeat calls, so toggling colour back and
+    // forth does not churn the wrapper.
+    expect(buildPointsDeckData(b, false, true)).toBe(colored);
+    expect(buildPointsDeckData(b, false, false)).toBe(plain);
+  });
+
+  it('gives a different wrapper for a different batch', () => {
+    const a = buildPointsDeckData(batch({}), false, false);
+    const b = buildPointsDeckData(batch({}), false, false);
+    expect(b).not.toBe(a);
+  });
+
+  it('omits getFeatureCode when the batch carries no codes', () => {
+    const data = buildPointsDeckData(batch({}), false, true);
+    expect(data.attributes.getFeatureCode).toBeUndefined();
   });
 });

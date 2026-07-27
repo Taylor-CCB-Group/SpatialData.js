@@ -334,21 +334,26 @@ describe('PointsDataEngine — feature catalog', () => {
     expect(engine.getFeatureCatalog('pts:other')).toBeUndefined();
   });
 
-  it('records null and stays settled when the scan rejects', async () => {
+  it('leaves the catalog retryable when the scan rejects, and retry() recovers it', async () => {
+    // A4: a failed full-catalog scan no longer settles permanently as null — it is a
+    // retryable `failed`, so it is not "loaded", not "loading", and retry() re-runs it.
     const engine = new PointsDataEngine();
+    let attempts = 0;
     const element = {
       key: 'pts:boom',
       listFeaturesWithCounts: vi.fn(async () => {
-        throw new Error('scan failed');
+        attempts += 1;
+        if (attempts === 1) throw new Error('scan failed');
+        return sampleCatalog;
       }),
     } as unknown as PointsElement;
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await engine.ensureFeatureCatalog({ key: 'pts:boom', layerId: 'l', element });
-
-    expect(engine.getFeatureCatalog('pts:boom')).toBeNull();
+    expect(engine.getFeatureCatalog('pts:boom')).toBeUndefined();
     expect(engine.isFeatureCatalogLoading('pts:boom')).toBe(false);
-    errSpy.mockRestore();
+
+    await engine.retry('pts:boom');
+    expect(engine.getFeatureCatalog('pts:boom')).toEqual(sampleCatalog);
   });
 });
 
@@ -363,7 +368,14 @@ describe('PointsDataEngine — row feature codes', () => {
 
     expect(engine.hasRowFeatureCodes('pts:rc')).toBe(true);
     expect(Array.from(engine.getRowFeatureCodes('pts:rc')!)).toEqual([0, 1, 0]);
-    expect(loadRowFeatureCodes).toHaveBeenCalledWith({ featureCatalog: sampleCatalog });
+    // R5 fix (Track A): the codes are read at the resident preload's cap so they
+    // stay row-aligned with the batch. No preload ran here, so the cap is the default.
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureCatalog: sampleCatalog,
+        memoryCap: DEFAULT_POINTS_MEMORY_CAP,
+      })
+    );
   });
 
   it('passes undefined catalog when none is built yet (core scans internally)', async () => {
@@ -372,7 +384,13 @@ describe('PointsDataEngine — row feature codes', () => {
 
     await engine.ensureRowFeatureCodes({ key: 'pts:rc2', layerId: 'l', element });
 
-    expect(loadRowFeatureCodes).toHaveBeenCalledWith({ featureCatalog: undefined });
+    // R5 fix (Track A): the cap is threaded through even with no catalog yet.
+    expect(loadRowFeatureCodes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureCatalog: undefined,
+        memoryCap: DEFAULT_POINTS_MEMORY_CAP,
+      })
+    );
   });
 
   it('is idempotent', async () => {
@@ -851,5 +869,62 @@ describe('PointsDataEngine — shed complete batch on lower', () => {
       truncated: true,
       loaded: 4_000_000,
     });
+  });
+});
+
+describe('PointsDataEngine — colour LUT inputs', () => {
+  it('reports the feature code-space size as maxCode + 1, memoised on catalog identity', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:lut');
+    expect(engine.getFeatureCodeSpaceSize('pts:lut')).toBe(0); // no catalog yet
+    await engine.ensureFeatureCatalog({ key: 'pts:lut', layerId: 'l', element });
+    expect(engine.getFeatureCodeSpaceSize('pts:lut')).toBe(2); // codes {0,1} → width 2
+  });
+
+  it('resolves by-name colour overrides to a code→rgb map via the catalog', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:ov');
+    await engine.ensureFeatureCatalog({ key: 'pts:ov', layerId: 'l', element });
+
+    const map = engine.getFeatureColorOverrideMap('pts:ov', {
+      GeneB: [10, 20, 30],
+    });
+    expect(map?.get(1)).toEqual([10, 20, 30]); // GeneB is code 1
+    expect(map?.has(0)).toBe(false);
+    // A name absent from the catalog is dropped, not thrown.
+    expect(engine.getFeatureColorOverrideMap('pts:ov', { Nope: [1, 2, 3] })).toBeNull();
+  });
+
+  it('returns null (all-default palette) with no overrides, and a stable map identity otherwise', async () => {
+    const engine = new PointsDataEngine();
+    const { element } = makeFeatureElement('pts:ov2');
+    await engine.ensureFeatureCatalog({ key: 'pts:ov2', layerId: 'l', element });
+    expect(engine.getFeatureColorOverrideMap('pts:ov2', undefined)).toBeNull();
+
+    const overrides = { GeneA: [1, 2, 3] as [number, number, number] };
+    const first = engine.getFeatureColorOverrideMap('pts:ov2', overrides);
+    // Same (config, catalog) → same map identity, so the palette texture downstream
+    // is not rebuilt on every getLayers frame.
+    expect(engine.getFeatureColorOverrideMap('pts:ov2', overrides)).toBe(first);
+  });
+
+  it('holds a per-element hover highlight and notifies subscribers on change only', () => {
+    const engine = new PointsDataEngine();
+    let notifications = 0;
+    engine.subscribe(() => {
+      notifications += 1;
+    });
+    expect(engine.getHighlightedFeature('pts:h')).toBe(-1); // none by default
+
+    engine.setHighlightedFeature('pts:h', 3);
+    expect(engine.getHighlightedFeature('pts:h')).toBe(3);
+    expect(notifications).toBe(1);
+
+    engine.setHighlightedFeature('pts:h', 3); // unchanged → no repaint
+    expect(notifications).toBe(1);
+
+    engine.setHighlightedFeature('pts:h', null); // clear
+    expect(engine.getHighlightedFeature('pts:h')).toBe(-1);
+    expect(notifications).toBe(2);
   });
 });

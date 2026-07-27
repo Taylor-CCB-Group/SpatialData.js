@@ -8,7 +8,11 @@ import {
   filterBatchSignature,
   hasPreloadedRowFeatureCodes,
 } from './pointsFeatureCodes.js';
-import type { ColumnarNdarrayPointsBatch, PointsRenderResource } from './pointsLoader.js';
+import type {
+  ColumnarNdarrayPointsBatch,
+  PointsLoader,
+  PointsRenderResource,
+} from './pointsLoader.js';
 import { resolvePointsRenderStrategy } from './pointsRenderStrategies.js';
 import {
   DEFAULT_POINT_RADIUS_MAX_PIXELS,
@@ -31,9 +35,20 @@ export interface PointsLayerProps {
   color?: [number, number, number, number];
   /** Colour points by their per-point feature code instead of the flat color. */
   colorByFeature?: boolean;
+  /** Number of feature codes the colour LUT must cover (catalog `maxCode + 1`). */
+  featureCodeSpaceSize?: number;
+  /** Per-feature colour overrides (`code → [r,g,b]`); absent codes keep the default. */
+  featureColorOverrides?: import('./pointsFeatureColor.js').FeatureColorOverrides | null;
+  /** Emphasise one feature code: its points keep their colour, others desaturate +
+   * dim. -1 (default) highlights nothing. */
+  highlightFeatureCode?: number;
   featureCodes?: readonly number[];
   /** Source-side integer codes aligned with the preloaded table rows. */
   preloadedFeatureCodes?: ArrayLike<number>;
+  /** Bumps when a stable resource's backing batch grows in place (the streaming
+   * partial overlay, D10). A change re-reads `loader.loadAll()` WITHOUT resetting the
+   * layer, so the overlay fills in without a per-chunk teardown. */
+  resourceRevision?: number;
   /** Max rows to draw after feature filtering. */
   renderCap?: number;
   showTileDebugOverlay?: boolean;
@@ -131,6 +146,18 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
       return;
     }
 
+    // Same loader, but its stable backing batch was swapped in place (the streaming
+    // partial overlay grows per chunk, D10; the base swaps resident↔matched↔streaming,
+    // P2): re-read `loadAll` for the new buffer and re-filter, WITHOUT the reset above
+    // — that is what keeps it from flashing. Return so the signature-filter pass below
+    // does not run against the STALE `preloadedBatch` with the NEW codes (a swap
+    // changes the batch and its row-aligned codes together); `refreshPreloadedBatch`
+    // re-filters the new batch with the current props.
+    if (props.resourceRevision !== oldProps.resourceRevision) {
+      void this.refreshPreloadedBatch();
+      return;
+    }
+
     const signature = filterBatchSignature(
       props.featureCodes,
       props.preloadedFeatureCodes,
@@ -155,6 +182,30 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     }
   }
 
+  /**
+   * What a `loadAll()` read was issued against. BOTH parts matter, for different
+   * races:
+   *
+   * - `revision` — the streaming overlay bumps it per chunk, so several reads can
+   *   be in flight at once. Today the adapter's `loadAll` snapshots the holder
+   *   synchronously and never awaits, so those resolve in call order and the last
+   *   writer is the newest; that is a property of one loader implementation, not
+   *   of the {@link PointsLoader} contract this method is written against.
+   * - `loader` — a loader swap (a cap raise) resets the batch state and starts a
+   *   fresh read, but an OLD read already in flight still resolves afterwards and
+   *   would write the previous loader's batch over it. A revision check alone does
+   *   not catch this: revisions are per-holder and can coincide across a swap.
+   */
+  private loadToken(): { loader: PointsLoader; revision: number | undefined } {
+    return { loader: this.props.resource.loader, revision: this.props.resourceRevision };
+  }
+
+  private isStaleLoad(token: { loader: PointsLoader; revision: number | undefined }): boolean {
+    return (
+      this.props.resource.loader !== token.loader || this.props.resourceRevision !== token.revision
+    );
+  }
+
   private async ensurePreloadedBatch(): Promise<void> {
     const { resource } = this.props;
     if (resource.loader.capabilities.kind !== 'preloaded-columnar') {
@@ -164,7 +215,11 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
     if (existing) {
       return;
     }
+    const token = this.loadToken();
     const batch = await resource.loader.loadAll?.();
+    if (this.isStaleLoad(token)) {
+      return;
+    }
     if (batch?.format === 'columnar-ndarray') {
       this.setState({ preloadedBatch: batch });
       const awaitingRowCodes = featureFilterAwaitingRowCodes(
@@ -181,6 +236,44 @@ export class PointsLayer extends CompositeLayer<PointsLayerProps> {
           )
         );
       }
+    }
+  }
+
+  /**
+   * Re-read the (grown) batch from a stable loader whose backing buffer changed in
+   * place — the D10 streaming overlay. Unlike {@link ensurePreloadedBatch} it has no
+   * "already loaded" short-circuit (the whole point is to pick up the growth) and it
+   * does not reset filter state, so the overlay updates without a teardown.
+   */
+  private async refreshPreloadedBatch(): Promise<void> {
+    const { resource } = this.props;
+    if (resource.loader.capabilities.kind !== 'preloaded-columnar') {
+      return;
+    }
+    const token = this.loadToken();
+    const batch = await resource.loader.loadAll?.();
+    // A newer revision (or a different loader) landed while this read was in
+    // flight; that read owns the state. See `loadToken`.
+    if (this.isStaleLoad(token)) {
+      return;
+    }
+    if (batch?.format !== 'columnar-ndarray') {
+      return;
+    }
+    this.setState({ preloadedBatch: batch });
+    const awaitingRowCodes = featureFilterAwaitingRowCodes(
+      this.props.featureCodes,
+      this.props.preloadedFeatureCodes
+    );
+    if (!awaitingRowCodes) {
+      void this.ensureFilteredBatch(
+        batch,
+        filterBatchSignature(
+          this.props.featureCodes,
+          this.props.preloadedFeatureCodes,
+          this.props.renderCap
+        )
+      );
     }
   }
 

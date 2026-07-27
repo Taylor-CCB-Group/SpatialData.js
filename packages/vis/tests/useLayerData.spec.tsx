@@ -283,3 +283,260 @@ describe('useLayerData — resolver lifecycle across a dataset swap', () => {
     expect(pointsResource()).toBe(before);
   });
 });
+
+describe('useLayerData — coverage-gated base (never shows the wrong gene)', () => {
+  // The reported bug: select gene A, deselect, select disjoint gene B → the base
+  // drew ALL of A's points (the matched batch survives a selection change as
+  // `stale`) until B's scan settled. The base must use the matched batch ONLY when
+  // it covers the current selection; otherwise show the resident preload (filtered
+  // to B) while B streams in.
+  function scanPointsElement(key: string): AvailableElement {
+    const resident = {
+      shape: [2, 3],
+      data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
+      featureCodes: new Int32Array([0, 1, 0]),
+      hasFeatureCodeColumn: true, // → supportsFeatureScan true right after preload
+      // Truncated on purpose: a matching scan is only planned when rows exist
+      // beyond the resident window. With a complete batch the resolver filters in
+      // memory and never scans, so there would be no matched batch to gate on.
+      preloadTruncated: true,
+      totalRowCount: 100,
+    };
+    const matchedForZero = {
+      shape: [2, 2],
+      data: [new Float32Array([0, 1]), new Float32Array([0, 1])],
+      featureCodes: new Int32Array([0, 0]),
+    };
+    const element = {
+      key,
+      loadPoints: vi.fn(async () => resident),
+      loadRowFeatureCodes: vi.fn(async () => new Int32Array([0, 1, 0])),
+      listFeaturesWithCounts: vi.fn(async () => null),
+      // The {0} scan settles; the {1} scan is left in flight so `lastGood` stays {0}
+      // — the exact window where the old code drew the wrong gene.
+      loadPointsMatchingFeatureCodes: vi.fn((opts: { featureCodes: readonly number[] }) =>
+        opts.featureCodes[0] === 0 ? Promise.resolve(matchedForZero) : new Promise<never>(() => {})
+      ),
+    } as unknown as PointsElement;
+    return { key, type: 'points', element, transform: new Matrix4() };
+  }
+
+  it('draws the resident batch (not the stale matched batch), via one stable base resource', async () => {
+    const pts = scanPointsElement('transcripts');
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
+
+    const { result, rerender } = renderHook(
+      ({ l }: { l: Record<string, LayerConfig> }) =>
+        useLayerData(l, Object.keys(l), elements, null),
+      {
+        initialProps: {
+          l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0] } },
+        },
+      }
+    );
+    type LoadAllResource = { loader: { loadAll?: () => Promise<{ shape: number[] }> } };
+    const baseResource = () =>
+      (result.current.getLayers()[0]?.props as { resource?: LoadAllResource } | undefined)
+        ?.resource;
+    const baseRowCount = async () => (await baseResource()?.loader.loadAll?.())?.shape[1];
+
+    // The {0} scan settles → the matched batch covers {0}; the base draws it (2 rows).
+    await waitFor(() => {
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.has(0)).toBe(
+        true
+      );
+    });
+    const before = baseResource();
+    expect(await baseRowCount()).toBe(2); // matched-{0}
+
+    // Switch to a DISJOINT gene {1}; its scan is in flight, so `lastGood` is still {0}.
+    rerender({
+      l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [1] } },
+    });
+    await waitFor(() => {
+      expect(result.current.pointsEngine.isMatchingLoading('transcripts', [1])).toBe(true);
+    });
+
+    // P2: the base resource identity is STABLE across the resident↔matched swap — no
+    // teardown, no flicker. P1: it now draws the RESIDENT batch (3 rows), never the
+    // stale matched-{0} batch (2 rows).
+    expect(baseResource()).toBe(before);
+    expect(await baseRowCount()).toBe(3);
+  });
+});
+
+describe('useLayerData — selection show/hide + colour', () => {
+  // Two more reported bugs beyond the disjoint switch above:
+  //   (A) GROWING a selection ([0] → [0,1]) blinked gene 0 out to the resident window
+  //       until gene 1's scan settled — a wanted gene vanishing.
+  //   (colour) the "all features" view (no selection, no explicit flag) drew flat
+  //       because per-row codes were never threaded, though colour-by-feature is on by
+  //       default in the renderer.
+  function coverableElement(key: string): AvailableElement {
+    const resident = {
+      shape: [2, 3],
+      data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
+      featureCodes: new Int32Array([0, 1, 0]),
+      hasFeatureCodeColumn: true,
+      // See the note in scanPointsElement: a scan is only planned for a truncated
+      // resident batch, which is the situation these matched-vs-resident cases model.
+      preloadTruncated: true,
+      totalRowCount: 100,
+    };
+    const matchedForZero = {
+      shape: [2, 2],
+      data: [new Float32Array([0, 1]), new Float32Array([0, 1])],
+      featureCodes: new Int32Array([0, 0]),
+    };
+    const element = {
+      key,
+      loadPoints: vi.fn(async () => resident),
+      loadRowFeatureCodes: vi.fn(async () => new Int32Array([0, 1, 0])),
+      listFeaturesWithCounts: vi.fn(async () => null),
+      // ONLY the exact {0} scan settles; any other selection (e.g. the grown {0,1})
+      // stays in flight, so `lastGood` — and thus coverage — remains {0}.
+      loadPointsMatchingFeatureCodes: vi.fn((opts: { featureCodes: readonly number[] }) =>
+        opts.featureCodes.length === 1 && opts.featureCodes[0] === 0
+          ? Promise.resolve(matchedForZero)
+          : new Promise<never>(() => {})
+      ),
+    } as unknown as PointsElement;
+    return { key, type: 'points', element, transform: new Matrix4() };
+  }
+
+  it('keeps the matched batch as the base when growing a covered selection (a wanted gene never blinks out)', async () => {
+    const pts = coverableElement('transcripts');
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
+
+    const { result, rerender } = renderHook(
+      ({ l }: { l: Record<string, LayerConfig> }) =>
+        useLayerData(l, Object.keys(l), elements, null),
+      {
+        initialProps: {
+          l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0] } },
+        },
+      }
+    );
+    type LoadAllResource = { loader: { loadAll?: () => Promise<{ shape: number[] }> } };
+    const baseResource = () =>
+      (result.current.getLayers()[0]?.props as { resource?: LoadAllResource } | undefined)
+        ?.resource;
+    const baseRowCount = async () => (await baseResource()?.loader.loadAll?.())?.shape[1];
+
+    await waitFor(() => {
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.has(0)).toBe(
+        true
+      );
+    });
+    expect(await baseRowCount()).toBe(2); // matched-{0}
+
+    // GROW {0} → {0,1}. Gene 1's scan hangs, so coverage stays {0}. The base must keep
+    // drawing the whole-dataset matched-{0} batch (2 rows) — gene 0 does NOT blink out
+    // to the resident window (3 rows) while gene 1 streams in via the overlay.
+    rerender({
+      l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0, 1] } },
+    });
+    await waitFor(() => {
+      expect(result.current.pointsEngine.isMatchingLoading('transcripts', [0, 1])).toBe(true);
+    });
+    expect(await baseRowCount()).toBe(2); // still matched-{0}, never resident-3
+  });
+
+  it('will not use the matched batch it cannot filter (a deselected gene must not survive)', async () => {
+    // The matched batch covers TWO genes but carries no row-aligned codes. Narrowing
+    // the selection to one of them therefore asks for a filter `PointsLayer` cannot
+    // apply — and its strategy resolves "awaiting row codes" by drawing the batch
+    // WHOLE. Passing the filter anyway is not a harmless no-op: it puts the just-
+    // deselected gene back on screen. The base must fall back to the resident batch,
+    // which filters in memory from codes it does have.
+    const resident = {
+      shape: [2, 3],
+      data: [new Float32Array([0, 1, 2]), new Float32Array([3, 4, 5])],
+      featureCodes: new Int32Array([0, 1, 0]),
+      hasFeatureCodeColumn: true,
+      preloadTruncated: true,
+      totalRowCount: 100,
+    };
+    const matchedForBoth = {
+      shape: [2, 4],
+      data: [new Float32Array([0, 1, 2, 3]), new Float32Array([0, 1, 2, 3])],
+      // Deliberately absent — `pointsScanChunkProgress` only sets `featureCodes`
+      // when the scan produced them, so this is a shape the resolver can hand back.
+    };
+    const pts: AvailableElement = {
+      key: 'transcripts',
+      type: 'points',
+      element: {
+        key: 'transcripts',
+        loadPoints: vi.fn(async () => resident),
+        loadRowFeatureCodes: vi.fn(async () => new Int32Array([0, 1, 0])),
+        listFeaturesWithCounts: vi.fn(async () => null),
+        // Only the {0,1} scan settles, so `lastGood` coverage stays {0,1} after the
+        // selection narrows to {0}.
+        loadPointsMatchingFeatureCodes: vi.fn((opts: { featureCodes: readonly number[] }) =>
+          opts.featureCodes.length === 2
+            ? Promise.resolve(matchedForBoth)
+            : new Promise<never>(() => {})
+        ),
+      } as unknown as PointsElement,
+      transform: new Matrix4(),
+    };
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
+
+    const { result, rerender } = renderHook(
+      ({ l }: { l: Record<string, LayerConfig> }) =>
+        useLayerData(l, Object.keys(l), elements, null),
+      {
+        initialProps: {
+          l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0, 1] } },
+        },
+      }
+    );
+    type LoadAllResource = { loader: { loadAll?: () => Promise<{ shape: number[] }> } };
+    const baseProps = () =>
+      result.current.getLayers()[0]?.props as
+        | { resource?: LoadAllResource; featureCodes?: readonly number[] }
+        | undefined;
+    const baseRowCount = async () => (await baseProps()?.resource?.loader.loadAll?.())?.shape[1];
+
+    await waitFor(() => {
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.size).toBe(2);
+    });
+    // Selection == coverage, so no filter is needed and the matched batch is usable.
+    expect(await baseRowCount()).toBe(4);
+
+    // NARROW {0,1} → {0}. Drawing matched-{0,1} would now require holding gene 1 back.
+    rerender({
+      l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0] } },
+    });
+    // Narrowing to a COVERED subset does not start a new scan — the resolver serves
+    // it from `lastGood` — so wait on the rendered selection, not on a scan.
+    await waitFor(() => {
+      expect(baseProps()?.featureCodes).toEqual([0]);
+    });
+    expect(await baseRowCount()).toBe(3); // resident, NOT the 4-row unfilterable matched batch
+  });
+
+  it('threads per-row codes to the base for the "all features" view (colour is on by default)', async () => {
+    const pts = coverableElement('transcripts');
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
+
+    // No `featureCodes` (⇒ "all features") and no `colorByFeature` flag: the base must
+    // still carry the per-row codes so the shader can colour by feature.
+    const { result } = render({ 'layer-p': pointsConfig('layer-p', 'transcripts') }, elements);
+
+    await waitFor(() => {
+      expect(result.current.pointsEngine.getRowFeatureCodes('transcripts')).toBeDefined();
+    });
+    const basePreloadedCodes = () =>
+      (
+        result.current.getLayers()[0]?.props as
+          | { preloadedFeatureCodes?: ArrayLike<number> }
+          | undefined
+      )?.preloadedFeatureCodes;
+    await waitFor(() => {
+      expect(basePreloadedCodes()).toBeDefined();
+    });
+    expect(basePreloadedCodes()?.length).toBe(3);
+  });
+});

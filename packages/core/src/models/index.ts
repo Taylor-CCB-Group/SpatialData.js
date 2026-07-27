@@ -536,6 +536,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
   async loadRowFeatureCodes(options?: {
     memoryCap?: number;
     featureCatalog?: PointsFeatureCatalog | null;
+    signal?: AbortSignal;
   }) {
     return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`, options);
   }
@@ -551,8 +552,9 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     featureCodes: readonly number[];
     onProgress?: (progress: PointsLoadProgress) => void;
     featureCodeByName?: ReadonlyMap<string, number>;
+    /** Aborts the scan between row-group chunks when it is superseded. */
+    signal?: AbortSignal;
   }) {
-    //todo generator version of this.
     return this.vPoints.loadPointsMatchingFeatureCodes(`points/${this.key}`, options);
   }
 
@@ -560,8 +562,12 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.vPoints.loadFeatureCounts(`points/${this.key}`);
   }
 
-  async listFeaturesWithCounts() {
-    return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`);
+  async listFeaturesWithCounts(options?: {
+    /** Called with the names-only catalog before the (slow) counts scan, so a panel
+     * can list features while counts are still loading. */
+    onPartialCatalog?: (catalog: PointsFeatureCatalog) => void;
+  }) {
+    return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`, options);
   }
 
   async getPointsTilingMetadata() {

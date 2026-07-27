@@ -51,6 +51,14 @@ export interface PointsLoadResult {
    * {@link PointsLoadOptions.includeFeatureCodes}. Gates the whole-dataset
    * feature-index scan (only worthwhile / correct when codes are authoritative). */
   hasFeatureCodeColumn?: boolean;
+  /**
+   * Per-feature point counts WITHIN THIS BATCH (`code → rows`), accumulated as the
+   * batch was decoded. Not the dataset-wide totals — those need the full counts scan
+   * — but a running tally that costs nothing extra, because the codes are already in
+   * hand while streaming. Lets a panel show per-feature stats long before the
+   * whole-dataset scan lands. Absent when the batch carries no per-row codes.
+   */
+  featureCodeCounts?: ReadonlyMap<number, number>;
   totalRowCount?: number;
   preloadTruncated?: boolean;
   /** Rows scanned when loading with an active feature filter. */

@@ -62,3 +62,64 @@ export function featureCodeToCssColor(code: number): string {
   const [r, g, b] = featureCodeToRgb(code);
   return `rgb(${r}, ${g}, ${b})`;
 }
+
+/** Per-feature colour overrides: `code → [r, g, b]` (0–255). Any code absent here
+ * keeps its default {@link featureCodeToRgb} colour. */
+export type FeatureColorOverrides = ReadonlyMap<number, readonly [number, number, number]>;
+
+/**
+ * Default LUT width, used whenever the catalog is unknown or smaller.
+ *
+ * The colour of a code is a PURE FUNCTION of that code — the catalog is not an input.
+ * Sizing the table from the catalog was a design error with a very visible cost: the
+ * catalog is the LAST thing to load on a big element, so until it landed the palette
+ * was one texel wide and the shader clamped every code to texel 0 — the whole layer
+ * one flat colour for the entire load. Covering a generous code space up front makes
+ * colour correct from the first streamed chunk; the width only grows if a catalog
+ * turns out to be bigger. 4096 texels is 16 KB.
+ */
+export const DEFAULT_FEATURE_PALETTE_WIDTH = 4096;
+
+/** The LUT width for a (possibly unknown) code space. Callers that compare against an
+ * existing texture must use this, so "needed" and "built" agree. */
+export function featurePaletteWidth(codeSpaceSize: number): number {
+  const requested = Number.isFinite(codeSpaceSize) ? Math.floor(codeSpaceSize) : 0;
+  return Math.max(DEFAULT_FEATURE_PALETTE_WIDTH, requested);
+}
+
+/** A colour lookup table indexed by feature code — one RGBA texel per code. Uploaded
+ * to a GPU texture and sampled by {@link pointsFeatureColorExtension} with
+ * `texelFetch(pfcPalette, ivec2(code, 0), 0)`. */
+export interface FeaturePalette {
+  /** RGBA8, row-major: bytes `[4*code .. 4*code+3]` are the colour for `code`. */
+  data: Uint8Array;
+  /** Texture width = number of codes covered (`maxCode + 1`). Always ≥ 1. */
+  width: number;
+}
+
+/**
+ * Build the feature-colour lookup table. Texel `i` is the colour for code `i`:
+ * {@link featureCodeToRgb} by default (so the palette is byte-identical to the
+ * procedural shader it replaced), with `overrides` patching individual codes.
+ *
+ * `codeSpaceSize` is a LOWER bound, not the answer: the table is always at least
+ * {@link DEFAULT_FEATURE_PALETTE_WIDTH} wide so colour works before any catalog
+ * loads. A code beyond the table is clamped to the last texel by the shader, so an
+ * under-sized table mis-colours the tail rather than crashing.
+ */
+export function buildFeaturePalette(
+  codeSpaceSize: number,
+  overrides?: FeatureColorOverrides
+): FeaturePalette {
+  const width = featurePaletteWidth(codeSpaceSize);
+  const data = new Uint8Array(width * 4);
+  for (let code = 0; code < width; code += 1) {
+    const [r, g, b] = overrides?.get(code) ?? featureCodeToRgb(code);
+    const offset = code * 4;
+    data[offset] = r;
+    data[offset + 1] = g;
+    data[offset + 2] = b;
+    data[offset + 3] = 255;
+  }
+  return { data, width };
+}
