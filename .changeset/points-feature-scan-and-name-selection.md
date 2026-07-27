@@ -31,3 +31,9 @@ worker transfer detached (`DataCloneError`, dropping the element onto whole-file
 reads); parquet part layout being re-probed on every call; a server that answers
 a directory path with 500 rather than 404 wedging part traversal; and point size
 not accounting for an element's transform scale.
+
+Known limitation: for a dictionary-only element the fallback catalog path cannot
+tally per-feature counts, and it settles *successfully* without them — so the
+retry path does not repair it and counts stay absent for the session. Names and
+selection are unaffected. Treat a missing count as unknown, not zero, and do not
+read the presence of counts as a signal that the scan completed.

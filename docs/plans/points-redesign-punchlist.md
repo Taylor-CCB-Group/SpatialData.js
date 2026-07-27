@@ -139,15 +139,22 @@ Each notes *why* it's coupled to the state-model / decode rework.
   one worker; the engine keys by element and assumes single-demand-per-element.
   Multi-layer sharing / a work queue belongs with the engine redesign.
 - **D7 — GeoArrow encoding.** Unexplored; a decode-path spike, not this PR.
-- **D8 — Streaming cancellation semantics.** The generators have no `AbortSignal`
-  threaded to the worker, and an abandoned manual `.next()` loop won't clean up.
-  Fine while consumers drain; design it with the new state layer.
+- **D8 — Streaming cancellation semantics.** *Partly addressed on the Track A
+  branch:* an `AbortSignal` is threaded to the scan generator, so supersede/evict
+  abort it between chunks. What remains is the general case this entry was written
+  about — the signal does not reach the WORKER, and an abandoned manual `.next()`
+  loop still won't clean up. Design the rest with the new state layer.
 - **D9 — Remove `'use no memo'` hatches (stable-snapshot option).** Give the
   engine stable-identity snapshot accessors so `useSyncExternalStore` tracks the
   value directly and the compiler stops needing an opt-out. Part of D1/D2.
-- **D10 — Progressive-overlay visibility logic + flashing.** F1 fixed the
+- **D10 — Progressive-overlay visibility logic + flashing.** *The flashing is
+  fixed on the Track A branch* — a scan-stable partial resource plus
+  `resourceRevision` means the overlay updates in place instead of being torn down
+  per chunk. The rest of this entry stands: the stable-growing-GPU-buffer work
+  below is still the destination, and it is shared with D3. Historical description
+  of the flash follows. F1 fixed the
   deselected-feature-lingering slice, but *which* points show during a partial
-  load still has logic problems, and it **flashes badly**: every notify rebuilds
+  load still has logic problems, and it **flashed badly**: every notify rebuilt
   the partial buffer into a fresh `PointsRenderResource` (new identity each
   chunk), so deck tears down and recreates the `__partial` layer per step instead
   of updating it in place. The real fix is a stable growing GPU buffer (preallocate

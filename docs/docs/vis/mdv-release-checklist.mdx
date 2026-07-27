@@ -125,6 +125,11 @@ Current local state:
   window needs a whole-dataset scan, whose cost scales with element size — this
   is what the tiling/index follow-up addresses. `matchingLoadState` exposes the
   progress meanwhile.
+- Remaining release risk: for a **dictionary-only** element, the fallback catalog
+  path cannot tally counts, and it settles *successfully* without them — so the
+  retry path does not repair it and the counts stay absent for the session. Do not
+  treat count ordering or the presence of counts as a signal that the scan
+  finished; use the names, and render a missing count as unknown rather than zero.
 
 ### Bespoke layer extension path
 

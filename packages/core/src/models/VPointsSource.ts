@@ -210,6 +210,7 @@ import {
   extractSentinelBoundingBox,
   featureCodeAllowSet,
   filterPointsToBounds,
+  isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
   mortonIntervalsForBounds,
   type PointsFeatureCatalog,
@@ -303,12 +304,20 @@ const PRELOAD_STREAM_BATCH_ROWS = 65_536;
  * Same dictionary-first approach as {@link appendFeatureCodesFromColumn}: read each
  * chunk's distinct values once rather than materialising a string per row.
  */
-function tallyFeatureCodesFromColumn(
+/** Exported for test only — not re-exported from the package index. */
+export function tallyFeatureCodesFromColumn(
   column: Vector,
   rows: number,
   nameToCode: ReadonlyMap<string, number>,
-  counts: Map<number, number>
+  counts: Map<number, number>,
+  /** The element's morton column when it is tiled. Every catalog builder this is
+   * paired with is told to skip the sentinel rows; walking them here instead would
+   * let the counts and the entries of the SAME catalog disagree. Only the first
+   * four rows can be sentinels, so this costs four boxed reads. */
+  mortonColumn?: Vector | null
 ): void {
+  const isSentinelRow = (rowIndex: number): boolean =>
+    mortonColumn != null && rowIndex < 4 && isMortonSentinelValue(mortonColumn.get(rowIndex));
   let seen = 0;
   let chunkStart = 0;
   for (const chunk of column.data) {
@@ -325,6 +334,9 @@ function tallyFeatureCodesFromColumn(
       }
       const indices = chunk.values as ArrayLike<number>;
       for (let row = 0; row < take; row += 1) {
+        if (isSentinelRow(chunkStart + row)) {
+          continue;
+        }
         const index = indices[row];
         const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
         if (code >= 0) {
@@ -333,6 +345,9 @@ function tallyFeatureCodesFromColumn(
       }
     } else {
       for (let row = 0; row < take; row += 1) {
+        if (isSentinelRow(chunkStart + row)) {
+          continue;
+        }
         const value = column.get(chunkStart + row);
         const code = value == null ? -1 : (nameToCode.get(String(value)) ?? -1);
         if (code >= 0) {
@@ -1948,8 +1963,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     tallyFeatureCodesFromColumn(
       nameColumn,
       arrowTable.numRows,
+      // `?? new Map()` is not dead: `featureCodeMapFromCatalog` is typed
+      // `Map | undefined` for its null-catalog callers, and nothing narrows it here.
       featureCodeMapFromCatalog(catalog) ?? new Map(),
-      counts
+      counts,
+      mortonColumn
     );
     return mergeFeatureCountsIntoCatalog(catalog, counts);
   }
@@ -2057,7 +2075,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             // After the accumulate above, every name in this batch has a code.
             const featureColumn = batch.getChild(featureKey);
             if (featureColumn) {
-              tallyFeatureCodesFromColumn(featureColumn, batch.numRows, nameToCode, counts);
+              tallyFeatureCodesFromColumn(
+                featureColumn,
+                batch.numRows,
+                nameToCode,
+                counts,
+                // Same flag the accumulate above uses, so counts and entries agree.
+                hasMortonColumn ? batch.getChild(MORTON_CODE_2D_COLUMN) : null
+              );
             }
             // Only republish when the list actually grew; most batches add
             // nothing once the common features have been seen.

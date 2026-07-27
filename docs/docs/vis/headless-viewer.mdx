@@ -341,7 +341,11 @@ Two things worth designing around:
 
 - The catalog arrives in two stages. An instant preview covering just the
   resident window is published first, then the authoritative full-dataset list
-  supersedes it; `catalogRefining` distinguishes them. Counts may lag the names.
+  supersedes it; `catalogRefining` distinguishes them. Counts may lag the names —
+  and for a dictionary-only element they may never arrive at all, because the
+  fallback that builds the catalog cannot tally them. That is a *successful*
+  settle, so nothing retries it. Treat counts as optional: sort and label from the
+  names, and do not read a missing count as zero or as "still loading".
 - Selecting a feature whose points are outside the resident window triggers a
   whole-dataset scan when `supportsOnDemandLoad` is true. `matchingLoadState`
   reports its progress so the UI can show that points are still arriving rather

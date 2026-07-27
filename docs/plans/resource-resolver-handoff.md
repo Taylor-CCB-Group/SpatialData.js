@@ -36,7 +36,10 @@ Read the two ADRs first. This document is sequencing, not rationale.
   dedup/supersede/settle primitive, keyed so everything a request depends on is in the
   key). **Races R1/R2/R3/R5 closed** with fail-before/pass-after tests. Failures are
   structured, **retryable** `SpatialEntryError`s with a `retry()` API (the stuck
-  full-catalog-scan fix). Cancellation is threaded to the scan generator (D8;
+  full-catalog-scan fix) — retryable meaning a request that FAILED. A catalog that
+  settles successfully but without counts (the dict-only fallback) is not a failure
+  and `retry()` does not repair it; see the "feature counts can settle permanently
+  absent" entry in the punchlist. Cancellation is threaded to the scan generator (D8;
   supersede/evict abort it between chunks). The render-phase engine kicks are
   **migrated into `plan()`** — `getLayers` is now pure reads, driven by the reconcile
   effect. The streaming-overlay **flash is fixed** (D10) via a scan-stable partial

@@ -37,9 +37,19 @@ const PFC_COLOR_MODULE = {
   uniformTypes: { highlightCode: 'f32' as const, paletteWidth: 'f32' as const },
 };
 
-/** Dispose a luma texture across the two method names different versions expose. */
+/**
+ * Dispose a luma texture across the two method names different versions expose.
+ *
+ * `destroy()` is the luma v9 API; `delete()` is the deprecated alias kept for
+ * backwards compatibility. Prefer the first and fall back — calling both meant a
+ * double free on every version that has them BOTH, which is every version that
+ * has `delete()` at all.
+ */
 function destroyTexture(texture: PaletteTexture | undefined): void {
-  texture?.destroy?.();
+  if (typeof texture?.destroy === 'function') {
+    texture.destroy();
+    return;
+  }
   texture?.delete?.();
 }
 

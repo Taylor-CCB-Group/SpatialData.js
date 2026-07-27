@@ -67,6 +67,10 @@ interface EntryMemos {
 interface GrowingPartial {
   /** The scan this partial belongs to (`${signature}#${cap}`); a change means a new scan. */
   scanKey: string;
+  /** The element the loader is bound to — see the note on `growingBases`. A scan key
+   * repeats across a dataset swap (same selection, same cap), so it alone does not
+   * catch a replaced element. */
+  element: PointsElement;
   resource: PointsRenderResource;
   /** Swapped per chunk; the loader's `loadAll` reads through it. */
   holder: { current: PointsLoadResult };
@@ -84,7 +88,16 @@ export class PointsRendererAdapter {
   /** The base layer's stable resource per element — see {@link getBaseResource}. */
   private readonly growingBases = new Map<
     string,
-    { resource: PointsRenderResource; holder: { current: PointsLoadResult }; revision: number }
+    {
+      /** The element the resource's loader is bound to. Stable while `spatialData`
+       * is, so this only differs after a real dataset swap — where the resolver
+       * cache is deliberately preserved under the same key, which is exactly how a
+       * stale loader would otherwise survive one. */
+      element: PointsElement;
+      resource: PointsRenderResource;
+      holder: { current: PointsLoadResult };
+      revision: number;
+    }
   >();
 
   private entry(key: string): EntryMemos {
@@ -160,12 +173,12 @@ export class PointsRendererAdapter {
       return null;
     }
     let growing = this.growingPartials.get(key);
-    if (!growing || growing.scanKey !== scanKey) {
+    if (!growing || growing.scanKey !== scanKey || growing.element !== element) {
       // New scan → build ONE resource whose loader reads through a mutable holder.
       const holder = { current: batch };
       const resource = this.buildGrowingResource(element, holder);
       if (!resource) return null;
-      growing = { scanKey, resource, holder, revision: 0 };
+      growing = { scanKey, element, resource, holder, revision: 0 };
       this.growingPartials.set(key, growing);
     } else if (growing.holder.current !== batch) {
       // Same scan, grown buffer → swap the holder + bump the revision. SAME resource.
@@ -209,11 +222,11 @@ export class PointsRendererAdapter {
       return null;
     }
     let growing = this.growingBases.get(key);
-    if (!growing) {
+    if (!growing || growing.element !== element) {
       const holder = { current: batch };
       const resource = this.buildGrowingResource(element, holder);
       if (!resource) return null;
-      growing = { resource, holder, revision: 0 };
+      growing = { element, resource, holder, revision: 0 };
       this.growingBases.set(key, growing);
     } else if (growing.holder.current !== batch) {
       growing.holder.current = batch;
@@ -240,9 +253,33 @@ export class PointsRendererAdapter {
       RESOLVE_OPTIONS
     );
     if (!base) return null;
+    // `base` is resolved from the batch the holder held at BUILD time, and the
+    // whole point of the holder is that the batch changes afterwards. `loadAll`
+    // reads through it, so it stays current; a `loadInBounds` bound to the
+    // original `base` would answer viewport queries from the first preload
+    // forever. Re-resolve lazily when the holder has moved — only on demand, and
+    // only once per swap, so the stable-identity `loader` below is untouched.
+    //
+    // No path reaches this today: these resources report `preloaded-columnar`,
+    // whose strategy renders from `loadAll` alone. It is wrong the moment a tiled
+    // strategy is pointed at a growing resource, which is what D5 does.
+    let resolvedFor = holder.current;
+    let active = base;
+    const currentBase = (): PointsRenderResource => {
+      if (resolvedFor !== holder.current) {
+        const next = resolvePointsRenderResource(
+          element,
+          { preloaded: holder.current, metadataKnown: false },
+          RESOLVE_OPTIONS
+        );
+        resolvedFor = holder.current;
+        if (next) active = next;
+      }
+      return active;
+    };
     const loader: PointsLoader = {
       capabilities: base.loader.capabilities,
-      loadInBounds: (options) => base.loader.loadInBounds(options),
+      loadInBounds: (options) => currentBase().loader.loadInBounds(options),
       loadAll: async () =>
         columnarBatchFromPointData({
           shape: holder.current.shape,

@@ -1,7 +1,7 @@
 import { featureNamesForCodes, resolveFeatureSelectionCodes } from '@spatialdata/core';
 import { featureCodeToRgb } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSpatialCanvasActions } from './context';
 import { describeFeatureRowState, featureRowOpacity } from './featureRowState';
 import { usePointsFeatureState } from './PointsFeatureState';
@@ -239,8 +239,44 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   const colorOverrides = config.featureColorOverrides;
   const effectiveRgb = (name: string, code: number): [number, number, number] =>
     colorOverrides?.[name] ?? featureCodeToRgb(code);
+  // `<input type="color">` fires change continuously while the picker is dragged,
+  // and each commit is a layer-config write → new palette → deck layer update, on a
+  // layer that can be holding millions of points. Coalesce to one write per frame:
+  // the canvas still previews live (which is the whole point of the control), but
+  // the work is bounded by the display rather than by event rate.
+  const pendingColorRef = useRef<{ name: string; rgb: [number, number, number] } | null>(null);
+  const colorFrameRef = useRef<number | null>(null);
+  // Read through a ref so a coalesced write merges into the LATEST overrides rather
+  // than whichever render created the handler.
+  const colorOverridesRef = useRef(colorOverrides);
+  colorOverridesRef.current = colorOverrides;
+  useEffect(
+    () => () => {
+      if (colorFrameRef.current !== null) {
+        cancelAnimationFrame(colorFrameRef.current);
+      }
+    },
+    []
+  );
   const setColorOverride = (name: string, rgb: [number, number, number]) => {
-    updateLayer(layerId, { featureColorOverrides: { ...(colorOverrides ?? {}), [name]: rgb } });
+    pendingColorRef.current = { name, rgb };
+    if (colorFrameRef.current !== null) {
+      return;
+    }
+    colorFrameRef.current = requestAnimationFrame(() => {
+      colorFrameRef.current = null;
+      const pending = pendingColorRef.current;
+      pendingColorRef.current = null;
+      if (!pending) {
+        return;
+      }
+      updateLayer(layerId, {
+        featureColorOverrides: {
+          ...(colorOverridesRef.current ?? {}),
+          [pending.name]: pending.rgb,
+        },
+      });
+    });
   };
   const clearColorOverride = (name: string) => {
     if (!colorOverrides || !(name in colorOverrides)) {
