@@ -1128,6 +1128,181 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return parts.length > 0 ? { parts } : null;
   }
 
+  /**
+   * Whether the URL-streaming scan applies: a URL-backed store whose server
+   * actually serves the range shapes the reader needs, for every part.
+   */
+  private async canStreamMatchingScan(parquetPath: string): Promise<string[] | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = dataset?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const urls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url || !(await this.serverSupportsStreamingRanges(url))) {
+        return null;
+      }
+      urls.push(url);
+    }
+    return urls;
+  }
+
+  /**
+   * Feature scan over `ParquetFile.stream({ columns, rowGroups })`.
+   *
+   * The row-group path this replaces range-reads `rowGroup.fileOffset()` for
+   * `compressedSize()` — the WHOLE row group, every column — because parquet-wasm
+   * cannot fetch individual column chunks (docs/parquet-wasm-limitations.md);
+   * column projection only happens later, at decode time, once the bytes are
+   * already down the wire. On a Xenium `transcripts` element that means fetching
+   * and decompressing all 12 columns (cell_id, transcript_id, fov_name, qv, …) for
+   * every one of 12.1M rows to use three of them: x, y and the feature column.
+   * Profiling a single-gene selection put ~30% of the wall clock in those reads and
+   * ~50% in the WASM decode of them.
+   *
+   * `stream()` issues its own ranged fetches per COLUMN CHUNK, so the projection
+   * reaches the network. This is the same reader the preload already uses
+   * ({@link streamPointsWithFeaturesByUrl}); the scan differs only in filtering
+   * each batch and yielding progress.
+   *
+   * Decoding moves to this thread rather than the worker — `stream()` is
+   * browser-main-thread only today (`supportsParquetStreaming` requires `window`).
+   * That is tolerable because the work arrives in `PRELOAD_STREAM_BATCH_ROWS`
+   * batches, so it is many short tasks rather than one long one; the byte-oriented
+   * worker path remains for stores this cannot serve.
+   */
+  private async *streamMatchingFeatureCodesByChunk(
+    partUrls: string[],
+    options: {
+      axisNames: string[];
+      axisCount: number;
+      featureKey: string;
+      featureCodeColumnName?: string;
+      featureCodes: readonly number[];
+      featureCodeByName?: ReadonlyMap<string, number>;
+      columnNames: string[];
+      memoryCap: number;
+      totalRowCount: number;
+      abort?: AbortSignal;
+    }
+  ) {
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      // `canStreamMatchingScan` already checked for this; belt and braces, since
+      // silently yielding nothing here would look like "the gene has no points".
+      throw new Error('ParquetFile.stream is unavailable for the feature scan.');
+    }
+    const { tableFromIPC } = await import('apache-arrow');
+    const { Float32PointBuffer, Int32PointBuffer, scanTableByFeatureCodes } = await import(
+      '../workers/pointsWorkerScan.js'
+    );
+
+    let matchedRows = 0;
+    let scannedRows = 0;
+    const accumulatedChunks: ColumnarPointsChunk[] = [];
+    // Batches are small (65k rows), so flushing one chunk per batch would push
+    // hundreds of chunks through `pointsScanChunkProgress`, whose re-concat is
+    // quadratic in CHUNK COUNT — fine for the ~9 the row-group path produces, not
+    // for hundreds. Accumulate across batches and flush on this stride instead.
+    const FLUSH_SCANNED_ROWS = 1_000_000;
+    let xs = new Float32PointBuffer();
+    let ys = new Float32PointBuffer();
+    let zs = new Float32PointBuffer();
+    let codes = new Int32PointBuffer();
+    let pendingMatched = 0;
+    let scannedAtLastFlush = 0;
+
+    const hasZ = options.axisNames.includes('z');
+    const flush = (partIndex: number) => {
+      const data: ArrayLike<number>[] = hasZ
+        ? [xs.toArray(), ys.toArray(), zs.toArray()]
+        : [xs.toArray(), ys.toArray()];
+      const chunk = toColumnarPointsChunk(
+        { shape: [options.axisCount, pendingMatched], data, featureCodes: codes.toArray() },
+        options.axisCount
+      );
+      accumulatedChunks.push(chunk);
+      xs = new Float32PointBuffer();
+      ys = new Float32PointBuffer();
+      zs = new Float32PointBuffer();
+      codes = new Int32PointBuffer();
+      pendingMatched = 0;
+      scannedAtLastFlush = scannedRows;
+      return pointsScanChunkProgress(accumulatedChunks, chunk, {
+        scannedRows,
+        matchedRows,
+        totalRowCount: options.totalRowCount,
+        memoryCap: options.memoryCap,
+        partIndex,
+        partCount: partUrls.length,
+      });
+    };
+
+    for (const [partIndex, url] of partUrls.entries()) {
+      if (matchedRows >= options.memoryCap) {
+        break;
+      }
+      const file = await ParquetFile.fromUrl(url);
+      const stream = await file.stream({
+        columns: options.columnNames,
+        batchSize: PRELOAD_STREAM_BATCH_ROWS,
+      });
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          checkAbort(options.abort); // superseded → stop before the next batch
+          if (matchedRows >= options.memoryCap) {
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          const table = tableFromIPC(value.intoIPCStream());
+          scannedRows += table.numRows;
+          const before = matchedRows;
+          matchedRows = scanTableByFeatureCodes({
+            table,
+            axisNames: options.axisNames,
+            featureKey: options.featureKey,
+            ...(options.featureCodeColumnName
+              ? { featureCodeColumnName: options.featureCodeColumnName }
+              : {}),
+            featureCodes: options.featureCodes,
+            memoryCap: options.memoryCap,
+            matchedRows,
+            xs,
+            ys,
+            zs,
+            codes,
+            ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
+          });
+          pendingMatched += matchedRows - before;
+          if (pendingMatched > 0 && scannedRows - scannedAtLastFlush >= FLUSH_SCANNED_ROWS) {
+            yield flush(partIndex);
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      if (pendingMatched > 0) {
+        yield flush(partIndex); // part boundary: don't carry matches across files
+      }
+    }
+
+    return {
+      totalRowCount: options.totalRowCount,
+      axisNames: options.axisNames,
+      scannedRows,
+      matchedRows,
+    };
+  }
+
   async *loadPointsMatchingFeatureCodesByChunk(
     elementPath: string,
     options: {
@@ -1193,6 +1368,26 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       !featureCodeColumnName && options.featureCodeByName
         ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
         : undefined;
+
+    // Preferred path: let the reader fetch only the projected columns (see
+    // `streamMatchingFeatureCodesByChunk`). Falls through to the byte-oriented
+    // worker path below for stores it cannot serve — non-URL stores, and servers
+    // that do not answer the range shapes the reader needs.
+    const streamablePartUrls = await this.canStreamMatchingScan(parquetPath);
+    if (streamablePartUrls) {
+      return yield* this.streamMatchingFeatureCodesByChunk(streamablePartUrls, {
+        axisNames,
+        axisCount,
+        featureKey,
+        ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+        featureCodes: options.featureCodes,
+        ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
+        columnNames,
+        memoryCap: options.memoryCap,
+        totalRowCount,
+        ...(options.abort ? { abort: options.abort } : {}),
+      });
+    }
 
     let matchedRows = 0;
     let scannedRows = 0;
