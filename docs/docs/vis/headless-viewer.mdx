@@ -253,6 +253,100 @@ Row alignment comes from `@spatialdata/core` (`createFeatureTableAlignment`);
 colour encoding from `@spatialdata/layers` (`buildShapeFillColorByFeatureId`).
 `SpatialCanvasViewer` wires these when `fillColorByColumn` is set.
 
+## Points: feature selection and colour
+
+Points styling is driven the same way as shapes — by updating the stack entry
+props, not by reaching into vis internals. The serializable fields on a points
+entry:
+
+```ts
+entry.props = {
+  ...entry.props,
+  // Which features are drawn. Omit for "all features".
+  featureNames: ['EPCAM', 'MALL'],
+  // Per-feature colour, keyed by feature name. Absent features keep the default
+  // categorical colour.
+  featureColorOverrides: { EPCAM: [220, 30, 30] },
+  // Categorical colour-by-feature. ON by default; pass false for a flat colour.
+  colorByFeature: true,
+  // Radius in the ELEMENT's own coordinate units (the layer folds in the
+  // element's transform scale, so the same value means the same apparent size
+  // across elements whose transforms differ).
+  pointSize: 0.1,
+  // Max rows retained in memory for the resident window. Raising it draws more
+  // points at the cost of memory and decode time.
+  pointsMemoryCap: 4_000_000,
+};
+```
+
+### Selections persist as names, not codes
+
+`featureNames` is the durable form and the one to serialize. There is also a
+`featureCodes: number[]`, which is retained for runtime use and for configs
+written before names existed — **do not persist it**.
+
+The reason is that a points element often has no feature-code column in the file.
+A Xenium `transcripts` carries `feature_name` and no codes; the same is true of a
+merfish `cell_type`. For those, codes are *assigned by the application* as a
+first-seen index while building the feature catalog, so the same gene is not
+guaranteed the same number between the instant resident-subset catalog and the
+full one, between the two catalog-building paths (which are chosen by row count),
+or between servers that differ in HTTP range support. A persisted code can
+therefore come back meaning a different feature, with nothing to signal it.
+
+Names are resolved to whatever codes the current catalog uses, at render time.
+Names the element does not have are dropped rather than coerced, so a config
+saved against one dataset can be applied to another without inventing features.
+`featureNames` takes precedence when both fields are present.
+
+If you need to convert in either direction yourself, `@spatialdata/core` exports
+`resolveFeatureSelectionCodes(selection, catalog)` and `featureNamesForCodes`.
+
+### Reading feature state headlessly
+
+To build your own feature UI, read the engine directly. `pointsEngine` and
+`resolvePointsTarget` come off the renderer-hook result; wrap a subtree in the
+provider and consume the hook:
+
+```tsx
+import { PointsFeatureStateProvider, usePointsFeatureState } from '@spatialdata/vis';
+
+const { pointsEngine, resolvePointsTarget } = useSpatialCanvasRenderer(/* … */);
+
+<PointsFeatureStateProvider engine={pointsEngine} target={resolvePointsTarget(layerId)}>
+  <MyFeatureList config={pointsConfig} />
+</PointsFeatureStateProvider>;
+
+function MyFeatureList({ config }) {
+  const {
+    catalog,             // { featureKey, entries: [{ code, name, count? }] } | null
+    catalogLoading,      // no catalog yet, one is on its way
+    catalogRefining,     // full scan running behind an instant preview
+    residentCodes,       // features present in the resident window
+    loadedMatchingCodes, // features currently on screen via the last scan
+    supportsOnDemandLoad,// a whole-dataset scan can reach beyond the window
+    matchingLoadState,   // progress of the scan for this selection
+    residentFeatureCounts,
+    requestCatalog,      // idempotent; upgrades the preview to the full list
+    setHighlightedFeature,
+  } = usePointsFeatureState(config);
+}
+```
+
+Pass the layer config (the hook resolves `featureNames` internally against the
+catalog it is already reading). An array of already-resolved codes is also
+accepted.
+
+Two things worth designing around:
+
+- The catalog arrives in two stages. An instant preview covering just the
+  resident window is published first, then the authoritative full-dataset list
+  supersedes it; `catalogRefining` distinguishes them. Counts may lag the names.
+- Selecting a feature whose points are outside the resident window triggers a
+  whole-dataset scan when `supportsOnDemandLoad` is true. `matchingLoadState`
+  reports its progress so the UI can show that points are still arriving rather
+  than appearing to be complete.
+
 ## Auto-fit and view state
 
 - Pass `viewState={null}` on first render to let the viewer compute an initial
@@ -314,6 +408,7 @@ Before treating the API as stable for MDV:
 - [x] Controlled `coordinateSystem`, `renderStack`, `viewState`
 - [x] Host overlay descriptors with `hostLayerResolver`; `deckLayers` / `deckProps` passthrough remains for compatibility
 - [x] `renderTooltip={false}` for external tooltip ownership
+- [x] Points feature selection persisted by NAME (`featureNames`), with `featureColorOverrides` keyed by name
 - [x] `demo/headless` route with local `blobs.zarr` fixture
 - [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)
 - [ ] Tooltip/pick row resolution fully on shared `FeatureTableAlignment` (in progress)

@@ -63,7 +63,7 @@ geometry/images and maps **MDV’s render stack** to Viv/deck output.
 | Images | Yes (Viv) |
 | Shapes | Yes — MDV drives style/filter via `layers` state |
 | Labels | Render when configured; segmentation vs shapes experiment is not a release gate |
-| Points | v1.1 |
+| Points | v1.1 — feature selection and colour are config-driven and serializable; tiling/index strategy still in progress |
 
 ### Custom deck layers (additive, not a replacement for state)
 
@@ -94,6 +94,37 @@ Current local state:
   contract as stable.
 
 Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; not required if config-driven styling is sufficient.
+
+### Points v1.1: feature selection and colour via `layers` state
+
+Points support the same config-driven model as shapes — MDV updates the layer
+config, vis owns loading and rendering:
+
+- [x] `PointsLayerConfig` accepts a serializable selection (`featureNames`), per-feature colour (`featureColorOverrides`), `colorByFeature`, `pointSize`, `pointsMemoryCap`
+- [x] Selections persist by feature NAME, not code, so a saved config survives catalog renumbering ([Headless viewer guide](./headless-viewer))
+- [x] Colour overrides keyed by feature name for the same reason
+- [x] Headless feature UI supported without vis internals: `PointsFeatureStateProvider` + `usePointsFeatureState`
+- [ ] Tiling / index strategy for very large elements (follow-up: benchmarking index strategies, Python writer utilities)
+
+The serialization detail that matters for saved MDV charts: a points element
+frequently has **no feature-code column in the file** — a Xenium `transcripts`
+carries `feature_name` only — so codes are assigned by the application while
+building the feature catalog and are not stable across catalog upgrades, catalog
+paths, or servers. `featureNames` is therefore the durable field; `featureCodes`
+exists for runtime and backwards compatibility and should not be persisted.
+
+Current local state:
+
+- `@spatialdata/core` exposes `resolveFeatureSelectionCodes()` and
+  `featureNamesForCodes()` for converting between the durable and runtime forms
+  against a given catalog.
+- The feature catalog is two-stage: an instant resident-subset preview, then the
+  authoritative full-dataset list. A selection made against either resolves to
+  the same features, which is what the name form buys.
+- Remaining release risk: a selection whose points fall outside the resident
+  window needs a whole-dataset scan, whose cost scales with element size — this
+  is what the tiling/index follow-up addresses. `matchingLoadState` exposes the
+  progress meanwhile.
 
 ### Bespoke layer extension path
 
