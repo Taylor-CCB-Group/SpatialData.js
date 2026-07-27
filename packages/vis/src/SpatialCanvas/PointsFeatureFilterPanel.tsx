@@ -244,12 +244,12 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   // layer that can be holding millions of points. Coalesce to one write per frame:
   // the canvas still previews live (which is the whole point of the control), but
   // the work is bounded by the display rather than by event rate.
-  const pendingColorRef = useRef<{ name: string; rgb: [number, number, number] } | null>(null);
+  // The pending value is the FULL next overrides map, not one entry: successive
+  // edits inside a frame accumulate into it, so two features recoloured before the
+  // frame fires both survive, and the merge base is taken at schedule time — no ref
+  // read during render, and no dependence on which render created the handler.
+  const pendingColorRef = useRef<Record<string, [number, number, number]> | null>(null);
   const colorFrameRef = useRef<number | null>(null);
-  // Read through a ref so a coalesced write merges into the LATEST overrides rather
-  // than whichever render created the handler.
-  const colorOverridesRef = useRef(colorOverrides);
-  colorOverridesRef.current = colorOverrides;
   useEffect(
     () => () => {
       if (colorFrameRef.current !== null) {
@@ -259,7 +259,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     []
   );
   const setColorOverride = (name: string, rgb: [number, number, number]) => {
-    pendingColorRef.current = { name, rgb };
+    pendingColorRef.current = { ...(pendingColorRef.current ?? colorOverrides ?? {}), [name]: rgb };
     if (colorFrameRef.current !== null) {
       return;
     }
@@ -267,18 +267,17 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
       colorFrameRef.current = null;
       const pending = pendingColorRef.current;
       pendingColorRef.current = null;
-      if (!pending) {
-        return;
+      if (pending) {
+        updateLayer(layerId, { featureColorOverrides: pending });
       }
-      updateLayer(layerId, {
-        featureColorOverrides: {
-          ...(colorOverridesRef.current ?? {}),
-          [pending.name]: pending.rgb,
-        },
-      });
     });
   };
   const clearColorOverride = (name: string) => {
+    // A coalesced write may still be queued for this feature. It carries the whole
+    // map, so letting it land after the clear would put the override straight back.
+    if (pendingColorRef.current && name in pendingColorRef.current) {
+      delete pendingColorRef.current[name];
+    }
     if (!colorOverrides || !(name in colorOverrides)) {
       return;
     }
