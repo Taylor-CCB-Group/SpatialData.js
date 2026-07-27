@@ -42,6 +42,42 @@ state model, not by patching mutations here.
 
 ---
 
+## Known open — feature counts can settle permanently absent
+
+Observed intermittently on a 12.1M-row Xenium `transcripts`: the feature panel
+sticks on "sorted by count so far" and never reaches authoritative counts.
+**Remounting the panel does not clear it**, which distinguishes it from the
+preview-vs-full supersession bug fixed in `46d5b89`.
+
+Mechanism (read from code; not yet reproduced deterministically):
+
+1. `listPointsFeatures` tries `listPointsFeaturesByStreamingScan` first, which
+   tallies counts as it scans, and falls back on any failure.
+2. The fallback does not tally. `listPointsFeaturesWithCounts` then calls
+   `loadFeatureCounts`, which needs an integer code column — so for a
+   **dictionary-only** element (Xenium `transcripts`, merfish `cell_type`) it
+   returns an empty map and the catalog settles with no counts.
+3. `PointsResolver.ensureFeatureCatalog` short-circuits on
+   `slot.settledKey === 'full'`, so that countless catalog is never re-requested.
+   The failure is therefore permanent for the session, and remount-immune.
+
+The non-determinism plausibly comes from `serverSupportsStreamingRanges`, a live
+two-request probe memoised per ORIGIN in a static map: if it loses a race or is
+throttled once, the whole origin is marked unservable for the session and the
+countless path is taken. Suspected to have become more likely when `be64b65` put
+the feature scan on that same probe, so it now runs earlier and more often —
+**unverified**.
+
+Two independent fixes, either of which removes the permanence:
+
+- Do not settle `'full'` for a catalog missing counts it should have — settle it
+  under an upgradable phase so a retry is possible. Makes it self-healing.
+- Make the fallback path tally counts for dict-only elements, so falling back is
+  a performance difference rather than a correctness one.
+
+Deliberately not fixed blind: forcing `serverSupportsStreamingRanges` to false
+should give a deterministic reproduction to fix against first.
+
 ## Defer-to-redesign
 
 Each notes *why* it's coupled to the state-model / decode rework.
