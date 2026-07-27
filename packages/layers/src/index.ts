@@ -41,6 +41,10 @@ export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';
 export { LabelsLayer, MAX_LABEL_CHANNELS } from './LabelsLayer';
 export type { PointsLayerProps } from './PointsLayer';
 export { PointsLayer } from './PointsLayer';
+// Exported so a CALLER can check the same condition `PointsLayer` checks before
+// handing it a filter it would decline to apply. See the strategy's
+// `resolveScatterBatch`: awaiting row codes means the batch is drawn WHOLE.
+export { featureFilterAwaitingRowCodes } from './pointsFeatureCodes.js';
 export { featureCodeToCssColor, featureCodeToRgb } from './pointsFeatureColor.js';
 export { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
 export {

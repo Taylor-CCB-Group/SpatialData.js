@@ -35,6 +35,7 @@ import {
 import {
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  featureFilterAwaitingRowCodes,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
@@ -1006,10 +1007,31 @@ export function useLayerData(
           // (`getBaseResource`) whose backing batch swaps under it — so the base never
           // tears down as the view evolves resident↔matched (the base flicker). An empty
           // matched batch (a scan that matched nothing) falls back to resident.
-          const matchedBatch =
+          const matchedCandidate =
             coveredSelection && coveredSelection.length > 0
               ? pointsEngine.getMatchedBatch(elem.key)
               : undefined;
+          // The filter that would have to be applied to draw the matched batch: a
+          // strict subset of what the scan covers means genes in the batch must be
+          // held back.
+          const matchedRowCodes = matchedCandidate
+            ? pointsEngine.getMatchingRowFeatureCodes(elem.key)
+            : undefined;
+          const matchedCoveredSize =
+            pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
+          const matchedFilter =
+            coveredSelection !== undefined && coveredSelection.length < matchedCoveredSize
+              ? coveredSelection
+              : undefined;
+          // ...but `PointsLayer` cannot apply a feature filter without row-aligned
+          // codes, and its strategy resolves that case by drawing the batch WHOLE.
+          // Handing it a filter it will decline is therefore not a no-op — it
+          // surfaces every gene the scan covered, including the one just deselected.
+          // Gate on the layer's OWN predicate (imported, not re-derived, so the two
+          // cannot drift) and fall back to the resident base, which filters in memory.
+          const matchedBatch = featureFilterAwaitingRowCodes(matchedFilter, matchedRowCodes)
+            ? undefined
+            : matchedCandidate;
           const useMatched = matchedBatch !== undefined && (matchedBatch.shape[1] ?? 0) > 0;
           // Falling back to the in-flight preload's growing buffer (D3) is what makes a
           // COLD load paint progressively: until the first full window settles there is
@@ -1027,16 +1049,14 @@ export function useLayerData(
           let basePreloadedCodes: ArrayLike<number> | undefined;
           let baseFilter: readonly number[] | undefined;
           if (useMatched) {
-            basePreloadedCodes = pointsEngine.getMatchingRowFeatureCodes(elem.key);
-            const coveredSize = pointsEngine.getLoadedMatchingFeatureCodes(elem.key)?.size ?? 0;
+            basePreloadedCodes = matchedRowCodes;
             // Filter the whole-dataset batch to the still-wanted covered subset unless
             // the selection is exactly the scanned set (then render it whole). The batch
             // only holds covered genes, so this can only ever DROP a deselected gene —
-            // never surface an unselected one.
-            baseFilter =
-              coveredSelection !== undefined && coveredSelection.length < coveredSize
-                ? coveredSelection
-                : undefined;
+            // never surface an unselected one. That holds because the gate above
+            // guarantees the filter is applicable; without it the drop silently
+            // becomes a no-op and the deselected gene stays on screen.
+            baseFilter = matchedFilter;
           } else {
             // Row codes drive both the in-memory filter (resident → selection) and
             // colour-by-feature. The row-codes LOAD is planned from the reconcile
