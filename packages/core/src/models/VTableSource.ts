@@ -823,7 +823,15 @@ export default class SpatialDataTableSource extends AnnDataSource {
         return null;
       }
       return {
-        schemaBytes: part.schemaBytes,
+        // A COPY, deliberately. These chunks are posted to the points worker with
+        // their buffers TRANSFERRED, which detaches them here — so handing out the
+        // cached metadata's own footer buffer would detach the cache on first use,
+        // and every later row group would post an already-detached buffer
+        // (`DataCloneError`, killing the progressive preload and dropping the
+        // element onto whole-file reads). The chunk owns its bytes; the cache keeps
+        // its own. Footers are small next to the row-group payload, and structured
+        // -cloning instead of transferring would copy just the same.
+        schemaBytes: new Uint8Array(part.schemaBytes),
         rowGroupBytes,
         rowGroupIndex: relativeRowGroupIndex,
         globalRowGroupIndex: rowGroupIndex,
