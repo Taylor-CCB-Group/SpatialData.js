@@ -1,3 +1,4 @@
+import { featureNamesForCodes, resolveFeatureSelectionCodes } from '@spatialdata/core';
 import { featureCodeToRgb } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -164,7 +165,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     residentFeatureCounts,
     requestCatalog,
     setHighlightedFeature,
-  } = usePointsFeatureState(config.featureCodes);
+  } = usePointsFeatureState(config);
 
   const [searchQuery, setSearchQuery] = useState('');
   // Request the full-dataset catalog whenever this panel is shown for a layer.
@@ -188,11 +189,15 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     entry.count ?? partialCounts?.get(entry.code);
   const countIsPartial = (entry: { code: number; count?: number }): boolean =>
     entry.count === undefined && partialCounts?.get(entry.code) !== undefined;
-  const allSelected = config.featureCodes === undefined;
-  const noneSelected = config.featureCodes !== undefined && config.featureCodes.length === 0;
+  // The selection persists as NAMES (see `PointsLayerConfig.featureNames`), but the
+  // rest of this panel — checkboxes, greying, the engine reads — works in codes.
+  // Resolve once here against the catalog we are already rendering.
+  const selection = resolveFeatureSelectionCodes(config, catalog);
+  const allSelected = selection === undefined;
+  const noneSelected = selection !== undefined && selection.length === 0;
   const selectedCodes = allSelected
     ? new Set(entries.map((entry) => entry.code))
-    : new Set(config.featureCodes ?? []);
+    : new Set(selection ?? []);
 
   const sortedEntries = useMemo(() => {
     const list = [...entries];
@@ -220,8 +225,14 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     return sortedEntries.filter((entry) => entry.name.toLowerCase().includes(query));
   }, [sortedEntries, searchQuery]);
 
-  const setFeatureCodes = (nextCodes: number[] | undefined) => {
-    updateLayer(layerId, { featureCodes: nextCodes });
+  // Write NAMES, and clear any legacy `featureCodes` so the two cannot disagree —
+  // `featureNames` wins when both are set, and a stale code list left behind in a
+  // saved config is exactly the confusion this change exists to remove.
+  const setSelectedCodes = (nextCodes: number[] | undefined) => {
+    updateLayer(layerId, {
+      featureNames: nextCodes ? featureNamesForCodes(nextCodes, catalog) : undefined,
+      featureCodes: undefined,
+    });
   };
 
   // Per-feature colour overrides, keyed by feature NAME (survives code remapping).
@@ -243,23 +254,21 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   };
 
   const toggleFeature = (code: number, checked: boolean) => {
-    const current = new Set(
-      allSelected ? entries.map((entry) => entry.code) : (config.featureCodes ?? [])
-    );
+    const current = new Set(allSelected ? entries.map((entry) => entry.code) : (selection ?? []));
     if (checked) {
       current.add(code);
     } else {
       current.delete(code);
     }
     if (current.size === 0) {
-      setFeatureCodes([]);
+      setSelectedCodes([]);
       return;
     }
     if (current.size === entries.length) {
-      setFeatureCodes(undefined);
+      setSelectedCodes(undefined);
       return;
     }
-    setFeatureCodes([...current].sort((left, right) => left - right));
+    setSelectedCodes([...current].sort((left, right) => left - right));
   };
 
   // Only block on loading when there is NOTHING to show. The catalog scan publishes
@@ -362,7 +371,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           checked={allSelected}
           onChange={(event) => {
             if (event.target.checked) {
-              setFeatureCodes(undefined);
+              setSelectedCodes(undefined);
             }
           }}
         />
@@ -374,7 +383,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           checked={noneSelected}
           onChange={(event) => {
             if (event.target.checked) {
-              setFeatureCodes([]);
+              setSelectedCodes([]);
             }
           }}
         />

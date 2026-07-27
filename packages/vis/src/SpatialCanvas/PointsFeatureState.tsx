@@ -22,6 +22,7 @@
  * consumers read `pointsEngine` + `resolvePointsTarget` off the renderer-hook
  * result, wrap a subtree in this provider, and consume `usePointsFeatureState`.
  */
+import { resolveFeatureSelectionCodes } from '@spatialdata/core';
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
 import {
   createContext,
@@ -94,6 +95,12 @@ function usePointsFeatureContext(): PointsFeatureStateContextValue {
   return value;
 }
 
+/** A layer's feature-filter selection: durable names, or already-resolved codes. */
+export interface PointsFeatureSelection {
+  featureNames?: readonly string[] | undefined;
+  featureCodes?: readonly number[] | undefined;
+}
+
 export interface PointsFeatureState {
   /** The feature catalog: `undefined` until requested/settled, `null` when the
    * element has no `feature_key`, else the catalog. */
@@ -148,7 +155,9 @@ const EMPTY_POINTS_FEATURE_STATE: Omit<
  * (the active selection — pass `config.featureCodes`), plus a stable
  * `requestCatalog`.
  */
-export function usePointsFeatureState(featureCodes?: readonly number[]): PointsFeatureState {
+export function usePointsFeatureState(
+  selection?: readonly number[] | PointsFeatureSelection
+): PointsFeatureState {
   'use no memo';
   const { engine, target, subscribe, getVersion } = usePointsFeatureContext();
   // Reactivity: re-render this component on every engine mutation. The returned
@@ -169,6 +178,15 @@ export function usePointsFeatureState(featureCodes?: readonly number[]): PointsF
   }
   const key = target.key;
   const scannable = engine.supportsFeatureScan(key);
+  // A selection persists as NAMES, so resolve it here against the catalog this
+  // hook is already reading — callers pass their config and keep working in codes.
+  // An array is still accepted as already-resolved codes.
+  const featureCodes = Array.isArray(selection)
+    ? selection
+    : resolveFeatureSelectionCodes(
+        (selection ?? {}) as PointsFeatureSelection,
+        engine.getFeatureCatalog(key)
+      );
   const hasSelection = !!featureCodes && featureCodes.length > 0;
   return {
     catalog: engine.getFeatureCatalog(key),

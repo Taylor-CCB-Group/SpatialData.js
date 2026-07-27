@@ -21,6 +21,7 @@ import {
   getTooltipSignature,
   type LabelsElement,
   type PointsElement,
+  resolveFeatureSelectionCodes,
   resolvePointsMemoryCap,
   resolveTooltipItems,
   type ShapesElement,
@@ -606,7 +607,15 @@ export function useLayerData(
           element: elem.element,
           config: {
             pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap),
-            ...(config.featureCodes ? { featureCodes: [...config.featureCodes] } : {}),
+            // Names are the durable selection; resolve them against the settled
+            // catalog so everything downstream keeps working in codes.
+            ...(() => {
+              const codes = resolveFeatureSelectionCodes(
+                config,
+                pointsEngine.getFeatureCatalog(elem.key)
+              );
+              return codes ? { featureCodes: codes } : {};
+            })(),
             ...(config.colorByFeature ? { colorByFeature: true } : {}),
           },
           transform: elem.transform,
@@ -614,7 +623,11 @@ export function useLayerData(
       }
     }
     void store.reconcile(contexts);
-  }, [layers, layerOrder, store, elementMapValue, loadedDataRevision]);
+    // `pointsEngine` is the stable useState value, so this adds no churn; it is in
+    // the list because the name→code resolution above reads its catalog. The catalog
+    // ARRIVING is covered by `loadedDataRevision` (bumped on every resolver settle),
+    // which is what re-resolves a name selection that could not be resolved yet.
+  }, [layers, layerOrder, store, elementMapValue, loadedDataRevision, pointsEngine]);
 
   // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
 
@@ -933,7 +946,10 @@ export function useLayerData(
           }
         } else if (config.type === 'points') {
           const element = elem.element as PointsElement;
-          const featureCodes = config.featureCodes;
+          const featureCodes = resolveFeatureSelectionCodes(
+            config,
+            pointsEngine.getFeatureCatalog(elem.key)
+          );
           const selectionActive = featureCodes !== undefined && featureCodes.length > 0;
           // Sizes the colour LUT so every point's feature code indexes a real texel.
           const featureCodeSpaceSize = pointsEngine.getFeatureCodeSpaceSize(elem.key);

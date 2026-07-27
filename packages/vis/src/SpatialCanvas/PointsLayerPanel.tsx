@@ -73,7 +73,7 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   // read is engine-backed and updates on notify; the compiler would otherwise
   // memoize this line's JSX and never repaint it as the scan progresses.
   'use no memo';
-  const { truncation: t } = usePointsFeatureState(config.featureCodes);
+  const { truncation: t } = usePointsFeatureState(config);
   if (!t) return null;
   // Report the batch held in memory (always true), NOT a per-selection matched
   // count: t.loaded is the covered-batch size, which overstates the selection
@@ -123,8 +123,8 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
           })
         }
       />
-    </label>    
-  )
+    </label>
+  );
 }
 
 export default function PointsLayerPanel({ config, engine, resolveTarget }: PointsLayerPanelProps) {

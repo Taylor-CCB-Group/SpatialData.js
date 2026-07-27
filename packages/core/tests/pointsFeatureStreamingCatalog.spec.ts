@@ -1,10 +1,10 @@
 import { Dictionary, Int32, tableFromArrays, Utf8, vectorFromArray } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
+import { supportsParquetStreaming } from '../src/parquetWasmLoader.js';
 import {
   accumulateFeatureCatalogFromTable,
   featureCatalogFromCodeMap,
 } from '../src/pointsFeatures.js';
-import { supportsParquetStreaming } from '../src/parquetWasmLoader.js';
 
 const FEATURE_KEY = 'feature_name';
 

@@ -15,8 +15,10 @@ export {
 export { tableToIndexColumnName } from './models/VTableSource.js';
 export {
   featureCodeMapFromCatalog,
+  featureNamesForCodes,
   mergeFeatureCountsIntoCatalog,
   remapRowFeatureCodes,
+  resolveFeatureSelectionCodes,
 } from './pointsFeatures.js';
 export {
   applyRenderCapToColumnar,

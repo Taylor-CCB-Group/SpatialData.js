@@ -386,3 +386,72 @@ export function mergeFeatureCountsIntoCatalog(
     })),
   };
 }
+
+/**
+ * The effective feature-code selection for a points layer.
+ *
+ * Selections persist as NAMES, not codes. For an element with a file-backed
+ * `*_codes` column the codes are authoritative and either form would do, but for
+ * a dictionary-only element (the common case — a Xenium `transcripts` carries
+ * `feature_name` and no code column) codes are APP-ASSIGNED: a first-seen index
+ * from whichever catalog scan ran. They are not guaranteed stable across the
+ * preview→full catalog upgrade, across the row-count threshold that picks between
+ * catalog paths, or across servers that differ in range support. A stored
+ * `featureCodes` can therefore come back meaning a different gene, silently.
+ * Names are also simply readable in a saved config.
+ *
+ * `featureNames` wins when present; `featureCodes` remains for runtime use and for
+ * configs written before this existed.
+ *
+ * Returns `undefined` for "no filter — draw everything". Names that are not in the
+ * catalog are dropped: a config may name genes this element does not have.
+ *
+ * When names are present but no catalog has loaded yet, the result is an empty
+ * selection rather than `undefined` — deliberately. Resolving to "everything"
+ * would flash the whole dataset before the catalog settles, which is both wrong
+ * and expensive; an empty selection draws nothing and self-corrects on the next
+ * notify.
+ */
+export function resolveFeatureSelectionCodes(
+  selection: {
+    featureNames?: readonly string[] | undefined;
+    featureCodes?: readonly number[] | undefined;
+  },
+  catalog: PointsFeatureCatalog | null | undefined
+): number[] | undefined {
+  const { featureNames, featureCodes } = selection;
+  if (featureNames === undefined) {
+    return featureCodes ? [...featureCodes] : undefined;
+  }
+  if (!catalog) {
+    return [];
+  }
+  const codeByName = featureCodeMapFromCatalog(catalog);
+  const codes: number[] = [];
+  for (const name of featureNames) {
+    const code = codeByName?.get(name);
+    if (code !== undefined) {
+      codes.push(code);
+    }
+  }
+  return codes.sort((left, right) => left - right);
+}
+
+/** The names for a set of codes, for writing a selection back as durable names. */
+export function featureNamesForCodes(
+  codes: Iterable<number>,
+  catalog: PointsFeatureCatalog | null | undefined
+): string[] {
+  if (!catalog) {
+    return [];
+  }
+  const nameByCode = new Map(catalog.entries.map((entry) => [entry.code, entry.name]));
+  const names: string[] = [];
+  for (const code of codes) {
+    const name = nameByCode.get(code);
+    if (name !== undefined) {
+      names.push(name);
+    }
+  }
+  return names.sort();
+}
