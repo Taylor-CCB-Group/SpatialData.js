@@ -490,6 +490,31 @@ export default class SpatialDataTableSource extends AnnDataSource {
     };
   }
 
+  /**
+   * Probe one path as a single parquet file, resolving to `null` — never
+   * throwing — when it is not one.
+   *
+   * `parquetPath` for a points/shapes element is a DIRECTORY of `part.N.parquet`
+   * files as often as it is a single file, and servers disagree on how they
+   * answer a range read of a directory: a static server 404s (the store maps that
+   * to `undefined` → `null`), but MDV's Flask returns **500** `[Errno 21] Is a
+   * directory`, S3 can 403, and some return a `200` body that fails the parquet
+   * magic check. The zarrita store throws on every non-2xx that is not 404, so
+   * without this guard a single misbehaving directory response escaped all the way
+   * out of {@link loadParquetDatasetMetadata} — the direct probe threw before the
+   * `part.N` enumeration ever ran, and the element wedged. Every one of those
+   * responses means the same thing here: "not a single parquet file at this path",
+   * so enumerate parts instead. This mirrors the already-tolerant
+   * {@link loadParquetFileBytesAtPath} and {@link loadParquetSchemaBytes}.
+   */
+  private async probeParquetPartMetadata(path: string): Promise<ParquetPartMetadata | null> {
+    try {
+      return await this.loadParquetPartMetadata(path);
+    } catch {
+      return null;
+    }
+  }
+
   async loadParquetDatasetMetadata(parquetPath: string): Promise<ParquetDatasetMetadata | null> {
     const { readMetadata } = await SpatialDataTableSource.parquetModulePromise;
     const { store } = this.storeRoot;
@@ -497,13 +522,15 @@ export default class SpatialDataTableSource extends AnnDataSource {
       return null;
     }
 
-    const directPart = await this.loadParquetPartMetadata(parquetPath);
+    const directPart = await this.probeParquetPartMetadata(parquetPath);
     const parts: ParquetPartMetadata[] = [];
     if (directPart) {
       parts.push(directPart);
     } else {
       for (let partIndex = 0; ; partIndex++) {
-        const part = await this.loadParquetPartMetadata(`${parquetPath}/part.${partIndex}.parquet`);
+        const part = await this.probeParquetPartMetadata(
+          `${parquetPath}/part.${partIndex}.parquet`
+        );
         if (!part) {
           break;
         }
