@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v5
@@ -157,3 +159,57 @@ jobs:
 
           # Clean up server
           kill "$SERVER_PID" || true
+
+  production-browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.14.1'
+          cache: 'pnpm'
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache generated production browser fixtures
+        id: cache-production-browser-fixtures
+        uses: actions/cache@v5
+        with:
+          path: test-fixtures-production-browser
+          key: ${{ runner.os }}-production-browser-fixtures-0.7.2-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.7.2/**') }}
+
+      - name: Generate test fixtures (Python spatialdata 0.7.2)
+        if: steps.cache-production-browser-fixtures.outputs.cache-hit != 'true'
+        run: pnpm test:fixtures:generate:0.7.2 -- --output-dir test-fixtures-production-browser
+
+      - name: Expose production browser fixtures
+        run: ln -s test-fixtures-production-browser test-fixtures
+
+      - name: Install Chromium and Linux dependencies
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build and browser-test the production browser consumer
+        run: pnpm test:browser:production
+
+      - name: Upload production browser artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: production-browser-artifacts
+          path: test-results
+          if-no-files-found: ignore
