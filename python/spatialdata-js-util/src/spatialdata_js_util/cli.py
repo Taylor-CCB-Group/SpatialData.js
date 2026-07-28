@@ -524,8 +524,14 @@ def _tui(args: argparse.Namespace) -> None:
 def _add_tui_command(subparsers: argparse._SubParsersAction) -> None:
     tui = subparsers.add_parser(
         "tui",
-        help="interactive terminal workflow for points commands",
-        description="Launch a Textual workflow UI for the Points writer commands.",
+        help="interactive terminal UI for every command",
+        description=(
+            "Launch the interactive workflow UI. It covers image recompression, "
+            "Points indexing, table CSC conversion, and codec backend info, with "
+            "guided forms, confirmation before any in-place write, and post-write "
+            "verification. Requires the 'tui' extra: "
+            "pip install 'spatialdata-js-util[tui]'"
+        ),
     )
     tui.add_argument(
         "zarr",

@@ -17,6 +17,9 @@ Installing the package also **registers the image codecs with zarr**, so stores
 written here open in ordinary `spatialdata.read_zarr` — see
 [Reading stores back in Python](#reading-stores-back-in-python).
 
+Every command is available three ways: an [interactive TUI](#interactive-tui)
+(start here), the `spatialdata-js-util` CLI, and the [Python API](#python-api).
+
 > **Status: experimental.** The HTJ2K codec identifier is not a standard
 > OME-Zarr codec. Stores using it are readable by the `SpatialData.js` runtime
 > and by Python with this package installed. It is published in the hope that,
@@ -36,6 +39,61 @@ pip install 'spatialdata-js-util[write]'
 ```
 
 Requires Python 3.12+ and `spatialdata >= 0.8.0`.
+
+## Interactive TUI
+
+If you would rather not memorise flags, everything below is also available as a
+terminal UI. It is the easiest way to get started.
+
+```bash
+pip install 'spatialdata-js-util[tui]'
+spatialdata-js-util tui
+
+# Or pre-fill the store path so you skip the first prompt
+spatialdata-js-util tui ~/data/xenium.zarr
+```
+
+Pick a command from the home menu and the UI walks you through it:
+
+```
+IMAGES   Recompress rasters (JPEG 2000 / HTJ2K)
+POINTS   List Points elements in a Zarr store
+POINTS   Morton-sort Points from Zarr
+POINTS   Morton-sort CSV/Parquet file
+POINTS   Write multiscale Points Parquet
+POINTS   Write index permutations derivative store
+TABLES   List table elements in a Zarr store
+TABLES   Convert table matrices to CSC
+CODECS   Show HTJ2K backend availability
+```
+
+The flow is the same for every command: **guided form → confirm → run → report.**
+
+- **Forms** are pre-filled with sensible defaults, and with the store path you
+  already used this session. `Enter` advances between fields and submits on the
+  last one; `Escape` goes back; `q` quits.
+- **Anything that overwrites asks first.** Rewriting `points/<key>/points.parquet`
+  in place, converting tables in place, or replacing an existing output store all
+  stop on a confirmation screen naming the exact path before touching anything.
+- **Runs stream their JSON output** to a log pane, so a long recompression shows
+  progress rather than appearing to hang.
+- **Writes are verified afterwards** and the report screen shows a pass/fail
+  table. For Morton writes that means:
+
+  | Check | Meaning |
+  |-------|---------|
+  | `column_present` | `morton_code_2d` column exists |
+  | `sentinel_prefix` | First 2–4 rows have `morton_code_2d == 0` |
+  | `sentinel_bbox` | Sentinel rows encode the full dataset x/y bounds |
+  | `morton_monotonic` | Morton codes non-decreasing after sentinels |
+  | `row_group_sentinels` | Row group 0 contains only sentinel rows |
+  | `no_uint_intermediates` | No persisted `*_uint` staging columns |
+
+  Multiscale and index-permutation runs show schema/manifest checks instead.
+
+`CODECS → Show HTJ2K backend availability` is a good first stop: it tells you
+which codec backend your environment resolved to, and whether it passed the
+multi-component probe described [below](#htj2k-backends-and-why-there-is-a-probe).
 
 ### Reading stores back in Python
 
@@ -154,8 +212,8 @@ Use `--experimental` only for layouts standard readers cannot consume (see
 [ADR 0002](../../docs/adr/0002-spatially-aware-vector-loading.md)).
 
 `points index-permutations` builds a derivative store with several sort layouts
-side by side for benchmarking, and `spatialdata-js-util tui` wraps the Points
-commands in a Textual UI (`pip install 'spatialdata-js-util[tui]'`).
+side by side for benchmarking. All of these are also available from the
+[TUI](#interactive-tui), which verifies the output after each write.
 
 ## Tables
 

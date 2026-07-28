@@ -7,11 +7,21 @@ from typing import Any, Callable, Literal
 
 
 class CommandId(str, Enum):
-    LIST_POINTS = "list-points"
-    MORTON_FROM_ZARR = "morton-points-from-zarr"
-    MORTON_POINTS = "morton-points"
-    MULTISCALE_POINTS = "multiscale-points"
-    INDEX_PERMUTATIONS = "write-index-permutations"
+    """Values mirror the `spatialdata-js-util` CLI paths the screens wrap."""
+
+    # images
+    RECOMPRESS = "images recompress"
+    # points
+    LIST_POINTS = "points list"
+    MORTON_FROM_ZARR = "points morton-from-zarr"
+    MORTON_POINTS = "points morton"
+    MULTISCALE_POINTS = "points multiscale"
+    INDEX_PERMUTATIONS = "points index-permutations"
+    # tables
+    LIST_TABLES = "tables list"
+    TABLES_TO_CSC = "tables to-csc"
+    # codecs
+    CODECS_INFO = "codecs info"
 
 
 VerifyKind = Literal["none", "morton", "multiscale", "manifest"]

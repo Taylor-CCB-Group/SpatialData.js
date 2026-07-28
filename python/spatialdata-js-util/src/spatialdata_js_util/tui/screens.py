@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import traceback
 from pathlib import Path
 from typing import Any
@@ -22,17 +23,21 @@ from textual.widgets import (
     ListItem,
     ListView,
     RichLog,
+    Select,
     Static,
 )
 
+from ..codecs import CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K
 from ..errors import WriterCommandError
 from ..index_permutations import DEFAULT_CONDITIONS
 from ..runners import (
     resolve_morton_from_zarr_output,
     run_list_points,
+    run_list_tables,
     run_morton_points,
     run_morton_points_from_zarr,
     run_multiscale_points,
+    run_tables_to_csc,
     run_write_index_permutations,
 )
 from ..verify import (
@@ -109,25 +114,31 @@ class HomeScreen(WriterScreen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(
-            "SpatialData experimental writer — pick a command.",
+            "spatialdata-js-util — pick a command.",
             id="home-title",
         )
         yield ListView(
-            ListItem(Label("List Points elements in a Zarr store"), id="cmd-list-points"),
-            ListItem(Label("Morton-sort Points from Zarr"), id="cmd-morton-from-zarr"),
-            ListItem(Label("Morton-sort CSV/Parquet file"), id="cmd-morton-points"),
-            ListItem(Label("Write multiscale Points Parquet"), id="cmd-multiscale-points"),
+            ListItem(Label("IMAGES   Recompress rasters (JPEG 2000 / HTJ2K)"), id="cmd-recompress"),
+            ListItem(Label("POINTS   List Points elements in a Zarr store"), id="cmd-list-points"),
+            ListItem(Label("POINTS   Morton-sort Points from Zarr"), id="cmd-morton-from-zarr"),
+            ListItem(Label("POINTS   Morton-sort CSV/Parquet file"), id="cmd-morton-points"),
+            ListItem(Label("POINTS   Write multiscale Points Parquet"), id="cmd-multiscale-points"),
             ListItem(
-                Label("Write index permutations derivative store"),
+                Label("POINTS   Write index permutations derivative store"),
                 id="cmd-index-permutations",
             ),
+            ListItem(Label("TABLES   List table elements in a Zarr store"), id="cmd-list-tables"),
+            ListItem(Label("TABLES   Convert table matrices to CSC"), id="cmd-tables-to-csc"),
+            ListItem(Label("CODECS   Show HTJ2K backend availability"), id="cmd-codecs-info"),
             id="command-list",
         )
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         item_id = event.item.id or ""
-        if item_id == "cmd-list-points":
+        if item_id == "cmd-recompress":
+            self.app.push_screen(RecompressImagesScreen())
+        elif item_id == "cmd-list-points":
             self._start_zarr_command(CommandId.LIST_POINTS)
         elif item_id == "cmd-morton-from-zarr":
             self._start_zarr_command(CommandId.MORTON_FROM_ZARR)
@@ -137,6 +148,19 @@ class HomeScreen(WriterScreen):
             self.app.push_screen(MultiscaleScreen())
         elif item_id == "cmd-index-permutations":
             self.app.push_screen(IndexPermutationsScreen())
+        elif item_id == "cmd-list-tables":
+            self._start_list_tables()
+        elif item_id == "cmd-tables-to-csc":
+            self.app.push_screen(TablesToCscScreen())
+        elif item_id == "cmd-codecs-info":
+            self.app.push_screen(RunScreen(codecs_info_task()))
+
+    def _start_list_tables(self) -> None:
+        zarr = self.app.context.zarr_path
+        if not zarr:
+            self.app.push_screen(ZarrPathScreen(CommandId.LIST_TABLES))
+            return
+        self.app.push_screen(RunScreen(list_tables_task(zarr)))
 
     def _start_zarr_command(self, command: CommandId) -> None:
         if command == CommandId.LIST_POINTS:
@@ -201,6 +225,9 @@ class ZarrPathScreen(InputFormScreen):
         self.app.context.zarr_path = str(resolved)
         if self.command == CommandId.LIST_POINTS:
             self._run_list_points(path)
+            return
+        if self.command == CommandId.LIST_TABLES:
+            self.app.push_screen(RunScreen(list_tables_task(path)))
             return
         self.app.push_screen(PointsKeyScreen(self.command))
 
@@ -674,6 +701,248 @@ class IndexPermutationsScreen(InputFormScreen):
         )
 
 
+def list_tables_task(zarr: str) -> TaskSpec:
+    def runner() -> dict[str, Any]:
+        return run_list_tables(zarr)
+
+    return TaskSpec(
+        command=CommandId.LIST_TABLES,
+        title="List tables",
+        runner=runner,
+    )
+
+
+def codecs_info_task() -> TaskSpec:
+    def runner() -> dict[str, Any]:
+        from ..codecs.backends import backend_report
+
+        return backend_report()
+
+    return TaskSpec(
+        command=CommandId.CODECS_INFO,
+        title="HTJ2K backends",
+        runner=runner,
+    )
+
+
+class RecompressImagesScreen(InputFormScreen):
+    """Recompress image rasters — the `images recompress` command."""
+
+    INPUT_ORDER = ("source", "dest", "image-key", "quality", "chunks", "workers")
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Static("Recompress images", classes="screen-title")
+        with VerticalScroll():
+            yield Label("Source store")
+            yield Input(
+                value=self.app.context.zarr_path or "",
+                placeholder="/path/to/input.zarr",
+                id="source",
+            )
+            yield Label("Destination store")
+            yield Input(placeholder="/path/to/output.zarr", id="dest")
+            yield Label("Image key (blank = every image)")
+            yield Input(placeholder="morphology_focus", id="image-key")
+            yield Label("Codec")
+            yield Select(
+                [
+                    ("HTJ2K (experimental.openjph_htj2k)", CODEC_HTJ2K_OPENJPH),
+                    ("JPEG 2000 (imagecodecs_jpeg2k)", CODEC_JPEG2K),
+                ],
+                value=CODEC_HTJ2K_OPENJPH,
+                allow_blank=False,
+                id="codec",
+            )
+            yield Label("Preset")
+            yield Select(
+                [("lossless", "lossless"), ("balanced", "balanced"), ("small", "small")],
+                value="lossless",
+                allow_blank=False,
+                id="preset",
+            )
+            yield Label("HTJ2K quality — quantization step, lower = better (blank = use preset)")
+            yield Input(placeholder="0.0002", id="quality")
+            yield Label("Chunks")
+            yield Input(value="auto", placeholder="auto, or one integer per axis", id="chunks")
+            yield Label("Workers")
+            yield Input(value=str(os.cpu_count() or 1), id="workers")
+            yield Checkbox("Write siblings instead of replacing images", id="sibling")
+            yield Checkbox("Overwrite destination if it exists", id="overwrite")
+        with Horizontal():
+            yield Button("Run", variant="primary", id="run")
+            yield Button("Back", id="back")
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.action_go_back()
+            return
+        self._submit()
+
+    def _submit(self) -> None:
+        source = self.query_one("#source", Input).value.strip()
+        dest = self.query_one("#dest", Input).value.strip()
+        if not source or not dest:
+            self.notify("Source and destination are required.", severity="error")
+            return
+        if not Path(source).is_dir():
+            self.notify(f"Not a directory: {source}", severity="error")
+            return
+
+        codec = str(self.query_one("#codec", Select).value)
+        preset = str(self.query_one("#preset", Select).value)
+        quality_raw = self.query_one("#quality", Input).value.strip()
+        quality: float | None = None
+        if quality_raw:
+            if codec != CODEC_HTJ2K_OPENJPH:
+                self.notify("Quality applies to HTJ2K only.", severity="error")
+                return
+            try:
+                quality = float(quality_raw)
+            except ValueError:
+                self.notify("Quality must be a number.", severity="error")
+                return
+
+        chunks_raw = self.query_one("#chunks", Input).value.strip() or "auto"
+        if chunks_raw == "auto":
+            chunks: Any = "auto"
+        else:
+            try:
+                chunks = tuple(int(part) for part in chunks_raw.split())
+            except ValueError:
+                self.notify(
+                    "Chunks must be 'auto' or space-separated integers.", severity="error"
+                )
+                return
+
+        try:
+            workers = _positive_int(self.query_one("#workers", Input).value, os.cpu_count() or 1)
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+
+        image_key = self.query_one("#image-key", Input).value.strip() or None
+        sibling = self.query_one("#sibling", Checkbox).value
+        overwrite = self.query_one("#overwrite", Checkbox).value
+        self.app.context.zarr_path = source
+
+        def runner() -> dict[str, Any]:
+            from ..images import recompress_spatialdata
+
+            return recompress_spatialdata(
+                source,
+                dest,
+                image_key=image_key,
+                codec=codec,
+                # An explicit quality overrides the preset, so don't send both.
+                preset=None if quality is not None else preset,
+                chunks=chunks,
+                quality=quality,
+                sibling=sibling,
+                overwrite=overwrite,
+                workers=workers,
+            ).manifest
+
+        dest_exists = Path(dest).exists()
+        task = TaskSpec(
+            command=CommandId.RECOMPRESS,
+            title="Recompress images",
+            runner=runner,
+            requires_confirm=dest_exists,
+            confirm_message=(
+                f"Destination already exists and will be replaced:\n{dest}\n\nProceed?"
+            ),
+        )
+        if dest_exists and not overwrite:
+            self.notify(
+                "Destination exists — tick 'Overwrite destination' to replace it.",
+                severity="error",
+            )
+            return
+        self.app.push_screen(ConfirmScreen(task) if task.requires_confirm else RunScreen(task))
+
+
+class TablesToCscScreen(InputFormScreen):
+    """Convert table matrices to CSC — the `tables to-csc` command."""
+
+    INPUT_ORDER = ("source", "dest", "tables")
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Static("Convert tables to CSC", classes="screen-title")
+        with VerticalScroll():
+            yield Static(
+                "CSC makes reading one variable (gene) a single contiguous range read "
+                "instead of a scan of every row. Values are unchanged.",
+                classes="section-label",
+            )
+            yield Label("Source store")
+            yield Input(
+                value=self.app.context.zarr_path or "",
+                placeholder="/path/to/store.zarr",
+                id="source",
+            )
+            yield Label("Destination store (blank = rewrite source in place)")
+            yield Input(placeholder="/path/to/output.zarr", id="dest")
+            yield Label("Table keys, comma-separated (blank = all tables)")
+            yield Input(placeholder="table", id="tables")
+            yield Checkbox("Convert named layers too", value=True, id="layers")
+            yield Checkbox("Also convert dense matrices (may increase size)", id="densify")
+            yield Checkbox("Overwrite destination if it exists", id="overwrite")
+        with Horizontal():
+            yield Button("Run", variant="primary", id="run")
+            yield Button("Back", id="back")
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.action_go_back()
+            return
+        self._submit()
+
+    def _submit(self) -> None:
+        source = self.query_one("#source", Input).value.strip()
+        if not source:
+            self.notify("Source store is required.", severity="error")
+            return
+        if not Path(source).is_dir():
+            self.notify(f"Not a directory: {source}", severity="error")
+            return
+
+        dest = self.query_one("#dest", Input).value.strip() or None
+        tables_raw = self.query_one("#tables", Input).value.strip()
+        tables = [key.strip() for key in tables_raw.split(",") if key.strip()] or None
+        layers = self.query_one("#layers", Checkbox).value
+        densify = self.query_one("#densify", Checkbox).value
+        overwrite = self.query_one("#overwrite", Checkbox).value
+        self.app.context.zarr_path = source
+
+        def runner() -> dict[str, Any]:
+            return run_tables_to_csc(
+                source,
+                dest,
+                tables=tables,
+                layers=layers,
+                densify=densify,
+                overwrite=overwrite,
+            )
+
+        in_place = dest is None
+        task = TaskSpec(
+            command=CommandId.TABLES_TO_CSC,
+            title="Tables to CSC",
+            runner=runner,
+            requires_confirm=in_place,
+            confirm_message=(
+                f"Rewrite table matrices in place:\n{source}\n\n"
+                f"{'All tables' if tables is None else 'Tables: ' + ', '.join(tables)}\n\n"
+                "Values are preserved; only the sparse layout changes. Proceed?"
+            ),
+        )
+        self.app.push_screen(ConfirmScreen(task) if in_place else RunScreen(task))
+
+
 class ConfirmScreen(WriterScreen):
     BINDINGS = [
         Binding("enter", "confirm", "Confirm overwrite"),
@@ -819,16 +1088,7 @@ class VerifyReportScreen(WriterScreen):
             if self.error:
                 yield Static(f"Error: {self.error}", id="error-text")
             elif self.result:
-                if self.task_spec.command == CommandId.LIST_POINTS:
-                    keys = self.result.get("points_keys", [])
-                    yield Static(f"Points keys: {', '.join(keys) or '(none)'}")
-                else:
-                    rows = self.result.get("rows")
-                    output = self.result.get("output")
-                    if rows is not None:
-                        yield Static(f"Rows: {rows}")
-                    if output:
-                        yield Static(f"Output: {output}")
+                yield from self._summary_lines(self.result)
             if self.checks:
                 passed = all_passed(self.checks)
                 status = "All checks passed" if passed else "Some checks failed"
@@ -846,6 +1106,46 @@ class VerifyReportScreen(WriterScreen):
             yield Button("Home", variant="primary", id="home")
             yield Button("Quit", id="quit")
         yield Footer()
+
+    def _summary_lines(self, result: dict[str, Any]) -> ComposeResult:
+        """Render the headline facts per command; the full JSON is on the run log."""
+        command = self.task_spec.command
+        if command == CommandId.LIST_POINTS:
+            keys = result.get("points_keys", [])
+            yield Static(f"Points keys: {', '.join(keys) or '(none)'}")
+        elif command == CommandId.LIST_TABLES:
+            keys = result.get("table_keys", [])
+            yield Static(f"Table keys: {', '.join(keys) or '(none)'}")
+        elif command == CommandId.CODECS_INFO:
+            yield Static(f"Selected backend: {result.get('selected') or '(none available)'}")
+            for name, info in (result.get("backends") or {}).items():
+                available = "available" if info.get("available") else "not available"
+                probe = "probe OK" if info.get("passes_multicomponent_probe") else "probe FAILED"
+                yield Static(f"  {name}: {available}, {probe}")
+        elif command == CommandId.RECOMPRESS:
+            images = result.get("images") or []
+            yield Static(f"Output: {result.get('output')}")
+            yield Static(f"Rasters recompressed: {len(images)}")
+            total = sum(int(image.get("encoded_bytes") or 0) for image in images)
+            if total:
+                yield Static(f"Encoded bytes: {total:,}")
+            backend = (result.get("htj2k") or {}).get("selected")
+            if backend:
+                yield Static(f"HTJ2K backend: {backend}")
+        elif command == CommandId.TABLES_TO_CSC:
+            yield Static(f"Output: {result.get('output')}")
+            for table in result.get("tables") or []:
+                matrices = ", ".join(
+                    f"{key} {value}" for key, value in (table.get("matrices") or {}).items()
+                )
+                yield Static(f"  {table.get('path')}: {matrices or '(no matrices)'}")
+        else:
+            rows = result.get("rows")
+            output = result.get("output")
+            if rows is not None:
+                yield Static(f"Rows: {rows}")
+            if output:
+                yield Static(f"Output: {output}")
 
     def on_mount(self) -> None:
         self.query_one("#home", Button).focus()

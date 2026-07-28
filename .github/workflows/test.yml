@@ -129,7 +129,7 @@ jobs:
         run: pnpm test:fixtures:generate
 
       - name: Run spatialdata-js-util tests
-        run: uv run --directory python/spatialdata-js-util --extra write pytest
+        run: uv run --directory python/spatialdata-js-util --extra write --extra tui pytest
 
       - name: Run unit tests
         run: pnpm test:unit

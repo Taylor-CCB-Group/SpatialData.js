@@ -73,6 +73,9 @@ package = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The TUI tests drive Textual's async pilot; they carry explicit
+# `@pytest.mark.asyncio` markers, so strict mode is what we want.
+asyncio_mode = "strict"
 
 [tool.basedpyright]
 extraPaths = ["scripts"]
@@ -80,4 +83,5 @@ extraPaths = ["scripts"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.24",
 ]
