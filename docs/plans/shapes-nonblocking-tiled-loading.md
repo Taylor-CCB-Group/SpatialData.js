@@ -83,7 +83,7 @@ a *consequence* of moving the load into the layer, not a feature bolted on.
 | Worker decode + transferables | `core/src/workers/points-worker.ts`, `pointsWorkerClient.ts` (`decodeGeometryWithFeaturesInWorker`), `pointsWorkerProtocol.ts` | add a `decode-shapes-wkb` request + handler + client, or a `shapes-worker.ts` |
 | Row-group range reads (INHERITED — reuse as-is) | `core/src/models/VTableSource.ts` | — |
 | Tiling metadata + real bounds loader | `core/src/pointsTiling.ts`, `VPointsSource.loadPointsInBounds` (morton bisect) | `ShapesTilingMetadata`, `VShapesSource.loadShapesInBounds` (bbox bisect) |
-| Python spatial writer | `python/spatialdata-experimental-writer/src/.../points.py` (morton sort, sentinels, row groups) | shapes GeoParquet writer under `shapes.experimental/<key>/` |
+| Python spatial writer | `python/spatialdata-js-util/src/.../points.py` (morton sort, sentinels, row groups) | shapes GeoParquet writer under `shapes.experimental/<key>/` |
 
 Note: the live vis points path currently sets `experimentalOptimizations: 'off'`
 (`PointsRendererAdapter.ts`), so even the points `TileLayer` is test-exercised but
@@ -299,7 +299,7 @@ artifact (Phase 2); renaming the worker (future).
 
 ### Phase 2 — the tiled artifact + tiled loader
 
-8. **Python writer** under `python/spatialdata-experimental-writer/`, a
+8. **Python writer** under `python/spatialdata-js-util/`, a
    `shapes` subcommand cloning `points.py` but: DuckDB Hilbert sort on geometry,
    GeoParquet 1.1 bbox covering column, zstd, sized row groups. Target
    `shapes.experimental/<key>/` (ADR 0002 — standard readers can't consume a

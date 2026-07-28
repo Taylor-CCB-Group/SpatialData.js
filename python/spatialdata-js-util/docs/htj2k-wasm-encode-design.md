@@ -1,7 +1,7 @@
 # HTJ2K OpenJPH WASM encode
 
 Status: **implemented** — HTJ2K encode uses vendored OpenJPH WASM inside a pool
-of persistent Node.js workers (`spatialdata_codec_writer/vendor/encode-plane.mjs`).
+of persistent Node.js workers (`spatialdata_js_util/codecs/vendor/encode-plane.mjs`).
 New stores are labelled `experimental.openjph_htj2k`.
 
 Native `imagecodecs` HTJ2K encode is intentionally **not** used: PyPI wheels are
@@ -36,7 +36,7 @@ back to planar `[..., z, y, x]`. The `mandelbulb` fixture uses
 ## Encode flow
 
 ```text
-Python spatialdata-codec-writer
+Python spatialdata-js-util
   → EncoderPool (N persistent Node workers)
   → vendored encode-plane.mjs --worker
   → openjph-wasm encode({ data, width, height, components, reversible, quality })
@@ -46,7 +46,7 @@ Python spatialdata-codec-writer
 Vendoring: run `node scripts/vendor-openjph-for-python.mjs` at the monorepo root
 to copy `openjph-wasm` dist assets (`index.mjs` + `wasm/`) into the Python package
 wheel. The copied `vendor/openjph/` blobs are gitignored; CI and
-`pnpm test:codec-writer` run the vendor step after `pnpm install`.
+`pnpm test:python` run the vendor step after `pnpm install`.
 
 Preset mapping:
 
@@ -81,7 +81,7 @@ rather than presets alone.
 ### CLI and JSON
 
 ```bash
-spatialdata-codec-writer recompress input.zarr output.zarr \
+spatialdata-js-util images recompress input.zarr output.zarr \
   --image-key morphology_focus \
   --codec experimental.openjph_htj2k \
   --quality 0.001 \
@@ -113,9 +113,9 @@ Mandelbrot plane across several qualities.
 
 ## References
 
-- Python encode: [`htj2k_encode.py`](../src/spatialdata_codec_writer/htj2k_encode.py),
-  [`codecs.py`](../src/spatialdata_codec_writer/codecs.py)
-- Vendored Node worker: [`vendor/encode-plane.mjs`](../src/spatialdata_codec_writer/vendor/encode-plane.mjs)
+- Python encode: [`htj2k_wasm.py`](../src/spatialdata_js_util/codecs/htj2k_wasm.py),
+  [`encoding.py`](../src/spatialdata_js_util/codecs/encoding.py)
+- Vendored Node worker: [`vendor/encode-plane.mjs`](../src/spatialdata_js_util/codecs/vendor/encode-plane.mjs)
 - Vendor script: [`scripts/vendor-openjph-for-python.mjs`](../../../scripts/vendor-openjph-for-python.mjs)
 - Dev fixtures: [`scripts/generate_codec_fixtures.py`](../scripts/generate_codec_fixtures.py)
 - JS encode: [`packages/zarrextra/src/htj2k-encode.ts`](../../../packages/zarrextra/src/htj2k-encode.ts)
