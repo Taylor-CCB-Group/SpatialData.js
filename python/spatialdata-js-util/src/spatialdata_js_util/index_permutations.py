@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-import pandas as pd
 
 from .points import MORTON_CODE_2D_COLUMN, write_morton_points_parquet
 from .store import (

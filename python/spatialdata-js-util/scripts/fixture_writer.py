@@ -8,7 +8,6 @@ from typing import Any
 import numpy as np
 
 from spatialdata_js_util.codecs import (
-    CODEC_HTJ2K_OPENJPH,
     CODEC_JPEG2K,
     HTJ2K_ENCODER,
     CodecName,

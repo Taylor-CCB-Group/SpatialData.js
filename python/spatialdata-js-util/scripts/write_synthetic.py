@@ -16,7 +16,7 @@ if _SRC_DIR not in sys.path:
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from spatialdata_js_util.codecs import CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K, CodecName
+from spatialdata_js_util.codecs import CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K
 from spatialdata_js_util.codecs import htj2k_available
 
 from fixture_writer import WrittenFixture, write_codec_spatialdata
