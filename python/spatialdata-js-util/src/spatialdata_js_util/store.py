@@ -31,14 +31,42 @@ def write_json(path: str | Path, value: dict[str, Any]) -> None:
     target.write_bytes(json_bytes(value))
 
 
-def _collect_consolidated_metadata(store_path: Path) -> dict[str, Any]:
+def _implicit_group(zarr_format: int) -> dict[str, Any]:
+    return {"attributes": {}, "node_type": "group", "zarr_format": zarr_format}
+
+
+def _collect_consolidated_metadata(store_path: Path, *, zarr_format: int = 3) -> dict[str, Any]:
+    """Map every node under *store_path* to its metadata document.
+
+    Entries are filled in for intermediate groups that have no `zarr.json` of
+    their own. Some writers create element directories without writing metadata
+    for the collection that contains them — `points/transcripts/zarr.json` but no
+    `points/zarr.json`. Listing the child without its parent leaves an orphan
+    that zarr cannot attach to the hierarchy, and it rejects the *whole* store:
+    `zarr.open_group` then raises `GroupNotFoundError` at the root, so the store
+    stops opening entirely rather than merely missing one element.
+    """
     metadata: dict[str, Any] = {}
     for meta_path in store_path.rglob("zarr.json"):
         if meta_path == store_path / "zarr.json":
             continue
         rel = meta_path.parent.relative_to(store_path).as_posix()
         metadata[rel] = read_json(meta_path)
+
+    for rel in list(metadata):
+        parts = rel.split("/")
+        for depth in range(1, len(parts)):
+            parent = "/".join(parts[:depth])
+            if parent not in metadata:
+                metadata[parent] = _implicit_group(zarr_format)
     return metadata
+
+
+def consolidated_metadata_orphans(metadata: dict[str, Any]) -> list[str]:
+    """Entries whose parent path is absent — these make a store unreadable."""
+    return sorted(
+        key for key in metadata if "/" in key and key.rsplit("/", 1)[0] not in metadata
+    )
 
 
 def refresh_consolidated_metadata(store_path: str | Path) -> None:
@@ -50,10 +78,22 @@ def refresh_consolidated_metadata(store_path: str | Path) -> None:
     root = Path(store_path)
     root_path = root / "zarr.json"
     root_meta = read_json(root_path)
+    metadata = _collect_consolidated_metadata(
+        root, zarr_format=int(root_meta.get("zarr_format", 3))
+    )
+
+    orphans = consolidated_metadata_orphans(metadata)
+    if orphans:
+        # Never write metadata that would make the store fail to open.
+        raise ValueError(
+            f"Refusing to write consolidated metadata with orphaned entries for {root}: "
+            f"{', '.join(orphans)}"
+        )
+
     root_meta["consolidated_metadata"] = {
         "kind": "inline",
         "must_understand": False,
-        "metadata": _collect_consolidated_metadata(root),
+        "metadata": metadata,
     }
     write_json(root_path, root_meta)
 

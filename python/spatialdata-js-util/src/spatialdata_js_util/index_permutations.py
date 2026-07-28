@@ -81,6 +81,27 @@ def _write_element_zarr_json(source_element_dir: Path, dest_element_dir: Path) -
     shutil.copy2(source_json, dest_element_dir / "zarr.json")
 
 
+def _write_points_collection_zarr_json(source_path: Path, dest_path: Path) -> None:
+    """Recreate the `points/` group metadata that `_copy_store_shell` skipped.
+
+    Without it the collection exists as a directory with no node metadata, so its
+    elements are listed in consolidated metadata under a parent that is not — an
+    orphan that stops the whole store from opening once anything rebuilds that
+    metadata from disk.
+    """
+    dest_json = dest_path / "points" / "zarr.json"
+    if dest_json.is_file():
+        return
+    dest_json.parent.mkdir(parents=True, exist_ok=True)
+    source_json = source_path / "points" / "zarr.json"
+    if source_json.is_file():
+        shutil.copy2(source_json, dest_json)
+        return
+    dest_json.write_text(
+        json.dumps({"attributes": {}, "zarr_format": 3, "node_type": "group"}, indent=2) + "\n"
+    )
+
+
 def _copy_canonical_parquet(source_parquet: Path, dest_parquet: Path) -> None:
     dest_parquet.parent.mkdir(parents=True, exist_ok=True)
     if source_parquet.is_dir():
@@ -123,6 +144,7 @@ def write_index_permutations(
     source_parquet = points_parquet_path(source_path, resolved_key)
 
     _copy_store_shell(source_path, dest_path, overwrite=overwrite)
+    _write_points_collection_zarr_json(source_path, dest_path)
 
     df = read_points_dataframe(source_parquet)
     if max_rows is not None and len(df) > max_rows:

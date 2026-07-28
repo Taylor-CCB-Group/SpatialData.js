@@ -159,3 +159,84 @@ class TestConvertStoreTablesToCsc:
         reopened = sd.read_zarr(store)
         assert reopened.tables["first"].X.format == "csc"
         assert reopened.tables["second"].X.format == "csr"
+
+
+class TestConsolidatedMetadataSurvivesConversion:
+    """Regression: a CSC conversion must not make the store unopenable.
+
+    An index-permutations store has `points/<key>/` directories but historically
+    no `points/zarr.json`. Rebuilding consolidated metadata purely from on-disk
+    metadata files dropped the `points` parent, orphaning its children, and zarr
+    then refused to open the store *at all* — which looked like element data loss
+    rather than a metadata fault.
+    """
+
+    @staticmethod
+    def _store_with_points(path: Path) -> Path:
+        import pandas as pd
+        from spatialdata.models import PointsModel
+
+        rng = np.random.default_rng(0)
+        points = PointsModel.parse(
+            pd.DataFrame(
+                {
+                    "x": rng.uniform(0, 100, 500),
+                    "y": rng.uniform(0, 100, 500),
+                    "feature_name": pd.Categorical(rng.choice(["a", "b", "c"], 500)),
+                }
+            ),
+            feature_key="feature_name",
+        )
+        sd.SpatialData(tables={"table": _table()}, points={"transcripts": points}).write(
+            path, overwrite=True
+        )
+        return path
+
+    def test_csc_conversion_keeps_an_index_permutations_store_readable(
+        self, tmp_path: Path
+    ) -> None:
+        from spatialdata_js_util.index_permutations import write_index_permutations
+
+        source = self._store_with_points(tmp_path / "src.zarr")
+        permuted = tmp_path / "perm.zarr"
+        write_index_permutations(source, permuted, points_key="transcripts")
+
+        # Readable before the conversion...
+        assert sd.read_zarr(permuted) is not None
+
+        convert_store_tables_to_csc(permuted)
+
+        # ...and still readable after it.
+        reopened = sd.read_zarr(permuted)
+        assert reopened.tables["table"].X.format == "csc"
+        assert "transcripts" in reopened.points
+
+    def test_index_permutations_writes_the_points_group(self, tmp_path: Path) -> None:
+        from spatialdata_js_util.index_permutations import write_index_permutations
+
+        source = self._store_with_points(tmp_path / "src.zarr")
+        permuted = tmp_path / "perm.zarr"
+        write_index_permutations(source, permuted, points_key="transcripts")
+
+        assert (permuted / "points" / "zarr.json").is_file()
+
+    def test_refresh_refuses_to_write_orphaned_entries(self, tmp_path: Path) -> None:
+        """The guard that would have turned this into a loud failure."""
+        import json
+
+        from spatialdata_js_util.store import (
+            consolidated_metadata_orphans,
+            refresh_consolidated_metadata,
+        )
+
+        store = self._store_with_points(tmp_path / "src.zarr")
+        # Simulate the writer that produced the broken store.
+        (store / "points" / "zarr.json").unlink()
+
+        refresh_consolidated_metadata(store)
+
+        meta = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
+        assert consolidated_metadata_orphans(meta) == []
+        # The missing parent is filled in rather than dropped.
+        assert meta["points"]["node_type"] == "group"
+        assert sd.read_zarr(store) is not None
