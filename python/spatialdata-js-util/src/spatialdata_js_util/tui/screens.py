@@ -28,6 +28,7 @@ from textual.widgets import (
 )
 
 from ..codecs import CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K
+from ..pyramids import DEFAULT_MIN_SIZE as DEFAULT_PYRAMID_MIN_SIZE
 from ..errors import WriterCommandError
 from ..index_permutations import DEFAULT_CONDITIONS
 from ..runners import (
@@ -769,6 +770,18 @@ class RecompressImagesScreen(InputFormScreen):
             yield Input(value=str(os.cpu_count() or 1), id="workers")
             yield Checkbox("Write siblings instead of replacing images", id="sibling")
             yield Checkbox("Overwrite destination if it exists", id="overwrite")
+            yield Static("Multiscale pyramid", classes="section-label")
+            yield Checkbox(
+                "Build a pyramid for images that have only one resolution level",
+                id="pyramid",
+            )
+            yield Label("Levels ('auto' halves until the largest axis fits the size below)")
+            yield Input(value="auto", id="pyramid-levels")
+            yield Label("Downscale between levels")
+            yield Input(value="2", id="pyramid-downscale")
+            yield Label("Auto stops at this size (px)")
+            yield Input(value=str(DEFAULT_PYRAMID_MIN_SIZE), id="pyramid-min-size")
+            yield Checkbox("Rebuild images that already have a pyramid", id="pyramid-force")
         with Horizontal():
             yield Button("Run", variant="primary", id="run")
             yield Button("Back", id="back")
@@ -822,9 +835,32 @@ class RecompressImagesScreen(InputFormScreen):
             self.notify(str(exc), severity="error")
             return
 
+        levels_raw = self.query_one("#pyramid-levels", Input).value.strip() or "auto"
+        if levels_raw == "auto":
+            pyramid_levels: Any = "auto"
+        else:
+            try:
+                pyramid_levels = _positive_int(levels_raw, 1)
+            except ValueError:
+                self.notify("Pyramid levels must be 'auto' or a positive integer.", severity="error")
+                return
+        try:
+            pyramid_downscale = _positive_int(self.query_one("#pyramid-downscale", Input).value, 2)
+            pyramid_min_size = _positive_int(
+                self.query_one("#pyramid-min-size", Input).value, DEFAULT_PYRAMID_MIN_SIZE
+            )
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        if pyramid_downscale < 2:
+            self.notify("Pyramid downscale must be at least 2.", severity="error")
+            return
+
         image_key = self.query_one("#image-key", Input).value.strip() or None
         sibling = self.query_one("#sibling", Checkbox).value
         overwrite = self.query_one("#overwrite", Checkbox).value
+        pyramid = self.query_one("#pyramid", Checkbox).value
+        pyramid_force = self.query_one("#pyramid-force", Checkbox).value
         self.app.context.zarr_path = source
 
         def runner() -> dict[str, Any]:
@@ -842,6 +878,11 @@ class RecompressImagesScreen(InputFormScreen):
                 sibling=sibling,
                 overwrite=overwrite,
                 workers=workers,
+                pyramid=pyramid or pyramid_force,
+                pyramid_levels=pyramid_levels,
+                pyramid_downscale=pyramid_downscale,
+                pyramid_min_size=pyramid_min_size,
+                pyramid_force=pyramid_force,
             ).manifest
 
         dest_exists = Path(dest).exists()
@@ -1132,6 +1173,12 @@ class VerifyReportScreen(WriterScreen):
             backend = (result.get("htj2k") or {}).get("selected")
             if backend:
                 yield Static(f"HTJ2K backend: {backend}")
+            for entry in result.get("pyramids") or []:
+                if entry.get("action") == "rebuilt":
+                    built = ", ".join(entry.get("levels") or [])
+                    yield Static(f"  pyramid {entry['path']}: {built}")
+                else:
+                    yield Static(f"  pyramid {entry['path']}: skipped ({entry.get('reason')})")
         elif command == CommandId.TABLES_TO_CSC:
             yield Static(f"Output: {result.get('output')}")
             for table in result.get("tables") or []:

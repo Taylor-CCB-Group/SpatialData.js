@@ -92,8 +92,91 @@ def _images_recompress(args: argparse.Namespace) -> None:
         reversible=True if args.reversible else None,
         sibling=args.sibling,
         workers=args.workers,
+        # Any explicit --pyramid-* option means the user wants pyramids, so the
+        # bare --pyramid flag is a convenience rather than a requirement.
+        pyramid=args.pyramid
+        or args.pyramid_levels != "auto"
+        or args.pyramid_downscale != 2
+        or args.pyramid_min_size != 1024
+        or args.pyramid_force,
+        pyramid_levels=args.pyramid_levels,
+        pyramid_downscale=args.pyramid_downscale,
+        pyramid_min_size=args.pyramid_min_size,
+        pyramid_force=args.pyramid_force,
     )
     _print_json(result.manifest)
+
+
+def _pyramid_levels(value: str) -> int | str:
+    if value == "auto":
+        return "auto"
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--pyramid-levels must be 'auto' or an integer") from None
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("--pyramid-levels must be at least 1")
+    return parsed
+
+
+def _add_pyramid_args(parser: argparse.ArgumentParser, *, with_flag: bool) -> None:
+    if with_flag:
+        parser.add_argument(
+            "--pyramid",
+            action="store_true",
+            help=(
+                "Build a multiscale pyramid for any image that has only one resolution "
+                "level, before recompressing. Implied by the other --pyramid-* options."
+            ),
+        )
+    parser.add_argument(
+        "--pyramid-levels",
+        type=_pyramid_levels,
+        default="auto",
+        metavar="N",
+        help=(
+            "Total resolution levels including full res, or 'auto' to halve until the "
+            "largest spatial axis fits --pyramid-min-size (default: auto)"
+        ),
+    )
+    parser.add_argument(
+        "--pyramid-downscale",
+        type=_positive_int,
+        default=2,
+        metavar="K",
+        help="Downscale factor between levels (default: 2)",
+    )
+    parser.add_argument(
+        "--pyramid-min-size",
+        type=_positive_int,
+        default=1024,
+        metavar="PX",
+        help="Stop 'auto' once the largest spatial axis is this size or smaller (default: 1024)",
+    )
+    parser.add_argument(
+        "--pyramid-force",
+        action="store_true",
+        help="Rebuild pyramids for images that already have more than one level",
+    )
+
+
+def _images_add_pyramid(args: argparse.Namespace) -> None:
+    from .pyramids import add_pyramids
+
+    def command() -> dict[str, Any]:
+        return add_pyramids(
+            args.source,
+            args.dest,
+            image_keys=args.image_key.split(",") if args.image_key else None,
+            include_labels=args.labels,
+            levels=args.pyramid_levels,
+            downscale=args.pyramid_downscale,
+            min_size=args.pyramid_min_size,
+            force=args.pyramid_force,
+            overwrite=args.overwrite,
+        ).manifest
+
+    _run_command(command)
 
 
 def _images_inspect(args: argparse.Namespace) -> None:
@@ -172,7 +255,34 @@ def _add_images_commands(subparsers: argparse._SubParsersAction) -> None:
         default=os.cpu_count() or 1,
         help="Parallel encoder workers (default: CPU count)",
     )
+    _add_pyramid_args(recompress, with_flag=True)
     recompress.set_defaults(func=_images_recompress)
+
+    add_pyramid = image_commands.add_parser(
+        "add-pyramid",
+        help="give single-resolution rasters a multiscale pyramid",
+        description=(
+            "Copy a store and add multiscale pyramids to rasters that have only one "
+            "resolution level, so a zoomed-out browser view does not have to read "
+            "full-resolution chunks. Codecs are left unchanged; use "
+            "'images recompress --pyramid' to do both in one pass."
+        ),
+    )
+    add_pyramid.add_argument("source", help="Existing SpatialData Zarr store")
+    add_pyramid.add_argument("dest", help="Output SpatialData Zarr store")
+    add_pyramid.add_argument(
+        "--image-key",
+        metavar="KEYS",
+        help="Comma-separated image element names (default: all images)",
+    )
+    add_pyramid.add_argument(
+        "--labels",
+        action="store_true",
+        help="Also build pyramids for labels (downsampled without inventing label ids)",
+    )
+    add_pyramid.add_argument("--overwrite", action="store_true")
+    _add_pyramid_args(add_pyramid, with_flag=False)
+    add_pyramid.set_defaults(func=_images_add_pyramid)
 
     inspect = image_commands.add_parser(
         "inspect",

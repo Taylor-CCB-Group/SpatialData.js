@@ -9,7 +9,7 @@ instead of a whole-element download:
 
 | Area | What it does | Why |
 |------|--------------|-----|
-| **images** | Recompress rasters as JPEG 2000 or HTJ2K | Tiles decode in the browser; HTJ2K is markedly cheaper to decode than JPEG 2000 |
+| **images** | Recompress rasters as JPEG 2000 or HTJ2K, and add [multiscale pyramids](#multiscale-pyramids) where they are missing | Tiles decode in the browser; HTJ2K is markedly cheaper to decode than JPEG 2000. Without a pyramid, a zoomed-out view still costs full-resolution chunks |
 | **points** | Morton-sort Points Parquet with sentinel bbox rows and controlled row groups | A viewport maps to a few Parquet row-group reads |
 | **tables** | Convert `X`/layers from CSR to CSC | Reading one gene becomes one contiguous range read, not a scan of every row |
 
@@ -77,6 +77,8 @@ The flow is the same for every command: **guided form → confirm → run → re
   stop on a confirmation screen naming the exact path before touching anything.
 - **Runs stream their JSON output** to a log pane, so a long recompression shows
   progress rather than appearing to hang.
+- The recompress form carries the [pyramid](#multiscale-pyramids) controls, so
+  single-resolution input can be made browser-ready without leaving the UI.
 - **Writes are verified afterwards** and the report screen shows a pass/fail
   table. For Morton writes that means:
 
@@ -164,6 +166,45 @@ spatialdata-js-util images recompress input.zarr out.zarr \
   --codec experimental.openjph_htj2k --quality 0.0005 --sibling --overwrite
 ```
 
+### Multiscale pyramids
+
+Acquisition output is often written at a single resolution. A browser then has no
+choice but to fetch full-resolution chunks however far out the user is zoomed —
+which defeats the image codecs rather than complementing them. `--pyramid` gives
+any single-level image a pyramid before recompressing it, so one command turns
+single-resolution input into a browser-ready store:
+
+```bash
+spatialdata-js-util images recompress input.zarr output.zarr \
+  --codec experimental.openjph_htj2k --preset balanced --pyramid --overwrite
+```
+
+To add pyramids without touching codecs:
+
+```bash
+spatialdata-js-util images add-pyramid input.zarr output.zarr --overwrite
+```
+
+By default levels are chosen automatically: keep halving until the largest
+spatial axis is `--pyramid-min-size` (1024) or smaller, so the coarsest level is
+roughly one chunk. Override with `--pyramid-levels N` (a *total* count including
+full resolution) and `--pyramid-downscale K`.
+
+Images that already have more than one level are **skipped**, and the manifest
+says so; `--pyramid-force` rebuilds them anyway. Pass `--labels` to
+`add-pyramid` to include label elements — they are downsampled by the label
+model, so ids are never averaged into values that identify no object.
+
+Full resolution is copied through unchanged; only the added levels are new.
+Levels are generated through SpatialData's own parsers, which get the per-level
+scale *and* half-pixel translation right — hand-written `multiscales` metadata
+tends to misalign every level against the full-resolution image.
+
+Pyramids are always written to a **different** store than the source. SpatialData
+refuses to delete the files backing a live element, so there is no in-place mode.
+
+### Other image notes
+
 Labels are written with Blosc/zstd. Browser image codecs support `uint8`,
 `int8`, `uint16` and `int16` only. A sidecar manifest records the expanded
 config, per-raster stats, the codec backend used, and decoded checksums:
@@ -241,6 +282,8 @@ csc = to_csc(adata.X)                         # or just a matrix
 ```python
 from spatialdata_js_util import (
     recompress_spatialdata,
+    add_pyramids,
+    has_pyramid,
     write_morton_points_parquet,
     convert_store_tables_to_csc,
     backend_report,
@@ -250,9 +293,14 @@ result = recompress_spatialdata(
     "input.zarr", "output-htj2k.zarr",
     codec="experimental.openjph_htj2k",
     preset="balanced",
+    pyramid=True,          # add levels to single-resolution images first
     overwrite=True,
 )
 print(result.manifest_path)
+
+# Or pyramids on their own
+has_pyramid("input.zarr", "images", "morphology")   # -> False
+add_pyramids("input.zarr", "output.zarr", levels=4)
 ```
 
 ## Monorepo development

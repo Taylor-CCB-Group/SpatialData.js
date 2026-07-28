@@ -45,11 +45,12 @@ def _store_with_table(path: Path) -> Path:
     return path
 
 
-def _store_with_image(path: Path) -> np.ndarray:
+def _store_with_image(path: Path, *, pixels: np.ndarray | None = None) -> np.ndarray:
     from spatialdata.models import Image2DModel
 
-    y, x = np.mgrid[0:64, 0:48]
-    pixels = np.stack([((x * 9 + y * 5) % 4096).astype(np.uint16)])
+    if pixels is None:
+        y, x = np.mgrid[0:64, 0:48]
+        pixels = np.stack([((x * 9 + y * 5) % 4096).astype(np.uint16)])
     sd.SpatialData(
         images={"morphology": Image2DModel.parse(pixels, dims=("c", "y", "x"))}
     ).write(path, overwrite=True)
@@ -285,3 +286,72 @@ class TestRecompressImages:
             app.screen.query_one("#run", Button).press()
             await pilot.pause()
             assert isinstance(app.screen, ConfirmScreen)
+
+
+class TestRecompressPyramidControls:
+    @pytest.mark.asyncio
+    async def test_pyramid_checkbox_builds_levels(self, tmp_path: Path) -> None:
+        from spatialdata_js_util.pyramids import has_pyramid
+
+        source = tmp_path / "src.zarr"
+        y, x = np.mgrid[0:2048, 0:1536]
+        pixels = np.stack([((x * 3 + y * 7) % 4096).astype(np.uint16)])
+        _store_with_image(source, pixels=pixels)
+        dest = tmp_path / "out.zarr"
+
+        app = WriterApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _select(pilot, "cmd-recompress")
+            app.screen.query_one("#source", Input).value = str(source)
+            app.screen.query_one("#dest", Input).value = str(dest)
+            app.screen.query_one("#pyramid", Checkbox).value = True
+            await pilot.pause()
+            app.screen.query_one("#run", Button).press()
+            report = await _run_to_report(pilot)
+            assert report.error is None, report.error
+            assert report.result is not None
+            assert report.result["pyramids"][0]["action"] == "rebuilt"
+
+        assert has_pyramid(dest, "images", "morphology")
+
+    @pytest.mark.asyncio
+    async def test_pyramid_off_by_default(self, tmp_path: Path) -> None:
+        from spatialdata_js_util.pyramids import has_pyramid
+
+        source = tmp_path / "src.zarr"
+        y, x = np.mgrid[0:2048, 0:1536]
+        _store_with_image(source, pixels=np.stack([((x + y) % 4096).astype(np.uint16)]))
+        dest = tmp_path / "out.zarr"
+
+        app = WriterApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _select(pilot, "cmd-recompress")
+            app.screen.query_one("#source", Input).value = str(source)
+            app.screen.query_one("#dest", Input).value = str(dest)
+            await pilot.pause()
+            app.screen.query_one("#run", Button).press()
+            report = await _run_to_report(pilot)
+            assert report.error is None, report.error
+            assert report.result["pyramids"] == []
+
+        assert not has_pyramid(dest, "images", "morphology")
+
+    @pytest.mark.asyncio
+    async def test_degenerate_downscale_is_rejected(self, tmp_path: Path) -> None:
+        source = tmp_path / "src.zarr"
+        _store_with_image(source)
+
+        app = WriterApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _select(pilot, "cmd-recompress")
+            app.screen.query_one("#source", Input).value = str(source)
+            app.screen.query_one("#dest", Input).value = str(tmp_path / "out.zarr")
+            app.screen.query_one("#pyramid", Checkbox).value = True
+            app.screen.query_one("#pyramid-downscale", Input).value = "1"
+            await pilot.pause()
+            app.screen.query_one("#run", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, RecompressImagesScreen)

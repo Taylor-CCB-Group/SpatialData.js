@@ -32,6 +32,7 @@ from .codecs.backends import (
 )
 from .codecs.htj2k_wasm import configure_encoder_pool
 from .provenance import package_version, sha256
+from .pyramids import DEFAULT_MIN_SIZE as DEFAULT_PYRAMID_MIN_SIZE
 from .store import read_json, refresh_consolidated_metadata, write_json
 
 ImagePreset = Literal["lossless", "balanced", "small"]
@@ -541,6 +542,44 @@ def _sibling_image_key(key: str, codec: str, preset: str) -> str:
     return f"{key}:{_codec_sibling_suffix(codec)}_{preset}"
 
 
+def _stage_pyramids(
+    *,
+    read_path: Path,
+    staging_path: Path,
+    image_keys: list[str],
+    levels: int | Literal["auto"],
+    downscale: int,
+    min_size: int,
+    force: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Path]]:
+    """Build pyramids for *image_keys* into a staging store.
+
+    Returns the per-raster reports and, for each key that was actually rebuilt,
+    the root to read its levels from.
+    """
+    import spatialdata as sd
+
+    from .pyramids import build_pyramids_into
+
+    shutil.copytree(read_path, staging_path)
+    reports = build_pyramids_into(
+        source_sdata=sd.read_zarr(read_path),
+        dest_sdata=sd.read_zarr(staging_path),
+        keys=image_keys,
+        collection="images",
+        levels=levels,
+        downscale=downscale,
+        min_size=min_size,
+        force=force,
+    )
+    roots = {
+        report["path"].split("/", 1)[1]: staging_path
+        for report in reports
+        if report.get("action") == "rebuilt"
+    }
+    return reports, roots
+
+
 def recompress_spatialdata(
     source: str | Path | Any,
     dest: str | Path,
@@ -556,6 +595,11 @@ def recompress_spatialdata(
     reversible: bool | None = None,
     sibling: bool = False,
     workers: int | None = None,
+    pyramid: bool = False,
+    pyramid_levels: int | Literal["auto"] = "auto",
+    pyramid_downscale: int = 2,
+    pyramid_min_size: int = DEFAULT_PYRAMID_MIN_SIZE,
+    pyramid_force: bool = False,
 ) -> RecompressedSpatialData:
     """Preserve a SpatialData store and recompress configured rasters.
 
@@ -570,6 +614,12 @@ def recompress_spatialdata(
     Path sources are copied before raster replacement, which keeps tables,
     shapes, points, and unconfigured rasters intact without loading the whole
     object.
+
+    With *pyramid*, any configured image that has only one resolution level is
+    given a multiscale pyramid before it is recompressed, so single-resolution
+    acquisition output becomes browser-ready in one pass. Images that already
+    have a pyramid are left alone unless *pyramid_force* is set. See
+    `spatialdata_js_util.pyramids` for how levels are chosen.
     """
 
     import os
@@ -583,6 +633,7 @@ def recompress_spatialdata(
 
     dest_path = Path(dest)
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    pyramid_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
         if isinstance(source, str | Path):
             read_path = _prepare_path_source(Path(source), dest_path, overwrite=overwrite)
@@ -616,11 +667,31 @@ def recompress_spatialdata(
         if not label_keys and resolved_config.get("default_labels", {}).get("codec") == "blosc":
             label_keys = _list_raster_keys(dest_path, "labels")
 
+        # Pyramids are staged in their own store rather than written straight into
+        # dest: the recompressor deletes a destination array before streaming the
+        # source into it, so reading the new levels from dest would pull the rug
+        # out from under itself.
+        pyramid_reports: list[dict[str, Any]] = []
+        pyramid_roots: dict[str, Path] = {}
+        if pyramid:
+            pyramid_dir = tempfile.TemporaryDirectory(prefix="spatialdata-js-util-pyramid-")
+            pyramid_reports, pyramid_roots = _stage_pyramids(
+                read_path=read_path,
+                staging_path=Path(pyramid_dir.name) / "pyramid.zarr",
+                image_keys=image_keys,
+                levels=pyramid_levels,
+                downscale=pyramid_downscale,
+                min_size=pyramid_min_size,
+                force=pyramid_force,
+            )
+
         image_reports = []
         default_image = resolved_config.get("default_image", {})
         for key in image_keys:
             image_config = _deep_merge(default_image, resolved_config.get("images", {}).get(key, {}))
             resolved_codec = _resolve_image_codec(image_config, key)
+            # Rebuilt images are read from staging; everything else from the source.
+            raster_root = pyramid_roots.get(key, read_path)
 
             if sibling:
                 dest_key = _sibling_image_key(
@@ -632,20 +703,33 @@ def recompress_spatialdata(
                 if sib_group_path.exists():
                     shutil.rmtree(sib_group_path)
                 sib_group_path.mkdir(parents=True)
-                src_group_meta = read_path / "images" / key / "zarr.json"
+                src_group_meta = raster_root / "images" / key / "zarr.json"
                 if src_group_meta.exists():
                     shutil.copy2(src_group_meta, sib_group_path / "zarr.json")
             else:
                 dest_key = key
+                if key in pyramid_roots:
+                    # Replace the copied single-level group wholesale so the store
+                    # declares the new levels and keeps no stale ones.
+                    dest_group = dest_path / "images" / dest_key
+                    if dest_group.exists():
+                        shutil.rmtree(dest_group)
+                    dest_group.mkdir(parents=True)
+                    shutil.copy2(
+                        raster_root / "images" / key / "zarr.json", dest_group / "zarr.json"
+                    )
 
-            for dataset in _datasets_from_raster_group(
-                dest_path / "images" / key if not sibling else read_path / "images" / key
-            ):
+            group_for_datasets = (
+                raster_root / "images" / key
+                if sibling or key in pyramid_roots
+                else dest_path / "images" / key
+            )
+            for dataset in _datasets_from_raster_group(group_for_datasets):
                 source_raster = f"images/{key}/{dataset}"
                 dest_raster = f"images/{dest_key}/{dataset}"
                 image_reports.append(
                     _recompress_image_array(
-                        source_array_path=read_path / source_raster,
+                        source_array_path=raster_root / source_raster,
                         dest_array_path=dest_path / dest_raster,
                         raster_path=dest_raster,
                         config=image_config,
@@ -684,6 +768,7 @@ def recompress_spatialdata(
             "images": image_reports,
             "labels": label_reports,
             "workers": worker_count,
+            "pyramids": pyramid_reports,
             "htj2k": backend_report(),
             "packages": {
                 "imagecodecs": package_version("imagecodecs"),
@@ -700,3 +785,5 @@ def recompress_spatialdata(
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
+        if pyramid_dir is not None:
+            pyramid_dir.cleanup()
