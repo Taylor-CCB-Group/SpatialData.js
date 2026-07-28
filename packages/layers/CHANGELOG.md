@@ -1,5 +1,14 @@
 # @spatialdata/layers
 
+## 0.3.1
+
+### Patch Changes
+
+- [#90](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/90) [`671dd60`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/671dd602dda759bae1fe78ffd2572fba496ff6b1) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Fix a production shader compilation error when rendering shapes layers.
+
+- Updated dependencies []:
+  - @spatialdata/core@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes
