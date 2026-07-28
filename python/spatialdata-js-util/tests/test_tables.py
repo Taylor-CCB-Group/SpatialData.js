@@ -240,3 +240,190 @@ class TestConsolidatedMetadataSurvivesConversion:
         # The missing parent is filled in rather than dropped.
         assert meta["points"]["node_type"] == "group"
         assert sd.read_zarr(store) is not None
+
+
+class TestConversionDoesNotReEncodeTheRestOfTheTable:
+    """Regression: the conversion must touch the matrices and nothing else.
+
+    Re-serialising the whole AnnData re-encoded `obs`/`var` with the installed
+    AnnData's current conventions — a `nullable-string-array` group instead of a
+    plain string array for the index, and `sharding_indexed` on every array. The
+    values were all still there, but readers looking for `var/_index` as an array
+    found a group and fell back to synthetic `var0..varN` names.
+    """
+
+    @staticmethod
+    def _node_encoding(path: Path) -> str:
+        doc = json.loads((path / "zarr.json").read_text())
+        if doc.get("node_type") == "group":
+            return f"group[{doc.get('attributes', {}).get('encoding-type')}]"
+        return f"array[{doc.get('data_type')}] {[c['name'] for c in doc.get('codecs', [])]}"
+
+    @staticmethod
+    def _named_table(n_obs: int = 40, n_vars: int = 6):
+        from spatialdata.models import TableModel
+
+        matrix = sparse.random(
+            n_obs, n_vars, density=0.4, format="csr", random_state=0, dtype=np.float32
+        )
+        adata = anndata.AnnData(X=matrix)
+        adata.var.index = [f"GENE{i}" for i in range(n_vars)]
+        adata.obs.index = [f"cell{i}" for i in range(n_obs)]
+        adata.obs["region"] = "img"
+        adata.obs["region"] = adata.obs["region"].astype("category")
+        adata.obs["instance_id"] = np.arange(n_obs)
+        return TableModel.parse(
+            adata, region="img", region_key="region", instance_key="instance_id"
+        )
+
+    def _store(self, path: Path) -> Path:
+        sd.SpatialData(tables={"table": self._named_table()}).write(path, overwrite=True)
+        return path
+
+    def test_var_and_obs_encoding_is_byte_identical(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path / "s.zarr")
+        table = store / "tables" / "table"
+        before = {
+            str(p.parent.relative_to(table)): p.read_bytes()
+            for p in sorted(table.rglob("zarr.json"))
+            if p.parent.name != "X" and "X/" not in str(p.parent.relative_to(table))
+        }
+
+        convert_store_tables_to_csc(store)
+
+        after = {
+            str(p.parent.relative_to(table)): p.read_bytes()
+            for p in sorted(table.rglob("zarr.json"))
+            if p.parent.name != "X" and "X/" not in str(p.parent.relative_to(table))
+        }
+        changed = [k for k in before if before.get(k) != after.get(k)]
+        assert changed == [], f"conversion re-encoded non-matrix nodes: {changed}"
+
+    def test_var_index_encoding_is_preserved(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path / "s.zarr")
+        index_path = store / "tables" / "table" / "var" / "_index"
+        before = self._node_encoding(index_path)
+
+        convert_store_tables_to_csc(store)
+
+        assert self._node_encoding(index_path) == before
+
+    def test_a_plain_string_index_is_not_upgraded(self, tmp_path: Path) -> None:
+        """The case that broke: an older store must not gain the newer encoding.
+
+        Stores written by earlier stacks hold `var/_index` as a plain string
+        array. Newer AnnData writes a `nullable-string-array` group instead, and
+        a conversion that re-encodes the index silently upgrades the store out
+        from under readers that only understand the array form.
+        """
+        import anndata as ad
+
+        store = self._store(tmp_path / "s.zarr")
+        index_path = store / "tables" / "table" / "var" / "_index"
+
+        # Rewrite the index the way an older stack would have.
+        if not hasattr(ad.settings, "allow_write_nullable_strings"):
+            pytest.skip("This AnnData has no nullable-string setting to pin.")
+        import zarr
+        from anndata.io import read_elem, write_elem
+
+        root = zarr.open_group(str(store / "tables" / "table"), mode="a", use_consolidated=False)
+        var = read_elem(root["var"])
+        previous = ad.settings.allow_write_nullable_strings
+        ad.settings.allow_write_nullable_strings = False
+        try:
+            write_elem(root, "var", var)
+        finally:
+            ad.settings.allow_write_nullable_strings = previous
+
+        legacy = self._node_encoding(index_path)
+        assert legacy.startswith("array["), f"failed to build the legacy layout: {legacy}"
+
+        convert_store_tables_to_csc(store)
+
+        assert self._node_encoding(index_path) == legacy
+        assert list(sd.read_zarr(store).tables["table"].var.index) == [
+            f"GENE{i}" for i in range(6)
+        ]
+
+    def test_var_names_are_readable_after_conversion(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path / "s.zarr")
+        convert_store_tables_to_csc(store)
+        table = sd.read_zarr(store).tables["table"]
+        assert list(table.var.index) == [f"GENE{i}" for i in range(6)]
+        assert list(table.obs.index) == [f"cell{i}" for i in range(40)]
+
+    def test_matrix_is_not_sharded(self, tmp_path: Path) -> None:
+        """Sharded chunks are a newer zarr feature older readers cannot decode."""
+        store = self._store(tmp_path / "s.zarr")
+
+        convert_store_tables_to_csc(store)
+
+        for part in ("data", "indices", "indptr"):
+            encoding = self._node_encoding(store / "tables" / "table" / "X" / part)
+            assert "sharding_indexed" not in encoding, f"X/{part} was sharded: {encoding}"
+
+    def test_var_dtypes_are_not_normalised(self, tmp_path: Path) -> None:
+        """object->category drift was harmless but still an unasked-for change."""
+        store = self._store(tmp_path / "s.zarr")
+        table_path = store / "tables" / "table"
+        import zarr
+
+        root = zarr.open_group(str(table_path), mode="a", use_consolidated=False)
+        from anndata.io import write_elem
+
+        import pandas as pd
+
+        var = pd.DataFrame(
+            {"genome": pd.Series(["GRCh38"] * 6, dtype=object)},
+            index=[f"GENE{i}" for i in range(6)],
+        )
+        write_elem(root, "var", var)
+        before = json.loads((table_path / "var" / "genome" / "zarr.json").read_text())
+
+        convert_store_tables_to_csc(store)
+
+        after = json.loads((table_path / "var" / "genome" / "zarr.json").read_text())
+        assert after == before
+
+
+class TestNestedConsolidatedMetadata:
+    """A table group's own consolidated listing must not survive a rewrite.
+
+    It caches the encoding of everything below it. Left in place after the
+    matrices are rewritten it describes the old codecs, and zarr trusts it over
+    the actual files — the array reads back as a checksum failure even though
+    the bytes on disk are correct.
+    """
+
+    def test_stale_nested_listing_is_dropped(self, tmp_path: Path) -> None:
+        import zarr
+
+        store = _store(tmp_path / "s.zarr")
+        table_path = store / "tables" / "table"
+
+        # Give the table group a consolidated listing, as older writers did.
+        zarr.consolidate_metadata(zarr.open_group(str(table_path), mode="a").store)
+        assert "consolidated_metadata" in json.loads((table_path / "zarr.json").read_text())
+
+        convert_store_tables_to_csc(store)
+
+        assert "consolidated_metadata" not in json.loads(
+            (table_path / "zarr.json").read_text()
+        )
+        assert sd.read_zarr(store).tables["table"].X.format == "csc"
+
+    def test_conversion_is_readable_with_a_pre_existing_nested_listing(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        store = _store(tmp_path / "s.zarr")
+        table_path = store / "tables" / "table"
+        zarr.consolidate_metadata(zarr.open_group(str(table_path), mode="a").store)
+
+        convert_store_tables_to_csc(store)
+
+        table = sd.read_zarr(store).tables["table"]
+        assert table.X.format == "csc"
+        assert table.X.nnz > 0

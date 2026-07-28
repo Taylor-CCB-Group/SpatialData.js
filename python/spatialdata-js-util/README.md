@@ -270,6 +270,13 @@ The conversion changes only the sparse layout, not the values, and the result
 stays readable by any AnnData client. Dense matrices are left alone unless you
 pass `--densify`, since sparsifying a dense matrix can make it bigger.
 
+Only the matrices are rewritten — `obs`, `var`, `uns` and the rest are left
+byte-for-byte alone, and what is written is pinned to the store's existing
+encodings (no sharding, no `nullable-string-array` index). Re-serialising a whole
+table would otherwise silently re-encode it with whatever conventions the
+installed AnnData currently prefers, which can leave readers unable to find the
+variable names even though every value is still present.
+
 ```python
 from spatialdata_js_util import convert_store_tables_to_csc, to_csc
 

@@ -9,20 +9,28 @@ so it is a single ranged read.
 The conversion is lossless and reversible: only the sparse layout changes, not
 the values, and `scipy`/`anndata` read either layout transparently. It is
 therefore safe to apply to a store that other tools also read.
+
+Only the matrices themselves are rewritten. An earlier version re-serialised the
+whole AnnData, which quietly re-encoded `obs` and `var` with the installed
+AnnData's current conventions — turning the index into a `nullable-string-array`
+group and sharding the arrays — so readers that had been fine with the store
+suddenly could not find the variable names. Everything written here is therefore
+scoped to the matrix being converted, and pinned to the older encodings.
 """
 
 from __future__ import annotations
 
 import shutil
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 from .errors import WriterCommandError
 from .provenance import package_version
 from .store import (
+    drop_consolidated_metadata,
     list_element_keys,
-    read_json,
     refresh_consolidated_metadata,
     write_json,
     zarr_format_of,
@@ -108,72 +116,93 @@ def _describe(before: str | None, after: str | None) -> str:
     return f"{before or 'dense'}->{after}"
 
 
-def _read_table(path: Path) -> "AnnData":
+#: AnnData settings pinned while writing, so a matrix we rewrite is encoded the
+#: way the rest of the store already is. Names absent from the installed AnnData
+#: are skipped.
+#:
+#: `auto_shard_zarr_v3` wraps arrays in `sharding_indexed`, and
+#: `allow_write_nullable_strings` stores a string column as a
+#: `nullable-string-array` *group* of `values`/`mask` instead of a plain string
+#: array. Both are newer AnnData defaults that older readers — including the
+#: JS runtime this package targets — do not understand.
+_PINNED_WRITE_SETTINGS: dict[str, Any] = {
+    "auto_shard_zarr_v3": False,
+    "allow_write_nullable_strings": False,
+}
+
+
+@contextmanager
+def _anndata_write_settings(*, zarr_format: int) -> Iterator[None]:
     import anndata as ad
 
-    return ad.read_zarr(path)
-
-
-#: Group attributes owned by AnnData's own encoding, which it rewrites itself.
-_ANNDATA_OWNED_ATTRS = frozenset({"encoding-type", "encoding-version"})
-
-
-def _group_attrs_path(path: Path) -> tuple[Path, str | None]:
-    """Return the metadata file holding a group's attributes, and its nesting key."""
-    if (path / "zarr.json").is_file():
-        return path / "zarr.json", "attributes"
-    if (path / ".zattrs").is_file():
-        return path / ".zattrs", None
-    raise FileNotFoundError(f"No zarr group attributes found at {path}")
-
-
-def _read_group_attrs(path: Path) -> dict[str, Any]:
-    meta_path, key = _group_attrs_path(path)
-    doc = read_json(meta_path)
-    return dict(doc.get(key, {})) if key else dict(doc)
-
-
-def _merge_group_attrs(path: Path, attrs: dict[str, Any]) -> None:
-    meta_path, key = _group_attrs_path(path)
-    doc = read_json(meta_path)
-    if key:
-        merged = {**dict(doc.get(key, {})), **attrs}
-        doc[key] = merged
-    else:
-        doc = {**doc, **attrs}
-    write_json(meta_path, doc)
-
-
-def _write_table(adata: "AnnData", path: Path, *, zarr_format: int) -> None:
-    """Rewrite a table group, preserving SpatialData's element attributes.
-
-    `AnnData.write_zarr` writes only AnnData's own group attributes, so a plain
-    rewrite silently drops the `spatialdata-encoding-type`, `region`,
-    `region_key`, `instance_key`, and `version` keys that SpatialData puts on the
-    group — and `read_zarr` then fails on the missing version. We therefore
-    capture the group's attributes first and merge the non-AnnData ones back.
-    """
-    import anndata as ad
-
-    preserved = {
-        key: value
-        for key, value in _read_group_attrs(path).items()
-        if key not in _ANNDATA_OWNED_ATTRS
+    settings = ad.settings
+    pinned = {**_PINNED_WRITE_SETTINGS, "zarr_write_format": zarr_format}
+    previous = {
+        name: getattr(settings, name) for name in pinned if hasattr(settings, name)
     }
-
-    # AnnData writes whichever zarr format its global setting names; a store must
-    # not end up with mixed-format groups, so pin it to the format we read.
-    previous = ad.settings.zarr_write_format
-    ad.settings.zarr_write_format = zarr_format
     try:
-        if path.exists():
-            shutil.rmtree(path)
-        adata.write_zarr(path)
+        for name, value in pinned.items():
+            if name in previous:
+                setattr(settings, name, value)
+        yield
     finally:
-        ad.settings.zarr_write_format = previous
+        for name, value in previous.items():
+            setattr(settings, name, value)
 
-    if preserved:
-        _merge_group_attrs(path, preserved)
+
+def _convert_group_matrix(group: Any, name: str, *, densify: bool) -> str:
+    """Convert one matrix child of a zarr group in place, reporting what changed."""
+    from anndata.io import read_elem, write_elem
+
+    matrix = read_elem(group[name])
+    before = _sparse_format(matrix)
+    converted = to_csc(matrix, densify=densify)
+    if converted is not matrix:
+        write_elem(group, name, converted)
+    return _describe(before, _sparse_format(converted))
+
+
+def _convert_table_matrices(
+    table_path: Path, *, layers: bool, densify: bool
+) -> dict[str, str]:
+    """Rewrite a table's matrices in place, touching nothing else.
+
+    Only the matrix children are rewritten. Re-serialising the whole AnnData
+    would re-encode `obs`, `var`, `uns` and friends with whatever conventions the
+    installed AnnData currently prefers, silently changing parts of the store the
+    conversion has no business touching.
+    """
+    import zarr
+
+    # Consolidated metadata makes the group read-only; the store root's copy is
+    # refreshed once at the end of the conversion instead.
+    root = zarr.open_group(str(table_path), mode="a", use_consolidated=False)
+    report: dict[str, str] = {}
+
+    with _anndata_write_settings(zarr_format=zarr_format_of(table_path)):
+        report["X"] = _convert_group_matrix(root, "X", densify=densify)
+        if layers and "layers" in root:
+            layers_group = root["layers"]
+            for name in sorted(layers_group.keys()):
+                report[f"layers/{name}"] = _convert_group_matrix(
+                    layers_group, name, densify=densify
+                )
+
+    # The table group may carry its own consolidated listing, which now describes
+    # the pre-conversion encoding. Readers trust it over the files, so a matrix
+    # rewritten correctly would still fail to load.
+    drop_consolidated_metadata(table_path)
+    return report
+
+
+def _table_dimensions(table_path: Path) -> tuple[int, int]:
+    import zarr
+
+    root = zarr.open_group(str(table_path), mode="r", use_consolidated=False)
+    shape = root["X"].attrs.get("shape")
+    if shape is None:  # dense X is a plain array
+        shape = root["X"].shape
+    return int(shape[0]), int(shape[1])
 
 
 def convert_store_tables_to_csc(
@@ -224,16 +253,14 @@ def convert_store_tables_to_csc(
     reports: list[dict[str, Any]] = []
     for key in selected:
         table_path = store_path / "tables" / key
-        zarr_format = zarr_format_of(table_path)
-        adata = _read_table(table_path)
-        matrices = anndata_to_csc(adata, layers=layers, densify=densify)
-        _write_table(adata, table_path, zarr_format=zarr_format)
+        n_obs, n_vars = _table_dimensions(table_path)
+        matrices = _convert_table_matrices(table_path, layers=layers, densify=densify)
         reports.append(
             {
                 "path": f"tables/{key}",
-                "n_obs": int(adata.n_obs),
-                "n_vars": int(adata.n_vars),
-                "zarr_format": zarr_format,
+                "n_obs": n_obs,
+                "n_vars": n_vars,
+                "zarr_format": zarr_format_of(table_path),
                 "matrices": matrices,
             }
         )

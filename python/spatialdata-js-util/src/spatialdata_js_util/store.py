@@ -31,6 +31,28 @@ def write_json(path: str | Path, value: dict[str, Any]) -> None:
     target.write_bytes(json_bytes(value))
 
 
+def drop_consolidated_metadata(group_path: str | Path) -> bool:
+    """Remove a group's own inline consolidated metadata, if it has any.
+
+    A nested block is a cache of the metadata below it. Rewriting anything under
+    the group leaves that cache describing the old encoding, and readers trust
+    the cache over the files — so an array can be rewritten correctly and still
+    fail to load. The store root's listing is refreshed separately and remains
+    the authoritative one.
+
+    Returns whether a block was actually removed.
+    """
+    meta_path = Path(group_path) / "zarr.json"
+    if not meta_path.is_file():
+        return False
+    doc = read_json(meta_path)
+    if "consolidated_metadata" not in doc:
+        return False
+    doc.pop("consolidated_metadata")
+    write_json(meta_path, doc)
+    return True
+
+
 def _implicit_group(zarr_format: int) -> dict[str, Any]:
     return {"attributes": {}, "node_type": "group", "zarr_format": zarr_format}
 
