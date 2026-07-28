@@ -104,7 +104,10 @@ export class FlatPolygonLayer extends (Layer as any) {
   }): void {
     super.updateState(params);
     const { props, oldProps, changeFlags } = params;
-    if (changeFlags.extensionsChanged) {
+    // Deck marks extensionsChanged on the update immediately following
+    // initializeState. `oldProps.extensions` is absent in that first update, so
+    // the model created during initialization is already current.
+    if (changeFlags.extensionsChanged && oldProps.extensions !== undefined) {
       this.state.model?.destroy();
       this.state.model = this._getModel();
     }

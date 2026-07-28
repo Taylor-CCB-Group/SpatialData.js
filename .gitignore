@@ -12,6 +12,8 @@ packages/zarrextra/src/*.d.ts.map
 # Testing
 coverage/
 test-fixtures/
+test-fixtures-production-browser/
+test-results/
 validation-results/
 
 # Python virtual environments (version-specific, completely separate)
