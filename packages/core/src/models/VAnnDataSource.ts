@@ -95,16 +95,14 @@ export default class AnnDataSource extends ZarrDataSource {
     let categoriesValues: string[] | undefined;
     let codesPath: string | undefined;
     if (categories) {
-      const { dtype } = await zarrOpen(storeRoot.resolve(`${prefix}/${categories}`), {
-        kind: 'array',
-      });
-      if (dtype === 'v2:object') {
-        categoriesValues = await this.getFlatArrDecompressed(`${prefix}/${categories}`);
+      const categoriesPath = `${prefix}/${categories}`;
+      if (await this.hasTextValues(categoriesPath)) {
+        categoriesValues = await this.getFlatArrDecompressed(categoriesPath);
       }
     } else if (encodingType === 'categorical') {
-      const { dtype } = await zarrOpen(storeRoot.resolve(`${path}/categories`), { kind: 'array' });
-      if (dtype === 'v2:object') {
-        categoriesValues = await this.getFlatArrDecompressed(`${path}/categories`);
+      const categoriesPath = `${path}/categories`;
+      if (await this.hasTextValues(categoriesPath)) {
+        categoriesValues = await this.getFlatArrDecompressed(categoriesPath);
       }
       codesPath = `${path}/codes`;
     } else if (encodingType === 'string-array') {
@@ -123,7 +121,24 @@ export default class AnnDataSource extends ZarrDataSource {
     if (!categoriesValues) {
       return data as TableColumnData;
     }
-    return Array.from(data, (i) => categoriesValues[i as number]);
+    // Pandas encodes a missing categorical as code -1, which indexes nothing.
+    return Array.from(data, (code) => {
+      const index = Number(code);
+      return index < 0 ? null : categoriesValues[index];
+    });
+  }
+
+  /**
+   * Whether the array at *path* holds text, and so needs decoding to strings.
+   *
+   * Covers zarr v3 `string` arrays as well as v2's `object` and fixed-width
+   * unicode. Testing for `v2:object` alone silently leaves categorical columns
+   * resolving to their raw integer codes, which look like plausible data rather
+   * than an error.
+   */
+  private async hasTextValues(path: string): Promise<boolean> {
+    const arr = await zarrOpen(this.storeRoot.resolve(path), { kind: 'array' });
+    return arr.is('string') || arr.is('object');
   }
 
   /**

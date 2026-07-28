@@ -44,6 +44,9 @@ adata.obs["instance_id"] = np.arange(10)
 # A genuine missing value, so the mask is exercised rather than only the
 # all-present case.
 adata.var["measured"] = pd.array([1, 2, None, 4, 5, 6], dtype="Int64")
+# A categorical with a missing entry. Written as a zarr v3 \`string\` categories
+# array, which is the case a v2-only dtype check silently mis-reads as codes.
+adata.var["family"] = pd.Categorical(["kinase", "kinase", None, "gpcr", "gpcr", "kinase"])
 
 table = TableModel.parse(
     adata, region="img", region_key="region", instance_key="instance_id"
@@ -146,6 +149,11 @@ describe('nullable-encoded AnnData columns', () => {
     // branch must not divert reads that were already resolving correctly.
     const ids = await source.loadObsIndex('tables/table');
     expect(ids).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
+  });
+
+  it('decodes a zarr v3 categorical to labels rather than raw codes', async () => {
+    const [family] = await source.loadVarColumns(['tables/table/var/family']);
+    expect(Array.from(family ?? [])).toEqual(['kinase', 'kinase', null, 'gpcr', 'gpcr', 'kinase']);
   });
 
   it('reads a nullable integer column, preserving the missing entry as null', async () => {
