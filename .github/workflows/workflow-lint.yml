@@ -1,0 +1,44 @@
+name: Workflow Lint
+
+# Deliberately a SEPARATE workflow file, and it must stay that way.
+#
+# A workflow cannot validate itself. Once a file stops parsing, GitHub can no
+# longer evaluate its `on:` triggers, so none of its own jobs run — the failure
+# surfaces only as a 0-second run with no jobs and no logs, which reads like
+# infra flake rather than a broken file. That is exactly how a duplicate `with:`
+# key reached main in #92: the PR's last green check predated the bad edit, and
+# nothing re-ran to contradict it.
+#
+# This file parses independently of the others, so it still runs when they are
+# broken and reports a real annotation with a file:line.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository (workflow-lint)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # actionlint covers both halves of the problem: a strict YAML syntax check
+      # (duplicate keys, bad indentation — the things GitHub silently rejects)
+      # and semantic checks on top (unknown `uses:` refs, invalid expressions,
+      # shellcheck over `run:` blocks). Pinned to an exact version: this gate is
+      # meant to fail on our mistakes, not on a linter release.
+      - name: Lint workflow files (actionlint)
+        uses: docker://rhysd/actionlint:1.7.12

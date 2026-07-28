@@ -21,9 +21,13 @@ jobs:
     # React-shipping packages via eslint-plugin-react-hooks. The backlog has been
     # cleared, so this is a required gate: any new finding fails the check.
     steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
+      # Every step in this file carries a distinct `name:`. Four jobs check out
+      # with byte-identical `uses:` blocks, so unnamed steps give reviewers (and
+      # tools applying line-anchored review suggestions) no way to tell them
+      # apart — that ambiguity is how a duplicate `with:` key landed in this job
+      # in #92 and broke the whole workflow.
+      - name: Check out repository (react-lint)
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -32,7 +36,8 @@ jobs:
         with:
           run_install: false
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
@@ -53,7 +58,8 @@ jobs:
     # tests are intentionally out of scope (still carry findings), so this gate is
     # narrower than `pnpm lint` (biome check .).
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out repository (biome-lint)
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -62,7 +68,8 @@ jobs:
         with:
           run_install: false
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
@@ -76,19 +83,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out repository (test)
+        uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v5
         with:
           run_install: false
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
 
-      - uses: astral-sh/setup-uv@v7
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
 
@@ -141,7 +151,7 @@ jobs:
 
           # Wait for server to be ready (up to ~30s)
           # Check both root and a fixture path to ensure server is fully ready
-          for i in {1..30}; do
+          for _ in {1..30}; do
             if curl -sSf http://localhost:38473/ >/dev/null && \
                curl -sSf http://localhost:38473/v0.5.0/blobs.zarr/zmetadata >/dev/null; then
               echo "Test server is up and serving fixtures"
@@ -165,7 +175,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out repository (production-browser)
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -174,12 +185,14 @@ jobs:
         with:
           run_install: false
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
 
-      - uses: astral-sh/setup-uv@v7
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
 
