@@ -208,7 +208,10 @@ jobs:
 
       - name: Generate test fixtures (Python spatialdata 0.7.2)
         if: steps.cache-production-browser-fixtures.outputs.cache-hit != 'true'
-        run: pnpm test:fixtures:generate:0.7.2 -- --output-dir test-fixtures-production-browser
+        # No `--` before the flags: pnpm forwards the separator through to the
+        # script verbatim, and argparse treats everything after a bare `--` as
+        # positional, so `-- --output-dir X` fails with "unrecognized arguments".
+        run: pnpm test:fixtures:generate:0.7.2 --output-dir test-fixtures-production-browser
 
       - name: Expose production browser fixtures
         run: ln -s test-fixtures-production-browser test-fixtures
