@@ -1,0 +1,83 @@
+[project]
+name = "spatialdata-js-util"
+version = "0.1.0"
+description = "Read/write utilities for browser-oriented SpatialData stores (image codecs, Morton-indexed points, CSC tables)"
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "SpatialData.js contributors" }]
+keywords = ["spatialdata", "zarr", "ome-zarr", "htj2k", "jpeg2000", "spatial-omics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "imagecodecs>=2025.8.2",
+    "numcodecs>=0.16",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pyarrow>=18",
+    "zarr>=3.1",
+]
+
+# The base install is deliberately light enough to serve as a *reader* shim: it
+# registers the image codecs with zarr and nothing here pulls in spatialdata
+# itself. Writing pulls in the heavier stack.
+[project.optional-dependencies]
+write = [
+    "anndata>=0.12",
+    "dask[array]>=2025.0",
+    "ome-zarr>=0.16",
+    "scipy>=1.11",
+    "spatialdata>=0.8.0",
+]
+tui = ["textual>=1.0"]
+all = ["spatialdata-js-util[write,tui]"]
+
+[project.urls]
+Homepage = "https://github.com/Taylor-CCB-Group/SpatialData.js"
+Repository = "https://github.com/Taylor-CCB-Group/SpatialData.js"
+
+[project.scripts]
+spatialdata-js-util = "spatialdata_js_util.cli:main"
+
+# Registers our image codecs with zarr-python v3 so that `zarr.open` — and
+# therefore `spatialdata.read_zarr` — can decode stores this package writes.
+# Merely installing the distribution is enough; no import is required.
+[project.entry-points."zarr.codecs"]
+"experimental.openjph_htj2k" = "spatialdata_js_util.codecs.zarr_codec:Htj2kCodec"
+"experimental.imagecodecs_htj2k" = "spatialdata_js_util.codecs.zarr_codec:LegacyHtj2kCodec"
+"imagecodecs_jpeg2k" = "spatialdata_js_util.codecs.zarr_codec:Jpeg2kCodec"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spatialdata_js_util = [
+    "codecs/probe/*.j2c",
+    "codecs/probe/*.npy",
+    "codecs/vendor/*.mjs",
+    "codecs/vendor/openjph/*",
+    "codecs/vendor/openjph/wasm/*",
+]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.basedpyright]
+extraPaths = ["scripts"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

@@ -11,7 +11,7 @@ import {
 } from '../src/parquetFooterStats.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const writerRoot = join(__dirname, '../../../python/spatialdata-experimental-writer');
+const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
 
 /** Slice the Thrift `FileMetaData` bytes out of a full parquet file. */
 function footerMetaData(fileBytes: Uint8Array): Uint8Array {

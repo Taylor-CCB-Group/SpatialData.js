@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Copy openjph-wasm dist assets into spatialdata-codec-writer package data for
+ * Copy openjph-wasm dist assets into spatialdata-js-util package data for
  * standalone pip installs (no monorepo checkout required).
  *
  * Vendors `dist/index.js` and the whole `dist/wasm/` directory so the package's
@@ -31,9 +31,10 @@ const distDir = join(resolveOpenJphRoot(), 'dist');
 const vendorRoot = join(
   repoRoot,
   'python',
-  'spatialdata-codec-writer',
+  'spatialdata-js-util',
   'src',
-  'spatialdata_codec_writer',
+  'spatialdata_js_util',
+  'codecs',
   'vendor',
   'openjph'
 );

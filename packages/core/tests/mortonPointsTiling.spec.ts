@@ -8,7 +8,7 @@ import SpatialDataPointsSource from '../src/models/VPointsSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '../../..');
-const writerRoot = join(projectRoot, 'python/spatialdata-experimental-writer');
+const writerRoot = join(projectRoot, 'python/spatialdata-js-util');
 
 async function writeSyntheticPointsZarr(root: string) {
   const elementDir = join(root, 'points', 'transcripts');
@@ -52,7 +52,7 @@ PY`,
   );
 
   execSync(
-    `uv run spatialdata-experimental-writer morton-points-from-zarr ${JSON.stringify(root)} --points-key transcripts --row-group-size 100`,
+    `uv run spatialdata-js-util points morton-from-zarr ${JSON.stringify(root)} --points-key transcripts --row-group-size 100`,
     { cwd: writerRoot, stdio: 'pipe' }
   );
 }

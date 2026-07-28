@@ -31,7 +31,7 @@ function ensureCodecFixture() {
   }
   mkdirSync(uvCacheDir, { recursive: true });
   execSync(
-    `node scripts/vendor-openjph-for-python.mjs && uv run --directory python/spatialdata-codec-writer python scripts/generate_codec_fixtures.py --output-dir ${JSON.stringify(fixtureDir)} --experimental-htj2k --overwrite`,
+    `node scripts/vendor-openjph-for-python.mjs && uv run --directory python/spatialdata-js-util --extra write python scripts/generate_codec_fixtures.py --output-dir ${JSON.stringify(fixtureDir)} --experimental-htj2k --overwrite`,
     {
       cwd: projectRoot,
       env: {
