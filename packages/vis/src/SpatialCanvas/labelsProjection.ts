@@ -18,6 +18,7 @@
 import {
   buildLabelColorLut,
   buildLabelFillColorByFeatureId,
+  featureColorSchemeSignature,
   type LabelColorLut,
   type LabelFillColorMode,
   type LabelRgbaColor,
@@ -55,7 +56,13 @@ export function getLabelFillColorSignature(config: LayerConfig | undefined): str
     return '';
   }
   const mode: LabelFillColorMode = config.fillColorByColumn.mode;
-  return [config.fillColorByColumn.columnName, mode].join('');
+  // The scheme is part of the key: swapping a palette changes every colour without
+  // touching the column, so a column-only key would keep serving the old colours.
+  const scheme = featureColorSchemeSignature(
+    config.fillColorByColumn.categoricalPalette,
+    config.fillColorByColumn.numericRamp
+  );
+  return [config.fillColorByColumn.columnName, mode, scheme].join('');
 }
 
 /** Stable serialisation of an id list for cache-invalidation comparison. */
@@ -93,6 +100,10 @@ export function buildLabelFillColorEntry(
       column: rows.extraColumns?.[0],
       mode: fillColorByColumn.mode,
       alpha: LABEL_FILL_COLOR_ALPHA,
+      ...(fillColorByColumn.categoricalPalette
+        ? { categoricalPalette: fillColorByColumn.categoricalPalette }
+        : {}),
+      ...(fillColorByColumn.numericRamp ? { numericRamp: fillColorByColumn.numericRamp } : {}),
     }),
     rowsSource: rows,
   };

@@ -34,7 +34,9 @@
 
 import {
   assignFeatureColors,
+  type FeatureCategoricalPaletteSpec,
   type FeatureFillColorMode,
+  type FeatureNumericRampSpec,
   type FeatureRgbaColor,
   type FeatureRgbColor,
   normalizeFeatureCellValue,
@@ -160,8 +162,8 @@ export interface BuildLabelFillColorByFeatureIdOptions {
    * where the fill alpha *is* the layer's opacity control.
    */
   alpha?: number;
-  categoricalPalette?: readonly LabelRgbColor[];
-  numericRamp?: readonly [LabelRgbColor, LabelRgbColor];
+  categoricalPalette?: FeatureCategoricalPaletteSpec;
+  numericRamp?: FeatureNumericRampSpec;
 }
 
 /**

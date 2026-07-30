@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { featureCodeToRgb } from '../src/pointsFeatureColor';
 import {
   buildShapeFillColorByFeatureId,
   resolveShapeFillColorMode,
@@ -12,6 +13,7 @@ describe('shape fill colour encoding', () => {
       column: ['type-x', 'type-y', 'type-z'],
       mode: 'categorical',
       alpha: 180,
+      categoricalPalette: 'classic',
     });
 
     expect(colors).toEqual({
@@ -20,6 +22,36 @@ describe('shape fill colour encoding', () => {
       'cell-c': [0, 0, 255, 180],
       'cell-d': [255, 0, 255, 180],
     });
+  });
+
+  it('defaults to the unbounded OkLab scheme', () => {
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds: ['cell-a', 'cell-b'],
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+      column: ['type-x', 'type-y'],
+      mode: 'categorical',
+      alpha: 180,
+    });
+
+    // The same colours points gives feature codes 0 and 1 — one scheme library-wide.
+    expect(colors).toEqual({
+      'cell-a': [...featureCodeToRgb(0), 180],
+      'cell-b': [...featureCodeToRgb(1), 180],
+    });
+  });
+
+  it('does not repeat colours past the length of the classic palette', () => {
+    const count = 12;
+    const colors = buildShapeFillColorByFeatureId({
+      featureIds: Array.from({ length: count }, (_, i) => `cell-${i}`),
+      rowIndexByFeatureIndex: Int32Array.from({ length: count }, (_, i) => i),
+      column: Array.from({ length: count }, (_, i) => `type-${i}`),
+      mode: 'categorical',
+      alpha: 255,
+    });
+
+    const distinct = new Set(Object.values(colors).map((c) => c.join(',')));
+    expect(distinct.size).toBe(count);
   });
 
   it('auto-detects numeric values and uses a continuous ramp', () => {
@@ -77,6 +109,8 @@ describe('shape fill colour encoding', () => {
       column: ['type-x', 'type-y'],
       mode: 'categorical',
       alpha: 180,
+      // Fixed palette: this test is about row alignment, so pin the colours.
+      categoricalPalette: 'classic',
     });
 
     expect(colors).toEqual({
@@ -92,6 +126,7 @@ describe('shape fill colour encoding', () => {
       column: ['type-a', 'type-b', 'type-c'],
       mode: 'categorical',
       alpha: 180,
+      categoricalPalette: 'classic',
     });
 
     expect(colors).toEqual({

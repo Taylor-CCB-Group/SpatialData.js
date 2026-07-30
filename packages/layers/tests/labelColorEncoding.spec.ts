@@ -5,6 +5,7 @@ import {
   isLabelVisibleInLut,
   parseLabelId,
 } from '../src/labelColorEncoding';
+import { featureCodeToRgb } from '../src/pointsFeatureColor';
 
 const WHITE: [number, number, number] = [255, 255, 255];
 
@@ -23,12 +24,32 @@ describe('label fill colour encoding', () => {
       ]),
       column: ['tumour', 'stroma', 'tumour'],
       mode: 'categorical',
+      categoricalPalette: 'classic',
     });
 
     expect(colors).toEqual({
       '1': [0, 0, 255, 255],
       '2': [0, 255, 0, 255],
       '3': [0, 0, 255, 255],
+    });
+  });
+
+  it('gives a label the same colour the same category gets on a shapes layer', () => {
+    const shared = {
+      rowIds: ['1', '2'],
+      rowIndexByFeatureId: new Map([
+        ['1', 0],
+        ['2', 1],
+      ]),
+      column: ['tumour', 'stroma'],
+      mode: 'categorical' as const,
+    };
+
+    // Default scheme, no palette passed: the OkLab colours points uses for codes
+    // 0 and 1. One scheme across points, shapes and labels.
+    expect(buildLabelFillColorByFeatureId(shared)).toEqual({
+      '1': [...featureCodeToRgb(0), 255],
+      '2': [...featureCodeToRgb(1), 255],
     });
   });
 

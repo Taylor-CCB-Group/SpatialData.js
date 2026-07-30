@@ -5,11 +5,32 @@
 import type { Matrix4 } from '@math.gl/core';
 import type { SpatialElement } from '@spatialdata/core';
 import type {
+  FeatureCategoricalPaletteSpec,
+  FeatureNumericRampSpec,
   LabelFillColorMode,
   ShapeFillColorMode,
   ShapeStrokeWidthUnits,
   ShapesLayerPickEvent,
 } from '@spatialdata/layers';
+
+/**
+ * How a table column is turned into colours. Shared verbatim by shapes and labels
+ * so one column reads the same way on either kind, and JSON-serializable so it
+ * survives a saved Render Stack.
+ */
+export interface FillColorByColumn<TMode> {
+  columnName: string;
+  mode: TMode;
+  /**
+   * Categorical scheme. Defaults to `'oklab'` — the same unbounded golden-angle
+   * OKLCh scheme points uses for colour-by-feature, so a column with more
+   * categories than a fixed list has colours does not repeat them. Pass
+   * `'classic'` for the original six-colour cycle, or your own RGB list.
+   */
+  categoricalPalette?: FeatureCategoricalPaletteSpec;
+  /** Endpoints of the continuous ramp, `[low, high]` as RGB 0–255. */
+  numericRamp?: FeatureNumericRampSpec;
+}
 
 // ============================================
 // View State Types
@@ -74,10 +95,7 @@ export interface ImageLayerConfig extends BaseLayerConfig {
 export interface ShapesLayerConfig extends BaseLayerConfig {
   type: 'shapes';
   fillColor?: [number, number, number, number];
-  fillColorByColumn?: {
-    columnName: string;
-    mode: ShapeFillColorMode;
-  };
+  fillColorByColumn?: FillColorByColumn<ShapeFillColorMode>;
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
   strokeWidthUnits?: ShapeStrokeWidthUnits;
@@ -149,10 +167,7 @@ export interface LabelsLayerConfig extends BaseLayerConfig {
    * Colour each label by an obs column of the associated table — the same option a
    * shapes layer takes, resolved against the same table.
    */
-  fillColorByColumn?: {
-    columnName: string;
-    mode: LabelFillColorMode;
-  };
+  fillColorByColumn?: FillColorByColumn<LabelFillColorMode>;
   /**
    * Per-label filtering and colouring. Field names and semantics are identical to
    * {@link ShapesLayerConfig.featureState}; a labels feature id is the label's

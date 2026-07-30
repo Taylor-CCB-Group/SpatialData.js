@@ -737,6 +737,10 @@ export function useLayerData(
           column: rows.extraColumns?.[0],
           mode: fillColorByColumn.mode,
           alpha: getShapeFillColorAlpha(config),
+          ...(fillColorByColumn.categoricalPalette
+            ? { categoricalPalette: fillColorByColumn.categoricalPalette }
+            : {}),
+          ...(fillColorByColumn.numericRamp ? { numericRamp: fillColorByColumn.numericRamp } : {}),
         }),
         rowsSource: rows,
         renderSource: renderData,

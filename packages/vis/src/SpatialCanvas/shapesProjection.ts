@@ -17,6 +17,7 @@ import type { ShapesRenderData } from '@spatialdata/core';
 import {
   buildShapeFeatureStateRuntime,
   EMPTY_SHAPE_FEATURE_STATE_RUNTIME,
+  featureColorSchemeSignature,
   type ShapeFeatureStateRuntime,
   type ShapeFillColorMode,
   type ShapesPrebuiltData,
@@ -49,9 +50,18 @@ export function getShapeFillColorSignature(config: LayerConfig | undefined): str
     return '';
   }
   const mode: ShapeFillColorMode = config.fillColorByColumn.mode;
-  return [config.fillColorByColumn.columnName, mode, String(getShapeFillColorAlpha(config))].join(
-    '\u0001'
+  // The scheme is part of the key: swapping a palette changes every colour without
+  // touching the column, so a column-only key would keep serving the old colours.
+  const scheme = featureColorSchemeSignature(
+    config.fillColorByColumn.categoricalPalette,
+    config.fillColorByColumn.numericRamp
   );
+  return [
+    config.fillColorByColumn.columnName,
+    mode,
+    String(getShapeFillColorAlpha(config)),
+    scheme,
+  ].join('\u0001');
 }
 
 /** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */

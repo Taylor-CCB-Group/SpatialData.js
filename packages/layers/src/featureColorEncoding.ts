@@ -14,12 +14,22 @@
  * over the same table.
  */
 
+import { featureCodeToRgb } from './pointsFeatureColor';
+
 export type FeatureFillColorMode = 'auto' | 'categorical' | 'continuous';
 
 export type FeatureRgbColor = [number, number, number];
 export type FeatureRgbaColor = [number, number, number, number];
 
-export const DEFAULT_FEATURE_CATEGORICAL_PALETTE: readonly FeatureRgbColor[] = [
+/**
+ * The original six-colour cycle.
+ *
+ * Kept because it is what saved configs written before schemes existed rendered
+ * with, and because a small hand-picked set is occasionally what you want. It
+ * **cycles**, so a column with more than six categories reuses colours — which is
+ * why it is no longer the default.
+ */
+export const CLASSIC_FEATURE_CATEGORICAL_PALETTE: readonly FeatureRgbColor[] = [
   [0, 0, 255],
   [0, 255, 0],
   [255, 0, 255],
@@ -28,10 +38,58 @@ export const DEFAULT_FEATURE_CATEGORICAL_PALETTE: readonly FeatureRgbColor[] = [
   [255, 255, 0],
 ];
 
-export const DEFAULT_FEATURE_NUMERIC_RAMP: readonly [FeatureRgbColor, FeatureRgbColor] = [
+/**
+ * How to colour categories. JSON-serializable on purpose — this travels in a saved
+ * layer config, so it is a name or a plain list of colours, never a function.
+ *
+ *  - `'oklab'`   — the points colour-by-feature scheme: OKLCh at fixed lightness and
+ *                  chroma, hue stepped by the golden angle. **Unbounded** — every
+ *                  category index gets its own well-separated hue, so a 30-category
+ *                  annotation does not repeat colours. The default.
+ *  - `'classic'` — {@link CLASSIC_FEATURE_CATEGORICAL_PALETTE}, cycled.
+ *  - a list      — your own colours, cycled.
+ */
+export type FeatureCategoricalPaletteSpec = 'oklab' | 'classic' | readonly FeatureRgbColor[];
+
+export type FeatureNumericRampSpec = readonly [FeatureRgbColor, FeatureRgbColor];
+
+export const DEFAULT_FEATURE_CATEGORICAL_PALETTE: FeatureCategoricalPaletteSpec = 'oklab';
+
+export const DEFAULT_FEATURE_NUMERIC_RAMP: FeatureNumericRampSpec = [
   [0, 64, 255],
   [255, 220, 0],
 ];
+
+/**
+ * Turn a palette spec into `categoryIndex → colour`.
+ *
+ * A function rather than an array because `'oklab'` has no length: its colour is a
+ * pure function of the index, so there is no table to run out of. That is the whole
+ * point of making it the default — the cycling of a fixed list is invisible in the
+ * render (two cell types simply share a colour) and so is exactly the kind of bug
+ * that survives review.
+ */
+export function resolveCategoricalPalette(
+  spec: FeatureCategoricalPaletteSpec = DEFAULT_FEATURE_CATEGORICAL_PALETTE
+): (categoryIndex: number) => FeatureRgbColor {
+  if (spec === 'oklab') {
+    return featureCodeToRgb;
+  }
+  const colors = spec === 'classic' ? CLASSIC_FEATURE_CATEGORICAL_PALETTE : spec;
+  if (colors.length === 0) {
+    return featureCodeToRgb;
+  }
+  return (categoryIndex) => colors[categoryIndex % colors.length];
+}
+
+/** Stable serialisation of a scheme, for projection cache keys. */
+export function featureColorSchemeSignature(
+  categoricalPalette?: FeatureCategoricalPaletteSpec,
+  numericRamp?: FeatureNumericRampSpec
+): string {
+  if (categoricalPalette === undefined && numericRamp === undefined) return '';
+  return JSON.stringify([categoricalPalette ?? null, numericRamp ?? null]);
+}
 
 /** A cell rendered as the canonical string form; `''` means "no usable value". */
 export function normalizeFeatureCellValue(value: unknown): string {
@@ -92,8 +150,8 @@ export interface AssignFeatureColorsOptions {
   values: readonly string[];
   mode: FeatureFillColorMode;
   alpha: number;
-  categoricalPalette?: readonly FeatureRgbColor[];
-  numericRamp?: readonly [FeatureRgbColor, FeatureRgbColor];
+  categoricalPalette?: FeatureCategoricalPaletteSpec;
+  numericRamp?: FeatureNumericRampSpec;
 }
 
 /**
@@ -112,9 +170,10 @@ export function assignFeatureColors({
   values,
   mode,
   alpha,
-  categoricalPalette = DEFAULT_FEATURE_CATEGORICAL_PALETTE,
+  categoricalPalette,
   numericRamp = DEFAULT_FEATURE_NUMERIC_RAMP,
 }: AssignFeatureColorsOptions): Array<FeatureRgbaColor | undefined> {
+  const colorForCategory = resolveCategoricalPalette(categoricalPalette);
   const colors = new Array<FeatureRgbaColor | undefined>(values.length).fill(undefined);
 
   const nonEmptyValues: string[] = [];
@@ -149,7 +208,7 @@ export function assignFeatureColors({
       categoryIndex = categoryIndexByValue.size;
       categoryIndexByValue.set(value, categoryIndex);
     }
-    colors[index] = rgba(categoricalPalette[categoryIndex % categoricalPalette.length], alpha);
+    colors[index] = rgba(colorForCategory(categoryIndex), alpha);
   }
 
   return colors;

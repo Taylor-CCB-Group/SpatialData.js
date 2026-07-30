@@ -10,7 +10,9 @@ import {
   assignFeatureColors,
   DEFAULT_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_NUMERIC_RAMP,
+  type FeatureCategoricalPaletteSpec,
   type FeatureFillColorMode,
+  type FeatureNumericRampSpec,
   type FeatureRgbaColor,
   type FeatureRgbColor,
   normalizeFeatureCellValue,
@@ -29,8 +31,8 @@ export interface BuildShapeFillColorByFeatureIdOptions {
   column: ArrayLike<unknown> | undefined;
   mode: ShapeFillColorMode;
   alpha: number;
-  categoricalPalette?: readonly ShapeRgbColor[];
-  numericRamp?: readonly [ShapeRgbColor, ShapeRgbColor];
+  categoricalPalette?: FeatureCategoricalPaletteSpec;
+  numericRamp?: FeatureNumericRampSpec;
 }
 
 export const DEFAULT_SHAPE_CATEGORICAL_PALETTE = DEFAULT_FEATURE_CATEGORICAL_PALETTE;

@@ -40,7 +40,13 @@ const rows = (column: unknown[]) => ({
 describe('buildLabelFillColorEntry', () => {
   it('keys colours by label id from the associated table rows', () => {
     const entry = buildLabelFillColorEntry(
-      config({ fillColorByColumn: { columnName: 'cell_type', mode: 'categorical' } }),
+      config({
+        fillColorByColumn: {
+          columnName: 'cell_type',
+          mode: 'categorical',
+          categoricalPalette: 'classic',
+        },
+      }),
       rows(['tumour', 'stroma'])
     );
 
@@ -48,6 +54,39 @@ describe('buildLabelFillColorEntry', () => {
       '1': [0, 0, 255, 255],
       '2': [0, 255, 0, 255],
     });
+  });
+
+  it('carries the configured scheme through to the colours', () => {
+    const entry = buildLabelFillColorEntry(
+      config({
+        fillColorByColumn: {
+          columnName: 'cell_type',
+          mode: 'categorical',
+          categoricalPalette: [
+            [10, 20, 30],
+            [40, 50, 60],
+          ],
+        },
+      }),
+      rows(['tumour', 'stroma'])
+    );
+
+    expect(entry?.fillColorByFeatureId).toEqual({
+      '1': [10, 20, 30, 255],
+      '2': [40, 50, 60, 255],
+    });
+  });
+
+  it('invalidates the cache when only the scheme changes', () => {
+    const base = { columnName: 'cell_type', mode: 'categorical' as const };
+    const sameRows = rows(['tumour', 'stroma']);
+    const a = buildLabelFillColorEntry(config({ fillColorByColumn: base }), sameRows);
+    const b = buildLabelFillColorEntry(
+      config({ fillColorByColumn: { ...base, categoricalPalette: 'classic' } }),
+      sameRows
+    );
+    // Same column, same rows — only the signature can tell these apart, and it must.
+    expect(b?.signature).not.toBe(a?.signature);
   });
 
   it('produces nothing when no column is selected', () => {

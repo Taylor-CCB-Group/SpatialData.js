@@ -39,14 +39,19 @@ export {
 } from './engine/PointsDataEngine.js';
 export type {
   AssignFeatureColorsOptions,
+  FeatureCategoricalPaletteSpec,
   FeatureFillColorMode,
+  FeatureNumericRampSpec,
   FeatureRgbaColor,
   FeatureRgbColor,
 } from './featureColorEncoding';
 export {
   assignFeatureColors,
+  CLASSIC_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_NUMERIC_RAMP,
+  featureColorSchemeSignature,
+  resolveCategoricalPalette,
   resolveFeatureFillColorMode,
 } from './featureColorEncoding';
 export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';

@@ -289,9 +289,7 @@ describe('LabelsResolver', () => {
     const otherColumn = labelsCtx(labelsElement(), {
       fillColorByColumn: { columnName: 'area', mode: 'auto' },
     });
-    expect(resolver.plan(otherColumn).map((t) => t.id)).toContain(
-      'cell_labels#fillColor:area'
-    );
+    expect(resolver.plan(otherColumn).map((t) => t.id)).toContain('cell_labels#fillColor:area');
   });
 });
 

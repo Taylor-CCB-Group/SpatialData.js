@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildLabelColorLut } from '../src/labelColorEncoding';
 import type { LabelsLayerProps } from '../src/LabelsLayer';
 import { LabelsLayer } from '../src/LabelsLayer';
+import { buildLabelColorLut } from '../src/labelColorEncoding';
 
 type TileLayerLike = {
   props: {
