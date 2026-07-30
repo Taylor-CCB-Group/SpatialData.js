@@ -2,6 +2,11 @@ import type { GetPickingInfoParams, PickingInfo } from '@deck.gl/core';
 import { picking, project32 } from '@deck.gl/core';
 import { XRLayer } from '@hms-dbmi/viv';
 import { Matrix4 } from '@math.gl/core';
+import {
+  isLabelVisibleInLut,
+  LABEL_COLOR_LUT_WIDTH,
+  type LabelColorLut,
+} from './labelColorEncoding';
 import { fs, labelsBitmaskUniforms, vs } from './labelsBitmaskLayerShaders';
 
 function getNormalizedColor(color?: readonly number[]): [number, number, number] {
@@ -57,6 +62,14 @@ function getLabelAtPixel(
   if (!Number.isFinite(labelValue) || labelValue <= 0) {
     return null;
   }
+  // A label the filter hides is not there to be picked. The LUT is consulted
+  // directly — the same table the shader samples — rather than kept as a second
+  // hidden-id set, so picking and drawing can never disagree about what is on
+  // screen.
+  const lut = props.featureColorLut as LabelColorLut | undefined;
+  if (!isLabelVisibleInLut(lut, Math.round(labelValue))) {
+    return null;
+  }
   return { labelId: labelValue, selection: selections?.[0] };
 }
 
@@ -72,6 +85,12 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     channelOutlineOpacities: { type: 'array', value: [0.95], compare: true },
     channelsVisible: { type: 'array', value: [true], compare: true },
     channelStrokeWidths: { type: 'array', value: [1.5], compare: true },
+    // The per-label lookup table and its GPU texture are OWNED BY THE PARENT
+    // `LabelsLayer` and handed down: a tiled labels element renders many of these
+    // sublayers at once, and one texture per tile would multiply a table that is
+    // already megabytes for a large segmentation.
+    featureColorLut: { type: 'object', value: null, compare: false },
+    featureColorTexture: { type: 'object', value: null, compare: false },
   };
 
   // biome-ignore lint/complexity/noUselessConstructor: widens the base UntypedXRLayer constructor so `new LabelsBitmaskTileLayer(props)` typechecks.
@@ -162,6 +181,36 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     });
   }
 
+  /**
+   * A 1×1 stand-in bound to `featureColorTexture` when no LUT is in play.
+   *
+   * The sampler is declared unconditionally in the fragment shader, so a binding
+   * must always be present even though `useFeatureColors = 0` means it is never
+   * sampled — an unbound sampler is a draw-time error, not a silently ignored one.
+   */
+  _getFallbackFeatureTexture() {
+    if (!this.state.fallbackFeatureTexture) {
+      this.state.fallbackFeatureTexture = this.context.device.createTexture({
+        width: 1,
+        height: 1,
+        dimension: '2d',
+        data: new Uint8Array([0, 0, 0, 0]),
+        mipmaps: false,
+        sampler: { minFilter: 'nearest', magFilter: 'nearest' },
+        format: 'rgba8unorm',
+      });
+    }
+    return this.state.fallbackFeatureTexture;
+  }
+
+  finalizeState(context: unknown) {
+    this.state.fallbackFeatureTexture?.delete?.();
+    this.state.fallbackFeatureTexture = null;
+    // The LUT texture itself belongs to the parent `LabelsLayer`; deleting it here
+    // would pull it out from under every sibling tile.
+    super.finalizeState?.(context);
+  }
+
   loadChannelTextures(channelData: { data?: unknown[]; width: number; height: number }) {
     const textures: Record<string, unknown> = { channel0: null };
 
@@ -205,6 +254,8 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       channelOutlineOpacities,
       channelsVisible,
       channelStrokeWidths,
+      featureColorLut,
+      featureColorTexture,
       maxZoom,
       opacity = 1,
       zoom,
@@ -213,6 +264,12 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     const color = getNormalizedColor(channelColors?.[0] ?? [255, 255, 255]);
     const zoomDelta = typeof zoom === 'number' && typeof maxZoom === 'number' ? maxZoom - zoom : 0;
     const scaleFactor = 1 / 2 ** zoomDelta;
+
+    // Feature colouring is on only when the parent handed down BOTH the table and
+    // its uploaded texture; a LUT without a texture (or vice versa) must fall back
+    // to the plain uniform-colour path rather than sample a stale/absent binding.
+    const lut = featureColorLut as LabelColorLut | undefined;
+    const useFeatureColors = lut && featureColorTexture ? 1 : 0;
 
     const labelsBitmask = {
       color0: [...color, 1] as const,
@@ -223,11 +280,17 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       channelStrokeWidth0: channelStrokeWidths?.[0] ?? 1.5,
       scaleFactor,
       labelOpacity: opacity,
+      useFeatureColors,
+      featureTexWidth: LABEL_COLOR_LUT_WIDTH,
+      featureCount: useFeatureColors ? (lut?.labelCount ?? 0) : 0,
     };
 
     model.shaderInputs?.setProps({ labelsBitmask });
     model.setUniforms?.(_opts.uniforms ?? {}, { disableWarnings: false });
-    model.setBindings(textures);
+    model.setBindings({
+      ...textures,
+      featureColorTexture: featureColorTexture ?? this._getFallbackFeatureTexture(),
+    });
     model.draw((this.context as { renderPass?: unknown }).renderPass);
   }
 }

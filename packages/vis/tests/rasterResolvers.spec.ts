@@ -265,6 +265,34 @@ describe('LabelsResolver', () => {
         .map((t) => t.resource)
     ).toContain('tooltip');
   });
+
+  it('plans a fill-colour row load per column, and stops once that column is served', async () => {
+    const resolver = new LabelsResolver();
+
+    expect(resolver.plan(labelsCtx(labelsElement())).map((t) => t.resource)).not.toContain(
+      'fillColor'
+    );
+
+    const withColumn = labelsCtx(labelsElement(), {
+      fillColorByColumn: { columnName: 'cell_type', mode: 'auto' },
+    });
+    const task = resolver.plan(withColumn).find((t) => t.resource === 'fillColor');
+    expect(task?.id).toBe('cell_labels#fillColor:cell_type');
+
+    // No spatialData injected, so the association helper returns empty rows —
+    // still a settled resource, which is what stops the replan.
+    await resolver.load(task as NonNullable<typeof task>, withColumn, signal());
+    expect(resolver.getFillColorRows('cell_labels')).toBeDefined();
+    expect(resolver.plan(withColumn).map((t) => t.resource)).not.toContain('fillColor');
+
+    // Switching columns supersedes: the column is part of the task id.
+    const otherColumn = labelsCtx(labelsElement(), {
+      fillColorByColumn: { columnName: 'area', mode: 'auto' },
+    });
+    expect(resolver.plan(otherColumn).map((t) => t.id)).toContain(
+      'cell_labels#fillColor:area'
+    );
+  });
 });
 
 describe('the store cannot tell where a resolver lives', () => {

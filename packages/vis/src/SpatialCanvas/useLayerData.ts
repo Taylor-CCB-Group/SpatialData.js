@@ -49,6 +49,13 @@ import {
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
+import {
+  buildLabelFillColorEntry,
+  getLabelFillColorSignature,
+  getStableLabelColorLut,
+  type LabelColorLutEntry,
+  type LabelFillColorEntry,
+} from './labelsProjection';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { renderShapesLayer } from './renderers/shapesRenderer';
 import { createNonOwningResolver } from './resolvers/nonOwningResolver';
@@ -65,6 +72,7 @@ import type {
   AvailableElement,
   ChannelConfig,
   ElementsByType,
+  LabelsLayerConfig,
   LayerConfig,
   ShapesLayerConfig,
 } from './types';
@@ -110,6 +118,18 @@ interface LoadedData {
    * table columns.
    */
   shapeFillColorData: Map<string, ShapeFillColorEntry>;
+  /**
+   * Per-layer table-column colours for labels, keyed by the label's instance id.
+   * The labels twin of `shapeFillColorData`, separate for the same reason: two
+   * layers may render one labels element through different table columns.
+   */
+  labelFillColorData: Map<string, LabelFillColorEntry>;
+  /**
+   * Per-layer per-label colour lookup tables. Identity-stable while the
+   * feature-state they encode is unchanged, so `LabelsLayer` re-uploads its GPU
+   * texture only on a real change and never on a hover/pan re-render.
+   */
+  labelColorLutData: Map<string, LabelColorLutEntry>;
   /**
    * World bounds keyed by element identity. Bounds depend on loaded geometry /
    * loader source and transform, not cosmetic layer props such as opacity.
@@ -337,6 +357,8 @@ export function useLayerData(
   const loadedDataRef = useRef<LoadedData>({
     shapePrebuiltData: new Map(),
     shapeFillColorData: new Map(),
+    labelFillColorData: new Map(),
+    labelColorLutData: new Map(),
     worldBounds: new Map(),
   });
   // Vis-side projection cache for coupling #1: the shapes resolver keeps raw
@@ -593,7 +615,11 @@ export function useLayerData(
           elementKey: elem.key,
           kind: 'labels',
           element: elem.element,
-          config: { tooltipFields: config.tooltipFields, channels: config.channels },
+          config: {
+            tooltipFields: config.tooltipFields,
+            channels: config.channels,
+            fillColorByColumn: config.fillColorByColumn,
+          },
           transform: elem.transform,
         });
       } else if (elem.type === 'points' && config.type === 'points') {
@@ -721,6 +747,38 @@ export function useLayerData(
     [shapesResolver]
   );
 
+  // Per-layer table-column colours for labels, built from the resolver's raw rows.
+  // Mirrors `getShapeFillColorEntry`, including its "no entry until the rows have
+  // actually loaded" rule: the LUT is memoised on a signature whose only fill term
+  // is this entry, so an eager empty entry would suppress the rebuild that makes
+  // the colours appear when the rows settle.
+  const getLabelFillColorEntry = useCallback(
+    (layerId: string, key: string, config: LabelsLayerConfig): LabelFillColorEntry | undefined => {
+      const cache = loadedDataRef.current.labelFillColorData;
+      if (!config.fillColorByColumn?.columnName) {
+        cache.delete(layerId);
+        return undefined;
+      }
+      const rows = labelsResolver.getFillColorRows(key);
+      if (!rows) return undefined;
+      const signature = getLabelFillColorSignature(config);
+      const cached = cache.get(layerId);
+      // Both terms are needed: the rows change when the COLUMN changes, and the
+      // signature changes when the mode does (same rows, different encoding).
+      if (cached && cached.rowsSource === rows && cached.signature === signature) {
+        return cached;
+      }
+      const entry = buildLabelFillColorEntry(config, rows);
+      if (!entry) {
+        cache.delete(layerId);
+        return undefined;
+      }
+      cache.set(layerId, entry);
+      return entry;
+    },
+    [labelsResolver]
+  );
+
   const reloadElement = useCallback(
     (type: string, key: string) => {
       const loaded = loadedDataRef.current;
@@ -744,6 +802,12 @@ export function useLayerData(
       } else if (type === 'labels') {
         labelsResolver.evict(key);
         loaded.worldBounds.delete(`labels:${key}`);
+        for (const [layerId, config] of Object.entries(layersRef.current)) {
+          if (config.type === 'labels' && config.elementKey === key) {
+            loaded.labelFillColorData.delete(layerId);
+            loaded.labelColorLutData.delete(layerId);
+          }
+        }
       }
       // The resolver/engine effects will pick up the missing data and reload
     },
@@ -1137,6 +1201,22 @@ export function useLayerData(
                 : rawSelections;
             const stableSelections = getStableSelections(`labels:${layerId}`, selections);
 
+            const channelColors =
+              ch?.colors && ch.colors.length > 0
+                ? ch.colors
+                : (labelsData.colors ?? [[255, 255, 255]]);
+
+            // Per-label filtering/colouring. The default colour is the layer's own
+            // channel colour, so a label the feature-state says nothing about draws
+            // exactly as it would with the LUT switched off.
+            const featureColorLut = getStableLabelColorLut(
+              layerId,
+              config,
+              getLabelFillColorEntry(layerId, elem.key, config),
+              channelColors[0] ?? [255, 255, 255],
+              loadedDataRef.current.labelColorLutData
+            );
+
             // Fallbacks mirror `buildLabelsChannelDefaults`: the resolver always
             // populates these, but its `LabelsChannelDefaults` types them optional.
             const layer = renderLabelsLayer({
@@ -1145,10 +1225,8 @@ export function useLayerData(
               modelMatrix: elem.transform,
               opacity: config.opacity,
               visible: config.visible,
-              channelColors:
-                ch?.colors && ch.colors.length > 0
-                  ? ch.colors
-                  : (labelsData.colors ?? [[255, 255, 255]]),
+              channelColors,
+              ...(featureColorLut ? { featureColorLut } : {}),
               channelsVisible:
                 ch?.channelsVisible && ch.channelsVisible.length > 0
                   ? ch.channelsVisible
@@ -1187,6 +1265,7 @@ export function useLayerData(
       getMergedShapeRenderData,
       getShapeFillColorEntry,
       getShapePrebuilt,
+      getLabelFillColorEntry,
       labelsResolver,
     ]
   );

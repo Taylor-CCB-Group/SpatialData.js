@@ -13,6 +13,9 @@ uniform labelsBitmaskUniforms {
   float channelFilled0;
   float scaleFactor;
   float labelOpacity;
+  float useFeatureColors;
+  float featureTexWidth;
+  float featureCount;
 } labelsBitmask;
 `;
 
@@ -28,6 +31,12 @@ export const labelsBitmaskUniforms = {
     channelFilled0: 'f32',
     scaleFactor: 'f32',
     labelOpacity: 'f32',
+    /** 1 when `featureColorTexture` holds a real per-label LUT, else 0. */
+    useFeatureColors: 'f32',
+    /** Texel columns in `featureColorTexture` (LABEL_COLOR_LUT_WIDTH). */
+    featureTexWidth: 'f32',
+    /** Number of addressable label ids; ids at or beyond this are unannotated. */
+    featureCount: 'f32',
   },
 } as const;
 
@@ -59,10 +68,34 @@ precision highp float;
 precision highp int;
 
 uniform sampler2D channel0;
+uniform sampler2D featureColorTexture;
 
 in vec2 vTexCoord;
 
 out vec4 fragColor;
+
+/**
+ * Per-label style from the lookup table: rgb is the label's fill colour and a
+ * is an opacity SCALE, not an opacity — 0 hides the label, and anything else
+ * multiplies the channel's fill and outline opacities, so the channel's own
+ * sliders keep working while a filter is applied.
+ *
+ * A label id past the end of the table is unannotated (it exists in the raster but
+ * the table says nothing about it) and keeps the plain channel colour, mirroring a
+ * shape with no per-feature colour falling back to the layer default.
+ */
+vec4 getLabelFeatureStyle(float sampledLabel) {
+  if (labelsBitmask.useFeatureColors < 0.5) {
+    return vec4(labelsBitmask.color0.rgb, 1.0);
+  }
+  float labelId = floor(sampledLabel + 0.5);
+  if (labelId < 0.0 || labelId >= labelsBitmask.featureCount) {
+    return vec4(labelsBitmask.color0.rgb, 1.0);
+  }
+  float width = max(labelsBitmask.featureTexWidth, 1.0);
+  ivec2 texel = ivec2(int(mod(labelId, width)), int(floor(labelId / width)));
+  return texelFetch(featureColorTexture, texel, 0);
+}
 
 float labelMatch(float sampledLabel, float referenceLabel) {
   return 1.0 - step(0.5, abs(sampledLabel - referenceLabel));
@@ -158,7 +191,21 @@ void main() {
     discard;
   }
 
-  fragColor = dataToColor(dat0, labelsBitmask.color0, labelsBitmask.channelOpacity0, labelsBitmask.channelOutlineOpacity0, labelsBitmask.channelFilled0);
+  // dat0.y is the sampled instance id — the index into the feature-state LUT.
+  vec4 featureStyle = getLabelFeatureStyle(dat0.y);
+  if (featureStyle.a <= 0.0) {
+    // Hidden by the filter. Discarding (rather than drawing at zero alpha) also
+    // keeps the label out of the depth/blend path entirely.
+    discard;
+  }
+
+  fragColor = dataToColor(
+    dat0,
+    vec4(featureStyle.rgb, 1.0),
+    labelsBitmask.channelOpacity0 * featureStyle.a,
+    labelsBitmask.channelOutlineOpacity0 * featureStyle.a,
+    labelsBitmask.channelFilled0
+  );
   fragColor.a = fragColor.a * labelsBitmask.labelOpacity;
 
   fragColor = picking_filterHighlightColor(fragColor);

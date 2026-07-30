@@ -6,8 +6,16 @@ import {
   type Layer,
   type LayersList,
   TileLayer,
+  type UpdateParameters,
 } from 'deck.gl';
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
+import {
+  buildLabelColorLut,
+  LABEL_COLOR_LUT_WIDTH,
+  type LabelColorLut,
+  type LabelFeatureStateInput,
+  type LabelRgbColor,
+} from './labelColorEncoding';
 
 /** One instance-ID raster per labels element (see `LabelsBitmaskTileLayer`). */
 export const MAX_LABEL_CHANNELS = 1 as const;
@@ -45,9 +53,50 @@ export interface LabelsLayerProps {
   channelOutlineOpacities?: number[];
   channelsFilled?: boolean[];
   channelStrokeWidths?: number[];
+  /**
+   * Per-label filtering and colouring, with the same field names and the same
+   * meanings as a shapes layer's feature-state. A labels feature id is the label's
+   * integer instance id as a string.
+   *
+   * Ignored when {@link featureColorLut} is supplied.
+   */
+  featureState?: LabelFeatureStateInput;
+  /**
+   * A pre-built lookup table, for callers that already cache one keyed by their own
+   * feature-state signature (the projection path). Skips the O(max-label-id) build
+   * that {@link featureState} would otherwise do inside the layer.
+   */
+  featureColorLut?: LabelColorLut;
   onClick?: (info: unknown) => void;
   onHover?: (info: unknown) => void;
   _subLayerProps?: CompositeLayerProps['_subLayerProps'];
+}
+
+/**
+ * Memoised `featureState → LUT`, so a bare re-render (a hover, a pan) does not
+ * rebuild a table that can be megabytes. Keyed by the feature-state's identity and
+ * then by the default colour, which is baked into every unannotated entry — the
+ * same two-level discipline `getFeatureColors` uses for shapes.
+ */
+const lutCache = new WeakMap<object, Map<string, LabelColorLut | null>>();
+
+function resolveFeatureColorLut(
+  featureState: LabelFeatureStateInput | undefined,
+  defaultColor: LabelRgbColor
+): LabelColorLut | undefined {
+  if (!featureState) return undefined;
+  const colorKey = `${defaultColor[0]},${defaultColor[1]},${defaultColor[2]}`;
+  let byColor = lutCache.get(featureState);
+  if (!byColor) {
+    byColor = new Map();
+    lutCache.set(featureState, byColor);
+  }
+  const cached = byColor.get(colorKey);
+  // `null` is a cached "this feature-state addresses nothing", distinct from a miss.
+  if (cached !== undefined) return cached ?? undefined;
+  const built = buildLabelColorLut({ featureState, defaultColor }) ?? null;
+  byColor.set(colorKey, built);
+  return built ?? undefined;
 }
 
 const VIV_SIGNAL_ABORTED = '__vivSignalAborted';
@@ -120,6 +169,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
       channelsFilled: channelsFilledProp,
       channelStrokeWidths: channelStrokeWidthsProp,
       selections: selectionsProp,
+      featureColorLut,
+      featureColorTexture,
     } = this.props;
     const selections = [firstSelection(selectionsProp)];
     const channelColors = stylePlane(channelColorsProp, [255, 255, 255]);
@@ -156,6 +207,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
         channelsFilled,
         channelStrokeWidths,
         selections,
+        featureColorLut,
+        featureColorTexture,
         bounds,
         id: `image-sub-layer-${bounds}-${id}`,
         interpolation: 'nearest',
@@ -288,6 +341,62 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     channelStrokeWidths: [1.5],
   } satisfies Partial<LabelsLayerProps>;
 
+  /**
+   * The LUT in force for this render: an explicitly supplied one, else one built
+   * (and memoised) from `featureState`. Pure — safe to call from `renderLayers`.
+   */
+  _resolveFeatureColorLut(): LabelColorLut | undefined {
+    const { featureColorLut, featureState, channelColors } = this.props;
+    const defaultColor = (channelColors?.[0] ?? [255, 255, 255]) as LabelRgbColor;
+    return featureColorLut ?? resolveFeatureColorLut(featureState, defaultColor);
+  }
+
+  updateState(params: UpdateParameters<CompositeLayer<LabelsLayerProps>>): void {
+    super.updateState(params);
+    this._updateFeatureColorTexture();
+  }
+
+  /**
+   * Keep the LUT's GPU texture in step with the resolved table.
+   *
+   * The texture lives here, on the composite, rather than on the bitmask sublayers:
+   * a tiled labels element draws many sublayers at once and they all read the same
+   * table, so one upload is both correct and the difference between a few megabytes
+   * and a few tens of megabytes.
+   */
+  _updateFeatureColorTexture(): void {
+    const lut = this._resolveFeatureColorLut();
+
+    if (this.state?.featureColorLut === lut) {
+      return;
+    }
+
+    (this.state?.featureColorTexture as { destroy?: () => void } | null)?.destroy?.();
+    let texture: unknown = null;
+    if (lut) {
+      const height = Math.max(1, Math.ceil(lut.labelCount / LABEL_COLOR_LUT_WIDTH));
+      // Pad to the full texel grid: the shader addresses by row/column, so the tail
+      // of the last row must exist even though no label maps to it.
+      const data = new Uint8Array(LABEL_COLOR_LUT_WIDTH * height * 4);
+      data.set(lut.colors.subarray(0, Math.min(lut.colors.length, data.length)));
+      texture = this.context.device.createTexture({
+        width: LABEL_COLOR_LUT_WIDTH,
+        height,
+        dimension: '2d',
+        data,
+        sampler: { minFilter: 'nearest', magFilter: 'nearest' },
+        format: 'rgba8unorm',
+      });
+    }
+    this.setState({ featureColorLut: lut, featureColorTexture: texture });
+  }
+
+  finalizeState(context: unknown): void {
+    (this.state?.featureColorTexture as { destroy?: () => void } | null)?.destroy?.();
+    // biome-ignore lint/suspicious/noExplicitAny: CompositeLayer's finalizeState is optional in its public types.
+    (super.finalizeState as any)?.(context);
+  }
+
   renderLayers(): Layer | null | LayersList {
     const {
       loader,
@@ -312,12 +421,18 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     const selections = [firstSelection(selectionsProp)];
     const structuralSelectionKey = labelsSelectionKey(selections);
     const nextLoader = Array.isArray(loader) && loader.length === 1 ? loader[0] : loader;
+    // The LUT is resolved here (memoised, pure) rather than read from state so the
+    // sublayers see it even on a render that precedes the texture upload; the
+    // texture comes from state, and the shader only samples when it has both.
+    const featureColorLut = this._resolveFeatureColorLut();
     const commonProps = {
       loader: nextLoader,
       selections,
       labelsSelectionKey: structuralSelectionKey,
       modelMatrix,
       opacity,
+      featureColorLut,
+      featureColorTexture: this.state?.featureColorTexture ?? null,
       channelsVisible: stylePlane(channelsVisible, true),
       channelColors: stylePlane(channelColors, [255, 255, 255]),
       channelOpacities: stylePlane(channelOpacities, 0.18),

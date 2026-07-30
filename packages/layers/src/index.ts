@@ -37,8 +37,44 @@ export {
   type PointsLoadTarget,
   type PointsMatchingLoadState,
 } from './engine/PointsDataEngine.js';
+export type {
+  AssignFeatureColorsOptions,
+  FeatureFillColorMode,
+  FeatureRgbaColor,
+  FeatureRgbColor,
+} from './featureColorEncoding';
+export {
+  assignFeatureColors,
+  DEFAULT_FEATURE_CATEGORICAL_PALETTE,
+  DEFAULT_FEATURE_NUMERIC_RAMP,
+  resolveFeatureFillColorMode,
+} from './featureColorEncoding';
 export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';
 export { LabelsLayer, MAX_LABEL_CHANNELS } from './LabelsLayer';
+export type {
+  BuildLabelColorLutOptions,
+  BuildLabelFillColorByFeatureIdOptions,
+  LabelColorLut,
+  LabelFeatureState,
+  LabelFeatureStateInput,
+  LabelFeatureStateRuntime,
+  LabelFillColorMode,
+  LabelRgbaColor,
+  LabelRgbColor,
+} from './labelColorEncoding';
+export {
+  buildLabelColorLut,
+  buildLabelFeatureStateRuntime,
+  buildLabelFillColorByFeatureId,
+  DEFAULT_LABEL_FILTERED_OPACITY_MULTIPLIER,
+  EMPTY_LABEL_FEATURE_STATE_RUNTIME,
+  isLabelFeatureStateRuntime,
+  isLabelVisibleInLut,
+  LABEL_COLOR_LUT_MAX_LABELS,
+  LABEL_COLOR_LUT_WIDTH,
+  normalizeLabelFeatureState,
+  parseLabelId,
+} from './labelColorEncoding';
 export type { PointsLayerProps } from './PointsLayer';
 export { PointsLayer } from './PointsLayer';
 // Exported so a CALLER can check the same condition `PointsLayer` checks before

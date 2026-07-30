@@ -5,6 +5,7 @@
 import type { Matrix4 } from '@math.gl/core';
 import type { SpatialElement } from '@spatialdata/core';
 import type {
+  LabelFillColorMode,
   ShapeFillColorMode,
   ShapeStrokeWidthUnits,
   ShapesLayerPickEvent,
@@ -144,6 +145,26 @@ export interface PointsLayerConfig extends BaseLayerConfig {
 export interface LabelsLayerConfig extends BaseLayerConfig {
   type: 'labels';
   tooltipFields?: string[];
+  /**
+   * Colour each label by an obs column of the associated table — the same option a
+   * shapes layer takes, resolved against the same table.
+   */
+  fillColorByColumn?: {
+    columnName: string;
+    mode: LabelFillColorMode;
+  };
+  /**
+   * Per-label filtering and colouring. Field names and semantics are identical to
+   * {@link ShapesLayerConfig.featureState}; a labels feature id is the label's
+   * integer instance id as a string (the same id the tooltip resolves against the
+   * associated table).
+   */
+  featureState?: {
+    fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+    hiddenFeatureIds?: string[];
+    fadedFeatureIds?: string[];
+    filteredOpacityMultiplier?: number;
+  };
   channels?: {
     channelIds?: string[];
     colors?: [number, number, number][];

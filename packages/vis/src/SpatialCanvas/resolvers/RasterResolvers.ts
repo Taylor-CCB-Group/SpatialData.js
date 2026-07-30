@@ -2,6 +2,7 @@ import { getImageSize } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
 import type { OmeZarrMultiscalesSource } from '@spatialdata/avivatorish';
 import {
+  type AssociatedTableFeatureRows,
   type AxisAlignedBounds,
   boundsFromImagePixelExtents,
   type EntryNotice,
@@ -10,6 +11,7 @@ import {
   isCancellation,
   type LabelsElement,
   type LabelsTooltipMetadata,
+  loadAssociatedTableFeatureRows,
   loadLabelsTooltipMetadata,
   Resolution,
   type ResolveContext,
@@ -82,6 +84,12 @@ export interface ImagesResolveConfig {
 export interface LabelsResolveConfig {
   tooltipFields?: string[];
   channels?: unknown;
+  /**
+   * The obs column driving per-label colouring. As for shapes, the resolver loads
+   * the ROWS; turning a column into colours is a pure projection and stays in
+   * `@spatialdata/layers` (`buildLabelFillColorByFeatureId`).
+   */
+  fillColorByColumn?: { columnName: string; mode: string };
 }
 
 /**
@@ -321,6 +329,12 @@ export class LabelsResolver
     { signature: string; resolution: Resolution<LabelsTooltipMetadata> }
   >();
 
+  /** Associated-table rows for the fill-colour column, keyed by element. */
+  private readonly fillColors = new Map<
+    string,
+    { column: string; resolution: Resolution<AssociatedTableFeatureRows> }
+  >();
+
   plan(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): readonly ResolveTask[] {
     const key = ctx.elementKey;
     const tasks: ResolveTask[] = [];
@@ -339,6 +353,15 @@ export class LabelsResolver
         });
       }
     }
+    const column = ctx.config.fillColorByColumn?.columnName;
+    if (column && this.fillColors.get(key)?.column !== column) {
+      // The column is IN the id: switching columns supersedes rather than queues.
+      tasks.push({
+        id: `${key}#fillColor:${column}`,
+        resource: 'fillColor',
+        payload: { column },
+      });
+    }
     return tasks;
   }
 
@@ -355,6 +378,36 @@ export class LabelsResolver
         const loader = await createImageLoader(ctx.element, this.options.fetchMultiscales);
         return { data: buildLabelsChannelDefaults(loader, ctx.element) };
       });
+      return;
+    }
+
+    if (task.resource === 'fillColor') {
+      const column = (task.payload as { column?: string } | undefined)?.column;
+      if (!column) return;
+      try {
+        const rows = await loadAssociatedTableFeatureRows({
+          spatialData: this.options.spatialData,
+          kind: 'labels',
+          key,
+          extraColumnNames: [column],
+        });
+        this.fillColors.set(key, { column, resolution: Resolution.ready(rows) });
+      } catch (cause) {
+        if (isCancellation(cause)) return;
+        this.fillColors.set(key, {
+          column,
+          resolution: Resolution.failed(
+            toSpatialEntryError(cause, {
+              elementKey: key,
+              kind: 'labels',
+              resource: 'fillColor',
+              fallback: 'load-failed',
+            })
+          ),
+        });
+      } finally {
+        this.notify();
+      }
       return;
     }
 
@@ -395,6 +448,12 @@ export class LabelsResolver
     return held ? Resolution.lastGood(held.resolution) : undefined;
   }
 
+  /** The raw table rows. The COLOURS are built by the projection — as for shapes. */
+  getFillColorRows(key: string): AssociatedTableFeatureRows | undefined {
+    const held = this.fillColors.get(key);
+    return held ? Resolution.lastGood(held.resolution) : undefined;
+  }
+
   snapshot(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): EntryResources {
     // Key by entry (layers may share an element) and transform (it moves the bounds).
     const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, '');
@@ -407,6 +466,7 @@ export class LabelsResolver
       resources: {
         loader: entry?.loader ?? Resolution.idle(),
         tooltip: this.tooltips.get(ctx.elementKey)?.resolution ?? Resolution.idle(),
+        fillColor: this.fillColors.get(ctx.elementKey)?.resolution ?? Resolution.idle(),
       },
       notices: entry?.notices ?? [],
       bounds: this.boundsFor(ctx.elementKey, ctx.transform),
@@ -419,10 +479,12 @@ export class LabelsResolver
   override evict(key: string): void {
     super.evict(key);
     this.tooltips.delete(key);
+    this.fillColors.delete(key);
   }
 
   override dispose(): void {
     super.dispose();
     this.tooltips.clear();
+    this.fillColors.clear();
   }
 }
