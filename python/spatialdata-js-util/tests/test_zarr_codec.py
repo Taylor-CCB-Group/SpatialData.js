@@ -23,6 +23,20 @@ from spatialdata_js_util.codecs.backends import (
 from spatialdata_js_util.codecs.zarr_codec import Htj2kCodec, Jpeg2kCodec
 
 
+
+def _skip_if_codec_unavailable(codec_name: str) -> None:
+    """Skip only when *this* codec's backend is missing.
+
+    A single HTJ2K gate over a parametrised pair gets both cases wrong: JPEG2K
+    skips when only `imagecodecs` is present without HTJ2K, and runs into an
+    ImportError when only the WASM backend is.
+    """
+    if codec_name == CODEC_HTJ2K_OPENJPH:
+        if not htj2k_available():
+            pytest.skip("No HTJ2K backend available.")
+        return
+    pytest.importorskip("imagecodecs", reason="imagecodecs is required for JPEG 2000.")
+
 def test_codecs_resolve_from_the_zarr_registry() -> None:
     """Entry-point registration must work without importing our modules first."""
     from zarr.registry import get_codec_class
@@ -43,10 +57,10 @@ def test_codec_from_dict_tolerates_unknown_configuration() -> None:
     assert isinstance(Htj2kCodec.from_dict({"configuration": {"unexpected": 1}}), Htj2kCodec)
 
 
-@pytest.mark.skipif(not htj2k_available(), reason="No HTJ2K backend available.")
 @pytest.mark.parametrize("codec_name", [CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K])
 def test_zarr_array_round_trips_through_the_codec(tmp_path: Path, codec_name: str) -> None:
     """A zarr array declaring our codec round-trips through zarr's own pipeline."""
+    _skip_if_codec_unavailable(codec_name)
     y, x = np.mgrid[0:64, 0:48]
     data = ((x * 5 + y * 3) % 4096).astype(np.uint16)
 
@@ -110,8 +124,9 @@ class TestBackendProbe:
         selected = report["selected"]
         if selected is None:
             pytest.skip("No HTJ2K backend available.")
-        if selected == BACKEND_IMAGECODECS:
-            assert report["backends"][BACKEND_IMAGECODECS]["passes_multicomponent_probe"]
+        # Whichever backend won, it has to decode the fixture — asserting only for
+        # `imagecodecs` left the WASM selection unchecked by the probe test.
+        assert backend_passes_probe(selected), f"selected backend {selected} fails the probe"
 
     def test_unknown_backend_never_passes(self) -> None:
         assert backend_passes_probe("not-a-real-backend") is False
@@ -144,11 +159,11 @@ class TestSpatialDataReadsOurStores:
         ).write(path, overwrite=True)
         return pixels
 
-    @pytest.mark.skipif(not htj2k_available(), reason="No HTJ2K backend available.")
     @pytest.mark.parametrize("codec_name", [CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K])
     def test_lossless_recompressed_store_reads_back_exactly(
         self, tmp_path: Path, codec_name: str
     ) -> None:
+        _skip_if_codec_unavailable(codec_name)
         sd = pytest.importorskip("spatialdata")
         from spatialdata_js_util import recompress_spatialdata
 
@@ -167,3 +182,18 @@ class TestSpatialDataReadsOurStores:
 
         read_back = np.asarray(sd.read_zarr(dest).images["morphology"].data.compute())
         assert np.array_equal(read_back, pixels)
+
+
+def test_legacy_codec_refuses_to_encode() -> None:
+    """The legacy label is registered for reading only.
+
+    It inherits the encode path, so without an explicit refusal a zarr write
+    through it would either spread a codec id we are retiring or fail with a
+    generic "unsupported codec" from two layers down.
+    """
+    import asyncio
+
+    from spatialdata_js_util.codecs.zarr_codec import LegacyHtj2kCodec
+
+    with pytest.raises(NotImplementedError, match="legacy label"):
+        asyncio.run(LegacyHtj2kCodec()._encode_single(None, None))

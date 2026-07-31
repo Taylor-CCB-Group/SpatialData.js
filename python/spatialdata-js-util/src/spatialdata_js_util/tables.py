@@ -180,7 +180,12 @@ def _convert_table_matrices(
     report: dict[str, str] = {}
 
     with _anndata_write_settings(zarr_format=zarr_format_of(table_path)):
-        report["X"] = _convert_group_matrix(root, "X", densify=densify)
+        # `X` is optional in AnnData — a table may carry only `layers`, or only
+        # annotations. Converting what is there beats refusing the whole table.
+        if "X" in root:
+            report["X"] = _convert_group_matrix(root, "X", densify=densify)
+        else:
+            report["X"] = "absent"
         if layers and "layers" in root:
             layers_group = root["layers"]
             for name in sorted(layers_group.keys()):
@@ -196,9 +201,16 @@ def _convert_table_matrices(
 
 
 def _table_dimensions(table_path: Path) -> tuple[int, int]:
+    """Report `(n_obs, n_vars)`, or `(0, 0)` for a table with no `X`.
+
+    Only used for the manifest, so an absent matrix is worth reporting as zero
+    rather than failing a conversion that has nothing to do with dimensions.
+    """
     import zarr
 
     root = zarr.open_group(str(table_path), mode="r", use_consolidated=False)
+    if "X" not in root:
+        return 0, 0
     shape = root["X"].attrs.get("shape")
     if shape is None:  # dense X is a plain array
         shape = root["X"].shape
@@ -231,6 +243,17 @@ def convert_store_tables_to_csc(
     else:
         store_path = Path(dest)
         in_place = False
+        # The overwrite branch below deletes the destination before copying, so a
+        # destination that *is* the source — or contains it — would delete the
+        # store we are about to read. Checked against resolved paths so a symlink
+        # or `.` in the argument cannot slip past.
+        resolved_source = source_path.resolve()
+        resolved_dest = store_path.resolve()
+        if resolved_dest == resolved_source or resolved_dest in resolved_source.parents:
+            raise WriterCommandError(
+                f"Destination would delete the source store: {store_path}\n"
+                "Pass no destination to convert in place."
+            )
         if store_path.exists():
             if not overwrite:
                 raise WriterCommandError(

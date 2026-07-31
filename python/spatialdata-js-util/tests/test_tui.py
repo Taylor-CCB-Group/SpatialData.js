@@ -19,6 +19,7 @@ sd = pytest.importorskip("spatialdata")
 
 from textual.widgets import Button, Checkbox, Input, ListView  # noqa: E402
 
+from spatialdata_js_util.codecs import htj2k_available  # noqa: E402
 from spatialdata_js_util.tui.app import WriterApp  # noqa: E402
 from spatialdata_js_util.tui.models import CommandId  # noqa: E402
 from spatialdata_js_util.tui.screens import (  # noqa: E402
@@ -200,6 +201,36 @@ class TestTablesToCsc:
         assert sd.read_zarr(store).tables["table"].X.format == "csr"
 
     @pytest.mark.asyncio
+    async def test_existing_destination_is_confirmed_before_it_is_replaced(
+        self, tmp_path: Path
+    ) -> None:
+        """Overwriting a destination deletes it, so it is confirmed like an in-place run."""
+        store = _store_with_table(tmp_path / "s.zarr")
+        dest = tmp_path / "csc.zarr"
+        dest.mkdir()
+        (dest / "keep.txt").write_text("existing contents")
+
+        app = WriterApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _select(pilot, "cmd-tables-to-csc")
+            app.screen.query_one("#source", Input).value = str(store)
+            app.screen.query_one("#dest", Input).value = str(dest)
+
+            # Without the overwrite box the form rejects it rather than starting a
+            # run that would fail deep in the conversion.
+            app.screen.query_one("#run", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, TablesToCscScreen)
+            assert (dest / "keep.txt").is_file()
+
+            app.screen.query_one("#overwrite", Checkbox).value = True
+            await pilot.pause()
+            app.screen.query_one("#run", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+
+    @pytest.mark.asyncio
     async def test_missing_source_is_reported_not_run(self, tmp_path: Path) -> None:
         app = WriterApp()
         async with app.run_test() as pilot:
@@ -215,6 +246,10 @@ class TestTablesToCsc:
 
 class TestRecompressImages:
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not htj2k_available(),
+        reason="No HTJ2K encoder is available in this environment.",
+    )
     async def test_recompresses_losslessly_and_reads_back(self, tmp_path: Path) -> None:
         source = tmp_path / "src.zarr"
         pixels = _store_with_image(source)
@@ -290,6 +325,10 @@ class TestRecompressImages:
 
 class TestRecompressPyramidControls:
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not htj2k_available(),
+        reason="No HTJ2K encoder is available in this environment.",
+    )
     async def test_pyramid_checkbox_builds_levels(self, tmp_path: Path) -> None:
         from spatialdata_js_util.pyramids import has_pyramid
 
@@ -316,6 +355,10 @@ class TestRecompressPyramidControls:
         assert has_pyramid(dest, "images", "morphology")
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not htj2k_available(),
+        reason="No HTJ2K encoder is available in this environment.",
+    )
     async def test_pyramid_off_by_default(self, tmp_path: Path) -> None:
         from spatialdata_js_util.pyramids import has_pyramid
 

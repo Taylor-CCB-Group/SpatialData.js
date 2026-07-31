@@ -25,9 +25,15 @@ def _load_bounds(manifest: dict, scenario_id: str | None) -> dict[str, float]:
 
 
 def _feature_codes(manifest: dict, scenario_id: str | None) -> list[int] | None:
+    # Defaults to the same scenario `_load_bounds` picks. Diverging here would
+    # measure scenario 0's bounds without scenario 0's feature filter — a query
+    # no scenario describes, reported under that scenario's name.
     scenarios = manifest.get("benchmark_scenarios") or []
     if not scenario_id:
-        return None
+        if not scenarios:
+            return None
+        codes = scenarios[0].get("feature_codes")
+        return list(codes) if codes is not None else None
     for scenario in scenarios:
         if scenario.get("id") == scenario_id:
             codes = scenario.get("feature_codes")

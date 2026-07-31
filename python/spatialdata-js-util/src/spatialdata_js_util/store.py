@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -219,7 +220,7 @@ def _points_element_consolidated_entry(
     if metadata is not None:
         entry = metadata.get(f"points/{points_key}")
         if isinstance(entry, dict):
-            return json.loads(json.dumps(entry))
+            return deepcopy(entry)
     element_json = _points_root(zarr_path) / points_key / "zarr.json"
     element_doc = read_json(element_json)
     return {
@@ -268,16 +269,14 @@ def register_points_elements_in_consolidated_metadata(
         metadata=metadata,
     )
     for key in element_keys:
-        metadata[f"points/{key}"] = json.loads(json.dumps(template_entry))
-    root_json.write_text(json.dumps(doc, indent=2) + "\n")
+        metadata[f"points/{key}"] = deepcopy(template_entry)
+    write_json(root_json, doc)
 
 
 def read_points_dataframe(parquet_path: str | Path) -> pd.DataFrame:
     path = Path(parquet_path)
     if not path.exists():
         raise FileNotFoundError(f"Points Parquet not found: {path}")
-    if path.is_dir():
-        table = ds.dataset(path, format="parquet").to_table()
-    else:
-        table = ds.dataset(path, format="parquet").to_table()
+    # `ds.dataset` handles a single file and a partitioned directory alike.
+    table = ds.dataset(path, format="parquet").to_table()
     return table.to_pandas()

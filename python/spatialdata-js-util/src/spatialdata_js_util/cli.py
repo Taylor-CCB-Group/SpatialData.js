@@ -66,7 +66,10 @@ def _recompress_chunks(value: list[str] | None):
     try:
         return tuple(int(part) for part in value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("chunks must be 'auto' or integer axis sizes") from exc
+        # Called from the command body rather than as an argparse `type=`, so an
+        # ArgumentTypeError here would surface as a traceback rather than a usage
+        # error. Match how the rest of the command reports bad arguments.
+        raise SystemExit("error: chunks must be 'auto' or integer axis sizes") from exc
 
 
 def _images_recompress(args: argparse.Namespace) -> None:

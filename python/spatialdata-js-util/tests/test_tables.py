@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from spatialdata_js_util.errors import WriterCommandError
+from spatialdata_js_util.store import drop_consolidated_metadata
 from spatialdata_js_util.tables import (
     anndata_to_csc,
     convert_store_tables_to_csc,
@@ -142,6 +144,26 @@ class TestConvertStoreTablesToCsc:
         with pytest.raises(WriterCommandError, match="already exists"):
             convert_store_tables_to_csc(store, dest)
 
+    def test_refuses_a_destination_that_would_delete_the_source(self, tmp_path: Path) -> None:
+        # The overwrite branch rmtree's the destination first, so a destination
+        # equal to (or containing) the source destroys the store being read.
+        store = _store(tmp_path / "s.zarr")
+        for dest in (store, store.parent):
+            with pytest.raises(WriterCommandError, match="delete the source"):
+                convert_store_tables_to_csc(store, dest, overwrite=True)
+        assert (store / "tables" / "table").is_dir()
+
+    def test_converts_a_table_with_no_x(self, tmp_path: Path) -> None:
+        # `X` is optional in AnnData; the layers still convert.
+        store = _store(tmp_path / "s.zarr")
+        shutil.rmtree(store / "tables" / "table" / "X")
+        drop_consolidated_metadata(store / "tables" / "table")
+
+        result = convert_store_tables_to_csc(store)
+
+        assert result.manifest["tables"][0]["matrices"]["X"] == "absent"
+        assert result.manifest["tables"][0]["n_obs"] == 0
+
     def test_rejects_unknown_table_key(self, tmp_path: Path) -> None:
         store = _store(tmp_path / "s.zarr")
         with pytest.raises(WriterCommandError, match="Unknown table"):
@@ -220,8 +242,8 @@ class TestConsolidatedMetadataSurvivesConversion:
 
         assert (permuted / "points" / "zarr.json").is_file()
 
-    def test_refresh_refuses_to_write_orphaned_entries(self, tmp_path: Path) -> None:
-        """The guard that would have turned this into a loud failure."""
+    def test_refresh_reconstructs_a_missing_collection_parent(self, tmp_path: Path) -> None:
+        """The repair that keeps a store openable when its parent group is absent."""
         import json
 
         from spatialdata_js_util.store import (
@@ -240,6 +262,26 @@ class TestConsolidatedMetadataSurvivesConversion:
         # The missing parent is filled in rather than dropped.
         assert meta["points"]["node_type"] == "group"
         assert sd.read_zarr(store) is not None
+
+    def test_refresh_refuses_to_write_orphaned_entries(self, monkeypatch, tmp_path: Path) -> None:
+        """The guard itself — an orphan that reconstruction cannot fill in.
+
+        Reconstruction covers every orphan reachable from a disk walk, so the
+        `ValueError` branch is only reachable if that ever stops holding. Pinning
+        it means a change to `_collect_consolidated_metadata` cannot quietly start
+        writing a listing that makes the store unopenable.
+        """
+        from spatialdata_js_util import store as store_module
+
+        store = self._store_with_points(tmp_path / "src.zarr")
+
+        def _orphaned(*_args, **_kwargs):
+            return {"points/transcripts": {"node_type": "group", "zarr_format": 3}}
+
+        monkeypatch.setattr(store_module, "_collect_consolidated_metadata", _orphaned)
+
+        with pytest.raises(ValueError, match="orphaned entries"):
+            store_module.refresh_consolidated_metadata(store)
 
 
 class TestConversionDoesNotReEncodeTheRestOfTheTable:

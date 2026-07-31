@@ -55,7 +55,7 @@ spatialdata-js-util tui ~/data/xenium.zarr
 
 Pick a command from the home menu and the UI walks you through it:
 
-```
+```text
 IMAGES   Recompress rasters (JPEG 2000 / HTJ2K)
 POINTS   List Points elements in a Zarr store
 POINTS   Morton-sort Points from Zarr

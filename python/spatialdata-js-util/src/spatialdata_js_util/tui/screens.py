@@ -729,7 +729,17 @@ def codecs_info_task() -> TaskSpec:
 class RecompressImagesScreen(InputFormScreen):
     """Recompress image rasters — the `images recompress` command."""
 
-    INPUT_ORDER = ("source", "dest", "image-key", "quality", "chunks", "workers")
+    INPUT_ORDER = (
+        "source",
+        "dest",
+        "image-key",
+        "quality",
+        "chunks",
+        "workers",
+        "pyramid-levels",
+        "pyramid-downscale",
+        "pyramid-min-size",
+    )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -970,18 +980,39 @@ class TablesToCscScreen(InputFormScreen):
             )
 
         in_place = dest is None
+        dest_exists = dest is not None and Path(dest).exists()
+        if dest_exists and not overwrite:
+            # The run would fail on this deep inside the conversion; say so while
+            # the form is still on screen and editable.
+            self.notify(
+                f"Destination already exists: {dest}\nTick overwrite to replace it.",
+                severity="error",
+            )
+            return
+
+        scope = "All tables" if tables is None else "Tables: " + ", ".join(tables)
+        if in_place:
+            confirm_message = (
+                f"Rewrite table matrices in place:\n{source}\n\n{scope}\n\n"
+                "Values are preserved; only the sparse layout changes. Proceed?"
+            )
+        else:
+            confirm_message = (
+                f"Replace the existing store:\n{dest}\n\n{scope}\n\n"
+                "Its current contents are deleted before the copy. Proceed?"
+            )
+
+        # Anything that destroys existing data is confirmed, whether that is the
+        # source (in place) or the destination (overwrite).
+        needs_confirm = in_place or dest_exists
         task = TaskSpec(
             command=CommandId.TABLES_TO_CSC,
             title="Tables to CSC",
             runner=runner,
-            requires_confirm=in_place,
-            confirm_message=(
-                f"Rewrite table matrices in place:\n{source}\n\n"
-                f"{'All tables' if tables is None else 'Tables: ' + ', '.join(tables)}\n\n"
-                "Values are preserved; only the sparse layout changes. Proceed?"
-            ),
+            requires_confirm=needs_confirm,
+            confirm_message=confirm_message,
         )
-        self.app.push_screen(ConfirmScreen(task) if in_place else RunScreen(task))
+        self.app.push_screen(ConfirmScreen(task) if needs_confirm else RunScreen(task))
 
 
 class ConfirmScreen(WriterScreen):

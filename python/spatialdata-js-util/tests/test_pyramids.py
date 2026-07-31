@@ -97,6 +97,13 @@ class TestResolveScaleFactors:
         with pytest.raises(WriterCommandError, match="at least 1"):
             resolve_scale_factors(element, levels=0)
 
+    def test_rejects_more_levels_than_the_cap(self) -> None:
+        # Clamping instead would build a different pyramid from the one asked
+        # for and report success.
+        element = self._Element(c=1, y=4096, x=4096)
+        with pytest.raises(WriterCommandError, match="at most"):
+            resolve_scale_factors(element, levels=MAX_LEVELS + 1)
+
 
 class TestAddPyramids:
     def test_single_level_store_gains_levels(self, tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from spatialdata_js_util.index_permutations import write_index_permutations
+from spatialdata_js_util.index_permutations import DEFAULT_CONDITIONS, write_index_permutations
 from spatialdata_js_util.points import (
     MORTON_CODE_2D_COLUMN,
     build_spatialdata_multiscale_metadata,
@@ -152,10 +152,7 @@ def test_verify_index_permutations_manifest(tmp_path) -> None:
         row_group_size=2,
         conditions=tuple(
             condition
-            for condition in __import__(
-                "spatialdata_js_util.index_permutations",
-                fromlist=["DEFAULT_CONDITIONS"],
-            ).DEFAULT_CONDITIONS
+            for condition in DEFAULT_CONDITIONS
             if condition.id in {"canonical", "morton"}
         ),
     )

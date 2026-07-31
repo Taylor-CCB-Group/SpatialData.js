@@ -104,9 +104,20 @@ class Htj2kCodec(_ImageCodec):
 
 @dataclass(frozen=True)
 class LegacyHtj2kCodec(_ImageCodec):
-    """HTJ2K under the pre-OpenJPH label; decode-compatible with `Htj2kCodec`."""
+    """HTJ2K under the pre-OpenJPH label; decode-compatible with `Htj2kCodec`.
+
+    Read-only by design. The label is registered so existing stores still open,
+    but new chunks should carry the current name — writing more of them would
+    spread a codec id we are trying to retire.
+    """
 
     codec_name = CODEC_HTJ2K_LEGACY
+
+    async def _encode_single(self, chunk_array: NDBuffer, chunk_spec: "ArraySpec") -> Buffer | None:
+        raise NotImplementedError(
+            f"{CODEC_HTJ2K_LEGACY} is a legacy label kept for reading existing stores; "
+            f"write with {CODEC_HTJ2K_OPENJPH} instead."
+        )
 
 
 @dataclass(frozen=True)

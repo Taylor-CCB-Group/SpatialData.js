@@ -97,7 +97,13 @@ def resolve_scale_factors(
     if levels != "auto":
         if levels < 1:
             raise WriterCommandError(f"Pyramid levels must be at least 1, got {levels}.")
-        return [downscale] * (min(int(levels), MAX_LEVELS) - 1)
+        # Silently capping an explicit request writes a pyramid the caller did not
+        # ask for and reports success; the cap is only implicit for `"auto"`.
+        if levels > MAX_LEVELS:
+            raise WriterCommandError(
+                f"Pyramid levels must be at most {MAX_LEVELS}, got {levels}."
+            )
+        return [downscale] * (int(levels) - 1)
 
     if min_size < 1:
         raise WriterCommandError(f"Pyramid min-size must be positive, got {min_size}.")

@@ -208,7 +208,14 @@ def verify_multiscale_parquet(path: str | Path) -> list[VerifyCheck]:
 
     checks.append(_check("file_exists", True, str(parquet_path)))
 
-    schema_metadata = pq.ParquetFile(parquet_path).schema_arrow.metadata
+    # A verifier that raises on a corrupt file reports nothing about it; the
+    # unreadable file is itself the finding, as in `verify_morton_parquet`.
+    try:
+        schema_metadata = pq.ParquetFile(parquet_path).schema_arrow.metadata
+    except Exception as exc:
+        checks.append(_check("parquet_readable", False, f"failed to read parquet: {exc}"))
+        return checks
+
     if schema_metadata is None or b"spatialdata_multiscale" not in schema_metadata:
         checks.append(
             _check(
@@ -302,13 +309,25 @@ def verify_index_permutations_manifest(dest_zarr: str | Path) -> list[VerifyChec
         checks.append(_check(f"path_{condition_id}", True, str(parquet_path)))
 
         tiling_kind = condition.get("tiling_kind")
-        if tiling_kind == "morton-points" and parquet_path.is_file():
-            for morton_check in verify_morton_parquet(parquet_path):
+        if tiling_kind == "morton-points":
+            if parquet_path.is_file():
+                for morton_check in verify_morton_parquet(parquet_path):
+                    checks.append(
+                        VerifyCheck(
+                            id=f"{condition_id}_{morton_check.id}",
+                            passed=morton_check.passed,
+                            detail=morton_check.detail,
+                        )
+                    )
+            else:
+                # A directory dataset passes the path check above, so without this
+                # the manifest would report `all_passed` for a Morton condition
+                # whose ordering was never looked at.
                 checks.append(
-                    VerifyCheck(
-                        id=f"{condition_id}_{morton_check.id}",
-                        passed=morton_check.passed,
-                        detail=morton_check.detail,
+                    _check(
+                        f"{condition_id}_morton_verified",
+                        False,
+                        f"morton ordering not verified: {parquet_path} is a directory dataset",
                     )
                 )
 

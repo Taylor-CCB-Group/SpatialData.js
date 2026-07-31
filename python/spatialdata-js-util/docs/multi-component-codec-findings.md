@@ -130,6 +130,11 @@ On the read side, `packages/zarrextra/src/codecs.ts` decodes the codestream to a
 planar component-major buffer and validates `decoded length === product(chunk_shape)`,
 so a multi-component chunk maps straight onto `[..., z, y, x]`.
 
-`imagecodecs` is no longer on the HTJ2K path (encode and decode both go through
-the openjph-wasm worker — the same WASM as the JS reader); it remains only for
-the JPEG2000 fixture path.
+`imagecodecs` is back on the HTJ2K path, and is now the preferred backend: its
+openjph 0.30.1 decodes multi-component codestreams correctly and honours `qstep`,
+so choosing it costs no quality control and removes Node.js from the install.
+That preference is not taken on trust — a backend is only selected after it
+decodes the committed multi-component probe fixture exactly (`codecs/backends.py`),
+which is what the earlier WASM build failed. The openjph-wasm worker remains as
+the fallback when `imagecodecs` is absent or fails the probe. `imagecodecs` also
+still serves the JPEG2000 fixture path, which is unrelated to backend selection.
