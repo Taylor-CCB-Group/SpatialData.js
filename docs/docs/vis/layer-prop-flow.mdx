@@ -342,6 +342,11 @@ hover into the table would re-upload a texture that is megabytes for a large seg
 on every move — exactly what the section above exists to prevent. Tiles are untouched
 either way.
 
+- **Both canvas surfaces resolve the pick through one function.** `SpatialCanvasViewer`
+  and the full-UI `SpatialCanvas` each own a `handleHover`; the highlight shipped working
+  in the first and dead in the second precisely because of that. `resolveHoveredLabel` in
+  `featureTooltipHover.ts` is the single implementation both must call — when adding hover
+  behaviour, add it there, not in one `handleHover`.
 - **Hover is runtime render state, never Render Stack config.** `useLayerData` keeps it on
   a ref plus a version counter (`setHoveredLabel`) so a saved view can never carry it, and
   so pointer motion *within* one label schedules no re-render. Points already carry their

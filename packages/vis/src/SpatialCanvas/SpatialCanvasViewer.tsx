@@ -1,11 +1,15 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
-import { parseLabelId, type RenderStack } from '@spatialdata/layers';
+import type { RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ensureCodecWorkers } from '../codecWorkers';
 import type { FeatureColorResolver } from './featureColorResolver';
-import { type HoverPointerEvent, isHoverDuringDrag } from './featureTooltipHover';
+import {
+  type HoverPointerEvent,
+  isHoverDuringDrag,
+  resolveHoveredLabel,
+} from './featureTooltipHover';
 import { ImageLayerContextProvider } from './ImageLayerContext';
 import {
   type RenderStackHostLayerResolver,
@@ -538,9 +542,12 @@ function SpatialCanvasViewerInner({
         renderer.setHoveredLabel(null);
         return;
       }
-      // Cleared unless this hover lands on a label below — moving onto empty space,
-      // onto a different layer kind, or off the canvas all arrive here.
-      let nextHoveredLabel: { layerId: string; labelId: number } | null = null;
+      // Cleared unless this hover lands on a label — moving onto empty space, onto a
+      // different layer kind, or off the canvas all resolve to null. Shared with the
+      // full-UI `SpatialCanvas`, which has its own `handleHover`.
+      renderer.setHoveredLabel(
+        resolveHoveredLabel(info, (layerId) => layerInputs.layers[layerId]?.type === 'labels')
+      );
       if (info.picked && typeof info.x === 'number' && typeof info.y === 'number') {
         const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
         const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
@@ -549,12 +556,6 @@ function SpatialCanvasViewerInner({
           object: info.object,
         });
         if (featurePickEvent) {
-          if (featurePickEvent.elementKind === 'labels') {
-            const labelId = parseLabelId(featurePickEvent.featureId);
-            if (labelId !== undefined) {
-              nextHoveredLabel = { layerId: featurePickEvent.layerId, labelId };
-            }
-          }
           onFeatureHover?.({
             ...featurePickEvent,
             coordinateSystem,
@@ -574,12 +575,12 @@ function SpatialCanvasViewerInner({
           });
         }
       }
-      renderer.setHoveredLabel(nextHoveredLabel);
       resolveTooltip(info);
     },
     [
       clearTooltip,
       coordinateSystem,
+      layerInputs.layers,
       onFeatureHover,
       onHover,
       onShapeHover,

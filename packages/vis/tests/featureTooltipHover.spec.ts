@@ -5,6 +5,7 @@ import {
   normalizeDeckLayerId,
   resolveDeckPickLayerIds,
   resolveHoverFeatureTooltip,
+  resolveHoveredLabel,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
 
 describe('isHoverDuringDrag', () => {
@@ -423,5 +424,62 @@ describe('featureTooltipHover', () => {
 
     expect(result?.items).toHaveLength(1);
     expect(getFeatureTooltip).toHaveBeenCalledWith('shapes:cells', expect.any(Object));
+  });
+});
+
+describe('resolveHoveredLabel', () => {
+  const isLabels = (layerId: string) => layerId.startsWith('labels:');
+
+  it('resolves the layer and label under the cursor', () => {
+    expect(
+      resolveHoveredLabel(
+        { picked: true, layer: { id: 'labels:cells' }, object: { labelId: 42 } },
+        isLabels
+      )
+    ).toEqual({ layerId: 'labels:cells', labelId: 42 });
+  });
+
+  it('strips deck’s per-viewport id suffix, so the id matches the layer config key', () => {
+    expect(
+      resolveHoveredLabel(
+        { picked: true, layer: { id: 'labels:cells-#detail#' }, object: { labelId: 7 } },
+        isLabels
+      )
+    ).toEqual({ layerId: 'labels:cells', labelId: 7 });
+  });
+
+  it('resolves nothing when the pick is not on a label', () => {
+    // Nothing under the cursor at all — moving onto empty space or off the canvas.
+    expect(resolveHoveredLabel({ picked: false, layer: { id: 'labels:cells' } }, isLabels)).toBeNull();
+    // A different layer kind: a shapes pick must never light up a labels layer.
+    expect(
+      resolveHoveredLabel(
+        { picked: true, layer: { id: 'shapes:cells' }, object: { featureId: '3' } },
+        isLabels
+      )
+    ).toBeNull();
+    // Picked, on a labels layer, but the object carries no label id.
+    expect(
+      resolveHoveredLabel({ picked: true, layer: { id: 'labels:cells' }, object: {} }, isLabels)
+    ).toBeNull();
+    // Deck can report a pick with no layer.
+    expect(resolveHoveredLabel({ picked: true, object: { labelId: 1 } }, isLabels)).toBeNull();
+  });
+
+  it('rejects a label id that is not a plain integer', () => {
+    // Guards the shader comparison: the id reaches it as a float and is matched
+    // against sampled ids by proximity.
+    expect(
+      resolveHoveredLabel(
+        { picked: true, layer: { id: 'labels:cells' }, object: { labelId: '1e3' } },
+        isLabels
+      )
+    ).toBeNull();
+    expect(
+      resolveHoveredLabel(
+        { picked: true, layer: { id: 'labels:cells' }, object: { labelId: 'abc' } },
+        isLabels
+      )
+    ).toBeNull();
   });
 });

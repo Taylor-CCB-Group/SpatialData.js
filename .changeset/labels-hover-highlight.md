@@ -5,8 +5,9 @@
 
 Highlight the labels feature under the cursor, the way shapes already do.
 
-`LabelsLayer` takes `highlightedLabelId` (and an optional `labelHighlightColor`), and
-`SpatialCanvasViewer` drives it from the same hover pick that feeds the tooltip. Deck's
+`LabelsLayer` takes `highlightedLabelId` (and an optional `labelHighlightColor`), and both
+canvas surfaces — `SpatialCanvasViewer` and the full-UI `SpatialCanvas` — drive it from the
+same hover pick that feeds the tooltip, through one shared resolver. Deck's
 `autoHighlight` cannot do this job: a labels tile's picking colour covers the whole quad,
 so there is no per-label deck object to highlight and turning it on would light up the
 entire tile. The highlight is resolved per FRAGMENT instead, comparing the sampled

@@ -21,7 +21,11 @@ import {
   useState,
 } from 'react';
 import { SpatialCanvasProvider, useSpatialCanvasActions, useSpatialCanvasStore } from './context';
-import { type HoverPointerEvent, isHoverDuringDrag } from './featureTooltipHover';
+import {
+  type HoverPointerEvent,
+  isHoverDuringDrag,
+  resolveHoveredLabel,
+} from './featureTooltipHover';
 import { ImageChannelPanelFromStore } from './ImageChannelPanel';
 import { LabelsChannelPanel } from './LabelsChannelPanel';
 import { LayerOrderList } from './LayerOrderList';
@@ -437,6 +441,7 @@ function SpatialCanvasInner({
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
     hasEnabledLayers,
+    setHoveredLabel,
     hasLayersDrawn,
     hasRenderableLayerData,
     isBlocking,
@@ -574,11 +579,18 @@ function SpatialCanvasInner({
       // changing the view, not inspecting features, so suppress tooltip work.
       if (isHoverDuringDrag(event)) {
         clearTooltip();
+        // Drop the highlight too: the pointer is steering the camera, so a label
+        // left lit under it would read as a selection the gesture did not make.
+        setHoveredLabel(null);
         return;
       }
+      // Same resolver the headless `SpatialCanvasViewer` uses — this surface has its
+      // own `handleHover`, and the two drifting is exactly how the highlight came to
+      // work there and do nothing here.
+      setHoveredLabel(resolveHoveredLabel(info, (layerId) => layers[layerId]?.type === 'labels'));
       resolveTooltip(info);
     },
-    [resolveTooltip, clearTooltip]
+    [resolveTooltip, clearTooltip, setHoveredLabel, layers]
   );
 
   const handleViewerRef = useCallback(
