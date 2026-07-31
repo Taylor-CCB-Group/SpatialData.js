@@ -307,6 +307,9 @@ importers:
       '@hms-dbmi/viv':
         specifier: 'catalog:'
         version: 0.22.0(548d8753976fb2b18b685811b3593318)
+      '@luma.gl/core':
+        specifier: 'catalog:'
+        version: 9.3.6
       '@luma.gl/engine':
         specifier: 'catalog:'
         version: 9.3.6(@luma.gl/core@9.3.6)(@luma.gl/shadertools@9.3.6(@luma.gl/core@9.3.6))

@@ -62,6 +62,23 @@ export const spatialLabelsSublayerSchema = sublayerBase.extend({
   /** OME-Zarr labels URL understood by the labels bitmask layer. */
   url: z.string().optional(),
   tooltipFields: z.array(z.string()).optional(),
+  /**
+   * Per-label filtering and colouring, keyed by the label's integer instance id as
+   * a string — the same identity the tooltip resolves against the associated table.
+   *
+   * Deliberately the same field names and meanings as
+   * {@link spatialShapesSublayerSchema}'s `featureState`, minus
+   * `strokeColorByFeatureId`: a label's outline is derived from its fill in the
+   * bitmask shader, so there is no per-label stroke to override.
+   */
+  featureState: z
+    .object({
+      fillColorByFeatureId: z.record(z.string(), rgbaColorSchema).optional(),
+      hiddenFeatureIds: z.array(z.string()).optional(),
+      fadedFeatureIds: z.array(z.string()).optional(),
+      filteredOpacityMultiplier: z.number().min(0).max(1).optional(),
+    })
+    .optional(),
 });
 
 export const spatialSublayerSchema = z.discriminatedUnion('kind', [
@@ -73,6 +90,7 @@ export const spatialSublayerSchema = z.discriminatedUnion('kind', [
 
 export type SpatialSublayer = z.infer<typeof spatialSublayerSchema>;
 export type SpatialShapesSublayer = z.infer<typeof spatialShapesSublayerSchema>;
+export type SpatialLabelsSublayer = z.infer<typeof spatialLabelsSublayerSchema>;
 
 export const spatialLayerPropsSchema = z.object({
   schemaVersion: z

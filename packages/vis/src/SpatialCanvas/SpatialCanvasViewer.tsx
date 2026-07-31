@@ -4,6 +4,7 @@ import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ensureCodecWorkers } from '../codecWorkers';
+import type { FeatureColorResolver } from './featureColorResolver';
 import { type HoverPointerEvent, isHoverDuringDrag } from './featureTooltipHover';
 import { ImageLayerContextProvider } from './ImageLayerContext';
 import {
@@ -32,6 +33,10 @@ import type {
   VivImagePropsResolver,
 } from './vivImagePassthrough';
 
+export type {
+  FeatureColorResolver,
+  FeatureColorResolverContext,
+} from './featureColorResolver';
 export type {
   VivImageExtensionResolver,
   VivImageLayerContext,
@@ -116,6 +121,13 @@ export interface SpatialCanvasViewerProps {
   vivImageExtensionResolver?: VivImageExtensionResolver;
   /** Per-image Viv prop overrides merged after saved `vivLayerProps` (runtime attachment). */
   vivImagePropsResolver?: VivImagePropsResolver;
+  /**
+   * Per-layer precomputed feature colours for shapes and labels (runtime
+   * attachment). Use when colour is driven by data the config cannot carry — a
+   * computed column, an external annotation, a live selection. See
+   * `FeatureColorResolver` for the stability contract.
+   */
+  featureColorResolver?: FeatureColorResolver;
 }
 
 interface AutoFitInput {
@@ -180,6 +192,7 @@ export interface UseSpatialCanvasRendererOptions {
   vivImageExtensions?: unknown[];
   vivImageExtensionResolver?: VivImageExtensionResolver;
   vivImagePropsResolver?: VivImagePropsResolver;
+  featureColorResolver?: FeatureColorResolver;
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -196,6 +209,7 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
   sortDeckLayers?: boolean;
   autoFit?: boolean;
   vivPassthrough?: VivImagePassthroughOptions;
+  featureColorResolver?: FeatureColorResolver;
   /**
    * When false, shape layers are built non-pickable (autoHighlight off), so deck
    * does not render their geometry into the picking buffer. Used both for the
@@ -218,6 +232,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   sortDeckLayers,
   autoFit = true,
   vivPassthrough,
+  featureColorResolver,
   pickingEnabled = true,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   ensureCodecWorkers();
@@ -237,7 +252,8 @@ export function useSpatialCanvasRendererFromLayerInputs({
     availableElements,
     coordinateSystem,
     spatialData ?? undefined,
-    vivPassthrough
+    vivPassthrough,
+    featureColorResolver
   );
 
   const generatedDeckLayers = layerData.getLayers({ pickingEnabled });
@@ -349,6 +365,7 @@ export function useSpatialCanvasRenderer({
   vivImageExtensions,
   vivImageExtensionResolver,
   vivImagePropsResolver,
+  featureColorResolver,
 }: UseSpatialCanvasRendererOptions) {
   const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
   const hostDeckLayers = useMemo(
@@ -381,6 +398,7 @@ export function useSpatialCanvasRenderer({
     sortDeckLayers: true,
     autoFit,
     vivPassthrough,
+    featureColorResolver,
   });
 }
 
@@ -440,6 +458,7 @@ function SpatialCanvasViewerInner({
   vivImageExtensions,
   vivImageExtensionResolver,
   vivImagePropsResolver,
+  featureColorResolver,
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
   const deckRef = useRef<DeckGLRef | null>(null);
@@ -487,6 +506,7 @@ function SpatialCanvasViewerInner({
     sortDeckLayers: Boolean(renderStack),
     autoFit,
     vivPassthrough,
+    featureColorResolver,
     pickingEnabled,
   });
   const hoverPickLayerIds = useMemo(

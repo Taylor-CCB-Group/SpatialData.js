@@ -7,7 +7,7 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import { LabelsLayer } from '@spatialdata/layers';
+import { type LabelColorLut, LabelsLayer } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 
 export interface LabelsLayerRenderConfig {
@@ -23,6 +23,12 @@ export interface LabelsLayerRenderConfig {
   channelsFilled: boolean[];
   channelStrokeWidths: number[];
   selections: Partial<{ z: number; c: number; t: number }>[];
+  /**
+   * Per-label colour/visibility lookup table, pre-built by the projection and
+   * identity-stable while its contents are unchanged. Absent means "no per-label
+   * feature state" — the layer draws every label in the channel colour.
+   */
+  featureColorLut?: LabelColorLut;
 }
 
 export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null {
@@ -39,6 +45,7 @@ export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null
     channelsFilled,
     channelStrokeWidths,
     selections,
+    featureColorLut,
   } = config;
 
   if (!visible || !loader) {
@@ -58,5 +65,6 @@ export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null
     channelsFilled,
     channelStrokeWidths,
     selections,
+    ...(featureColorLut ? { featureColorLut } : {}),
   });
 }

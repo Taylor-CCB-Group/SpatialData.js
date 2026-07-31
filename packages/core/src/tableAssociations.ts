@@ -1,5 +1,5 @@
 import type { SpatialData } from './store';
-import type { ElementName, TableColumnData } from './types';
+import type { ElementName, TableColumnData, TableColumnKind } from './types';
 
 type SpatialAssociationKind = Exclude<ElementName, 'tables'>;
 
@@ -8,6 +8,16 @@ export interface AssociatedTableFeatureRows {
   rowIndexByFeatureId?: Map<string, number>;
   regionColumn?: TableColumnData | undefined;
   extraColumns?: Array<TableColumnData | undefined>;
+  /**
+   * The declared kind of each entry in {@link extraColumns}, positionally aligned.
+   *
+   * Carried alongside the values so a consumer deciding how to *encode* a column
+   * (continuous ramp vs. categorical palette) can ask the store what the column is
+   * instead of inferring it back from stringified values — an inference that is
+   * wrong at both edges: one `NaN` makes a float column look non-numeric, and
+   * integer cluster codes look like a continuum.
+   */
+  extraColumnKinds?: Array<TableColumnKind | undefined>;
 }
 
 /**
@@ -140,6 +150,7 @@ export async function loadAssociatedTableFeatureRows({
       rowIndexByFeatureId: undefined,
       regionColumn: undefined,
       extraColumns: undefined,
+      extraColumnKinds: undefined,
     };
   }
 
@@ -150,6 +161,7 @@ export async function loadAssociatedTableFeatureRows({
       rowIndexByFeatureId: undefined,
       regionColumn: undefined,
       extraColumns: undefined,
+      extraColumnKinds: undefined,
     };
   }
 
@@ -169,6 +181,17 @@ export async function loadAssociatedTableFeatureRows({
   const columns = await table.loadObsColumns(requestedColumns);
   const regionColumn = columns[0];
   const extraColumns = columns.slice(1);
+  // Kinds come from consolidated metadata, already in memory — no I/O, and asked
+  // for the extra columns directly so the result aligns with `extraColumns` by
+  // construction rather than by matching lengths.
+  //
+  // Still guarded: `undefined` (not `[]`) when a table cannot answer, because
+  // "we do not know" and "no column has a kind" are different claims and only the
+  // first is true. Consumers already handle an absent kind.
+  const extraColumnKinds =
+    typeof table.getObsColumnKinds === 'function'
+      ? table.getObsColumnKinds(uniqueExtra)
+      : undefined;
   const filteredRowIds: string[] = [];
   const rowIndexByFeatureId = new Map<string, number>();
 
@@ -197,6 +220,7 @@ export async function loadAssociatedTableFeatureRows({
     rowIndexByFeatureId,
     regionColumn,
     extraColumns,
+    extraColumnKinds,
   };
 }
 

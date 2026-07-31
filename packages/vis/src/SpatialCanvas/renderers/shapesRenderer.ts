@@ -15,6 +15,7 @@ import {
   DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_MIN_PIXELS,
   DEFAULT_SHAPE_STROKE_WIDTH_UNITS,
+  type FeatureColorBuffer,
   type ShapeFeatureStateRuntime,
   type ShapeStrokeWidthUnits,
   type ShapesPrebuiltData,
@@ -71,6 +72,11 @@ export interface ShapesLayerRenderConfig {
    * true.
    */
   pickingEnabled?: boolean;
+  /**
+   * Host-computed per-feature RGBA indexed by feature index. Wins over
+   * `featureState` for fill colour — see `CreateShapesDeckLayerOptions.featureColors`.
+   */
+  featureColors?: FeatureColorBuffer;
 }
 
 /**
@@ -96,6 +102,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | Laye
     renderData,
     prebuilt,
     pickingEnabled,
+    featureColors,
   } = config;
 
   if (!visible) return null;
@@ -123,6 +130,7 @@ export function renderShapesLayer(config: ShapesLayerRenderConfig): Layer | Laye
       opacity,
       modelMatrix,
       pickingEnabled,
+      ...(featureColors ? { featureColors } : {}),
     },
     prebuilt
   );

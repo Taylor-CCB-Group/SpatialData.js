@@ -5,10 +5,56 @@
 import type { Matrix4 } from '@math.gl/core';
 import type { SpatialElement } from '@spatialdata/core';
 import type {
+  FeatureCategoricalPaletteSpec,
+  FeatureMissingValueOptions,
+  FeatureNumericRampSpec,
+  LabelFillColorMode,
   ShapeFillColorMode,
   ShapeStrokeWidthUnits,
   ShapesLayerPickEvent,
 } from '@spatialdata/layers';
+
+/**
+ * Per-feature filtering and colouring, keyed by feature id.
+ *
+ * Shared by shapes and labels because the fields mean the same thing on both — that
+ * sameness is the point of the API, so it is expressed as one type rather than two
+ * that happen to match today. Only the id differs: a shape's is its geometry id, a
+ * label's is its integer instance id as a string.
+ */
+export interface FeatureStateConfig {
+  fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+  hiddenFeatureIds?: string[];
+  fadedFeatureIds?: string[];
+  filteredOpacityMultiplier?: number;
+}
+
+/**
+ * How a table column is turned into colours. Shared verbatim by shapes and labels
+ * so one column reads the same way on either kind, and JSON-serializable so it
+ * survives a saved Render Stack.
+ */
+export interface FillColorByColumn<TMode> {
+  columnName: string;
+  mode: TMode;
+  /**
+   * Categorical scheme. Defaults to `'oklab'` — the same unbounded golden-angle
+   * OKLCh scheme points uses for colour-by-feature, so a column with more
+   * categories than a fixed list has colours does not repeat them. Pass your own
+   * RGB list to override it; the list cycles.
+   */
+  categoricalPalette?: FeatureCategoricalPaletteSpec;
+  /** Endpoints of the continuous ramp, `[low, high]` as RGB 0–255. */
+  numericRamp?: FeatureNumericRampSpec;
+  /**
+   * What counts as missing in this column, and how a feature with no value should
+   * render — keep the layer default, hide it, or take an explicit colour.
+   *
+   * `null` and `NaN` are always missing; this adds the store-specific sentinel
+   * strings (`'NA'`, `'unknown'`, …) that only the caller can recognise.
+   */
+  missingValues?: FeatureMissingValueOptions;
+}
 
 // ============================================
 // View State Types
@@ -73,10 +119,7 @@ export interface ImageLayerConfig extends BaseLayerConfig {
 export interface ShapesLayerConfig extends BaseLayerConfig {
   type: 'shapes';
   fillColor?: [number, number, number, number];
-  fillColorByColumn?: {
-    columnName: string;
-    mode: ShapeFillColorMode;
-  };
+  fillColorByColumn?: FillColorByColumn<ShapeFillColorMode>;
   strokeColor?: [number, number, number, number];
   strokeWidth?: number;
   strokeWidthUnits?: ShapeStrokeWidthUnits;
@@ -84,12 +127,9 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
   strokeWidthMaxPixels?: number;
   /** Table obs columns to display for a picked feature in this shapes layer. */
   tooltipFields?: string[];
-  featureState?: {
-    fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+  featureState?: FeatureStateConfig & {
+    /** Shapes only: a label's outline is derived from its fill in the shader. */
     strokeColorByFeatureId?: Record<string, [number, number, number, number]>;
-    hiddenFeatureIds?: string[];
-    fadedFeatureIds?: string[];
-    filteredOpacityMultiplier?: number;
   };
 }
 
@@ -144,6 +184,18 @@ export interface PointsLayerConfig extends BaseLayerConfig {
 export interface LabelsLayerConfig extends BaseLayerConfig {
   type: 'labels';
   tooltipFields?: string[];
+  /**
+   * Colour each label by an obs column of the associated table — the same option a
+   * shapes layer takes, resolved against the same table.
+   */
+  fillColorByColumn?: FillColorByColumn<LabelFillColorMode>;
+  /**
+   * Per-label filtering and colouring. Field names and semantics are identical to
+   * {@link ShapesLayerConfig.featureState}; a labels feature id is the label's
+   * integer instance id as a string (the same id the tooltip resolves against the
+   * associated table).
+   */
+  featureState?: FeatureStateConfig;
   channels?: {
     channelIds?: string[];
     colors?: [number, number, number][];

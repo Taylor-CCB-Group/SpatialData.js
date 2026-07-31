@@ -31,6 +31,8 @@ export type {
   AvailableElement,
   ChannelConfig,
   ElementsByType,
+  FeatureColorResolver,
+  FeatureColorResolverContext,
   HoverTooltipMode,
   ImageLayerContextValue,
   ImageLoaderData,

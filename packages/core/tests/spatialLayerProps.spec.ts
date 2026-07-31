@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   migrateSpatialLayerProps,
   SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
+  spatialLabelsSublayerSchema,
   spatialLayerPropsSchema,
   spatialShapesSublayerSchema,
 } from '../src/spatialLayerProps.js';
@@ -82,5 +83,49 @@ describe('migrateSpatialLayerProps', () => {
       defaultStrokeWidthMinPixels: 0,
       defaultStrokeWidthMaxPixels: 1,
     });
+  });
+
+  it('parses labels feature-state props with the same field names as shapes', () => {
+    const out = migrateSpatialLayerProps({
+      schemaVersion: SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
+      sublayers: [
+        {
+          kind: 'labels',
+          tooltipFields: ['cell_type'],
+          featureState: {
+            // Labels feature ids are the integer instance id as a string.
+            fillColorByFeatureId: { '1': [5, 6, 7, 8] },
+            hiddenFeatureIds: ['2'],
+            fadedFeatureIds: ['3'],
+            filteredOpacityMultiplier: 0.2,
+          },
+        },
+      ],
+    });
+
+    expect(out.sublayers[0]).toMatchObject({
+      kind: 'labels',
+      featureState: {
+        fillColorByFeatureId: { '1': [5, 6, 7, 8] },
+        hiddenFeatureIds: ['2'],
+        fadedFeatureIds: ['3'],
+        filteredOpacityMultiplier: 0.2,
+      },
+    });
+  });
+
+  it('strips a labels stroke override, which the bitmask shader derives', () => {
+    // A label's outline is a derivation of its fill in the shader, so there is no
+    // per-label stroke to set. The config still parses — this is not an error worth
+    // failing a whole saved stack over — but the unsupported field is dropped
+    // rather than carried along to silently do nothing.
+    const result = spatialLabelsSublayerSchema.safeParse({
+      kind: 'labels',
+      featureState: { strokeColorByFeatureId: { '1': [1, 2, 3, 4] } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect('strokeColorByFeatureId' in (result.data.featureState ?? {})).toBe(false);
+    }
   });
 });

@@ -672,3 +672,119 @@ describe('SpatialLayer', () => {
     expect((geoarrow!.props as any).data).toHaveLength(2);
   });
 });
+
+describe('host-supplied feature colour buffer', () => {
+  /**
+   * The escape hatch for colour driven by data the config cannot carry. It is
+   * indexed by FEATURE INDEX — the position in the loaded geometry — and wins over
+   * `featureState` rather than merging with it, because merging would mean a
+   * per-feature dictionary lookup again, which is the cost it exists to remove.
+   */
+  const buffer = {
+    // cell-1 red, cell-2 hidden (alpha 0), cell-3 green.
+    colors: new Uint8Array([255, 0, 0, 255, 0, 0, 0, 0, 0, 255, 0, 255]),
+    count: 3,
+  };
+
+  it('overrides feature-state on the object polygon path', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      {
+        kind: 'shapes',
+        elementKey: 'cells',
+        visible: true,
+        defaultFillColor: [10, 20, 30, 255],
+        // Deliberately contradictory: the buffer must win outright.
+        featureState: { fillColorByFeatureId: { 'cell-1': [1, 2, 3, 255] } },
+      },
+      { id: 'shapes-buffer', featureColors: buffer }
+    );
+
+    const props = layer!.props as any;
+    const byIndex = (i: number) => props.getFillColor(props.data[i]);
+    expect(byIndex(0)).toEqual([255, 0, 0, 255]);
+    expect(byIndex(1)).toEqual([0, 0, 0, 0]);
+    expect(byIndex(2)).toEqual([0, 255, 0, 255]);
+  });
+
+  it('derives the outline from the buffer colour, matching the binary path', () => {
+    const layer = createShapesDeckLayer(
+      renderData,
+      { kind: 'shapes', elementKey: 'cells', visible: true },
+      { id: 'shapes-buffer-outline', featureColors: buffer }
+    );
+
+    const props = layer!.props as any;
+    expect(props.getLineColor(props.data[0])).toEqual(deriveStrokeColor([255, 0, 0, 255]));
+  });
+
+  it('hands the bytes to FlatPolygonLayer verbatim on the binary path', () => {
+    const binaryRenderData: ShapesRenderDataLike = {
+      kind: 'flat-polygons',
+      geometryKind: 'polygon',
+      elementKey: 'cells',
+      featureIds: ['cell-1', 'cell-2'],
+      polygonBinary: {
+        positions: new Float32Array([0, 0, 1, 0, 0, 1, 10, 10, 11, 10, 10, 11]),
+        startIndices: new Int32Array([0, 3, 6]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+    };
+    const prebuilt = buildShapesPrebuiltData(binaryRenderData);
+    const twoFeatures = { colors: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), count: 2 };
+
+    const layers = createShapesDeckLayer(
+      binaryRenderData,
+      { kind: 'shapes', elementKey: 'cells', visible: true },
+      { id: 'binary-buffer', featureColors: twoFeatures },
+      prebuilt
+    ) as any[];
+
+    // The exact array, not a copy: identity is what keeps the texture from
+    // re-uploading on every render.
+    expect(layers[0].props.featureColors).toBe(twoFeatures.colors);
+  });
+
+  it('renders an uncovered feature transparent on every geometry path', () => {
+    // The binary path pads a short buffer with transparent, so the object paths
+    // must agree — otherwise one buffer looks different depending on which
+    // representation the element happened to load as.
+    const short = { colors: new Uint8Array([255, 0, 0, 255]), count: 1 };
+    const layer = createShapesDeckLayer(
+      renderData,
+      { kind: 'shapes', elementKey: 'cells', visible: true, defaultFillColor: [9, 9, 9, 255] },
+      { id: 'shapes-short-buffer', featureColors: short }
+    );
+
+    const props = layer!.props as any;
+    expect(props.getFillColor(props.data[0])).toEqual([255, 0, 0, 255]);
+    expect(props.getFillColor(props.data[1])).toEqual([0, 0, 0, 0]);
+  });
+
+  it('pads a short buffer rather than reading past its end', () => {
+    const short = { colors: new Uint8Array([255, 0, 0, 255]), count: 1 };
+    const binaryRenderData: ShapesRenderDataLike = {
+      kind: 'flat-polygons',
+      geometryKind: 'polygon',
+      elementKey: 'cells',
+      featureIds: ['cell-1', 'cell-2'],
+      polygonBinary: {
+        positions: new Float32Array([0, 0, 1, 0, 0, 1, 10, 10, 11, 10, 10, 11]),
+        startIndices: new Int32Array([0, 3, 6]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+    };
+    const layers = createShapesDeckLayer(
+      binaryRenderData,
+      { kind: 'shapes', elementKey: 'cells', visible: true },
+      { id: 'binary-short', featureColors: short },
+      buildShapesPrebuiltData(binaryRenderData)
+    ) as any[];
+
+    const colors = layers[0].props.featureColors as Uint8Array;
+    expect(colors.length).toBe(2 * 4);
+    expect(Array.from(colors.subarray(0, 4))).toEqual([255, 0, 0, 255]);
+    // The uncovered tail is transparent, not garbage.
+    expect(Array.from(colors.subarray(4, 8))).toEqual([0, 0, 0, 0]);
+  });
+});

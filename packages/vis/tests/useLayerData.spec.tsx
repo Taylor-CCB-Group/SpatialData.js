@@ -500,7 +500,9 @@ describe('useLayerData — selection show/hide + colour', () => {
     const baseRowCount = async () => (await baseProps()?.resource?.loader.loadAll?.())?.shape[1];
 
     await waitFor(() => {
-      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.size).toBe(2);
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.size).toBe(
+        2
+      );
     });
     // Selection == coverage, so no filter is needed and the matched batch is usable.
     expect(await baseRowCount()).toBe(4);

@@ -43,6 +43,25 @@ See also the [visualization overview](../vis/overview): deck-only integrators ca
 
 For shapes, the important contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.
 
+**Labels** now follow that same contract. The colour-encoding core is shared
+rather than duplicated per kind:
+
+- `featureColorEncoding` holds what is common — the `auto`/`categorical`/
+  `continuous` mode decision, `resolveCategoricalPalette()`, numeric ramps, and
+  the missing-value policy — plus `FeatureColorBuffer`, the precomputed-RGBA
+  currency both kinds render from.
+- `shapeColorEncoding` and `labelColorEncoding` are the thin per-kind surfaces:
+  `buildShapeFillColorByFeatureId()` and `buildLabelFillColorByFeatureId()`.
+- Shapes index colour by feature index; labels have no geometry, so
+  `buildLabelColorLut()` produces a lookup table indexed by the label's own
+  integer instance id that the bitmask fragment shader samples. Either way a
+  feature-state change re-uploads only the small table, never the tiles.
+
+The default categorical palette is `DEFAULT_FEATURE_CATEGORICAL_PALETTE`
+(`'oklab'`), whose colour is a pure function of the category index and therefore
+cannot repeat — see the
+[behaviour-change note](../vis/headless-viewer#choosing-the-colour-scheme).
+
 Points should follow the same package split before we make a GeoArrow migration
 load-bearing:
 

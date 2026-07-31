@@ -1,14 +1,14 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-import { FileSystemStore } from '@zarrita/storage';
-import {
-  readZarr,
-  type SpatialData,
-  type AnyElement,
-} from '../../packages/core/src/store/index.js';
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FileSystemStore } from '@zarrita/storage';
+import { beforeAll, describe, expect, it } from 'vitest';
+import {
+  type AnyElement,
+  readZarr,
+  type SpatialData,
+} from '../../packages/core/src/store/index.js';
 import { fixtureServerOrigin } from '../../scripts/fixture-server-port.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,6 +75,25 @@ describe.each(versions)('Integration Tests - spatialdata v%s (file store)', (ver
     expect(sdata.source).toBe(fixtureStore);
     expect(sdata.url).toBeUndefined();
     expect(sdata.rootStore.tree).toBeDefined();
+  }, 30000);
+
+  it('reads obs column kinds synchronously, from consolidated metadata alone', async () => {
+    // The load-bearing assumption behind `getObsColumnKinds` being sync: opening a
+    // store already pulls every node's attributes and array metadata into the tree.
+    // Unit tests assert the classifier against a mock tree — this asserts the tree
+    // really carries what the classifier reads, across both zarr generations, and
+    // would catch a zarrextra change that silently stopped populating it.
+    const sdata = await readZarr(fixtureStore);
+    const table = sdata.tables?.table;
+    expect(table).toBeDefined();
+    if (!table) return;
+
+    const names = table.getObsColumnNames();
+    const kinds = table.getObsColumnKinds(names);
+
+    expect(kinds[names.indexOf('instance_id')]).toBe('numeric');
+    expect(kinds[names.indexOf('region')]).toBe('categorical');
+    expect(kinds).toHaveLength(names.length);
   }, 30000);
 
   it('should parse elements from the file-backed store and expose path identities', async () => {

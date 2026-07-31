@@ -38,6 +38,25 @@ export type ElementName = (typeof ElementNames)[number];
 export type Table = ad.AnnData<zarr.Readable, zarr.NumberDataType, zarr.Uint32>;
 export type TableValue = string | number | boolean | bigint | null | undefined;
 export type TableColumnData = ArrayLike<TableValue> & Iterable<TableValue>;
+
+/**
+ * What an obs column *is*, as the store declares it — not as its values happen to
+ * look once decoded.
+ *
+ * The loader already has to distinguish these to decode a column at all (an
+ * AnnData categorical is codes plus a categories array; a `string-array` is
+ * neither), and until this existed it threw the answer away. Consumers were then
+ * left inferring the type back from stringified values, which is both lossy and
+ * wrong at the edges: a float column with one `NaN` reads as non-numeric, and
+ * integer cluster codes read as a continuum.
+ *
+ *  - `numeric`     — an integer or float dtype. Orderable; a ramp is meaningful.
+ *  - `categorical` — an AnnData categorical (`encoding-type: 'categorical'`), i.e.
+ *                    the store itself says these are levels, not quantities.
+ *  - `string`      — free text (`string-array`, or an object dtype).
+ *  - `boolean`     — a bool dtype. Two levels, so categorical in practice.
+ */
+export type TableColumnKind = 'numeric' | 'categorical' | 'string' | 'boolean';
 // export type Shapes = {
 //   attrs: Record<string, unknown>;
 //   loadPolygonShapes: () => Promise<Array<Array<Array<[number, number]>>>>;

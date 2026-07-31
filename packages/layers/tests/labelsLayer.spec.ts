@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LabelsLayerProps } from '../src/LabelsLayer';
 import { LabelsLayer } from '../src/LabelsLayer';
+import { buildLabelColorLut } from '../src/labelColorEncoding';
 
 type TileLayerLike = {
   props: {
@@ -234,6 +235,45 @@ describe('LabelsLayer prop flow', () => {
     });
 
     expect(empty).toBeNull();
+  });
+
+  it('forwards the per-label colour lookup table to bitmask tiles', () => {
+    const { loader } = makeLabelsLoader();
+    const featureColorLut = buildLabelColorLut({
+      featureState: { hiddenFeatureIds: ['2'] },
+      defaultColor: [255, 255, 255],
+    });
+    const tileLayer = renderLabelsLayer({ loader, featureColorLut });
+
+    expect(tileLayer.props.featureColorLut).toBe(featureColorLut);
+
+    const bitmaskLayer = tileLayer.props.renderSubLayers({
+      ...tileLayer.props,
+      id: 'tile-0-0-0',
+      data: { data: [new Float32Array([0, 1, 2, 0])], width: 2, height: 2 },
+      tile: {
+        bbox: { left: 0, top: 0, right: 2, bottom: 2 },
+        index: { x: 0, y: 0, z: 0 },
+        zoom: 0,
+      },
+    }) as { props: Record<string, unknown> };
+
+    expect(bitmaskLayer.props.featureColorLut).toBe(featureColorLut);
+  });
+
+  it('builds a lookup table from serializable featureState when none is supplied', () => {
+    const { loader } = makeLabelsLoader();
+    const featureState = { hiddenFeatureIds: ['3'] };
+    const tileLayer = renderLabelsLayer({ loader, featureState });
+
+    const lut = tileLayer.props.featureColorLut as { count: number; colors: Uint8Array };
+    expect(lut.count).toBe(4);
+    expect(lut.colors[3 * 4 + 3]).toBe(0);
+
+    // Memoised on the feature-state identity: a re-render with the same state must
+    // hand deck the same table, or the layer re-uploads its texture every frame.
+    const again = renderLabelsLayer({ loader, featureState });
+    expect(again.props.featureColorLut).toBe(lut);
   });
 
   it('keeps labels bitmask sublayer ids distinct across tile resolutions', () => {

@@ -6,9 +6,9 @@ sidebar_position: 6
 
 This note records the intended foundation for linking SpatialData features to
 table rows, tooltip values, and visual encodings. The current `SpatialCanvas`
-demo supports table-driven shape fill colour and aggregated feature tooltips,
-and this page tracks which parts have moved into reusable core/layer utilities
-and which parts are still demo-facing.
+demo supports table-driven fill colour for **both shapes and labels**, plus
+aggregated feature tooltips, and this page tracks which parts have moved into
+reusable core/layer utilities and which parts are still demo-facing.
 
 ## Reference Semantics
 
@@ -140,7 +140,8 @@ obs, a GeoDataFrame column, or a matrix-backed feature.
 
 The current `SpatialCanvas` behaviour is acceptable as demo functionality:
 
-- Shape fill colour can be driven by a chosen table column.
+- Shape **and label** fill colour can be driven by a chosen table column,
+  through the same `fillColorByColumn` / `featureState` API on both kinds.
 - Tooltips can aggregate multiple visible layers under the cursor.
 - Multiple layer configs may represent the same element with different visual
   properties.
@@ -150,22 +151,35 @@ The reusable foundation is partially in place:
 - `@spatialdata/core` exposes `FeatureTableAlignment` /
   `createFeatureTableAlignment()`, with tests for feature-index precedence,
   feature-id fallback, and unresolved features.
-- `@spatialdata/layers` owns the reusable shape column-to-colour encoder, and
-  that encoder consumes resolved `rowIndexByFeatureIndex` rather than deciding
-  feature/table association locally.
+- `@spatialdata/layers` owns the reusable column-to-colour encoders. The shared
+  core (`featureColorEncoding`) holds the mode decision, palettes, ramps and
+  missing-value policy; `shapeColorEncoding` and `labelColorEncoding` are the
+  per-kind surfaces over it. Both consume resolved `rowIndexByFeatureIndex`
+  rather than deciding feature/table association locally.
+- `@spatialdata/core` now reports a `TableColumnKind` per obs column
+  (`TableElement.getObsColumnKinds()`), so `mode: 'auto'` can trust what a
+  column *is* rather than inferring it from decoded values.
 - `@spatialdata/vis` remains the UI/producer layer: it chooses the column, loads
   the associated table column through core helpers, and passes resolved
   feature-state into deck layers.
+
+Labels use the label's integer instance id as the feature id, consistent with
+Python `get_element_instances`; background `0` is never drawn.
 
 Before publishing a stable library-facing API, revisit the implementation with
 this checklist:
 
 1. Finish routing tooltip and pick-event row resolution through the shared core
    resolver shape.
-2. Add labels-side association coverage using Python `spatialdata` semantics
-   for non-background label values.
+2. ~~Add labels-side association coverage using Python `spatialdata` semantics
+   for non-background label values.~~ Done for the colour/filter encode path:
+   labels resolve per-feature colour through a label-id-indexed LUT keyed by
+   instance id, excluding background. Row-resolution parity with shapes is
+   still item 1.
 3. Add annotation-column discovery for direct shape annotations and future
-   matrix-backed values.
+   matrix-backed values. *(Partly advanced: obs columns now report their kind,
+   which is the discovery metadata a "colour by" UI needs to offer the right
+   affordance. Direct shape annotations and matrix-backed values remain.)*
 4. Keep `SpatialCanvas` as the consumer of these utilities, not the owner of
    semantic association rules.
 5. Add fixture coverage for non-matching row order, missing rows, mixed-region

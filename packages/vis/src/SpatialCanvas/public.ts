@@ -11,6 +11,10 @@ export {
   useSpatialCanvasStore,
   useSpatialCanvasStoreApi,
 } from './context';
+export type {
+  FeatureColorResolver,
+  FeatureColorResolverContext,
+} from './featureColorResolver';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
 export type { ImageLayerContextValue } from './ImageLayerContext';
 export { ImageLayerContextProvider, useImageLayerContext } from './ImageLayerContext';

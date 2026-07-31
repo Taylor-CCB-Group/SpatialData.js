@@ -24,6 +24,7 @@ import type {
   Result,
   SDataProps,
   TableColumnData,
+  TableColumnKind,
   ZAttrsAny,
   ZarrTree,
 } from '../types';
@@ -210,6 +211,62 @@ export type TableKeys = {
   instanceKey: string;
 };
 
+/** AnnData `encoding-type` values that settle the kind on their own. */
+const OBS_KIND_BY_ENCODING: Record<string, TableColumnKind> = {
+  categorical: 'categorical',
+  'string-array': 'string',
+};
+
+/**
+ * Classify a dtype from either zarr generation.
+ *
+ * v3 spells them out (`float64`, `bool`, `string`); v2 uses numpy typestrings
+ * (`<f8`, `|b1`, `|O`). Both reach the tree, so both are read here rather than
+ * making callers care which store they opened.
+ */
+function classifyObsDtype(dtype: string): TableColumnKind | undefined {
+  if (dtype === 'string') return 'string';
+  if (dtype === 'bool') return 'boolean';
+  if (/^(u?int\d+|float\d+)$/.test(dtype)) return 'numeric';
+
+  const code = dtype.replace(/^[<>|=]/, '').charAt(0);
+  if (code === 'b') return 'boolean';
+  if (code === 'O' || code === 'S' || code === 'U') return 'string';
+  if (code === 'i' || code === 'u' || code === 'f') return 'numeric';
+  return undefined;
+}
+
+/**
+ * What an obs column is, from consolidated metadata alone — no I/O, and no need
+ * for the column to have been loaded.
+ *
+ * This is the whole reason the kind does not need an async accessor: opening a
+ * store already reads every node's attributes and array metadata into the tree, so
+ * the `encoding-type` that tells a categorical from a string array, and the dtype
+ * that tells a float from a bool, are sitting there before anyone asks for values.
+ *
+ * Total by construction — an unrecognised node yields `undefined`, which every
+ * consumer already handles as "decide some other way".
+ */
+export function classifyObsColumnNode(node: unknown): TableColumnKind | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+
+  const attrs = (node as ZarrTree)[ATTRS_KEY];
+  const encoding = attrs?.['encoding-type'];
+  if (typeof encoding === 'string' && OBS_KIND_BY_ENCODING[encoding]) {
+    return OBS_KIND_BY_ENCODING[encoding];
+  }
+  // Older AnnData writes a `categories` attribute pointing at the levels instead
+  // of an `encoding-type` — the same form `_loadColumn` has always had to accept.
+  if (attrs && 'categories' in attrs) return 'categorical';
+
+  const arrayMetadata = (node as LazyZarrArray<zarr.DataType>)[ZARRAY_KEY] as ZAttrsAny | undefined;
+  if (!arrayMetadata) return undefined;
+  // `data_type` is zarr v3, `dtype` is v2.
+  const dtype = arrayMetadata.data_type ?? arrayMetadata.dtype;
+  return typeof dtype === 'string' ? classifyObsDtype(dtype) : undefined;
+}
+
 // ============================================
 // Table Element (non-spatial)
 // ============================================
@@ -344,6 +401,26 @@ export class TableElement extends AbstractElement<'tables'> {
     return this.tableSource.loadObsColumns(
       columnNames.map((columnName) => `tables/${this.key}/obs/${columnName}`)
     ) as Promise<Array<TableColumnData | undefined>>;
+  }
+
+  /**
+   * The declared kind of each named obs column — what the store says it is, not
+   * what its decoded values look like.
+   *
+   * Synchronous, and deliberately so: this reads the consolidated metadata already
+   * held in the tree, exactly as {@link getObsColumnNames} does. A caller can ask
+   * what a column is *before* deciding whether to load it — which is what a UI
+   * offering "colour by" wants, and what an async accessor could not give it.
+   *
+   * `undefined` for a column that is absent or whose node we do not recognise.
+   */
+  getObsColumnKinds(columnNames: string[]): Array<TableColumnKind | undefined> {
+    const node = this.parsed as ZarrTree;
+    const obsNode = node.obs as ZarrTree | undefined;
+    if (!obsNode || typeof obsNode !== 'object') {
+      return columnNames.map(() => undefined);
+    }
+    return columnNames.map((columnName) => classifyObsColumnNode(obsNode[columnName]));
   }
 }
 

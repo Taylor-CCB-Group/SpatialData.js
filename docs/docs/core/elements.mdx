@@ -185,6 +185,11 @@ const adata = await table.getAnnDataJS();
 const rowIds = await table.loadObsIndex();
 const regionColumns = await table.loadObsColumns(['region']);
 
+// What those columns ARE, without loading their values. Synchronous: opening the
+// store already read the metadata this is derived from.
+const kinds = table.getObsColumnKinds(['leiden', 'area']);
+// -> ['categorical', 'numeric']  (also 'string' | 'boolean', or undefined if unknown)
+
 // Normalized association metadata (Python `get_table_keys()` equivalent)
 const { region, regionKey, instanceKey } = table.getTableKeys();
 
@@ -259,6 +264,17 @@ Implementation note:
 helpers and currently stay on the direct zarr/parquet loader path rather than
 depending on `anndata.js`. `getAnnDataJS()` remains available for higher-level
 AnnData access.
+
+`getObsColumnKinds()` is deliberately **synchronous**. Opening a store already
+reads every node's attributes and array metadata into the tree — the same tree
+`getObsColumnNames()` reads names from — so the `encoding-type` that separates
+an AnnData categorical from a string array, and the dtype that separates a float
+from a bool, are in memory before anyone asks for values. That lets a caller ask
+what a column *is* before deciding whether to load it, which is what a
+"colour by" UI needs in order to offer the right affordance up front. The
+classifier reads both zarr generations (v3 spells dtypes out, v2 uses numpy
+typestrings). Kinds are best-effort: a source that cannot report one yields
+`undefined` and consumers fall back to inspecting values.
 
 Planned API evolution:
 the current `loadObsColumns()` helper is optimized for association / tooltip

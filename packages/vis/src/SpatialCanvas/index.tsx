@@ -834,7 +834,7 @@ function SpatialCanvasInner({
                     updateLayer={actions.updateLayer}
                   />
                 )}
-                {selectedConfig.type === 'shapes' && (
+                {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (
                   <ShapeFillColorPanel
                     tableName={associatedTable?.key}
                     availableFields={availableTooltipFields}
@@ -842,7 +842,11 @@ function SpatialCanvasInner({
                     onChange={(fillColorByColumn) => {
                       actions.updateLayer(selectedConfig.id, { fillColorByColumn });
                     }}
-                    noAssociatedTableMessage="No associated table found for this shapes layer"
+                    noAssociatedTableMessage={
+                      selectedConfig.type === 'labels'
+                        ? 'No associated table found for this labels layer'
+                        : 'No associated table found for this shapes layer'
+                    }
                   />
                 )}
                 {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (

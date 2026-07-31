@@ -32,6 +32,7 @@
     "@math.gl/core": "catalog:",
     "@spatialdata/core": "workspace:*",
     "zod": "catalog:",
+    "@luma.gl/core": "catalog:",
     "@luma.gl/engine": "catalog:"
   },
   "devDependencies": {

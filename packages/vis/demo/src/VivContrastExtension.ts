@@ -2,12 +2,13 @@
  * Demo copy of MDV's VivContrastExtension (`~/code/www/MDV/src/webgl/VivContrastExtension.ts`).
  * Applies per-channel brightness/contrast in the Viv image shader (requires `brightness` / `contrast` layer props).
  */
-import type { Layer, UpdateParameters } from 'deck.gl';
+
 import { VivLayerExtension } from '@hms-dbmi/viv';
 import { VIV_CHANNEL_INDEX_PLACEHOLDER as I } from '@vivjs/constants';
+import type { Layer, UpdateParameters } from 'deck.gl';
 
 export type ContrastProps = {
-  //nb, if these were per-channel, they'd be declared 
+  //nb, if these were per-channel, they'd be declared
   // { [`contrast${I}`]: number... }
   //if we start using this extension other than for quick demo
   contrast: number[];
