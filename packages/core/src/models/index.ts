@@ -271,7 +271,10 @@ function classifyObsDtype(dtype: ZarrDataType): TableColumnKind {
 export function classifyObsColumnNode(node: unknown): TableColumnKind | undefined {
   const attrs = getNodeAttrs(node);
   const encoding = attrs?.['encoding-type'];
-  if (typeof encoding === 'string' && OBS_KIND_BY_ENCODING[encoding]) {
+  // Own properties only: the encoding name came out of a store, so it can be
+  // `constructor` as easily as `categorical`, and an unguarded lookup would
+  // answer that with `Object` and return it as if it were a column kind.
+  if (typeof encoding === 'string' && Object.hasOwn(OBS_KIND_BY_ENCODING, encoding)) {
     return OBS_KIND_BY_ENCODING[encoding];
   }
   // Older AnnData writes a `categories` attribute pointing at the levels instead

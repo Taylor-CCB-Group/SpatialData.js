@@ -161,10 +161,14 @@ const V3_DTYPE_NAMES: Record<string, ZarrDataType> = {
  * Deliberately not a bare string: the answer is meant to be comparable with an
  * opened array's `dtype`, so the two layers agree by construction rather than by
  * coincidence.
+ *
+ * Own properties only, in both tables. The name being looked up came out of a
+ * store's metadata, so `constructor` is as possible as `float64` — and an
+ * unguarded lookup answers it with `Object`, which is truthy, escapes as if it
+ * were a data type, and makes the next `dtype.startsWith` throw.
  */
 export function normalizeDtype(dtype: string): ZarrDataType | undefined {
-  const v3 = V3_DTYPE_NAMES[dtype];
-  if (v3) return v3;
+  if (Object.hasOwn(V3_DTYPE_NAMES, dtype)) return V3_DTYPE_NAMES[dtype];
 
   // `|O` is the one v2 typestring whose meaning is not in the table below.
   if (dtype === '|O') return 'v2:object';
@@ -173,8 +177,7 @@ export function normalizeDtype(dtype: string): ZarrDataType | undefined {
   if (!match) return undefined;
   const rest = match[1];
 
-  const named = V2_DTYPE_NAMES[rest];
-  if (named) return named;
+  if (Object.hasOwn(V2_DTYPE_NAMES, rest)) return V2_DTYPE_NAMES[rest];
 
   // Fixed-width bytes (`S`) and unicode (`U`), which zarrita keeps as-is behind
   // a `v2:` prefix because v3 has no equivalent.

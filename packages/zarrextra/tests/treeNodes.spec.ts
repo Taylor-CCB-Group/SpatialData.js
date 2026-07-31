@@ -131,6 +131,18 @@ describe('array metadata and dtype', () => {
     expect(normalizeDtype('nonsense')).toBeUndefined();
   });
 
+  it('does not answer with inherited properties of its lookup tables', () => {
+    // The name comes out of a store, so it can be anything. An unguarded
+    // `TABLE[name]` answers `constructor` with `Object` — truthy, so it escapes
+    // as if it were a data type, and the next `dtype.startsWith` throws.
+    for (const inherited of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      expect(normalizeDtype(inherited)).toBeUndefined();
+      expect(normalizeDtype(`<${inherited}`)).toBeUndefined();
+      expect(getArrayDtype(arrayNode({ data_type: inherited }))).toBeUndefined();
+      expect(getArrayDtype(arrayNode({ dtype: `<${inherited}` }))).toBeUndefined();
+    }
+  });
+
   /**
    * The reason to normalise into zarrita's vocabulary at all: a dtype read from
    * tree metadata and one read from an opened array have to be the same value,

@@ -125,8 +125,12 @@ versa. An application reading uncompressed or blosc-compressed stores — which 
 of them — gets no benefit from either.
 
 The install footprint is also larger than the import graph suggests. `zod` is a hard
-dependency used by a single internal schema module, so every consumer installs it
-whether or not anything reaches it.
+dependency reached by a single internal schema module that nothing currently calls,
+so every consumer installs it whether or not anything uses it. Which way that should
+resolve is open: array metadata is read from a store with a bare `JSON.parse` today
+and typed as [an unvalidated record](./tree-nodes#array-metadata-types), so there is
+at least as good a case for validating more at that boundary — and earning the
+dependency — as for dropping it.
 
 :::caution subject to redesign
 
