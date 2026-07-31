@@ -274,7 +274,28 @@ export class TableElement extends AbstractElement<'tables'> {
   }
 
   /**
+   * Name of the obs array holding the dataframe index, as declared by the
+   * `_index` attribute AnnData writes on the `obs` group. Literally `_index`
+   * when the index is unnamed (the `blobs` fixture), otherwise the index's own
+   * name (e.g. `cell_id`).
+   */
+  getObsIndexColumnName(): string | undefined {
+    const node = this.parsed as ZarrTree;
+    const obsNode = node.obs as ZarrTree | undefined;
+    if (!obsNode || typeof obsNode !== 'object') {
+      return undefined;
+    }
+    const indexName = (obsNode[ATTRS_KEY] as ZAttrsAny | undefined)?._index;
+    return typeof indexName === 'string' ? indexName : undefined;
+  }
+
+  /**
    * Get available obs column names from the parsed tree.
+   *
+   * The index array is excluded: it sits alongside the columns in the `obs`
+   * group but is the row label, not a column of the dataframe, and it is already
+   * reachable as `loadObsIndex()` / `getObsIndexColumnName()`. Offering it as a
+   * column would surface AnnData's internal `_index` name in the UI.
    */
   getObsColumnNames(): string[] {
     const node = this.parsed as ZarrTree;
@@ -282,7 +303,8 @@ export class TableElement extends AbstractElement<'tables'> {
     if (!obsNode || typeof obsNode !== 'object') {
       return [];
     }
-    return Object.keys(obsNode);
+    const indexName = this.getObsIndexColumnName();
+    return Object.keys(obsNode).filter((columnName) => columnName !== indexName);
   }
 
   /**

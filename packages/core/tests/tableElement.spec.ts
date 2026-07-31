@@ -2,7 +2,7 @@ import { assert, describe, expect, it, vi } from 'vitest';
 import { ATTRS_KEY } from 'zarrextra';
 import { SpatialData } from '../src/store/index.js';
 
-function createMockSpatialData() {
+function createMockSpatialData(obs: Record<string | symbol, unknown> = {}) {
   const rootStore = {
     tree: {
       tables: {
@@ -13,7 +13,7 @@ function createMockSpatialData() {
             region_key: 'region',
             'spatialdata-encoding-type': 'ngff:regions_table',
           },
-          obs: {},
+          obs,
         },
       },
     },
@@ -69,5 +69,43 @@ describe('TableElement direct table reads', () => {
     };
 
     await expect(table.loadObsColumns(['score'])).resolves.toEqual([[1, 2, 3]]);
+  });
+});
+
+describe('TableElement obs column names', () => {
+  it('omits the unnamed index that AnnData stores as `_index` (blobs fixture shape)', () => {
+    const sdata = createMockSpatialData({
+      [ATTRS_KEY]: { _index: '_index', 'encoding-type': 'dataframe' },
+      _index: {},
+      instance_id: {},
+      region: {},
+    });
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
+    const table = sdata.tables.cells_table;
+
+    expect(table.getObsIndexColumnName()).toBe('_index');
+    expect(table.getObsColumnNames()).toEqual(['instance_id', 'region']);
+  });
+
+  it('omits a named index too', () => {
+    const sdata = createMockSpatialData({
+      [ATTRS_KEY]: { _index: 'cell_id', 'encoding-type': 'dataframe' },
+      cell_id: {},
+      leiden: {},
+    });
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
+    const table = sdata.tables.cells_table;
+
+    expect(table.getObsIndexColumnName()).toBe('cell_id');
+    expect(table.getObsColumnNames()).toEqual(['leiden']);
+  });
+
+  it('keeps every key when obs declares no index', () => {
+    const sdata = createMockSpatialData({ leiden: {}, score: {} });
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
+    const table = sdata.tables.cells_table;
+
+    expect(table.getObsIndexColumnName()).toBeUndefined();
+    expect(table.getObsColumnNames()).toEqual(['leiden', 'score']);
   });
 });

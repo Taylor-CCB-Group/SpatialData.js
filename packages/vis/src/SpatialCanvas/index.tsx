@@ -554,6 +554,9 @@ function SpatialCanvasInner({
     // flips to 'ready' in lockstep with the load, so the button enables immediately.
     (selectedLayerReadyResource === 'ready' || hasRenderableLayerData(selectedConfig.id));
 
+  // The obs index is already left out by `getObsColumnNames()`; what remains to
+  // drop here are the two association keys, which are structural rather than
+  // annotation.
   // TODO: include extra annotation columns carried by the shapes element itself,
   // not just associated table obs columns. Longer term, expose entries
   // corresponding to vars in X / layers once core has a clean annotation API.
