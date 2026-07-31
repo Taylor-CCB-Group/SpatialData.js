@@ -335,12 +335,8 @@ shapes. Deck's own machinery cannot do it here: a labels tile's picking colour c
 whole quad, so there is no per-label deck object for `picking_filterHighlightColor` to act
 on, and enabling `autoHighlight` would light up the entire tile. The highlight is resolved
 **per fragment** instead — the shader compares the sampled instance id against a
-`highlightedLabelId` uniform.
-
-A uniform, not a bit in the LUT, is the whole point. The pointer moves constantly; baking
-hover into the table would re-upload a texture that is megabytes for a large segmentation
-on every move — exactly what the section above exists to prevent. Tiles are untouched
-either way.
+`highlightedLabelId` uniform, rather than a LUT entry, so a pointer move re-uploads
+nothing.
 
 - **Both canvas surfaces resolve the pick through one function.** `SpatialCanvasViewer`
   and the full-UI `SpatialCanvas` each own a `handleHover`; the highlight shipped working

@@ -288,10 +288,10 @@ Hovering a label highlights it, the way `autoHighlight` highlights a shape. Noth
 configure: both canvas surfaces — `SpatialCanvasViewer` and the full-UI `SpatialCanvas` —
 drive it from the same pick that feeds the tooltip, through one shared resolver
 (`resolveHoveredLabel`). It therefore follows `hoverTooltipMode`: `'off'` disables picking
-and with it the highlight. It is deliberately **not** part of the Render Stack: hover changes on every
-pointer move and would be meaningless in a saved view, so it never appears in an entry's
-`props`. A label the filter hides is never highlighted, for the same reason it can never
-be picked.
+and with it the highlight. It is deliberately **not** part of the Render Stack: hover
+changes on every pointer move and would be meaningless in a saved view, so it never
+appears in an entry's `props`. A label the filter hides is never highlighted, for the same
+reason it can never be picked.
 
 Hosts driving `LabelsLayer` directly get `highlightedLabelId` (the integer id, or `-1` for
 none) and `labelHighlightColor` (RGBA, alpha being the mix weight toward the tint rather
