@@ -204,4 +204,22 @@ describe('obs column kinds from consolidated metadata', () => {
 
     expect(table.getObsColumnKinds(['mystery', 'not_there'])).toEqual([undefined, undefined]);
   });
+
+  it('does not mistake an inherited property of its encoding table for a kind', () => {
+    // `encoding-type` and the dtype both come out of a store, so either can name
+    // something on `Object.prototype`. Unguarded lookups answer with `Object`,
+    // which is truthy: the encoding table returns it as a column kind, and the
+    // dtype table hands the classifier a function that then throws.
+    const table = tableWithObs({
+      by_encoding: { [ATTRS_KEY]: { 'encoding-type': 'constructor' } },
+      by_dtype: arrayNode({ data_type: 'constructor' }),
+      by_typestring: arrayNode({ dtype: '<toString' }),
+    });
+
+    expect(table.getObsColumnKinds(['by_encoding', 'by_dtype', 'by_typestring'])).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
 });

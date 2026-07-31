@@ -1,0 +1,206 @@
+---
+sidebar_position: 2
+---
+
+# Tree nodes
+
+`openExtraConsolidated` returns a `ZarrTree`: the store's hierarchy as a plain
+JavaScript object, with every node's attributes and array metadata already read into
+memory. This page covers what a node looks like, how to tell the two kinds apart, and
+how to read a data type out of one without opening anything.
+
+## The shape of a node
+
+A tree has two kinds of node, and both are objects:
+
+```ts
+type ZarrTree = {
+  [ATTRS_KEY]?: ZAttrsAny;
+  [key: string]: ZarrTree | LazyZarrArray<zarr.DataType>;
+};
+
+type LazyZarrArray<T extends zarr.DataType> = {
+  [ATTRS_KEY]?: ZAttrsAny;
+  [ZARRAY_KEY]: ZarrArrayMetadata;
+  get: () => Promise<zarr.Array<T>>;
+};
+```
+
+A group's string keys are its children. An array leaf has no children — it has
+`get()`, which opens the array when you actually want data.
+
+Attributes and array metadata hang off **symbol** keys, `ATTRS_KEY` and `ZARRAY_KEY`.
+That is deliberate: symbol-keyed properties do not show up in `Object.keys`,
+`for...in` or `JSON.stringify`, so enumerating a group's children gives you children
+and nothing else. It also means `console.log` of a tree hides them; use
+`serializeZarrTree(tree)` to get a plain-string-keyed copy (`_attrs`, `_zarray`) for
+debugging.
+
+## Telling a group from an array
+
+`ZarrTree`'s index signature admits either kind at every key, so the type alone will
+not tell you which one you have. The obvious runtime test is wrong:
+
+```ts
+// Wrong. A LazyZarrArray is an object too.
+if (typeof node === 'object') {
+  for (const columnName of Object.keys(node)) { /* ... 'get' is not a column */ }
+}
+```
+
+An array node slips through, and its own properties are read as if they were child
+keys — so a table whose `obs` was somehow an array reports a column called `get`.
+Use the guards instead. `ZARRAY_KEY` is the discriminator: required on every array
+leaf, absent from every group.
+
+```ts
+import { isLazyZarrArray, isZarrGroup } from 'zarrextra';
+
+isLazyZarrArray(node); // node is LazyZarrArray<zarr.DataType>
+isZarrGroup(node);     // node is ZarrTree
+```
+
+`zarrita`'s own guards do not apply here — these are consolidated-metadata tree
+nodes, not open `zarr.Array` / `zarr.Group` handles.
+
+:::note
+
+`isZarrGroup` is the complement of `isLazyZarrArray` *within a tree*: it says "not an
+array leaf", not "provably a group". Any object that is not an array node is walkable
+as one, which is what a caller enumerating children needs. Pair it with an existence
+check when the node might be absent.
+
+:::
+
+## Navigating
+
+Most call sites do not want a guard on its own — they want "the node at this path, if
+it is the kind I need". That is three functions:
+
+```ts
+import { getChildNode, getChildGroup, getChildArray } from 'zarrextra';
+
+const obs = getChildGroup(tree, 'tables', 'cells', 'obs');
+const index = getChildArray(obs, '_index');
+const either = getChildNode(obs, 'cell_type');
+```
+
+Each takes a starting node and a path, and returns `undefined` if any step is
+missing, if a step before the last is an array, or if the node at the end is not the
+kind asked for. Only own properties are walked, so `getChildGroup(tree, '__proto__')`
+is `undefined` rather than `Object.prototype`.
+
+`getNodeAttrs(node)` reads the attributes off either kind of node, or `undefined`
+when it has none:
+
+```ts
+import { getNodeAttrs } from 'zarrextra';
+
+const indexName = getNodeAttrs(obs)?._index; // AnnData's dataframe index name
+```
+
+## Data types
+
+`getArrayMetadata(node)` returns what the store wrote for an array — but the two zarr
+generations spell the data type differently, and both reach the tree:
+
+- zarr v2 writes `dtype` as a numpy typestring: `<f8`, `|b1`, `|O`, `<U16`.
+- zarr v3 writes `data_type` as a name: `float64`, `bool`, `string`.
+
+`getArrayDtype(node)` folds both into one vocabulary so callers do not have to know
+which generation the store they opened happens to be:
+
+```ts
+import { getArrayDtype } from 'zarrextra';
+
+getArrayDtype(node); // 'float64' | 'bool' | 'string' | 'v2:object' | ... | undefined
+```
+
+The vocabulary is `zarrita`'s own `DataType`, not a bare string, and that is the
+point: the answer is directly comparable with an opened array's `dtype`, so a check
+made against tree metadata and the same check made after opening cannot drift apart.
+`normalizeDtype(dtype)` exposes the same conversion for a typestring you already
+hold. Both answer `undefined` for a type this package does not model — `complex64`,
+the `r*` raw types, and v3 extension dtypes, which are written as objects rather than
+strings.
+
+The declared type is `ZarrDataType`, which is `zarr.DataType` plus `float16`.
+`zarrita` admits `float16` only when the type environment declares `Float16Array`,
+which an `ES2022` lib does not; the name still turns up in real stores and is still
+worth classifying.
+
+### Is it text?
+
+`isTextDataType(dtype)` answers "do these values need decoding to strings":
+
+```ts
+import { getArrayDtype, isTextDataType } from 'zarrextra';
+
+const dtype = getArrayDtype(node);
+if (dtype && isTextDataType(dtype)) { /* ... */ }
+```
+
+It covers v3 `string`, v2 fixed-width unicode and bytes (`v2:U16`, `v2:S5`), **and**
+`v2:object`. That last one is the trap. `zarrita`'s `isDataType(dtype, 'string')` is
+deliberately false for `v2:object`, so it has to be tested separately — and testing
+for one spelling without the other is what makes a reader hand back raw integer codes
+where category labels were expected. No error is raised, and the numbers look like
+plausible data.
+
+Because it is defined over a data type rather than over a node, the same predicate
+answers the question at both layers: against tree metadata before loading, and
+against an opened array's `dtype` while decoding.
+
+## Array metadata types
+
+`ZARRAY_KEY` carries a `ZarrArrayMetadata`:
+
+```ts
+type ZarrArrayMetadata = ZarrV2ArrayNode | ZarrV3ArrayNode | ZAttrsAny;
+```
+
+`dtype` is absent from the v3 member and `data_type` from the v2 member, so neither
+can be read without narrowing — reading the v2 spelling off a v3 node and silently
+getting `undefined` does not type-check. Prefer `getArrayDtype` over narrowing by
+hand.
+
+The third member is deliberate rather than sloppy. This is unvalidated JSON straight
+from the store, and zarr v3 permits data types this package does not model, so a
+union of only the two known shapes would either be a lie or would have to fail the
+whole store open over a node nobody asked about.
+
+## Worked example
+
+Enumerating a table's obs columns, using nothing but metadata already in memory:
+
+```ts
+import { getChildGroup, getNodeAttrs, getArrayDtype, isTextDataType } from 'zarrextra';
+
+const obs = getChildGroup(tree, 'tables', 'cells', 'obs');
+if (!obs) throw new Error('no obs group');
+
+// The index sits alongside the columns but is the row label, not a column.
+const indexName = getNodeAttrs(obs)?._index;
+
+for (const columnName of Object.keys(obs)) {
+  if (columnName === indexName) continue;
+
+  const node = obs[columnName];
+  const encoding = getNodeAttrs(node)?.['encoding-type'];
+  const dtype = getArrayDtype(node);
+
+  console.log(columnName, { encoding, dtype, isText: dtype ? isTextDataType(dtype) : undefined });
+}
+```
+
+Note what `dtype` is `undefined` for. An AnnData categorical is a **group** of `codes`
+plus `categories`, and a nullable column is a **group** of `values` plus `mask` —
+neither has array metadata of its own, so the `encoding-type` attribute is the only
+thing on the node that says what the column holds. Telling a group from an array is
+necessary here but not sufficient: you also have to know what a particular group
+*is*.
+
+That knowledge is AnnData's, not zarr's, so it lives in `@spatialdata/core` rather
+than here — `classifyObsColumnNode` maps a node to a column kind, and
+`readNullableArray` reads the nullable group layout. See
+[elements](../core/elements) for the table API built on top of them.

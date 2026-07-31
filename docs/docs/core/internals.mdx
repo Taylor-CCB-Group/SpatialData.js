@@ -244,11 +244,17 @@ These are used internally during element construction to validate and type metad
 
 ## Store Parsing
 
-The `zarrUtils.ts` module handles parsing zarr store contents:
+Parsing zarr store contents lives in `zarrextra`, not in core:
 
-- `tryConsolidated(store)` - Attempts to load consolidated metadata
-- `parseStoreContents(store)` - Builds the `ZarrTree` structure
-- `serializeZarrTree(tree)` - Serializes for JSON output
+- `openExtraConsolidated(source)` - Resolves consolidated metadata and builds the
+  `ZarrTree`, returning a `Result`
+- `serializeZarrTree(tree)` - Serializes for JSON output, converting the symbol-keyed
+  attributes and array metadata to string keys
+
+Element construction walks that tree with the guards and accessors described in
+[tree nodes](../zarrextra/tree-nodes) — `AbstractElement` narrows an element's own
+node to a group once, so no element subclass has to discriminate group from array
+itself.
 
 ## Result Type Implementation
 

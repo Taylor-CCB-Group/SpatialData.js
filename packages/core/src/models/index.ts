@@ -20,15 +20,15 @@ import { type BaseTransformation, Identity, parseTransforms } from '../transform
 import type {
   BadFileHandler,
   ElementName,
-  LazyZarrArray,
   Result,
   SDataProps,
   TableColumnData,
   TableColumnKind,
   ZAttrsAny,
+  ZarrDataType,
   ZarrTree,
 } from '../types';
-import { ATTRS_KEY, Err, Ok, ZARRAY_KEY } from '../types';
+import { Err, getArrayDtype, getChildGroup, getNodeAttrs, isTextDataType, Ok } from '../types';
 import { NULLABLE_ENCODING_KINDS } from './nullableArrays';
 import SpatialDataPointsSource from './VPointsSource';
 import SpatialDataShapesSource from './VShapesSource';
@@ -60,7 +60,15 @@ abstract class AbstractElement<T extends ElementName> {
   readonly url?: string;
   protected readonly sdata: SDataProps;
   protected readonly rawAttrs: ZAttrsAny;
-  protected readonly parsed: ZarrTree | LazyZarrArray<zarr.DataType>;
+  /**
+   * The element's own node in the tree.
+   *
+   * Narrowed to a group here, once, so no subclass has to re-litigate the
+   * union: every SpatialData element is a group on disk (a multiscale, a
+   * dataframe, an AnnData), and one that arrives as an array is a store we
+   * cannot read, not a case to handle further down.
+   */
+  protected readonly parsed: ZarrTree;
 
   constructor({ sdata, name, key }: ElementParams<T>) {
     this.sdata = sdata;
@@ -73,15 +81,16 @@ abstract class AbstractElement<T extends ElementName> {
     if (!tree) {
       throw new Error('Tree store contents not available');
     }
-    if (!(name in tree)) {
+    const elementTypeGroup = getChildGroup(tree, name);
+    if (!elementTypeGroup) {
       throw new Error(`Unknown element type: ${name}`);
     }
-    const p1 = tree[name] as ZarrTree;
-    if (!(key in p1)) {
+    const elementGroup = getChildGroup(elementTypeGroup, key);
+    if (!elementGroup) {
       throw new Error(`Unknown element key: ${key}`);
     }
-    this.parsed = p1[key];
-    this.rawAttrs = ((p1[key] as ZarrTree)[ATTRS_KEY] as ZAttrsAny) ?? {};
+    this.parsed = elementGroup;
+    this.rawAttrs = getNodeAttrs(elementGroup) ?? {};
   }
 }
 
@@ -229,22 +238,22 @@ const OBS_KIND_BY_ENCODING: Record<string, TableColumnKind> = {
 };
 
 /**
- * Classify a dtype from either zarr generation.
+ * Classify a normalised zarr data type.
  *
- * v3 spells them out (`float64`, `bool`, `string`); v2 uses numpy typestrings
- * (`<f8`, `|b1`, `|O`). Both reach the tree, so both are read here rather than
- * making callers care which store they opened.
+ * Reading `zarrita`'s vocabulary rather than a raw typestring is what keeps this
+ * in step with the loaders: `getArrayDtype` folds v2's numpy typestrings
+ * (`<f8`, `|b1`, `|O`) and v3's names (`float64`, `bool`, `string`) into the same
+ * `DataType` an opened array reports, and `isTextDataType` is the same question
+ * `AnnDataSource` asks of that opened array. The two layers agree because they
+ * share the definition, not because both happen to spell it the same way.
+ *
+ * Total: what remains after text and booleans is numeric or bigint, either of
+ * which a "colour by" UI treats as a number.
  */
-function classifyObsDtype(dtype: string): TableColumnKind | undefined {
-  if (dtype === 'string') return 'string';
+function classifyObsDtype(dtype: ZarrDataType): TableColumnKind {
+  if (isTextDataType(dtype)) return 'string';
   if (dtype === 'bool') return 'boolean';
-  if (/^(u?int\d+|float\d+)$/.test(dtype)) return 'numeric';
-
-  const code = dtype.replace(/^[<>|=]/, '').charAt(0);
-  if (code === 'b') return 'boolean';
-  if (code === 'O' || code === 'S' || code === 'U') return 'string';
-  if (code === 'i' || code === 'u' || code === 'f') return 'numeric';
-  return undefined;
+  return 'numeric';
 }
 
 /**
@@ -260,22 +269,22 @@ function classifyObsDtype(dtype: string): TableColumnKind | undefined {
  * consumer already handles as "decide some other way".
  */
 export function classifyObsColumnNode(node: unknown): TableColumnKind | undefined {
-  if (!node || typeof node !== 'object') return undefined;
-
-  const attrs = (node as ZarrTree)[ATTRS_KEY];
+  const attrs = getNodeAttrs(node);
   const encoding = attrs?.['encoding-type'];
-  if (typeof encoding === 'string' && OBS_KIND_BY_ENCODING[encoding]) {
+  // Own properties only: the encoding name came out of a store, so it can be
+  // `constructor` as easily as `categorical`, and an unguarded lookup would
+  // answer that with `Object` and return it as if it were a column kind.
+  if (typeof encoding === 'string' && Object.hasOwn(OBS_KIND_BY_ENCODING, encoding)) {
     return OBS_KIND_BY_ENCODING[encoding];
   }
   // Older AnnData writes a `categories` attribute pointing at the levels instead
   // of an `encoding-type` — the same form `_loadColumn` has always had to accept.
   if (attrs && 'categories' in attrs) return 'categorical';
 
-  const arrayMetadata = (node as LazyZarrArray<zarr.DataType>)[ZARRAY_KEY] as ZAttrsAny | undefined;
-  if (!arrayMetadata) return undefined;
-  // `data_type` is zarr v3, `dtype` is v2.
-  const dtype = arrayMetadata.data_type ?? arrayMetadata.dtype;
-  return typeof dtype === 'string' ? classifyObsDtype(dtype) : undefined;
+  // A group that said nothing about itself above (a nullable column, a
+  // categorical) has no dtype of its own, and reports `undefined` here.
+  const dtype = getArrayDtype(node);
+  return dtype ? classifyObsDtype(dtype) : undefined;
 }
 
 // ============================================
@@ -344,23 +353,9 @@ export class TableElement extends AbstractElement<'tables'> {
   /**
    * The `obs` group node, or `undefined` when this table has no `obs` or the
    * node turns out to be an array rather than a group.
-   *
-   * `ZarrTree`'s index signature admits a `LazyZarrArray` at every key, and a
-   * lazy array is an object too — so a `typeof === 'object'` test alone lets one
-   * through, and its own properties would then read as obs column names.
-   * `ZARRAY_KEY` is the discriminator (it is required on `LazyZarrArray`,
-   * absent on groups), the same one `serializeZarrTree` uses.
    */
   private getObsGroup(): ZarrTree | undefined {
-    const tableNode = this.parsed;
-    if (ZARRAY_KEY in tableNode) {
-      return undefined;
-    }
-    const obsNode = tableNode.obs;
-    if (!obsNode || typeof obsNode !== 'object' || ZARRAY_KEY in obsNode) {
-      return undefined;
-    }
-    return obsNode;
+    return getChildGroup(this.parsed, 'obs');
   }
 
   /**
@@ -370,7 +365,7 @@ export class TableElement extends AbstractElement<'tables'> {
    * name (e.g. `cell_id`).
    */
   getObsIndexColumnName(): string | undefined {
-    const indexName = this.getObsGroup()?.[ATTRS_KEY]?._index;
+    const indexName = getNodeAttrs(this.getObsGroup())?._index;
     return typeof indexName === 'string' ? indexName : undefined;
   }
 
@@ -782,11 +777,12 @@ export function loadElements<T extends ElementName>(
   if (!tree) {
     throw new Error('Tree store contents not available');
   }
-  if (!(name in tree)) {
+  const elementTypeGroup = getChildGroup(tree, name);
+  if (!elementTypeGroup) {
     return undefined;
   }
 
-  const keys = Object.keys(tree[name] as object);
+  const keys = Object.keys(elementTypeGroup);
   if (keys.length === 0) {
     return undefined;
   }

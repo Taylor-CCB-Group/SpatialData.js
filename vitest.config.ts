@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createWorkspaceSourceAliases } from './vite.config.base';
 
 const __filename = fileURLToPath(import.meta.url);
 // not strictly necessary as vite will provide this in config context
@@ -36,10 +37,9 @@ export default defineConfig({
           hookTimeout: 60000,
         },
         resolve: {
-          alias: {
-            '@spatialdata/core': resolve(__dirname, 'packages/core/src'),
-            zarrextra: resolve(__dirname, 'packages/zarrextra/src'),
-          },
+          // The same source aliases the package projects use, rather than a
+          // second hand-maintained list that was already missing entries.
+          alias: createWorkspaceSourceAliases(__dirname),
         },
       },
     ],

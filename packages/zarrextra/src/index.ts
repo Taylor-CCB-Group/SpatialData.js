@@ -1,5 +1,6 @@
 import * as zarr from 'zarrita';
 import { Err, Ok, type Result } from './result';
+import { getArrayMetadata, getNodeAttrs } from './treeNodes';
 import type {
   ConsolidatedStore,
   LazyZarrArray,
@@ -174,11 +175,13 @@ export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
 
   const result: Record<string, unknown> = {};
 
-  if (ATTRS_KEY in obj && obj[ATTRS_KEY]) {
-    result._attrs = obj[ATTRS_KEY];
+  const attrs = getNodeAttrs(obj);
+  if (attrs) {
+    result._attrs = attrs;
   }
-  if (ZARRAY_KEY in obj && obj[ZARRAY_KEY]) {
-    result._zarray = obj[ZARRAY_KEY];
+  const arrayMetadata = getArrayMetadata(obj);
+  if (arrayMetadata) {
+    result._zarray = arrayMetadata;
   }
 
   for (const key in obj) {
@@ -229,11 +232,27 @@ export {
 export { createPrefixedStore } from './prefixedStore';
 export type { Result } from './result';
 export { Err, isErr, isOk, Ok, unwrap, unwrapOr } from './result';
+export type { ZarrDataType } from './treeNodes';
+export {
+  getArrayDtype,
+  getArrayMetadata,
+  getChildArray,
+  getChildGroup,
+  getChildNode,
+  getNodeAttrs,
+  isLazyZarrArray,
+  isTextDataType,
+  isZarrGroup,
+  normalizeDtype,
+} from './treeNodes';
 export type {
   ConsolidatedStore,
   LazyZarrArray,
   StoreReference,
   ZAttrsAny,
+  ZarrArrayMetadata,
   ZarrTree,
+  ZarrV2ArrayNode,
+  ZarrV3ArrayNode,
 } from './types';
 export { ATTRS_KEY, ZARRAY_KEY } from './types';

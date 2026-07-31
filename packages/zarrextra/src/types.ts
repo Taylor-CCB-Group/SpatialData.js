@@ -28,7 +28,7 @@ export const ZARRAY_KEY = Symbol('.zarray');
  */
 export type LazyZarrArray<T extends zarr.DataType> = {
   [ATTRS_KEY]?: ZAttrsAny;
-  [ZARRAY_KEY]: ZAttrsAny;
+  [ZARRAY_KEY]: ZarrArrayMetadata;
   get: () => Promise<zarr.Array<T>>;
 };
 
@@ -45,34 +45,75 @@ export interface ZarrTree {
 }
 
 /**
- * Zarr v3 array node metadata
+ * Zarr v2 array node metadata, as written to `.zarray`.
+ *
+ * `dtype` is a numpy typestring (`<f8`, `|b1`, `|O`, `<U16`) — the v2 spelling of
+ * what v3 calls `data_type`. Prefer {@link getArrayDtype} over reading either
+ * field: it is the only place that knows both spellings, and it answers in
+ * `zarrita`'s own `DataType` vocabulary so tree-level and opened-array-level
+ * checks cannot drift apart.
+ */
+export type ZarrV2ArrayNode = {
+  shape: number[];
+  chunks: number[];
+  dtype: string;
+  fill_value?: unknown;
+  order?: string;
+  filters?: unknown[] | null;
+  compressor?: unknown;
+  dimension_separator?: string;
+  zarr_format?: number;
+};
+
+/**
+ * Zarr v3 array node metadata, as written to `zarr.json`.
+ *
+ * Only `shape` and `data_type` are required here: the rest are optional in the
+ * specification or omitted by real writers, and this type describes metadata as
+ * it arrives from a store rather than metadata that has been through
+ * {@link validateV3Zarray}.
  */
 export type ZarrV3ArrayNode = {
   shape: number[];
   data_type: string;
-  chunk_grid: {
+  chunk_grid?: {
     name: string;
     configuration: {
       chunk_shape: number[];
     };
   };
-  chunk_key_encoding: {
+  chunk_key_encoding?: {
     name: string;
     configuration: {
       separator: string;
     };
   };
-  fill_value: number | string | boolean;
-  codecs: Array<{
+  fill_value?: number | string | boolean;
+  codecs?: Array<{
     name: string;
     configuration?: Record<string, unknown>;
   }>;
-  attributes: Record<string, unknown>;
-  dimension_names: string[];
-  zarr_format: number;
-  node_type: 'array';
-  storage_transformers: unknown[];
+  attributes?: Record<string, unknown>;
+  dimension_names?: string[];
+  zarr_format?: number;
+  node_type?: 'array';
+  storage_transformers?: unknown[];
 };
+
+/**
+ * The array metadata a tree leaf carries under {@link ZARRAY_KEY} — one of the
+ * two generations, or an unrecognised record.
+ *
+ * The third member is deliberate rather than sloppy. This is unvalidated JSON
+ * straight from the store, and zarr v3 permits data types we do not model (an
+ * extension dtype is written as an object, not a string), so a union of only the
+ * two known shapes would either be a lie or would have to fail the whole store
+ * open. What the union does buy is the compile error that matters: `dtype` is
+ * absent from the v3 member and `data_type` from the v2 member, so neither can
+ * be read without narrowing — reading `.dtype` off a v3 node and silently
+ * getting `undefined` no longer type-checks.
+ */
+export type ZarrArrayMetadata = ZarrV2ArrayNode | ZarrV3ArrayNode | ZAttrsAny;
 
 /**
  * Zarr v3 group node metadata

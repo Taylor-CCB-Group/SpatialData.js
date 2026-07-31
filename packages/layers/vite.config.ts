@@ -1,9 +1,15 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
+import { createWorkspaceSourceAliases } from '../../vite.config.base';
 
 // .d.ts files are emitted via `tsc --emitDeclarationOnly` in the build script.
 export default defineConfig({
   root: resolve(__dirname),
+  // Sibling packages resolve to their sources — see the note in
+  // `packages/core/vite.config.ts` for why the default is a trap for tests.
+  resolve: {
+    alias: createWorkspaceSourceAliases(resolve(__dirname, '../..')),
+  },
   build: {
     outDir: resolve(__dirname, 'dist'),
     lib: {

@@ -5,10 +5,15 @@ Extra utilities for working with zarr stores using zarrita.
 This package provides helper functions and types for:
 - Parsing zarr store contents into a tree structure
 - Working with consolidated metadata
+- Navigating that tree: type guards, child accessors, and data types read from
+  metadata alone
 - Serializing zarr tree structures
 - Registering additional Zarrita codecs, including JP2K (`imagecodecs_jpeg2k`)
 - Loading OME-Zarr multiscales from an existing Zarrita store for Viv-compatible viewers
 - Result type for explicit error handling
+
+Full documentation: [overview](https://taylor-ccb-group.github.io/SpatialData.js/docs/zarrextra/overview)
+and [tree nodes](https://taylor-ccb-group.github.io/SpatialData.js/docs/zarrextra/tree-nodes).
 
 ## Result Type
 
@@ -40,7 +45,22 @@ if (result.ok) {
 
 ## API
 
-See the TypeScript definitions for full API documentation.
+See [the documentation site](https://taylor-ccb-group.github.io/SpatialData.js/docs/zarrextra/overview)
+for the store, tree and data-type APIs, and the TypeScript definitions for everything else.
+
+The tree returned by `openExtraConsolidated` holds a group or an array at every key,
+and both are objects — so use the exported guards rather than a `typeof` test, which
+lets an array through and then reads its own `get` property as if it were a child:
+
+```typescript
+import { getArrayDtype, getChildGroup, isLazyZarrArray, isZarrGroup } from 'zarrextra';
+
+const obs = getChildGroup(tree, 'tables', 'cells', 'obs');
+const dtype = getArrayDtype(obs?.leiden); // 'float64' | 'string' | ... | undefined
+```
+
+`getArrayDtype` reads the data type from consolidated metadata with no I/O, folding
+zarr v2's numpy typestrings and v3's names into `zarrita`'s own `DataType` vocabulary.
 
 ## Codec registration
 
