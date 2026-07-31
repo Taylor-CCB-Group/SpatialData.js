@@ -10,7 +10,19 @@ const require = createRequire(import.meta.url);
 const layersRequire = createRequire(path.join(workspaceRoot, 'packages/layers/package.json'));
 const reactRoot = path.dirname(require.resolve('react/package.json'));
 const reactDomRoot = path.dirname(require.resolve('react-dom/package.json'));
-const deckCoreRoot = layersRequire.resolve('@deck.gl/core');
+// The ESM entry, deliberately: `require.resolve` yields `dist/index.cjs`, and
+// aliasing every `@deck.gl/core` import to it splits `@luma.gl/shadertools` into a
+// CJS copy (reached through deck) and an ESM copy (reached through
+// `@vivjs/extensions`). Two copies means two `ShaderAssembler` singletons, and
+// Viv's own assembler is built by COPYING the default one's modules and hooks at
+// construction — so it copies an empty one, and every Viv-derived layer (labels
+// included) fails to compile its vertex shader for want of `project`/`layer` and
+// deck's `DECKGL_FILTER_*` hooks.
+//
+// The same single-luma-runtime requirement that `packages/layers`' build externals
+// exist to satisfy — this is the consumer-side half of it. Put the `.cjs` back and
+// `labels-color-by.spec.ts` fails; that scenario is what catches it.
+const deckCoreRoot = layersRequire.resolve('@deck.gl/core').replace(/index\.cjs$/, 'index.js');
 const distRoot = (workspacePackage: string) => path.join(workspaceRoot, workspacePackage, 'dist');
 const packageRootAliases = (packageName: string, root: string) => [
   { find: new RegExp(`^${packageName}$`), replacement: path.join(root, 'index.js') },
