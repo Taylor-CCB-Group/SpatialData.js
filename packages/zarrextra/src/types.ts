@@ -116,37 +116,6 @@ export type ZarrV3ArrayNode = {
 export type ZarrArrayMetadata = ZarrV2ArrayNode | ZarrV3ArrayNode | ZAttrsAny;
 
 /**
- * Zarr v3 group node metadata
- */
-export type ZarrV3GroupNode = {
-  attributes: Record<string, unknown>;
-  zarr_format: number;
-  consolidated_metadata: {
-    kind: string;
-    must_understand: boolean;
-    metadata: Record<string, unknown>;
-  };
-  node_type: 'group';
-};
-
-/**
- * Zarr v3 consolidated metadata structure (zarr.json)
- * The actual structure has metadata nested under consolidated_metadata.metadata
- * with path keys like "images/blobs_image", "labels/blobs_labels", etc.
- * Each entry can be either a group node or an array node.
- */
-export type ZarrV3Metadata = {
-  attributes: Record<string, unknown>;
-  zarr_format: number;
-  consolidated_metadata: {
-    kind: string;
-    must_understand: boolean;
-    metadata: Record<string, ZarrV3GroupNode | ZarrV3ArrayNode>;
-  };
-  node_type: 'group';
-};
-
-/**
  * This type is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`,
  * and `tree: ZarrTree` which has the object hierarchy as described in the consolidated metadata as a mostly "Plain Old Javascript Object",
  * but with (weakly typed) `Symbol`-keyed `attrs` & `.zarray` properties where available, and a `get()` on leaf nodes
