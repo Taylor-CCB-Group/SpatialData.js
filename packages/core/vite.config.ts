@@ -3,7 +3,22 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { createWorkspaceSourceAliases } from '../../vite.config.base';
 
-const rollupExternals = new Set(['zarrita', 'zod', 'anndata.js', 'zarrextra', 'apache-arrow']);
+const rollupExternals = ['zarrita', 'zod', 'anndata.js', 'zarrextra', 'apache-arrow'];
+
+/**
+ * Left for the consumer to resolve — the package itself, and any subpath of it.
+ *
+ * Equivalent to the `/^name(?:\/.*)?$/` form the other packages pass as regexes,
+ * spelled as a predicate because this config externalizes by function. Matching
+ * the exact specifier alone would leave a subpath entry point — `zarrextra/workers`,
+ * `zod/v4` — to be resolved and bundled, and with the workspace source aliases
+ * above, resolving `zarrextra/workers` means inlining a sibling's source.
+ *
+ * `apache-arrow/vector` is imported here already, but only as a type, so it is
+ * erased before rollup sees it. The first value import of a subpath would not be.
+ */
+const isExternalPackage = (id: string) =>
+  rollupExternals.some((name) => id === name || id.startsWith(`${name}/`));
 
 export default defineConfig({
   // Resolve sibling packages to their sources, as `vis` already does.
@@ -41,7 +56,7 @@ export default defineConfig({
         if (normalizedId.includes('vendor/parquet-wasm/parquet_wasm.js')) {
           return true;
         }
-        return rollupExternals.has(id);
+        return isExternalPackage(id);
       },
     },
     sourcemap: true,
