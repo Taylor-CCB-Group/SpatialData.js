@@ -17,9 +17,15 @@ repo previously depended on silently dropped every component but the first (see
 `docs/multi-component-codec-findings.md`). That defect is specific to that build,
 not to OpenJPH — but "a build of OpenJPH" is not on its own evidence of
 correctness. So `imagecodecs` is not trusted on reputation: it is admitted only
-if it decodes a committed multi-component codestream, produced by the WASM
-encoder, to the exact expected samples. The probe runs once per process and the
-backend is rejected on any mismatch.
+if it decodes a committed multi-component codestream to the exact expected
+samples. The probe runs once per process and the backend is rejected on any
+mismatch.
+
+The fixture's expected samples are generated in numpy rather than by a decoder,
+so the ground truth is codec-independent. Which backend *encoded* the codestream
+is recorded alongside it and reported by `backend_report()` — probing a backend
+against a codestream it produced itself only shows self-consistency, so that
+provenance is part of reading the result. See `scripts/build_htj2k_probe.py`.
 
 Set ``SPATIALDATA_JS_UTIL_HTJ2K_BACKEND=imagecodecs|openjph-wasm`` to pin one
 backend explicitly (the probe still gates ``imagecodecs``).
@@ -27,6 +33,7 @@ backend explicitly (the probe still gates ``imagecodecs``).
 
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -41,6 +48,7 @@ _BACKEND_ENV_VAR = "SPATIALDATA_JS_UTIL_HTJ2K_BACKEND"
 _PROBE_DIR = Path(__file__).resolve().parent / "probe"
 _PROBE_CODESTREAM = _PROBE_DIR / "multicomponent.j2c"
 _PROBE_EXPECTED = _PROBE_DIR / "multicomponent.npy"
+_PROBE_PROVENANCE = _PROBE_DIR / "multicomponent.json"
 
 
 class Htj2kBackend(Protocol):
@@ -140,6 +148,30 @@ def probe_fixture() -> tuple[bytes, np.ndarray]:
     return _PROBE_CODESTREAM.read_bytes(), np.load(_PROBE_EXPECTED)
 
 
+def probe_encoder() -> str | None:
+    """Which backend encoded the committed fixture, or `None` if unrecorded.
+
+    A backend probed against a codestream it produced itself has only shown that
+    it is self-consistent, so this is needed to read a probe result correctly.
+    """
+    if not _PROBE_PROVENANCE.is_file():
+        return None
+    try:
+        encoder = json.loads(_PROBE_PROVENANCE.read_text()).get("encoder")
+    except (OSError, ValueError):
+        return None
+    return encoder if isinstance(encoder, str) else None
+
+
+def available_backends() -> list[Htj2kBackend]:
+    """Every installed backend, in preference order.
+
+    Exposed for the probe builder, which has to encode with one backend and
+    check the result against the others rather than take the single selected one.
+    """
+    return [_BACKENDS[name] for name in _PREFERENCE if _BACKENDS[name].available()]
+
+
 @lru_cache(maxsize=None)
 def backend_passes_probe(name: str) -> bool:
     """Whether *name* decodes the committed multi-component fixture exactly.
@@ -205,6 +237,9 @@ def backend_report() -> dict[str, Any]:
     selected = resolve_backend()
     return {
         "selected": selected.name if selected else None,
+        # Reading a probe result needs to know who produced the codestream: a
+        # backend that encoded it has only proved self-consistency by decoding it.
+        "probe_encoder": probe_encoder(),
         "backends": {
             name: {
                 "available": backend.available(),

@@ -17,11 +17,12 @@ from spatialdata_js_util.codecs import (
 from spatialdata_js_util.codecs.backends import (
     BACKEND_IMAGECODECS,
     BACKEND_OPENJPH_WASM,
+    available_backends,
     backend_passes_probe,
+    probe_encoder,
     probe_fixture,
 )
 from spatialdata_js_util.codecs.zarr_codec import Htj2kCodec, Jpeg2kCodec
-
 
 
 def _skip_if_codec_unavailable(codec_name: str) -> None:
@@ -36,6 +37,7 @@ def _skip_if_codec_unavailable(codec_name: str) -> None:
             pytest.skip("No HTJ2K backend available.")
         return
     pytest.importorskip("imagecodecs", reason="imagecodecs is required for JPEG 2000.")
+
 
 def test_codecs_resolve_from_the_zarr_registry() -> None:
     """Entry-point registration must work without importing our modules first."""
@@ -130,6 +132,26 @@ class TestBackendProbe:
 
     def test_unknown_backend_never_passes(self) -> None:
         assert backend_passes_probe("not-a-real-backend") is False
+
+    def test_probe_records_which_backend_encoded_it(self) -> None:
+        """A backend probed against its own output has only shown self-consistency.
+
+        So the provenance travels with the fixture and is reported, rather than
+        living in a docstring that a regeneration would silently outdate.
+        """
+        encoder = probe_encoder()
+        assert encoder in {BACKEND_IMAGECODECS, BACKEND_OPENJPH_WASM}
+        assert backend_report()["probe_encoder"] == encoder
+
+    def test_available_backends_is_a_subset_in_preference_order(self) -> None:
+        # The probe builder encodes with one backend and checks the rest, so it
+        # needs all of them rather than the single selected one.
+        names = [backend.name for backend in available_backends()]
+        assert names == [
+            name for name in (BACKEND_IMAGECODECS, BACKEND_OPENJPH_WASM) if name in names
+        ]
+        for name in names:
+            assert backend_report()["backends"][name]["available"]
 
     @pytest.mark.parametrize("name", [BACKEND_IMAGECODECS, BACKEND_OPENJPH_WASM])
     def test_available_backends_decode_our_codestream(self, name: str) -> None:

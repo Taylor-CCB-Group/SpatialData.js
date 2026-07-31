@@ -63,6 +63,7 @@ where = ["src"]
 spatialdata_js_util = [
     "codecs/probe/*.j2c",
     "codecs/probe/*.npy",
+    "codecs/probe/*.json",
     "codecs/vendor/*.mjs",
     "codecs/vendor/openjph/*",
     "codecs/vendor/openjph/wasm/*",
