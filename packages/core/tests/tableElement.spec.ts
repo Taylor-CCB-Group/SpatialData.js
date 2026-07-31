@@ -1,5 +1,5 @@
 import { assert, describe, expect, it, vi } from 'vitest';
-import { ATTRS_KEY } from 'zarrextra';
+import { ATTRS_KEY, ZARRAY_KEY } from 'zarrextra';
 import { SpatialData } from '../src/store/index.js';
 
 function createMockSpatialData(obs: Record<string | symbol, unknown> = {}) {
@@ -98,6 +98,19 @@ describe('TableElement obs column names', () => {
 
     expect(table.getObsIndexColumnName()).toBe('cell_id');
     expect(table.getObsColumnNames()).toEqual(['leiden']);
+  });
+
+  it('treats an obs node that is an array rather than a group as having no columns', () => {
+    const sdata = createMockSpatialData({
+      [ZARRAY_KEY]: { shape: [2] },
+      [ATTRS_KEY]: { _index: '_index' },
+      get: () => Promise.resolve({}),
+    });
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
+    const table = sdata.tables.cells_table;
+
+    expect(table.getObsIndexColumnName()).toBeUndefined();
+    expect(table.getObsColumnNames()).toEqual([]);
   });
 
   it('keeps every key when obs declares no index', () => {
