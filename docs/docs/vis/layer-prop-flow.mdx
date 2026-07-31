@@ -352,7 +352,9 @@ nothing.
 - **`resolveHighlightedLabel` refuses background and hidden labels** before the value
   reaches the shader, so an id that went stale between the pick and the frame cannot light
   up something the filter hides.
-- **The tint prop is `labelHighlightColor`.** See the anti-patterns below.
+- **The tint reuses deck's `highlightColor`**, with the same meaning (alpha is the blend
+  weight), so one prop name covers shapes and labels. The labels default is declared in
+  `defaultProps`; see the anti-patterns below for why it cannot be a use-site fallback.
 
 ### Anti-patterns (labels)
 
@@ -362,7 +364,7 @@ nothing.
 | Returning a fresh `FeatureColorBuffer` wrapper each render | Re-uploads the texture every frame; keep the `colors` identity stable |
 | Keying a colour resource by element alone | Two layers, two columns, one element → eviction ping-pong that never settles |
 | Carrying the hovered label in the colour LUT | Re-uploads a multi-megabyte texture on every pointer move; use the uniform |
-| Naming a layer prop `highlightColor` | deck's own `Layer` owns that name and defaults it to navy `[0, 0, 128, 128]`, so your prop is never absent and your default can never apply — this silently drew every labels hover in deck's navy. Labels use `labelHighlightColor` |
+| Defaulting a prop deck also defines with `props.x ?? MY_DEFAULT` | deck fills its own default in, so the prop is never absent and your fallback never runs. This drew every labels hover in deck's navy `highlightColor`. Redefine it in the layer's `defaultProps`, which does override deck's |
 
 ## Shape/table annotation controls
 

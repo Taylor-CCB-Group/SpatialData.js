@@ -97,10 +97,10 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     // changes a uniform and nothing is re-uploaded. `-1` means "nothing hovered";
     // label 0 is background and is discarded before the highlight runs anyway.
     highlightedLabelId: { type: 'number', value: -1, compare: true },
-    // `labelHighlightColor`, not `highlightColor`: deck's own `Layer` already owns that
-    // name and defaults it to navy `[0, 0, 128, 128]`, so a same-named prop here would
-    // never be absent and this default could never win.
-    labelHighlightColor: { type: 'array', value: DEFAULT_LABEL_HIGHLIGHT_COLOR, compare: true },
+    // Deck's own `Layer` prop, redefaulted from its navy `[0, 0, 128, 128]`. Declaring
+    // it here is what makes the labels default win: deck fills its base default in, so
+    // the prop is never absent and a `?? DEFAULT` at the use site would never run.
+    highlightColor: { type: 'array', value: DEFAULT_LABEL_HIGHLIGHT_COLOR, compare: true },
   };
 
   // biome-ignore lint/complexity/noUselessConstructor: widens the base UntypedXRLayer constructor so `new LabelsBitmaskTileLayer(props)` typechecks.
@@ -270,7 +270,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       featureColorLut,
       featureColorTexture,
       highlightedLabelId,
-      labelHighlightColor,
+      highlightColor,
       maxZoom,
       opacity = 1,
       zoom,
@@ -287,7 +287,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     const useFeatureColors = lut && featureColorTexture ? 1 : 0;
 
     const highlighted = resolveHighlightedLabel(highlightedLabelId as number | null, lut);
-    const highlightRgba = (labelHighlightColor as readonly number[] | undefined) ?? [];
+    const highlightRgba = (highlightColor as readonly number[] | undefined) ?? [];
     const highlightNormalized = getNormalizedColor(
       highlightRgba.length >= 3 ? highlightRgba : DEFAULT_LABEL_HIGHLIGHT_COLOR
     );

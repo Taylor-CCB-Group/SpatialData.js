@@ -3,7 +3,7 @@ import type { LabelsLayerProps } from '../src/LabelsLayer';
 import { LabelsLayer } from '../src/LabelsLayer';
 import { buildLabelColorLut, DEFAULT_LABEL_HIGHLIGHT_COLOR } from '../src/labelColorEncoding';
 
-/** deck.gl core `Layer.defaultProps.highlightColor`. Not ours; must not leak in. */
+/** deck.gl core `Layer.defaultProps.highlightColor`, which ours must override. */
 const DECK_CORE_HIGHLIGHT_COLOR = [0, 0, 128, 128];
 
 type TileLayerLike = {
@@ -282,7 +282,7 @@ describe('LabelsLayer prop flow', () => {
     expect(bitmaskLayer.props.highlightedLabelId).toBe(2);
   });
 
-  it('sends the labels highlight tint down, not deck.gl core’s', () => {
+  it('redefaults deck’s own highlightColor to the labels tint', () => {
     const { loader } = makeLabelsLoader();
     const tileLayer = renderLabelsLayer({ loader, highlightedLabelId: 2 });
 
@@ -297,12 +297,13 @@ describe('LabelsLayer prop flow', () => {
       },
     }) as { props: Record<string, unknown> };
 
-    // The tint lives under `labelHighlightColor` because deck's own `Layer` owns
-    // `highlightColor` and defaults it to navy. Naming ours the same made every
-    // hover draw in deck's navy: the prop was never absent, so the fallback to
-    // yellow below could never run. Assert the value, not just the plumbing.
-    expect(bitmaskLayer.props.labelHighlightColor).toEqual(DEFAULT_LABEL_HIGHLIGHT_COLOR);
-    expect(bitmaskLayer.props.labelHighlightColor).not.toEqual(DECK_CORE_HIGHLIGHT_COLOR);
+    // We reuse deck's `highlightColor` name, so the labels default has to be declared
+    // in `defaultProps` to beat deck's navy base default. Applying it with `?? DEFAULT`
+    // at the use site does NOT work — deck fills its own default in, so the prop is
+    // never absent and every hover drew navy. Assert the value, not the plumbing: that
+    // is the part that silently regressed.
+    expect(bitmaskLayer.props.highlightColor).toEqual(DEFAULT_LABEL_HIGHLIGHT_COLOR);
+    expect(bitmaskLayer.props.highlightColor).not.toEqual(DECK_CORE_HIGHLIGHT_COLOR);
   });
 
   it('does not reload tiles when only the hovered label changes', async () => {
