@@ -1,5 +1,107 @@
 # @spatialdata/vis
 
+## 0.4.0
+
+### Minor Changes
+
+- [#95](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/95) [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Decide continuous vs categorical from the column's declared kind, and let callers
+  configure missing values.
+
+  `TableElement.getObsColumnKinds` reports what the store says each obs column is —
+  `numeric`, `categorical`, `string` or `boolean` — and `loadAssociatedTableFeatureRows`
+  carries it alongside the values as `extraColumnKinds`. It is **synchronous**: opening a
+  store already reads every node's attributes and array metadata into the tree, so a caller
+  can ask what a column is before deciding whether to load it. Both zarr generations are
+  read (v3 `data_type`, v2 numpy typestrings). `'auto'` mode now trusts that in
+  preference to sniffing stringified values, which was wrong at both edges: one `NaN` made a
+  float column look non-numeric, and integer cluster codes looked like a continuum. Value
+  sniffing remains only as the fallback when no kind is available.
+
+  `fillColorByColumn.missingValues` configures the rest: `treatAsMissing` adds
+  store-specific sentinel strings (`'NA'`, `'unknown'`, …) that only the caller can
+  recognise, and `render` chooses whether a feature with no value keeps the layer default,
+  is hidden, or takes an explicit colour. `null` and `NaN` are always missing and are not
+  configurable. Sentinels are excluded before the mode decision, the numeric extent and the
+  category set, so a sentinel never becomes a category or drags a ramp.
+
+- [#95](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/95) [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Let a host hand in precomputed feature colours as a buffer, for shapes and labels.
+
+  `SpatialCanvasViewer` takes a `featureColorResolver` — a runtime attachment alongside
+  `hostLayerResolver` / `vivImagePropsResolver` — returning a `FeatureColorBuffer`
+  (`{ colors: Uint8Array; count: number }`) for a layer. Use it when colour comes from data
+  a config cannot carry: a computed column, an annotation from outside the table, a live
+  selection.
+
+  Previously the only route was `featureState.fillColorByFeatureId`, which makes the host
+  stringify integers it already had and costs a Map copy plus (for labels) a parse per
+  entry, all to produce the buffer the renderer wanted anyway.
+
+  The index means different things per kind, and the resolver context says which: for labels
+  it is the raster's own pixel value; for shapes it is the position in the loaded geometry,
+  so the context supplies the `featureIds` ordering to build against. A buffer wins over
+  `featureState` rather than merging with it — bake hide and fade into the alpha.
+
+  Also: `LabelColorLut` is now `FeatureColorBuffer` (`labelCount` → `count`) so both kinds
+  share one currency.
+
+- [#95](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/95) [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Let `fillColorByColumn` carry a colour scheme, and default categorical colouring to the
+  unbounded OkLab scheme.
+
+  `fillColorByColumn` on both shapes and labels layers now takes `categoricalPalette`
+  (`'oklab'`, or your own RGB list, which cycles) and `numericRamp`. Both are
+  JSON-serializable, so they survive a saved Render Stack.
+
+  **Behaviour change:** the categorical default is now `'oklab'` — the same golden-angle
+  OKLCh scheme `@spatialdata/layers` already used for points colour-by-feature. The previous
+  six-colour palette cycled, so a column with more than six categories silently drew two
+  categories in the same colour; the OkLab scheme is a pure function of the category index
+  and has no length. Pass an explicit RGB list to pin specific colours.
+
+- [#95](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/95) [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Filter and colour annotated labels elements with the same API as shapes.
+
+  A labels layer now accepts `fillColorByColumn` (colour every label by an obs column of
+  its associated table) and a `featureState` with the same fields and meanings a shapes
+  layer's takes — `fillColorByFeatureId`, `hiddenFeatureIds`, `fadedFeatureIds`,
+  `filteredOpacityMultiplier` — keyed by the label's integer instance id as a string.
+
+  The mechanism mirrors shapes: the palette, numeric ramp and `'auto'` mode detection are
+  now shared (`featureColorEncoding`), so the same column reads the same way on a shapes
+  layer and on a labels layer over the same table. Where a shape resolves its colour from a
+  per-feature texture indexed by feature index, a label resolves its colour from a
+  per-label lookup table indexed by the raster's own pixel value, sampled in the bitmask
+  fragment shader. Hidden labels are discarded, faded labels scale the channel's fill and
+  outline opacities, and a hidden label is no longer pickable. The lookup table is owned by
+  `LabelsLayer` and shared across tile sublayers, and is re-uploaded only when the
+  feature-state it encodes actually changes.
+
+- [#103](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/103) [`5c0d6dd`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5c0d6ddf9f04dc7cf1c3ee962c85fbfedcff3796) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Highlight the labels feature under the cursor, the way shapes already do.
+
+  Nothing to configure on either canvas surface: the highlight follows the same hover pick
+  that feeds the tooltip, so it respects `hoverTooltipMode`. Hosts driving `LabelsLayer`
+  directly get `highlightedLabelId` and an optional `highlightColor`.
+
+### Patch Changes
+
+- [#98](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/98) [`ed2979d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ed2979de3ecf1eca95d2d78cabf79622b13c9c32) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Bump deck.gl to 9.3.7 and the luma.gl ecosystem to 9.3.6.
+
+  The catalog entries for the `@deck.gl/*` packages move from `~9.3.5` to `~9.3.7`
+  and the `@luma.gl/*` entries to `~9.3.6` (the latest 9.3 patch of each).
+  `@spatialdata/layers` pinned `@luma.gl/engine` outside the catalog at `^9.3.5`;
+  it now uses `catalog:` like every other deck/luma dependency, so the whole
+  ecosystem stays on one version.
+
+  The lockfile is also deduped: `@luma.gl/shadertools`, `@luma.gl/webgl` and
+  `@luma.gl/gltf` reach us only as peers of the deck packages, so they had stayed
+  at 9.3.5 while the directly-declared luma packages moved to 9.3.6. A mixed luma
+  tree is the kind of thing that breaks deck at runtime rather than at build time,
+  so they are now collapsed onto 9.3.6 with the rest.
+
+- Updated dependencies [[`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`5c0d6dd`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5c0d6ddf9f04dc7cf1c3ee962c85fbfedcff3796), [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811), [`1925695`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/1925695a15e1d354bc8100e55fb6bfca85bfc951), [`ed2979d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ed2979de3ecf1eca95d2d78cabf79622b13c9c32), [`0e0f2b5`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/0e0f2b5bd3a905c5cf4559ea80fe7017d195a083), [`886c6f2`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/886c6f2750998aaaf39c7ca617f048ecedade3bb)]:
+  - @spatialdata/core@0.4.0
+  - @spatialdata/layers@0.4.0
+  - @spatialdata/avivatorish@0.4.0
+  - @spatialdata/react@0.4.0
+
 ## 0.3.1
 
 ### Patch Changes
