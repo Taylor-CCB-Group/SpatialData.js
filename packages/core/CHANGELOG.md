@@ -1,5 +1,98 @@
 # @spatialdata/core
 
+## 0.4.0
+
+### Minor Changes
+
+- [#95](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/95) [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Decide continuous vs categorical from the column's declared kind, and let callers
+  configure missing values.
+
+  `TableElement.getObsColumnKinds` reports what the store says each obs column is —
+  `numeric`, `categorical`, `string` or `boolean` — and `loadAssociatedTableFeatureRows`
+  carries it alongside the values as `extraColumnKinds`. It is **synchronous**: opening a
+  store already reads every node's attributes and array metadata into the tree, so a caller
+  can ask what a column is before deciding whether to load it. Both zarr generations are
+  read (v3 `data_type`, v2 numpy typestrings). `'auto'` mode now trusts that in
+  preference to sniffing stringified values, which was wrong at both edges: one `NaN` made a
+  float column look non-numeric, and integer cluster codes looked like a continuum. Value
+  sniffing remains only as the fallback when no kind is available.
+
+  `fillColorByColumn.missingValues` configures the rest: `treatAsMissing` adds
+  store-specific sentinel strings (`'NA'`, `'unknown'`, …) that only the caller can
+  recognise, and `render` chooses whether a feature with no value keeps the layer default,
+  is hidden, or takes an explicit colour. `null` and `NaN` are always missing and are not
+  configurable. Sentinels are excluded before the mode decision, the numeric extent and the
+  category set, so a sentinel never becomes a category or drags a ramp.
+
+- [#95](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/95) [`baa54e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/baa54e9d25524901c6f33804da3b02d54bb89811) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Add `featureState` to the labels sublayer schema, and export `SpatialLabelsSublayer`.
+
+  `spatialLabelsSublayerSchema` now carries `fillColorByFeatureId`, `hiddenFeatureIds`,
+  `fadedFeatureIds` and `filteredOpacityMultiplier` — the same field names and meanings
+  `spatialShapesSublayerSchema` already had, keyed by the label's integer instance id as a
+  string. It omits `strokeColorByFeatureId`: a label's outline is derived from its fill in
+  the bitmask shader, so there is no per-label stroke to override.
+
+  This closes the last place where a labels layer could not express what a shapes layer
+  could.
+
+- [#101](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/101) [`1925695`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/1925695a15e1d354bc8100e55fb6bfca85bfc951) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Read AnnData's nullable-encoded columns, and report their kind.
+
+  A nullable column is a **group** of `values` + `mask`, not an array, so opening its
+  path as an array fails outright. The visible symptom is usually a missing _index_
+  rather than a missing value, because `obs/_index` and `var/_index` are ordinary
+  columns — a table would load with `varN` in place of gene names, or with no row ids.
+  This is not a legacy shape to tolerate: AnnData 0.13 defaults to zarr v3 and writes
+  string columns this way by default, `_index` included, so it is what a freshly
+  written `spatialdata` store looks like.
+
+  All three nullable encodings are read (`nullable-string-array`, `nullable-integer`,
+  `nullable-boolean`), with the mask honoured — a masked entry decodes as `null`, which
+  the missing-value handling already treats as absent, so it stays distinguishable from
+  a real `0` or `''` rather than being silently rendered as one.
+
+  `getObsColumnKinds` recognises the same three. Without this the kind lookup fell
+  through to array metadata that a group does not have and returned `undefined`,
+  sending `'auto'` mode back to sniffing decoded values for exactly the columns AnnData
+  now writes by default — the case that lookup exists to avoid.
+
+  Also fixes zarr v3 categoricals decoding to their raw integer codes. The categories
+  array is written as `string` on v3, and the text check tested for one v2 spelling of
+  that dtype (`v2:object`), so the column resolved to codes — plausible-looking numbers
+  rather than an error. The check now asks zarrita whether the dtype is text, which
+  covers v3 `string` and v2 `U`/`S` alike, and pandas' `-1` missing code maps to `null`
+  instead of indexing off the end of the categories.
+
+### Patch Changes
+
+- [#104](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/104) [`0e0f2b5`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/0e0f2b5bd3a905c5cf4559ea80fe7017d195a083) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Run the package unit tests in CI.
+
+  `test:unit` was `vitest run --exclude tests/integration/**` with the glob
+  unquoted, so the shell expanded it before vitest saw it. `--exclude` took the
+  first match and the second became a positional filename filter, which meant the
+  command ran exactly one file — the integration test it was meant to exclude —
+  and no package unit test at all. CI reported that as a pass.
+
+  Quoting alone would have surfaced 49 failures: the root config declared a single
+  `node` environment for every file it collected, so the React hook tests in
+  `react`, `vis` and `avivatorish` failed with `document is not defined`. They pass
+  under `pnpm test`, which uses each package's own config.
+
+  The root config now declares one project per package, so each runs under its own
+  `vite.config.ts` and therefore its own environment, plus an `integration`
+  project for the root suite. `test:unit` and `test:integration` select by project
+  name rather than by glob. Both commands now agree with `pnpm test`: 788 tests
+  across 95 files, where CI had been running 20.
+
+- [#96](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/96) [`886c6f2`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/886c6f2750998aaaf39c7ca617f048ecedade3bb) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `TableElement.getObsColumnNames()` no longer reports the obs index as a column.
+
+  The index array sits alongside the columns in the `obs` group, so it was being
+  offered anywhere obs columns are listed — as `_index` for tables whose index is
+  unnamed (the `blobs` fixture), which is AnnData's internal storage name rather
+  than anything meaningful to a user. The name is now read from the `_index`
+  attribute on the `obs` group and filtered out; the new
+  `TableElement.getObsIndexColumnName()` exposes it for callers that want the
+  index itself, alongside the existing `loadObsIndex()`.
+
 ## 0.3.1
 
 ## 0.3.0
