@@ -52,7 +52,9 @@ function App() {
         {route === 'headless' ? (
           <HeadlessBlobsDemo />
         ) : route === 'codec' ? (
-          <Suspense fallback={<div style={{ padding: 16, color: '#888' }}>Loading codec demo...</div>}>
+          <Suspense
+            fallback={<div style={{ padding: 16, color: '#888' }}>Loading codec demo...</div>}
+          >
             <CodecFixtureDemo />
           </Suspense>
         ) : (

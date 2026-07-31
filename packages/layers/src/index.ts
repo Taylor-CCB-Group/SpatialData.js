@@ -40,6 +40,7 @@ export {
 export type {
   AssignFeatureColorsOptions,
   FeatureCategoricalPaletteSpec,
+  FeatureColorBuffer,
   FeatureFillColorMode,
   FeatureNumericRampSpec,
   FeatureRgbaColor,
@@ -50,6 +51,7 @@ export {
   CLASSIC_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_NUMERIC_RAMP,
+  featureColorAt,
   featureColorSchemeSignature,
   resolveCategoricalPalette,
   resolveFeatureFillColorMode,

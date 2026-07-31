@@ -6,6 +6,7 @@ import {
 } from '@spatialdata/core';
 import { type Layer, type PickingInfo, PolygonLayer, ScatterplotLayer } from 'deck.gl';
 import { FlatPolygonLayer } from './FlatPolygonLayer';
+import { type FeatureColorBuffer, featureColorAt } from './featureColorEncoding';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
 
@@ -327,6 +328,21 @@ export interface CreateShapesDeckLayerOptions {
   opacity?: number;
   modelMatrix?: Matrix4;
   spatialCoordinateSystem?: string | null;
+  /**
+   * Precomputed per-feature RGBA, indexed by **feature index** — the feature's
+   * position in `featureIds` / the geometry buffers, which is decided by the loader
+   * rather than by the data. Callers must build against the ordering they were
+   * handed, never one they assume.
+   *
+   * When present this WINS over `sublayer.featureState` for fill colour, rather than
+   * merging with it. Merging would mean consulting a `featureId → colour` dictionary
+   * per feature again, which is the cost this exists to remove; a caller driving
+   * colour from its own data bakes hide and fade into the alpha instead.
+   *
+   * Identity is the invalidation signal: return the same buffer across renders and
+   * nothing re-uploads.
+   */
+  featureColors?: FeatureColorBuffer;
   onShapeHover?: (event: ShapesLayerPickEvent) => void;
   onShapeClick?: (event: ShapesLayerPickEvent) => void;
   /**
@@ -517,6 +533,34 @@ function getFeatureColors(
   }
   byColor.set(colorKey, colors);
   return colors;
+}
+
+/**
+ * A caller's buffer as exactly `featureCount` RGBA entries.
+ *
+ * Returned as-is in the common case (right length, so no copy and a stable identity
+ * — which is what keeps `FlatPolygonLayer` from re-uploading). A buffer that is too
+ * short is padded with transparent, so a caller who sized against a stale feature
+ * count gets an under-coloured tail rather than a texture read past its end.
+ */
+const fittedBufferCache = new WeakMap<Uint8Array, Map<number, Uint8Array>>();
+
+function fitFeatureColorBuffer(buffer: FeatureColorBuffer, featureCount: number): Uint8Array {
+  const needed = featureCount * 4;
+  if (buffer.colors.length === needed) {
+    return buffer.colors;
+  }
+  let byCount = fittedBufferCache.get(buffer.colors);
+  if (!byCount) {
+    byCount = new Map();
+    fittedBufferCache.set(buffer.colors, byCount);
+  }
+  const cached = byCount.get(featureCount);
+  if (cached) return cached;
+  const fitted = new Uint8Array(needed);
+  fitted.set(buffer.colors.subarray(0, Math.min(buffer.colors.length, needed)));
+  byCount.set(featureCount, fitted);
+  return fitted;
 }
 
 /**
@@ -906,26 +950,39 @@ function createPolygonDeckLayer(
   const defaultStrokeWidthMaxPixels =
     sublayer.defaultStrokeWidthMaxPixels ?? DEFAULT_SHAPE_STROKE_WIDTH_MAX_PIXELS;
 
+  // A caller-supplied buffer is read by feature index — one typed-array read, no
+  // dictionary lookup — and wins over feature-state, as on the binary path.
+  const buffer = options.featureColors;
+  const fillAt = (d: ShapePolygonRenderDatum): [number, number, number, number] =>
+    (buffer && featureColorAt(buffer, d.featureIndex)) ??
+    (buffer
+      ? defaultFillColor
+      : resolveFeatureColor(
+          d.featureId,
+          featureState.fillColorByFeatureId,
+          EMPTY_SHAPE_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
+          defaultFillColor,
+          featureState
+        ));
+
   return new PolygonLayer<ShapePolygonRenderDatum>({
     id: options.id,
     data,
     getPolygon: (d) => d.polygon,
-    getFillColor: (d) =>
-      resolveFeatureColor(
-        d.featureId,
-        featureState.fillColorByFeatureId,
-        EMPTY_SHAPE_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
-        defaultFillColor,
-        featureState
-      ),
-    getLineColor: (d) => resolveStrokeColor(d.featureId, featureState, resolvedDefaultStroke),
+    getFillColor: fillAt,
+    getLineColor: (d) =>
+      buffer
+        ? // Same derivation the shader does on the binary path, so a buffer-driven
+          // outline reads the same on both.
+          deriveStrokeColor(fillAt(d))
+        : resolveStrokeColor(d.featureId, featureState, resolvedDefaultStroke),
     getLineWidth: defaultStrokeWidth,
     lineWidthUnits: defaultStrokeWidthUnits,
     lineWidthMinPixels: defaultStrokeWidthMinPixels,
     lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
     updateTriggers: {
-      getFillColor: stableColorUpdateTrigger(featureState, defaultFillColor),
-      getLineColor: stableColorUpdateTrigger(featureState, resolvedDefaultStroke),
+      getFillColor: buffer?.colors ?? stableColorUpdateTrigger(featureState, defaultFillColor),
+      getLineColor: buffer?.colors ?? stableColorUpdateTrigger(featureState, resolvedDefaultStroke),
       getLineWidth: [defaultStrokeWidth],
     },
     filled: true,
@@ -1006,7 +1063,12 @@ function createBinaryPolygonDeckLayers(
     );
   };
 
-  const featureColors = getFeatureColors(featureState, featureIds, defaultFillColor, fillColorAt);
+  // A caller-supplied buffer is used verbatim — no build, no per-feature lookup.
+  // It is padded/truncated to the feature count so a short buffer cannot read past
+  // the end of the texture (the tail simply renders transparent).
+  const featureColors = options.featureColors
+    ? fitFeatureColorBuffer(options.featureColors, featureIds.length)
+    : getFeatureColors(featureState, featureIds, defaultFillColor, fillColorAt);
 
   const layer = new FlatPolygonLayer({
     id: options.id,
@@ -1060,13 +1122,18 @@ function createCircleDeckLayer(
     getRadius: (d) => d.radius,
     radiusUnits,
     getFillColor: (d) => {
+      const fromBuffer = options.featureColors
+        ? (featureColorAt(options.featureColors, d.featureIndex) ?? defaultFillColor)
+        : undefined;
+      if (fromBuffer) return fromBuffer;
       const base = featureState.fillColorByFeatureId.get(d.featureId) ?? defaultFillColor;
       return featureState.fadedFeatureIds.has(d.featureId)
         ? multiplyAlpha(base, featureState.filteredOpacityMultiplier)
         : base;
     },
     updateTriggers: {
-      getFillColor: stableColorUpdateTrigger(featureState, defaultFillColor),
+      getFillColor:
+        options.featureColors?.colors ?? stableColorUpdateTrigger(featureState, defaultFillColor),
     },
     opacity: options.opacity ?? 1,
     modelMatrix: options.modelMatrix,

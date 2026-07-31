@@ -35,6 +35,7 @@
 import {
   assignFeatureColors,
   type FeatureCategoricalPaletteSpec,
+  type FeatureColorBuffer,
   type FeatureFillColorMode,
   type FeatureNumericRampSpec,
   type FeatureRgbaColor,
@@ -224,12 +225,12 @@ export function parseLabelId(featureId: string): number | undefined {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-export interface LabelColorLut {
-  /** RGBA per label id, `4 * labelCount` long. RGB = colour, A = opacity scale. */
-  colors: Uint8Array;
-  /** `maxLabelId + 1`; the shader treats ids at or beyond this as unannotated. */
-  labelCount: number;
-}
+/**
+ * The per-label colour table: a {@link FeatureColorBuffer} whose index is the
+ * raster's own pixel value. `count` is `maxLabelId + 1`; the shader treats ids at
+ * or beyond it as unannotated and leaves them on the channel colour.
+ */
+export type LabelColorLut = FeatureColorBuffer;
 
 export interface BuildLabelColorLutOptions {
   featureState: LabelFeatureStateInput | undefined;
@@ -286,14 +287,14 @@ export function buildLabelColorLut({
 
   if (highest < 0) return undefined;
 
-  const labelCount = highest + 1;
-  const colors = new Uint8Array(labelCount * 4);
+  const count = highest + 1;
+  const colors = new Uint8Array(count * 4);
   const fadeAlpha = Math.max(0, Math.min(255, Math.round(255 * runtime.filteredOpacityMultiplier)));
 
   // Default fill for every addressable label, fully opaque. Label 0 is background
   // and never drawn, but is filled for the same reason the rest are: the shader
   // reads the table without a bounds branch per fragment.
-  for (let labelId = 0; labelId < labelCount; labelId += 1) {
+  for (let labelId = 0; labelId < count; labelId += 1) {
     const offset = labelId * 4;
     colors[offset] = defaultColor[0];
     colors[offset + 1] = defaultColor[1];
@@ -303,7 +304,7 @@ export function buildLabelColorLut({
 
   for (const [featureId, color] of runtime.fillColorByFeatureId) {
     const labelId = parseLabelId(featureId);
-    if (labelId === undefined || labelId >= labelCount) continue;
+    if (labelId === undefined || labelId >= count) continue;
     const offset = labelId * 4;
     colors[offset] = color[0];
     colors[offset + 1] = color[1];
@@ -316,22 +317,22 @@ export function buildLabelColorLut({
   // Fade before hide: a label in both sets must end up hidden.
   for (const featureId of runtime.fadedFeatureIds) {
     const labelId = parseLabelId(featureId);
-    if (labelId === undefined || labelId >= labelCount) continue;
+    if (labelId === undefined || labelId >= count) continue;
     const offset = labelId * 4;
     colors[offset + 3] = Math.round((colors[offset + 3] * fadeAlpha) / 255);
   }
   for (const featureId of runtime.hiddenFeatureIds) {
     const labelId = parseLabelId(featureId);
-    if (labelId === undefined || labelId >= labelCount) continue;
+    if (labelId === undefined || labelId >= count) continue;
     colors[labelId * 4 + 3] = 0;
   }
 
-  return { colors, labelCount };
+  return { colors, count };
 }
 
 /** Whether a label draws at all, for the CPU-side picking path. */
 export function isLabelVisibleInLut(lut: LabelColorLut | undefined, labelId: number): boolean {
   if (!lut) return true;
-  if (!Number.isInteger(labelId) || labelId < 0 || labelId >= lut.labelCount) return true;
+  if (!Number.isInteger(labelId) || labelId < 0 || labelId >= lut.count) return true;
   return lut.colors[labelId * 4 + 3] > 0;
 }

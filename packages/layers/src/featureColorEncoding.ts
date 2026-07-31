@@ -22,6 +22,50 @@ export type FeatureRgbColor = [number, number, number];
 export type FeatureRgbaColor = [number, number, number, number];
 
 /**
+ * Precomputed per-feature colours — the currency both kinds render from, and the
+ * one a host can hand us directly instead of a `featureId → colour` dictionary.
+ *
+ * The dictionary form is fine for a handful of overrides and wrong for a whole
+ * element: it stringifies integers the caller already had, then costs a Map copy
+ * and (for labels) a parse per entry, all to end up here. A host driving colour
+ * from its own data — a computed column, an external annotation, a live selection
+ * — should write these bytes once and hand them over.
+ *
+ * **What the index means differs by kind, and it matters:**
+ *  - labels — the raster's own pixel value (the label's instance id). Stable and
+ *    data-defined; a host can author this from the table alone.
+ *  - shapes — the feature's position in the loaded geometry, which is decided by
+ *    the loader, not the data. A host must build against the `featureIds` ordering
+ *    it is given, never one it assumes.
+ *
+ * Alpha is a MODULATION, not an opacity: `0` hides the feature, and anything else
+ * scales what the layer would otherwise draw at. Bake filtering into it.
+ */
+export interface FeatureColorBuffer {
+  /** RGBA, row-major: bytes `[4*i .. 4*i+3]` are the colour for index `i`. */
+  colors: Uint8Array;
+  /** Number of indices covered. An index at or beyond this is unannotated. */
+  count: number;
+}
+
+/** Read one RGBA out of a buffer; `undefined` when the index is not covered. */
+export function featureColorAt(
+  buffer: FeatureColorBuffer | undefined,
+  index: number
+): FeatureRgbaColor | undefined {
+  if (!buffer || !Number.isInteger(index) || index < 0 || index >= buffer.count) {
+    return undefined;
+  }
+  const offset = index * 4;
+  return [
+    buffer.colors[offset],
+    buffer.colors[offset + 1],
+    buffer.colors[offset + 2],
+    buffer.colors[offset + 3],
+  ];
+}
+
+/**
  * The original six-colour cycle.
  *
  * Kept because it is what saved configs written before schemes existed rendered

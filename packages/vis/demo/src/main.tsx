@@ -1,6 +1,6 @@
+import { enablePointsWorker, setPointsWorkerRequestTimeout } from '@spatialdata/core';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { enablePointsWorker, setPointsWorkerRequestTimeout } from '@spatialdata/core';
 // Vite bundles the core points worker and hands us a runtime URL. Enabling it
 // moves the CPU-heavy work off the main thread so the UI stays responsive:
 //  - the codes-with-geometry preload decode (decodeGeometryWithFeatures) — the

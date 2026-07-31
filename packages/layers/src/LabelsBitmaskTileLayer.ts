@@ -282,7 +282,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       labelOpacity: opacity,
       useFeatureColors,
       featureTexWidth: LABEL_COLOR_LUT_WIDTH,
-      featureCount: useFeatureColors ? (lut?.labelCount ?? 0) : 0,
+      featureCount: useFeatureColors ? (lut?.count ?? 0) : 0,
     };
 
     model.shaderInputs?.setProps({ labelsBitmask });

@@ -374,7 +374,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     (this.state?.featureColorTexture as { destroy?: () => void } | null)?.destroy?.();
     let texture: unknown = null;
     if (lut) {
-      const height = Math.max(1, Math.ceil(lut.labelCount / LABEL_COLOR_LUT_WIDTH));
+      const height = Math.max(1, Math.ceil(lut.count / LABEL_COLOR_LUT_WIDTH));
       // Pad to the full texel grid: the shader addresses by row/column, so the tail
       // of the last row must exist even though no label maps to it.
       const data = new Uint8Array(LABEL_COLOR_LUT_WIDTH * height * 4);

@@ -92,7 +92,7 @@ describe('label colour lookup table', () => {
       defaultColor: WHITE,
     });
 
-    expect(lut?.labelCount).toBe(4);
+    expect(lut?.count).toBe(4);
     expect(rgbaAt(lut?.colors as Uint8Array, 3)).toEqual([10, 20, 30, 255]);
     // Labels 0..2 are addressable but unannotated: default colour, fully opaque.
     expect(rgbaAt(lut?.colors as Uint8Array, 1)).toEqual([255, 255, 255, 255]);
@@ -151,7 +151,7 @@ describe('label colour lookup table', () => {
       maxLabelId: 10,
     });
 
-    expect(lut?.labelCount).toBe(3);
+    expect(lut?.count).toBe(3);
     expect(rgbaAt(lut?.colors as Uint8Array, 2)).toEqual([255, 255, 255, 0]);
   });
 

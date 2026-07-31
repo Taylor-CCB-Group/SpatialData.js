@@ -266,8 +266,8 @@ describe('LabelsLayer prop flow', () => {
     const featureState = { hiddenFeatureIds: ['3'] };
     const tileLayer = renderLabelsLayer({ loader, featureState });
 
-    const lut = tileLayer.props.featureColorLut as { labelCount: number; colors: Uint8Array };
-    expect(lut.labelCount).toBe(4);
+    const lut = tileLayer.props.featureColorLut as { count: number; colors: Uint8Array };
+    expect(lut.count).toBe(4);
     expect(lut.colors[3 * 4 + 3]).toBe(0);
 
     // Memoised on the feature-state identity: a re-render with the same state must

@@ -48,6 +48,7 @@ import {
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createFeatureColorStabilizer, type FeatureColorResolver } from './featureColorResolver';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
 import {
   buildLabelFillColorEntry,
@@ -349,9 +350,14 @@ export function useLayerData(
   availableElements: ElementsByType,
   _coordinateSystem: string | null,
   spatialData?: SpatialData,
-  vivPassthrough?: VivImagePassthroughOptions
+  vivPassthrough?: VivImagePassthroughOptions,
+  featureColorResolver?: FeatureColorResolver
 ): UseLayerDataResult {
   const { getOmeZarrMultiscalesData } = useVivLoaderRegistry();
+
+  // Collapses a host's per-render wrapper churn onto the buffer identity, so a
+  // resolver that reuses its bytes never costs a re-upload. See its doc comment.
+  const stabilizeFeatureColors = useMemo(() => createFeatureColorStabilizer(), []);
 
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
@@ -982,6 +988,18 @@ export function useLayerData(
           const renderData = getMergedShapeRenderData(elem.key);
           if (renderData) {
             const fillColorEntry = getShapeFillColorEntry(layerId, elem.key, config, renderData);
+            // Host-computed colours, indexed by feature index. The resolver is given
+            // the ordering it must build against — a shape's index belongs to the
+            // loaded geometry, not to the data.
+            const hostFeatureColors = stabilizeFeatureColors(
+              layerId,
+              featureColorResolver?.({
+                layerId,
+                elementKey: elem.key,
+                kind: 'shapes',
+                featureIds: renderData.featureIds,
+              })
+            );
             const layer = renderShapesLayer({
               element: elem.element as ShapesElement,
               id: layerId,
@@ -1006,6 +1024,7 @@ export function useLayerData(
                 renderData,
                 config.featureState?.hiddenFeatureIds
               ),
+              ...(hostFeatureColors ? { featureColors: hostFeatureColors } : {}),
               pickingEnabled,
             });
             // The binary polygon path returns [fill, outline]; flatten so both
@@ -1210,16 +1229,25 @@ export function useLayerData(
                 ? ch.colors
                 : (labelsData.colors ?? [[255, 255, 255]]);
 
-            // Per-label filtering/colouring. The default colour is the layer's own
-            // channel colour, so a label the feature-state says nothing about draws
-            // exactly as it would with the LUT switched off.
-            const featureColorLut = getStableLabelColorLut(
+            // Per-label filtering/colouring. A host-supplied buffer wins outright —
+            // it is already the exact table the shader samples, indexed by the
+            // raster's own pixel value, so there is nothing to merge and nothing to
+            // build. Otherwise the config drives it, and the default colour is the
+            // layer's own channel colour, so a label the feature-state says nothing
+            // about draws exactly as it would with the LUT switched off.
+            const hostFeatureColors = stabilizeFeatureColors(
               layerId,
-              config,
-              getLabelFillColorEntry(layerId, elem.key, config),
-              channelColors[0] ?? [255, 255, 255],
-              loadedDataRef.current.labelColorLutData
+              featureColorResolver?.({ layerId, elementKey: elem.key, kind: 'labels' })
             );
+            const featureColorLut =
+              hostFeatureColors ??
+              getStableLabelColorLut(
+                layerId,
+                config,
+                getLabelFillColorEntry(layerId, elem.key, config),
+                channelColors[0] ?? [255, 255, 255],
+                loadedDataRef.current.labelColorLutData
+              );
 
             // Fallbacks mirror `buildLabelsChannelDefaults`: the resolver always
             // populates these, but its `LabelsChannelDefaults` types them optional.
@@ -1271,6 +1299,8 @@ export function useLayerData(
       getShapePrebuilt,
       getLabelFillColorEntry,
       labelsResolver,
+      featureColorResolver,
+      stabilizeFeatureColors,
     ]
   );
 

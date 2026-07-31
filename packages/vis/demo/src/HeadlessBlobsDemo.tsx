@@ -1,8 +1,8 @@
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  SpatialCanvasViewer,
   type RenderStack,
+  SpatialCanvasViewer,
   type SpatialFeaturePickEvent,
   type ViewState,
 } from '../../src/index';
@@ -70,12 +70,7 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
   }, [firstImageEntry, persistVivLayerProps, tone.brightness, tone.contrast]);
 
   const vivImagePropsResolver = useCallback(
-    ({
-      channelCount,
-    }: {
-      elementKey: string;
-      channelCount: number;
-    }) => {
+    ({ channelCount }: { elementKey: string; channelCount: number }) => {
       if (persistVivLayerProps) return undefined;
       const n = Math.max(1, channelCount);
       return {
@@ -209,7 +204,14 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
               />
               <span>Persist tone on render-stack entry.props.vivLayerProps</span>
             </label>
-            <label style={{ display: 'grid', gridTemplateColumns: '72px 1fr 40px', gap: 8, alignItems: 'center' }}>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '72px 1fr 40px',
+                gap: 8,
+                alignItems: 'center',
+              }}
+            >
               <span style={{ color: '#aaa' }}>Brightness</span>
               <input
                 type="range"
@@ -223,7 +225,14 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
               />
               <span style={{ color: '#666' }}>{tone.brightness.toFixed(2)}</span>
             </label>
-            <label style={{ display: 'grid', gridTemplateColumns: '72px 1fr 40px', gap: 8, alignItems: 'center' }}>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '72px 1fr 40px',
+                gap: 8,
+                alignItems: 'center',
+              }}
+            >
               <span style={{ color: '#aaa' }}>Contrast</span>
               <input
                 type="range"
@@ -231,9 +240,7 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
                 max={1}
                 step={0.01}
                 value={tone.contrast}
-                onChange={(e) =>
-                  setTone((prev) => ({ ...prev, contrast: Number(e.target.value) }))
-                }
+                onChange={(e) => setTone((prev) => ({ ...prev, contrast: Number(e.target.value) }))}
               />
               <span style={{ color: '#666' }}>{tone.contrast.toFixed(2)}</span>
             </label>
