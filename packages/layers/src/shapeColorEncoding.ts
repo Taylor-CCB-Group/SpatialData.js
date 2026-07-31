@@ -11,7 +11,9 @@ import {
   DEFAULT_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_NUMERIC_RAMP,
   type FeatureCategoricalPaletteSpec,
+  type FeatureColumnKind,
   type FeatureFillColorMode,
+  type FeatureMissingValueOptions,
   type FeatureNumericRampSpec,
   type FeatureRgbaColor,
   type FeatureRgbColor,
@@ -33,6 +35,9 @@ export interface BuildShapeFillColorByFeatureIdOptions {
   alpha: number;
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
+  /** What the store declares the column to be; `'auto'` trusts it over the values. */
+  columnKind?: FeatureColumnKind;
+  missingValues?: FeatureMissingValueOptions;
 }
 
 export const DEFAULT_SHAPE_CATEGORICAL_PALETTE = DEFAULT_FEATURE_CATEGORICAL_PALETTE;
@@ -49,6 +54,8 @@ export function buildShapeFillColorByFeatureId({
   alpha,
   categoricalPalette,
   numericRamp,
+  columnKind,
+  missingValues,
 }: BuildShapeFillColorByFeatureIdOptions): Record<string, ShapeRgbaColor> {
   if (!column) return {};
 
@@ -63,6 +70,8 @@ export function buildShapeFillColorByFeatureId({
     alpha,
     ...(categoricalPalette ? { categoricalPalette } : {}),
     ...(numericRamp ? { numericRamp } : {}),
+    ...(columnKind ? { columnKind } : {}),
+    ...(missingValues ? { missingValues } : {}),
   });
 
   const colors: Record<string, ShapeRgbaColor> = {};

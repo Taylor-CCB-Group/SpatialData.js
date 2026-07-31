@@ -24,6 +24,7 @@ import type {
   Result,
   SDataProps,
   TableColumnData,
+  TableColumnKind,
   ZAttrsAny,
   ZarrTree,
 } from '../types';
@@ -344,6 +345,17 @@ export class TableElement extends AbstractElement<'tables'> {
     return this.tableSource.loadObsColumns(
       columnNames.map((columnName) => `tables/${this.key}/obs/${columnName}`)
     ) as Promise<Array<TableColumnData | undefined>>;
+  }
+
+  /**
+   * The declared kind of each named obs column — what the store says it is, not
+   * what its decoded values look like. Shares the loader's per-column cache with
+   * {@link loadObsColumns}, so asking for both costs one decode.
+   */
+  async loadObsColumnKinds(columnNames: string[]): Promise<Array<TableColumnKind | undefined>> {
+    return this.tableSource.loadObsColumnKinds(
+      columnNames.map((columnName) => `tables/${this.key}/obs/${columnName}`)
+    );
   }
 }
 

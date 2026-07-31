@@ -743,6 +743,10 @@ export function useLayerData(
           column: rows.extraColumns?.[0],
           mode: fillColorByColumn.mode,
           alpha: getShapeFillColorAlpha(config),
+          ...(rows.extraColumnKinds?.[0] ? { columnKind: rows.extraColumnKinds[0] } : {}),
+          ...(fillColorByColumn.missingValues
+            ? { missingValues: fillColorByColumn.missingValues }
+            : {}),
           ...(fillColorByColumn.categoricalPalette
             ? { categoricalPalette: fillColorByColumn.categoricalPalette }
             : {}),

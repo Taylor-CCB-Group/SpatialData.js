@@ -36,7 +36,9 @@ import {
   assignFeatureColors,
   type FeatureCategoricalPaletteSpec,
   type FeatureColorBuffer,
+  type FeatureColumnKind,
   type FeatureFillColorMode,
+  type FeatureMissingValueOptions,
   type FeatureNumericRampSpec,
   type FeatureRgbaColor,
   type FeatureRgbColor,
@@ -165,6 +167,9 @@ export interface BuildLabelFillColorByFeatureIdOptions {
   alpha?: number;
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
+  /** What the store declares the column to be; `'auto'` trusts it over the values. */
+  columnKind?: FeatureColumnKind;
+  missingValues?: FeatureMissingValueOptions;
 }
 
 /**
@@ -181,6 +186,8 @@ export function buildLabelFillColorByFeatureId({
   alpha = 255,
   categoricalPalette,
   numericRamp,
+  columnKind,
+  missingValues,
 }: BuildLabelFillColorByFeatureIdOptions): Record<string, LabelRgbaColor> {
   if (!column || !rowIds || rowIds.length === 0) return {};
 
@@ -197,6 +204,8 @@ export function buildLabelFillColorByFeatureId({
     alpha,
     ...(categoricalPalette ? { categoricalPalette } : {}),
     ...(numericRamp ? { numericRamp } : {}),
+    ...(columnKind ? { columnKind } : {}),
+    ...(missingValues ? { missingValues } : {}),
   });
 
   const colors: Record<string, LabelRgbaColor> = {};

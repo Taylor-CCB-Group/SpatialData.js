@@ -109,13 +109,30 @@ export function resolveCategoricalPalette(
   return (categoryIndex) => colors[categoryIndex % colors.length];
 }
 
-/** Stable serialisation of a scheme, for projection cache keys. */
+/**
+ * Stable serialisation of a scheme, for projection cache keys.
+ *
+ * The missing-value policy belongs here too: changing a sentinel or how a missing
+ * feature renders changes colours without touching the column, so a key that
+ * omitted it would keep serving the previous table.
+ */
 export function featureColorSchemeSignature(
   categoricalPalette?: FeatureCategoricalPaletteSpec,
-  numericRamp?: FeatureNumericRampSpec
+  numericRamp?: FeatureNumericRampSpec,
+  missingValues?: FeatureMissingValueOptions
 ): string {
-  if (categoricalPalette === undefined && numericRamp === undefined) return '';
-  return JSON.stringify([categoricalPalette ?? null, numericRamp ?? null]);
+  if (
+    categoricalPalette === undefined &&
+    numericRamp === undefined &&
+    missingValues === undefined
+  ) {
+    return '';
+  }
+  return JSON.stringify([
+    categoricalPalette ?? null,
+    numericRamp ?? null,
+    missingValues ? [missingValues.treatAsMissing ?? null, missingValues.render ?? null] : null,
+  ]);
 }
 
 /**
@@ -177,17 +194,93 @@ function getFiniteExtent(values: Array<number | undefined>): [number, number] | 
 }
 
 /**
- * Resolve `'auto'`: a column whose every non-empty value parses as a finite number
- * is continuous; anything else is categorical.
+ * What the store says the column is. Re-exported from `@spatialdata/core`'s
+ * `TableColumnKind` so this module stays dependency-free.
+ */
+export type FeatureColumnKind = 'numeric' | 'categorical' | 'string' | 'boolean';
+
+/**
+ * Resolve `'auto'`.
+ *
+ * **Prefer the declared kind.** The loader knows whether a column is a float array
+ * or an AnnData categorical, because it had to know in order to decode it, and that
+ * answer is not recoverable from the decoded values: a float column with one `NaN`
+ * looks non-numeric, and integer cluster codes look like a continuum. Both were real
+ * bugs before the kind was plumbed through.
+ *
+ * `boolean` is two levels, so it colours categorically despite arriving in a numeric
+ * typed array.
+ *
+ * The value-sniffing fallback survives only for callers with no kind to offer —
+ * hand-built columns in tests, and any source that has not been taught to report
+ * one. It keeps its old rule, warts and all, so those callers see no change.
  */
 export function resolveFeatureFillColorMode(
   mode: FeatureFillColorMode,
-  values: readonly string[]
+  values: readonly string[],
+  columnKind?: FeatureColumnKind
 ): Exclude<FeatureFillColorMode, 'auto'> {
   if (mode !== 'auto') return mode;
+  if (columnKind === 'numeric') return 'continuous';
+  if (columnKind !== undefined) return 'categorical';
   return values.every((value) => featureNumericValue(value) !== undefined)
     ? 'continuous'
     : 'categorical';
+}
+
+/**
+ * What counts as missing, and what a missing feature should look like.
+ *
+ * JSON-serializable, because it travels in a saved layer config next to the palette.
+ *
+ * `null`, `undefined` and non-finite numbers are ALWAYS missing and are not
+ * configurable — those are the language's and the domain's own spellings of "no
+ * value", and letting a config claim `NaN` is a category would only ever be a bug.
+ * What is configurable is the store-specific part: the sentinel STRINGS a particular
+ * pipeline happens to write, which we cannot tell from real categories on our own.
+ */
+export interface FeatureMissingValueOptions {
+  /**
+   * Extra cell values to treat as missing, compared after trimming and
+   * case-insensitively — e.g. `['NA', 'n/a', 'unknown', '-']`.
+   *
+   * Nothing here by default: a value that looks like a placeholder in one dataset
+   * is a real category in another, and silently dropping a category is the same
+   * class of bug as colouring `NaN`.
+   */
+  treatAsMissing?: readonly string[];
+  /**
+   * How a feature with no value renders.
+   *
+   *  - `'default'` (default) — no colour is assigned; the feature keeps whatever the
+   *    layer would otherwise draw it as.
+   *  - `'hide'` — fully transparent. On labels the fragment is discarded; on shapes
+   *    the feature draws nothing.
+   *  - an RGBA — an explicit colour, e.g. grey for "not measured".
+   */
+  render?: 'default' | 'hide' | FeatureRgbaColor;
+}
+
+const HIDDEN_RGBA: FeatureRgbaColor = [0, 0, 0, 0];
+
+/** The colour a missing feature takes, or `undefined` to leave it on the default. */
+function missingColor(
+  options: FeatureMissingValueOptions | undefined
+): FeatureRgbaColor | undefined {
+  const render = options?.render;
+  if (render === undefined || render === 'default') return undefined;
+  if (render === 'hide') return HIDDEN_RGBA;
+  return render;
+}
+
+/** Sentinel matcher, or `undefined` when there is nothing extra to match. */
+function missingMatcher(
+  options: FeatureMissingValueOptions | undefined
+): ((value: string) => boolean) | undefined {
+  const sentinels = options?.treatAsMissing;
+  if (!sentinels || sentinels.length === 0) return undefined;
+  const set = new Set(sentinels.map((s) => s.trim().toLowerCase()));
+  return (value) => set.has(value.trim().toLowerCase());
 }
 
 export interface AssignFeatureColorsOptions {
@@ -197,6 +290,13 @@ export interface AssignFeatureColorsOptions {
   alpha: number;
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
+  /**
+   * What the store declares this column to be. Supply it whenever you have it —
+   * `'auto'` trusts it in preference to sniffing the values. See
+   * {@link resolveFeatureFillColorMode}.
+   */
+  columnKind?: FeatureColumnKind;
+  missingValues?: FeatureMissingValueOptions;
 }
 
 /**
@@ -217,27 +317,54 @@ export function assignFeatureColors({
   alpha,
   categoricalPalette,
   numericRamp = DEFAULT_FEATURE_NUMERIC_RAMP,
+  columnKind,
+  missingValues,
 }: AssignFeatureColorsOptions): Array<FeatureRgbaColor | undefined> {
   const colorForCategory = resolveCategoricalPalette(categoricalPalette);
   const colors = new Array<FeatureRgbaColor | undefined>(values.length).fill(undefined);
 
+  // Sentinels are resolved once, up front, so a missing value is missing everywhere
+  // that follows — the mode decision, the numeric extent, and the category set. A
+  // sentinel that reached the category set would become a category of its own,
+  // which is the bug this option exists to let callers avoid.
+  const isSentinel = missingMatcher(missingValues);
+  const isMissing = (value: string): boolean =>
+    value.trim() === '' || (isSentinel?.(value) ?? false);
+  const missingFill = missingColor(missingValues);
+  const applyMissing = (index: number) => {
+    if (missingFill) colors[index] = missingFill;
+  };
+
   const nonEmptyValues: string[] = [];
   for (const value of values) {
-    if (value.trim() !== '') nonEmptyValues.push(value);
+    if (!isMissing(value)) nonEmptyValues.push(value);
   }
-  if (nonEmptyValues.length === 0) return colors;
+  if (nonEmptyValues.length === 0) {
+    for (let index = 0; index < values.length; index += 1) applyMissing(index);
+    return colors;
+  }
 
-  const resolvedMode = resolveFeatureFillColorMode(mode, nonEmptyValues);
+  const resolvedMode = resolveFeatureFillColorMode(mode, nonEmptyValues, columnKind);
 
   if (resolvedMode === 'continuous') {
-    const numericValues = values.map((value) => featureNumericValue(value));
+    const numericValues = values.map((value) =>
+      isMissing(value) ? undefined : featureNumericValue(value)
+    );
     const extent = getFiniteExtent(numericValues);
-    if (!extent) return colors;
+    if (!extent) {
+      for (let index = 0; index < values.length; index += 1) applyMissing(index);
+      return colors;
+    }
     const [min, max] = extent;
     const range = max - min;
     for (let index = 0; index < values.length; index += 1) {
       const value = numericValues[index];
-      if (value === undefined) continue;
+      if (value === undefined) {
+        // Covers both a missing cell and — when the kind said numeric — a value
+        // that would not parse. Neither belongs on the ramp.
+        applyMissing(index);
+        continue;
+      }
       const t = range === 0 ? 0.5 : (value - min) / range;
       colors[index] = rgba(interpolateRgb(numericRamp[0], numericRamp[1], t), alpha);
     }
@@ -247,7 +374,10 @@ export function assignFeatureColors({
   const categoryIndexByValue = new Map<string, number>();
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value.trim() === '') continue;
+    if (isMissing(value)) {
+      applyMissing(index);
+      continue;
+    }
     let categoryIndex = categoryIndexByValue.get(value);
     if (categoryIndex === undefined) {
       categoryIndex = categoryIndexByValue.size;

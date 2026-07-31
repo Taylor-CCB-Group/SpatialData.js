@@ -1,5 +1,5 @@
 import type { SpatialData } from './store';
-import type { ElementName, TableColumnData } from './types';
+import type { ElementName, TableColumnData, TableColumnKind } from './types';
 
 type SpatialAssociationKind = Exclude<ElementName, 'tables'>;
 
@@ -8,6 +8,16 @@ export interface AssociatedTableFeatureRows {
   rowIndexByFeatureId?: Map<string, number>;
   regionColumn?: TableColumnData | undefined;
   extraColumns?: Array<TableColumnData | undefined>;
+  /**
+   * The declared kind of each entry in {@link extraColumns}, positionally aligned.
+   *
+   * Carried alongside the values so a consumer deciding how to *encode* a column
+   * (continuous ramp vs. categorical palette) can ask the store what the column is
+   * instead of inferring it back from stringified values — an inference that is
+   * wrong at both edges: one `NaN` makes a float column look non-numeric, and
+   * integer cluster codes look like a continuum.
+   */
+  extraColumnKinds?: Array<TableColumnKind | undefined>;
 }
 
 /**
@@ -140,6 +150,7 @@ export async function loadAssociatedTableFeatureRows({
       rowIndexByFeatureId: undefined,
       regionColumn: undefined,
       extraColumns: undefined,
+      extraColumnKinds: undefined,
     };
   }
 
@@ -150,6 +161,7 @@ export async function loadAssociatedTableFeatureRows({
       rowIndexByFeatureId: undefined,
       regionColumn: undefined,
       extraColumns: undefined,
+      extraColumnKinds: undefined,
     };
   }
 
@@ -166,9 +178,21 @@ export async function loadAssociatedTableFeatureRows({
   });
   const requestedColumns = [regionKey, ...uniqueExtra];
   const rowIds = await table.loadObsIndex();
-  const columns = await table.loadObsColumns(requestedColumns);
+  // Values and kinds share the loader's per-column cache, so this is one decode.
+  //
+  // Kinds are best-effort: a table source that predates them (or cannot determine
+  // them) must still serve values. Consumers already have to handle an absent kind,
+  // since a column that fails to resolve has none either — so an unavailable method
+  // degrades to the same path rather than failing the whole association load.
+  const [columns, columnKinds] = await Promise.all([
+    table.loadObsColumns(requestedColumns),
+    typeof table.loadObsColumnKinds === 'function'
+      ? table.loadObsColumnKinds(requestedColumns).catch(() => [])
+      : Promise.resolve([]),
+  ]);
   const regionColumn = columns[0];
   const extraColumns = columns.slice(1);
+  const extraColumnKinds = columnKinds.slice(1);
   const filteredRowIds: string[] = [];
   const rowIndexByFeatureId = new Map<string, number>();
 
@@ -197,6 +221,7 @@ export async function loadAssociatedTableFeatureRows({
     rowIndexByFeatureId,
     regionColumn,
     extraColumns,
+    extraColumnKinds,
   };
 }
 

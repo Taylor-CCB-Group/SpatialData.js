@@ -18,6 +18,7 @@
 import {
   buildLabelColorLut,
   buildLabelFillColorByFeatureId,
+  type FeatureColumnKind,
   featureColorSchemeSignature,
   type LabelColorLut,
   type LabelFillColorMode,
@@ -60,7 +61,8 @@ export function getLabelFillColorSignature(config: LayerConfig | undefined): str
   // touching the column, so a column-only key would keep serving the old colours.
   const scheme = featureColorSchemeSignature(
     config.fillColorByColumn.categoricalPalette,
-    config.fillColorByColumn.numericRamp
+    config.fillColorByColumn.numericRamp,
+    config.fillColorByColumn.missingValues
   );
   return [config.fillColorByColumn.columnName, mode, scheme].join('');
 }
@@ -87,6 +89,7 @@ export function buildLabelFillColorEntry(
         rowIds?: string[];
         rowIndexByFeatureId?: Map<string, number>;
         extraColumns?: Array<ArrayLike<unknown> | undefined>;
+        extraColumnKinds?: Array<FeatureColumnKind | undefined>;
       }
     | undefined
 ): LabelFillColorEntry | undefined {
@@ -100,6 +103,10 @@ export function buildLabelFillColorEntry(
       column: rows.extraColumns?.[0],
       mode: fillColorByColumn.mode,
       alpha: LABEL_FILL_COLOR_ALPHA,
+      ...(rows.extraColumnKinds?.[0] ? { columnKind: rows.extraColumnKinds[0] } : {}),
+      ...(fillColorByColumn.missingValues
+        ? { missingValues: fillColorByColumn.missingValues }
+        : {}),
       ...(fillColorByColumn.categoricalPalette
         ? { categoricalPalette: fillColorByColumn.categoricalPalette }
         : {}),

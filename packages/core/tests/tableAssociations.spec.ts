@@ -235,3 +235,39 @@ describe('createFeatureTableAlignment', () => {
     expect(alignment.resolveRowIndex({ featureId: '2', featureIndex: 2 })).toBe(2);
   });
 });
+
+describe('column kinds travel with the values', () => {
+  /**
+   * The encoding decision (ramp vs palette) needs to know what a column IS, and
+   * that is not recoverable from decoded values — a float column with one NaN
+   * looks non-numeric, integer cluster codes look continuous. The loader already
+   * has to know in order to decode, so the answer rides along.
+   */
+  it('reports a kind per extra column, positionally aligned', async () => {
+    const table = {
+      getTableKeys: () => ({ region: ['cells'], regionKey: 'region', instanceKey: 'cell_id' }),
+      loadObsIndex: async () => ['1', '2'],
+      loadObsColumns: async () => [
+        ['cells', 'cells'],
+        [0.5, Number.NaN],
+        ['tumour', 'stroma'],
+      ],
+      loadObsColumnKinds: async () => ['categorical', 'numeric', 'categorical'],
+    };
+    const spatialData = {
+      getAssociatedTable: () => ['cells_table', table],
+    } as unknown as Parameters<typeof loadAssociatedTableFeatureRows>[0]['spatialData'];
+
+    const rows = await loadAssociatedTableFeatureRows({
+      spatialData,
+      kind: 'labels',
+      key: 'cells',
+      extraColumnNames: ['UMAP1', 'cell_type'],
+    });
+
+    // The region key is dropped from both lists in lockstep, so index 0 of
+    // `extraColumnKinds` describes index 0 of `extraColumns`.
+    expect(rows.extraColumnKinds).toEqual(['numeric', 'categorical']);
+    expect(rows.extraColumns?.[0]).toEqual([0.5, Number.NaN]);
+  });
+});

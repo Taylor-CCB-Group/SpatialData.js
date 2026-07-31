@@ -6,6 +6,7 @@ import type { Matrix4 } from '@math.gl/core';
 import type { SpatialElement } from '@spatialdata/core';
 import type {
   FeatureCategoricalPaletteSpec,
+  FeatureMissingValueOptions,
   FeatureNumericRampSpec,
   LabelFillColorMode,
   ShapeFillColorMode,
@@ -30,6 +31,14 @@ export interface FillColorByColumn<TMode> {
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   /** Endpoints of the continuous ramp, `[low, high]` as RGB 0–255. */
   numericRamp?: FeatureNumericRampSpec;
+  /**
+   * What counts as missing in this column, and how a feature with no value should
+   * render — keep the layer default, hide it, or take an explicit colour.
+   *
+   * `null` and `NaN` are always missing; this adds the store-specific sentinel
+   * strings (`'NA'`, `'unknown'`, …) that only the caller can recognise.
+   */
+  missingValues?: FeatureMissingValueOptions;
 }
 
 // ============================================

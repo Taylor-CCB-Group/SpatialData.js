@@ -58,6 +58,24 @@ describe('TableElement direct table reads', () => {
     expect(getAnnDataSpy).not.toHaveBeenCalled();
   });
 
+  it('loads obs column kinds through the same source path', async () => {
+    const sdata = createMockSpatialData();
+    assert(sdata.tables, 'sdata.tables on mock object should be truthy');
+    const table = sdata.tables.cells_table;
+
+    const loadObsColumnKinds = vi.fn().mockResolvedValue(['numeric', 'categorical']);
+    (table as any).tableSource = { loadObsColumnKinds };
+
+    await expect(table.loadObsColumnKinds(['UMAP1', 'cell_type'])).resolves.toEqual([
+      'numeric',
+      'categorical',
+    ]);
+    expect(loadObsColumnKinds).toHaveBeenCalledWith([
+      'tables/cells_table/obs/UMAP1',
+      'tables/cells_table/obs/cell_type',
+    ]);
+  });
+
   it('preserves non-string obs column values until the consumer formats them', async () => {
     const sdata = createMockSpatialData();
     assert(sdata.tables, 'sdata.tables on mock object should be truthy');

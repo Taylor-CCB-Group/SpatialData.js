@@ -54,7 +54,8 @@ export function getShapeFillColorSignature(config: LayerConfig | undefined): str
   // touching the column, so a column-only key would keep serving the old colours.
   const scheme = featureColorSchemeSignature(
     config.fillColorByColumn.categoricalPalette,
-    config.fillColorByColumn.numericRamp
+    config.fillColorByColumn.numericRamp,
+    config.fillColorByColumn.missingValues
   );
   return [
     config.fillColorByColumn.columnName,
