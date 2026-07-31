@@ -1,0 +1,106 @@
+---
+sidebar_position: 1
+---
+
+# zarrextra Overview
+
+`zarrextra` is the layer between [`zarrita`](https://github.com/manzt/zarrita.js) and
+`@spatialdata/core`. It holds the things a SpatialData reader needs that are not
+specific to SpatialData: opening a store and reading its whole hierarchy up front,
+navigating that hierarchy, decoding image codecs `zarrita` does not ship, and moving
+chunk decode off the main thread.
+
+It is published outside the `@spatialdata/*` namespace because nothing in it knows
+what an image or a table is. If you are reading SpatialData stores, you want
+`@spatialdata/core`, which re-exports the parts of this package you are likely to
+need. If you are reading some other zarr hierarchy and want the same tree and codec
+machinery, you can depend on `zarrextra` alone.
+
+:::info alpha prerelease
+
+Versioned alongside the `@spatialdata/*` packages for now, but able to version
+independently in future releases. The API described here is not yet stable.
+
+:::
+
+```bash
+npm install zarrextra
+# or
+pnpm add zarrextra
+```
+
+## Opening a store
+
+`openExtraConsolidated` takes a URL or any `zarrita` `Readable`, resolves consolidated
+metadata, and reads the entire hierarchy into a tree — every group, every array, and
+every node's attributes — before returning.
+
+```ts
+import { openExtraConsolidated, isErr } from 'zarrextra';
+
+const result = await openExtraConsolidated('https://example.com/store.zarr');
+if (isErr(result)) {
+  console.error(result.error);
+} else {
+  const { zarritaStore, tree } = result.value;
+}
+```
+
+It returns a [`Result`](#result), not a thrown error: failing to open a store is an
+ordinary outcome for a URL a user typed, and the message is worth handling rather
+than catching.
+
+The `ConsolidatedStore` it resolves to has two halves, and which one you want depends
+on whether you need data or only structure:
+
+| Field | What it is | Use it for |
+|---|---|---|
+| `zarritaStore` | `zarr.Listable<Readable>` — the store, with metadata served from memory | Opening arrays, reading chunks |
+| `tree` | `ZarrTree` — the hierarchy as a plain object | Enumerating, navigating, reading metadata without I/O |
+
+The tree is the reason this package exists. Because every node's attributes and array
+metadata are already in memory, a question like "what columns does this table have,
+and what type is each one?" is answerable synchronously, before deciding whether any
+of it is worth loading. [Tree nodes](./tree-nodes) covers the shape of a node, how to
+tell a group from an array, and how to read a data type out of one.
+
+## Store extras
+
+Two smaller helpers that come up when a store is not being consumed whole:
+
+- `createPrefixedStore(store, prefix)` — a `Readable` view rooted at a subpath. Used
+  to hand a table's own subtree to `anndata.js` without it knowing about SpatialData's
+  layout above.
+- `loadOmeZarrMultiscalesFromStore(store, path)` — reads an OME-Zarr multiscales group
+  into Viv-compatible pixel sources, reusing an already-open store rather than making
+  the viewer open its own.
+
+## Result
+
+`Result<T, E>` is a small Rust-style success-or-error union, used wherever a failure
+is expected rather than exceptional:
+
+```ts
+type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
+```
+
+with `Ok`, `Err`, `isOk`, `isErr`, `unwrap` and `unwrapOr`. It is re-exported from
+`@spatialdata/core`, so importing it from either package gives the same type. See
+[error handling](../core/error-handling) for how core uses it.
+
+## Codecs and workers
+
+SpatialData stores in the wild use image codecs `zarrita` does not register by
+default, and decoding them on the main thread will stall a render. Those two concerns
+are documented where they are used rather than repeated here:
+
+| Topic | Where |
+|---|---|
+| Registering JP2K and experimental HTJ2K decode, encoding HTJ2K | [package README](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/zarrextra/README.md) |
+| Which setup each context needs (Node, browser with vis, browser without) | [codec fixtures](../vis/codec-fixtures) |
+| Shipping a worker entry point consumers can use without private URLs | [worker bundling pattern](../worker-bundling) |
+
+The short version: in Node, call `registerJpeg2kCodec()` / `registerExperimentalHtj2kCodec()`
+on the main thread. In a browser using `@spatialdata/vis`, do nothing — the renderer
+path enables the bundled codec worker for you. In a browser without vis, call
+`enableWorkerChunkDecode()` from `zarrextra/workers` before loading codec-backed data.
