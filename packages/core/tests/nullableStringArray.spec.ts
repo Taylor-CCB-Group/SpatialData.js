@@ -3,8 +3,10 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FileSystemStore } from '@zarrita/storage';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import SpatialDataTableSource from '../src/models/VTableSource.js';
+import { readZarr } from '../src/store/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
@@ -41,6 +43,12 @@ adata.var.index = pd.array([f"GENE{i}" for i in range(6)], dtype="string")
 adata.obs.index = pd.array([f"cell{i}" for i in range(10)], dtype="string")
 adata.obs["region"] = pd.Categorical(["img"] * 10)
 adata.obs["instance_id"] = np.arange(10)
+# Nullable obs columns, so the kind lookup is exercised on columns and not only
+# on the index (which \`getObsColumnNames\` filters out).
+adata.obs["qc_count"] = pd.array([1, None, 3, 4, 5, 6, 7, 8, 9, 10], dtype="Int64")
+adata.obs["passes_qc"] = pd.array(
+    [True, None, False, True, True, False, True, True, False, True], dtype="boolean"
+)
 # A genuine missing value, so the mask is exercised rather than only the
 # all-present case.
 adata.var["measured"] = pd.array([1, 2, None, 4, 5, 6], dtype="Int64")
@@ -58,10 +66,21 @@ ad.settings.allow_write_nullable_strings = True
 sd.SpatialData(tables={"table": table}).write(root, overwrite=True)
 
 # Fail loudly here rather than letting the test assert against the wrong layout.
-encoding = __import__("json").loads(
-    (root / "tables" / "table" / "var" / "_index" / "zarr.json").read_text()
-)["attributes"]["encoding-type"]
-assert encoding == "nullable-string-array", f"fixture wrote {encoding!r}"
+json = __import__("json")
+
+
+def encoding_of(*parts):
+    path = root.joinpath("tables", "table", *parts, "zarr.json")
+    return json.loads(path.read_text())["attributes"]["encoding-type"]
+
+
+for parts, expected in [
+    (("var", "_index"), "nullable-string-array"),
+    (("obs", "qc_count"), "nullable-integer"),
+    (("obs", "passes_qc"), "nullable-boolean"),
+]:
+    actual = encoding_of(*parts)
+    assert actual == expected, f"fixture wrote {actual!r} for {'/'.join(parts)}"
 PY`,
     { cwd: writerRoot, stdio: 'pipe' }
   );
@@ -107,11 +126,12 @@ function createFilesystemStore(root: string) {
 
 describe('nullable-encoded AnnData columns', () => {
   let fixtureRoot: string;
+  let storeRoot: string;
   let source: SpatialDataTableSource;
 
   beforeAll(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), 'nullable-anndata-'));
-    const storeRoot = join(fixtureRoot, 'store.zarr');
+    storeRoot = join(fixtureRoot, 'store.zarr');
     writeNullableTableFixture(storeRoot);
     source = new SpatialDataTableSource({
       store: createFilesystemStore(storeRoot),
@@ -167,5 +187,48 @@ describe('nullable-encoded AnnData columns', () => {
       5,
       6,
     ]);
+  });
+
+  describe('declared column kinds', () => {
+    /**
+     * The kind lookup runs on the consolidated metadata rather than on decoded
+     * values, so it is only meaningful against a tree opened from a real store —
+     * a mock tree would assert the shape we chose to write in the mock.
+     */
+    async function openTable() {
+      const sdata = await readZarr(new FileSystemStore(storeRoot));
+      const table = sdata.tables?.table;
+      if (!table) {
+        throw new Error('fixture store has no `table`');
+      }
+      return table;
+    }
+
+    it('reports the kind of a nullable column instead of leaving it undefined', async () => {
+      const table = await openTable();
+      const kinds = Object.fromEntries(
+        ['qc_count', 'passes_qc', 'region', 'instance_id'].map((name) => [
+          name,
+          table.getObsColumnKinds([name])[0],
+        ])
+      );
+      // The nullable pair is the point: they are groups, so there is no array
+      // metadata to fall back on and an unlisted encoding yields `undefined`,
+      // which sends callers back to sniffing decoded values.
+      expect(kinds).toEqual({
+        qc_count: 'numeric',
+        passes_qc: 'boolean',
+        region: 'categorical',
+        instance_id: 'numeric',
+      });
+    });
+
+    it('still excludes the index from the obs columns when it is nullable-encoded', async () => {
+      const table = await openTable();
+      expect(table.getObsColumnNames()).not.toContain('_index');
+      expect(table.getObsColumnNames()).toEqual(
+        expect.arrayContaining(['region', 'instance_id', 'qc_count', 'passes_qc'])
+      );
+    });
   });
 });

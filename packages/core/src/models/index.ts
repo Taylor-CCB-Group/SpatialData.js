@@ -29,6 +29,7 @@ import type {
   ZarrTree,
 } from '../types';
 import { ATTRS_KEY, Err, Ok, ZARRAY_KEY } from '../types';
+import { NULLABLE_ENCODING_KINDS } from './nullableArrays';
 import SpatialDataPointsSource from './VPointsSource';
 import SpatialDataShapesSource from './VShapesSource';
 import SpatialDataTableSource from './VTableSource';
@@ -211,10 +212,20 @@ export type TableKeys = {
   instanceKey: string;
 };
 
-/** AnnData `encoding-type` values that settle the kind on their own. */
+/**
+ * AnnData `encoding-type` values that settle the kind on their own.
+ *
+ * The nullable encodings have to be listed here rather than left to the dtype
+ * branch below: they are groups of `values` + `mask`, so there is no array
+ * metadata on the node itself to fall back to. Leaving them out is not a
+ * missing edge case — AnnData 0.13 writes string columns this way by default on
+ * zarr v3, `obs/_index` included, so the columns that most need a declared kind
+ * are exactly the ones that would arrive without one.
+ */
 const OBS_KIND_BY_ENCODING: Record<string, TableColumnKind> = {
   categorical: 'categorical',
   'string-array': 'string',
+  ...NULLABLE_ENCODING_KINDS,
 };
 
 /**
@@ -415,9 +426,8 @@ export class TableElement extends AbstractElement<'tables'> {
    * `undefined` for a column that is absent or whose node we do not recognise.
    */
   getObsColumnKinds(columnNames: string[]): Array<TableColumnKind | undefined> {
-    const node = this.parsed as ZarrTree;
-    const obsNode = node.obs as ZarrTree | undefined;
-    if (!obsNode || typeof obsNode !== 'object') {
+    const obsNode = this.getObsGroup();
+    if (!obsNode) {
       return columnNames.map(() => undefined);
     }
     return columnNames.map((columnName) => classifyObsColumnNode(obsNode[columnName]));

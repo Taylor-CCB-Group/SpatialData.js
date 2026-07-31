@@ -1,5 +1,5 @@
 import { type Location, type Readable, get as zarrGet, open as zarrOpen } from 'zarrita';
-import type { TableValue } from '../types';
+import type { TableColumnKind, TableValue } from '../types';
 
 /**
  * AnnData's nullable encodings, which store a column as a *group* rather than an
@@ -14,12 +14,20 @@ import type { TableValue } from '../types';
  *
  * See the AnnData on-disk specification, "Nullable integers, booleans and
  * strings" — all three share this group layout at encoding-version 0.1.0.
+ *
+ * The mapped value is the kind of the column's `values`, which is what the
+ * encoding name already tells us — the mask changes which entries are present,
+ * never what type they are. Declared here rather than at the classifier so the
+ * three encoding names are listed once: reading them and classifying them have
+ * to stay in step, and they live in different modules.
  */
-export const NULLABLE_ENCODING_TYPES = new Set([
-  'nullable-string-array',
-  'nullable-integer',
-  'nullable-boolean',
-]);
+export const NULLABLE_ENCODING_KINDS: Record<string, TableColumnKind> = {
+  'nullable-string-array': 'string',
+  'nullable-integer': 'numeric',
+  'nullable-boolean': 'boolean',
+};
+
+export const NULLABLE_ENCODING_TYPES = new Set(Object.keys(NULLABLE_ENCODING_KINDS));
 
 export function isNullableEncoding(encodingType: unknown): boolean {
   return typeof encodingType === 'string' && NULLABLE_ENCODING_TYPES.has(encodingType);
