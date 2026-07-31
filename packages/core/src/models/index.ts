@@ -27,7 +27,7 @@ import type {
   ZAttrsAny,
   ZarrTree,
 } from '../types';
-import { ATTRS_KEY, Err, Ok } from '../types';
+import { ATTRS_KEY, Err, Ok, ZARRAY_KEY } from '../types';
 import SpatialDataPointsSource from './VPointsSource';
 import SpatialDataShapesSource from './VShapesSource';
 import SpatialDataTableSource from './VTableSource';
@@ -274,15 +274,53 @@ export class TableElement extends AbstractElement<'tables'> {
   }
 
   /**
+   * The `obs` group node, or `undefined` when this table has no `obs` or the
+   * node turns out to be an array rather than a group.
+   *
+   * `ZarrTree`'s index signature admits a `LazyZarrArray` at every key, and a
+   * lazy array is an object too — so a `typeof === 'object'` test alone lets one
+   * through, and its own properties would then read as obs column names.
+   * `ZARRAY_KEY` is the discriminator (it is required on `LazyZarrArray`,
+   * absent on groups), the same one `serializeZarrTree` uses.
+   */
+  private getObsGroup(): ZarrTree | undefined {
+    const tableNode = this.parsed;
+    if (ZARRAY_KEY in tableNode) {
+      return undefined;
+    }
+    const obsNode = tableNode.obs;
+    if (!obsNode || typeof obsNode !== 'object' || ZARRAY_KEY in obsNode) {
+      return undefined;
+    }
+    return obsNode;
+  }
+
+  /**
+   * Name of the obs array holding the dataframe index, as declared by the
+   * `_index` attribute AnnData writes on the `obs` group. Literally `_index`
+   * when the index is unnamed (the `blobs` fixture), otherwise the index's own
+   * name (e.g. `cell_id`).
+   */
+  getObsIndexColumnName(): string | undefined {
+    const indexName = this.getObsGroup()?.[ATTRS_KEY]?._index;
+    return typeof indexName === 'string' ? indexName : undefined;
+  }
+
+  /**
    * Get available obs column names from the parsed tree.
+   *
+   * The index array is excluded: it sits alongside the columns in the `obs`
+   * group but is the row label, not a column of the dataframe, and it is already
+   * reachable as `loadObsIndex()` / `getObsIndexColumnName()`. Offering it as a
+   * column would surface AnnData's internal `_index` name in the UI.
    */
   getObsColumnNames(): string[] {
-    const node = this.parsed as ZarrTree;
-    const obsNode = node.obs as ZarrTree | undefined;
-    if (!obsNode || typeof obsNode !== 'object') {
+    const obsNode = this.getObsGroup();
+    if (!obsNode) {
       return [];
     }
-    return Object.keys(obsNode);
+    const indexName = this.getObsIndexColumnName();
+    return Object.keys(obsNode).filter((columnName) => columnName !== indexName);
   }
 
   /**
