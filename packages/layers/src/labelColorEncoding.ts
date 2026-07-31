@@ -87,6 +87,52 @@ export type LabelFeatureStateInput = LabelFeatureState | LabelFeatureStateRuntim
 
 export const DEFAULT_LABEL_FILTERED_OPACITY_MULTIPLIER = 0.35;
 
+/**
+ * Hover tint, matching the `highlightColor` shapes pass to deck's `autoHighlight`
+ * so the same pointer gesture reads the same way on either kind.
+ *
+ * Alpha is the MIX WEIGHT toward this colour, not an opacity — the shader also
+ * lifts the hovered label's fill, which a plain alpha blend over a 0.18-opacity
+ * fill would not make visible.
+ */
+export const DEFAULT_LABEL_HIGHLIGHT_COLOR: LabelRgbaColor = [255, 255, 0, 128];
+
+/** `highlightedLabelId` when nothing is hovered. Label ids are non-negative. */
+export const NO_HIGHLIGHTED_LABEL = -1;
+
+/**
+ * The label the shader should actually draw as hovered, given the table in force.
+ *
+ * Separate from the layer because the interesting part is the refusals, and they
+ * are all cheap to get wrong:
+ *
+ *  - Label `0` is background. It is discarded before the highlight runs, but a
+ *    caller that maps "nothing picked" to `0` rather than `-1` would otherwise be
+ *    asking to highlight the background.
+ *  - A label the filter HIDES must not light up. Picking already refuses to return
+ *    one, so this only catches an id that went stale between the pick and the
+ *    frame — but the shader has no view of the hidden set beyond the LUT alpha it
+ *    is about to discard on, so the check belongs on this side.
+ *  - A non-finite or fractional id would reach the shader as a `float` and compare
+ *    against sampled ids by proximity; rounding here keeps that comparison exact.
+ */
+export function resolveHighlightedLabel(
+  highlightedLabelId: number | null | undefined,
+  lut?: LabelColorLut
+): number {
+  if (highlightedLabelId == null || !Number.isFinite(highlightedLabelId)) {
+    return NO_HIGHLIGHTED_LABEL;
+  }
+  const labelId = Math.round(highlightedLabelId);
+  if (labelId <= 0) {
+    return NO_HIGHLIGHTED_LABEL;
+  }
+  if (lut && !isLabelVisibleInLut(lut, labelId)) {
+    return NO_HIGHLIGHTED_LABEL;
+  }
+  return labelId;
+}
+
 /** Singleton for the common case of no feature-state at all. */
 export const EMPTY_LABEL_FEATURE_STATE_RUNTIME = Object.freeze({
   fillColorByFeatureId: new Map(),

@@ -76,13 +76,16 @@ export {
   buildLabelFeatureStateRuntime,
   buildLabelFillColorByFeatureId,
   DEFAULT_LABEL_FILTERED_OPACITY_MULTIPLIER,
+  DEFAULT_LABEL_HIGHLIGHT_COLOR,
   EMPTY_LABEL_FEATURE_STATE_RUNTIME,
   isLabelFeatureStateRuntime,
   isLabelVisibleInLut,
   LABEL_COLOR_LUT_MAX_LABELS,
   LABEL_COLOR_LUT_WIDTH,
+  NO_HIGHLIGHTED_LABEL,
   normalizeLabelFeatureState,
   parseLabelId,
+  resolveHighlightedLabel,
 } from './labelColorEncoding';
 export type { PointsLayerProps } from './PointsLayer';
 export { PointsLayer } from './PointsLayer';

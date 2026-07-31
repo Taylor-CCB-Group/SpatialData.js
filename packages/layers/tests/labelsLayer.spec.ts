@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LabelsLayerProps } from '../src/LabelsLayer';
 import { LabelsLayer } from '../src/LabelsLayer';
-import { buildLabelColorLut } from '../src/labelColorEncoding';
+import { buildLabelColorLut, DEFAULT_LABEL_HIGHLIGHT_COLOR } from '../src/labelColorEncoding';
+
+/** deck.gl core `Layer.defaultProps.highlightColor`, which ours must override. */
+const DECK_CORE_HIGHLIGHT_COLOR = [0, 0, 128, 128];
 
 type TileLayerLike = {
   props: {
@@ -259,6 +262,77 @@ describe('LabelsLayer prop flow', () => {
     }) as { props: Record<string, unknown> };
 
     expect(bitmaskLayer.props.featureColorLut).toBe(featureColorLut);
+  });
+
+  it('forwards the hovered label id to bitmask tiles', () => {
+    const { loader } = makeLabelsLoader();
+    const tileLayer = renderLabelsLayer({ loader, highlightedLabelId: 2 });
+
+    const bitmaskLayer = tileLayer.props.renderSubLayers({
+      ...tileLayer.props,
+      id: 'tile-0-0-0',
+      data: { data: [new Float32Array([0, 1, 2, 0])], width: 2, height: 2 },
+      tile: {
+        bbox: { left: 0, top: 0, right: 2, bottom: 2 },
+        index: { x: 0, y: 0, z: 0 },
+        zoom: 0,
+      },
+    }) as { props: Record<string, unknown> };
+
+    expect(bitmaskLayer.props.highlightedLabelId).toBe(2);
+  });
+
+  it('redefaults deck’s own highlightColor to the labels tint', () => {
+    const { loader } = makeLabelsLoader();
+    const tileLayer = renderLabelsLayer({ loader, highlightedLabelId: 2 });
+
+    const bitmaskLayer = tileLayer.props.renderSubLayers({
+      ...tileLayer.props,
+      id: 'tile-0-0-0',
+      data: { data: [new Float32Array([0, 1, 2, 0])], width: 2, height: 2 },
+      tile: {
+        bbox: { left: 0, top: 0, right: 2, bottom: 2 },
+        index: { x: 0, y: 0, z: 0 },
+        zoom: 0,
+      },
+    }) as { props: Record<string, unknown> };
+
+    // We reuse deck's `highlightColor` name, so the labels default has to be declared
+    // in `defaultProps` to beat deck's navy base default. Applying it with `?? DEFAULT`
+    // at the use site does NOT work — deck fills its own default in, so the prop is
+    // never absent and every hover drew navy. Assert the value, not the plumbing: that
+    // is the part that silently regressed.
+    expect(bitmaskLayer.props.highlightColor).toEqual(DEFAULT_LABEL_HIGHLIGHT_COLOR);
+    expect(bitmaskLayer.props.highlightColor).not.toEqual(DECK_CORE_HIGHLIGHT_COLOR);
+  });
+
+  it('does not reload tiles when only the hovered label changes', async () => {
+    const { loader, onGetTile } = makeLabelsLoader();
+    const initial = renderLabelsLayer({ loader, highlightedLabelId: -1 });
+
+    await loadOneTile(initial);
+    expect(onGetTile).toHaveBeenCalledTimes(1);
+
+    // The whole point of carrying hover as a uniform: the pointer moves constantly,
+    // and a segmentation's tiles are the most expensive thing on screen to refetch.
+    const hovered = renderLabelsLayer({ loader, highlightedLabelId: 7 });
+    if (triggerChanged(initial, hovered)) {
+      await loadOneTile(hovered);
+    }
+
+    expect(getTileTrigger(hovered)).toEqual(getTileTrigger(initial));
+    expect(onGetTile).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not rebuild the colour table when only the hovered label changes', () => {
+    const { loader } = makeLabelsLoader();
+    const featureState = { hiddenFeatureIds: ['3'] };
+    const initial = renderLabelsLayer({ loader, featureState, highlightedLabelId: -1 });
+    const hovered = renderLabelsLayer({ loader, featureState, highlightedLabelId: 2 });
+
+    // Identity, not equality: a fresh table with identical bytes would still be a
+    // multi-megabyte texture upload on every pointer move.
+    expect(hovered.props.featureColorLut).toBe(initial.props.featureColorLut);
   });
 
   it('builds a lookup table from serializable featureState when none is supplied', () => {

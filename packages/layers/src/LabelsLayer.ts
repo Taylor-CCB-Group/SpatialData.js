@@ -12,10 +12,13 @@ import {
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
 import {
   buildLabelColorLut,
+  DEFAULT_LABEL_HIGHLIGHT_COLOR,
   LABEL_COLOR_LUT_WIDTH,
   type LabelColorLut,
   type LabelFeatureStateInput,
+  type LabelRgbaColor,
   type LabelRgbColor,
+  NO_HIGHLIGHTED_LABEL,
 } from './labelColorEncoding';
 
 /** One instance-ID raster per labels element (see `LabelsBitmaskTileLayer`). */
@@ -68,6 +71,27 @@ export interface LabelsLayerProps {
    * that {@link featureState} would otherwise do inside the layer.
    */
   featureColorLut?: LabelColorLut;
+  /**
+   * The label id under the cursor, or `-1` / omitted for none.
+   *
+   * Runtime render state, not config: it changes on every pointer move and must
+   * never be serialized into a saved view. It reaches the shader as a uniform, so
+   * hovering re-uploads nothing — the LUT and the tiles are both untouched.
+   */
+  highlightedLabelId?: number | null;
+  /**
+   * Hover tint, RGBA 0–255; defaults to {@link DEFAULT_LABEL_HIGHLIGHT_COLOR}.
+   *
+   * Deliberately deck's own `Layer` prop name, and deliberately the same meaning:
+   * deck blends its `highlightColor` over a highlighted fragment weighted by that
+   * colour's alpha, which is exactly what the labels shader does. One name across
+   * shapes (via `autoHighlight`) and labels. The labels default is declared in
+   * `defaultProps`, which is what overrides deck's navy base default.
+   *
+   * Unlike deck's, this one must be an array — the accessor/function form has no
+   * meaning here, since there is no per-label deck object to call it with.
+   */
+  highlightColor?: LabelRgbaColor;
   onClick?: (info: unknown) => void;
   onHover?: (info: unknown) => void;
   _subLayerProps?: CompositeLayerProps['_subLayerProps'];
@@ -172,6 +196,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
       selections: selectionsProp,
       featureColorLut,
       featureColorTexture,
+      highlightedLabelId,
+      highlightColor,
     } = this.props;
     const selections = [firstSelection(selectionsProp)];
     const channelColors = stylePlane(channelColorsProp, [255, 255, 255]);
@@ -210,6 +236,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
         selections,
         featureColorLut,
         featureColorTexture,
+        highlightedLabelId: highlightedLabelId ?? NO_HIGHLIGHTED_LABEL,
+        highlightColor,
         bounds,
         id: `image-sub-layer-${bounds}-${id}`,
         interpolation: 'nearest',
@@ -340,6 +368,11 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     channelOutlineOpacities: [0.95],
     channelsFilled: [true],
     channelStrokeWidths: [1.5],
+    // Overrides deck's own `Layer` default for this prop (navy `[0, 0, 128, 128]`).
+    // The default MUST be declared here rather than applied with `?? DEFAULT` at the
+    // use site: deck fills its base default in, so the prop is never absent and a
+    // use-site fallback can never run.
+    highlightColor: DEFAULT_LABEL_HIGHLIGHT_COLOR,
   } satisfies Partial<LabelsLayerProps>;
 
   /**
@@ -424,6 +457,8 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       channelOutlineOpacities = [0.95],
       channelsFilled = [true],
       channelStrokeWidths = [1.5],
+      highlightedLabelId,
+      highlightColor,
       onClick,
       onHover,
     } = this.props;
@@ -447,6 +482,8 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       opacity,
       featureColorLut,
       featureColorTexture: this.state?.featureColorTexture ?? null,
+      highlightedLabelId: highlightedLabelId ?? NO_HIGHLIGHTED_LABEL,
+      highlightColor,
       channelsVisible: stylePlane(channelsVisible, true),
       channelColors: stylePlane(channelColors, [255, 255, 255]),
       channelOpacities: stylePlane(channelOpacities, 0.18),

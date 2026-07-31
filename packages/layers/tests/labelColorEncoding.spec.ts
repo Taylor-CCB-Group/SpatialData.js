@@ -3,7 +3,9 @@ import {
   buildLabelColorLut,
   buildLabelFillColorByFeatureId,
   isLabelVisibleInLut,
+  NO_HIGHLIGHTED_LABEL,
   parseLabelId,
+  resolveHighlightedLabel,
 } from '../src/labelColorEncoding';
 import { featureCodeToRgb } from '../src/pointsFeatureColor';
 
@@ -192,5 +194,40 @@ describe('parseLabelId', () => {
     expect(parseLabelId('1.5')).toBeUndefined();
     expect(parseLabelId('cell_1')).toBeUndefined();
     expect(parseLabelId('1e3')).toBeUndefined();
+  });
+});
+
+describe('resolveHighlightedLabel', () => {
+  it('passes through a real label id', () => {
+    expect(resolveHighlightedLabel(7)).toBe(7);
+  });
+
+  it('treats absent, non-finite and background ids as no highlight', () => {
+    expect(resolveHighlightedLabel(undefined)).toBe(NO_HIGHLIGHTED_LABEL);
+    expect(resolveHighlightedLabel(null)).toBe(NO_HIGHLIGHTED_LABEL);
+    expect(resolveHighlightedLabel(Number.NaN)).toBe(NO_HIGHLIGHTED_LABEL);
+    expect(resolveHighlightedLabel(Number.POSITIVE_INFINITY)).toBe(NO_HIGHLIGHTED_LABEL);
+    // Label 0 is background: never drawn, so never hovered. A caller that spells
+    // "nothing picked" as 0 rather than -1 must not light up the background.
+    expect(resolveHighlightedLabel(0)).toBe(NO_HIGHLIGHTED_LABEL);
+    expect(resolveHighlightedLabel(-1)).toBe(NO_HIGHLIGHTED_LABEL);
+  });
+
+  it('rounds, so the float the shader compares against is exact', () => {
+    expect(resolveHighlightedLabel(3.4)).toBe(3);
+    expect(resolveHighlightedLabel(3.6)).toBe(4);
+  });
+
+  it('refuses a label the table hides', () => {
+    const lut = buildLabelColorLut({
+      featureState: { hiddenFeatureIds: ['2'] },
+      defaultColor: [255, 255, 255],
+    });
+    // Picking already refuses a hidden label; this catches an id that went stale
+    // between the pick and the frame, which the shader could not catch itself.
+    expect(resolveHighlightedLabel(2, lut)).toBe(NO_HIGHLIGHTED_LABEL);
+    expect(resolveHighlightedLabel(1, lut)).toBe(1);
+    // Past the end of the table is unannotated, not hidden.
+    expect(resolveHighlightedLabel(900, lut)).toBe(900);
   });
 });

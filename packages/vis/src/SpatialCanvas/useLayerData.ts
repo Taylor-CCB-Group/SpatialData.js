@@ -241,6 +241,15 @@ interface UseLayerDataResult {
         object: ShapeFeatureRenderDatum;
       }
     | undefined;
+  /**
+   * Set (or clear with `null`) the label drawn as hovered.
+   *
+   * Runtime render state, deliberately not part of the Render Stack: it changes on
+   * every pointer move and would be meaningless in a saved view. It reaches the
+   * shader as a uniform, so a hover re-uploads neither the colour LUT nor the
+   * tiles. Passing an unchanged value is free — no re-render is scheduled.
+   */
+  setHoveredLabel: (next: { layerId: string; labelId: number } | null) => void;
   /** Whether any layers are currently loading */
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
@@ -414,6 +423,29 @@ export function useLayerData(
 
   const notifyLoadedDataChanged = useCallback(() => {
     setLoadedDataRevision((revision) => revision + 1);
+  }, []);
+
+  // Hover highlight for labels (runtime render state, never config — it changes on
+  // every pointer move and must not reach a saved Render Stack).
+  //
+  // ONE entry, not a per-layer map: only one thing is under the cursor at a time, so
+  // a single slot makes "moved to a different layer" and "moved off" the same
+  // transition instead of two bookkeeping cases that can disagree.
+  //
+  // A ref plus a version counter rather than plain state: deck fires hover on every
+  // pointer move, but the highlight only changes when the pointer crosses INTO A
+  // DIFFERENT LABEL, so the re-render is gated on that transition rather than on
+  // pointer motion. `getLayers` reads the ref during render.
+  const hoveredLabelRef = useRef<{ layerId: string; labelId: number } | null>(null);
+  const [, setHoveredLabelRevision] = useState(0);
+
+  const setHoveredLabel = useCallback((next: { layerId: string; labelId: number } | null) => {
+    const prev = hoveredLabelRef.current;
+    if (prev?.layerId === next?.layerId && prev?.labelId === next?.labelId) {
+      return;
+    }
+    hoveredLabelRef.current = next;
+    setHoveredLabelRevision((revision) => revision + 1);
   }, []);
 
   // Build a map of element key -> AvailableElement for quick lookup. Memoised so it
@@ -1257,6 +1289,12 @@ export function useLayerData(
 
             // Fallbacks mirror `buildLabelsChannelDefaults`: the resolver always
             // populates these, but its `LabelsChannelDefaults` types them optional.
+            // Only the layer actually under the cursor highlights; a stale id from a
+            // layer that is no longer hovered must not tint a second element.
+            const hoveredLabel = hoveredLabelRef.current;
+            const highlightedLabelId =
+              hoveredLabel?.layerId === layerId ? hoveredLabel.labelId : undefined;
+
             const layer = renderLabelsLayer({
               id: layerId,
               loader: labelsData.loader,
@@ -1265,6 +1303,7 @@ export function useLayerData(
               visible: config.visible,
               channelColors,
               ...(featureColorLut ? { featureColorLut } : {}),
+              ...(highlightedLabelId !== undefined ? { highlightedLabelId } : {}),
               channelsVisible:
                 ch?.channelsVisible && ch.channelsVisible.length > 0
                   ? ch.channelsVisible
@@ -1667,6 +1706,7 @@ export function useLayerData(
     getFeatureTooltip,
     getFeaturePickEvent,
     getShapePickEvent,
+    setHoveredLabel,
     isLoading,
     isBlocking,
     reloadElement,

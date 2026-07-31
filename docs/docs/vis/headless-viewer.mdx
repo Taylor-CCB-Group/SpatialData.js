@@ -284,6 +284,20 @@ that the fragment shader samples. The property that matters is the same on both:
 a feature-state change re-uploads only the small table, never the tiles. Picking
 consults that table too, so a hidden label cannot be picked.
 
+Hovering a label highlights it, the way `autoHighlight` highlights a shape. Nothing to
+configure: both canvas surfaces — `SpatialCanvasViewer` and the full-UI `SpatialCanvas` —
+drive it from the same pick that feeds the tooltip, through one shared resolver
+(`resolveHoveredLabel`). It therefore follows `hoverTooltipMode`: `'off'` disables picking
+and with it the highlight. It is deliberately **not** part of the Render Stack: hover
+changes on every pointer move and would be meaningless in a saved view, so it never
+appears in an entry's `props`. A label the filter hides is never highlighted, for the same
+reason it can never be picked.
+
+Hosts driving `LabelsLayer` directly get `highlightedLabelId` (the integer id, or `-1` for
+none) and `highlightColor` — deck's own prop name, with deck's own meaning, so the tint is
+set the same way on labels as on shapes. Alpha is the blend weight toward the tint, not an
+opacity.
+
 ### Choosing the colour scheme
 
 `fillColorByColumn` carries the scheme, not just the column name. Every field is

@@ -110,6 +110,10 @@ Labels take the same API, so MDV drives them the same way — no separate code p
 - [x] Colour resolves through a label-id-indexed LUT the shader samples, so a
       selection change re-uploads a small table rather than the tiles; picking
       consults the same table, so a hidden label cannot be picked.
+- [x] Hovering a label highlights it, as `autoHighlight` does for shapes. MDV
+      configures nothing: it follows `hoverTooltipMode` and is driven from the same
+      pick as the tooltip. It is runtime render state, so it never appears in a
+      saved Render Stack entry — do not try to persist or restore it.
 
 The one thing MDV must get right is the id: a labels feature id is the label's
 **integer instance id as a string** — the raster's own pixel value, and the same

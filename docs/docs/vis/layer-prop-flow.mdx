@@ -328,6 +328,34 @@ only the small table, **never the tiles**.
   element alone let two layers colouring one element by different columns evict
   each other on every plan.
 
+### Hover highlight: a uniform, not a table entry
+
+The label under the cursor is drawn highlighted, matching what `autoHighlight` gives
+shapes. Deck's own machinery cannot do it here: a labels tile's picking colour covers the
+whole quad, so there is no per-label deck object for `picking_filterHighlightColor` to act
+on, and enabling `autoHighlight` would light up the entire tile. The highlight is resolved
+**per fragment** instead — the shader compares the sampled instance id against a
+`highlightedLabelId` uniform, rather than a LUT entry, so a pointer move re-uploads
+nothing.
+
+- **Both canvas surfaces resolve the pick through one function.** `SpatialCanvasViewer`
+  and the full-UI `SpatialCanvas` each own a `handleHover`; the highlight shipped working
+  in the first and dead in the second precisely because of that. `resolveHoveredLabel` in
+  `featureTooltipHover.ts` is the single implementation both must call — when adding hover
+  behaviour, add it there, not in one `handleHover`.
+- **Hover is runtime render state, never Render Stack config.** `useLayerData` keeps it on
+  a ref plus a version counter (`setHoveredLabel`) so a saved view can never carry it, and
+  so pointer motion *within* one label schedules no re-render. Points already carry their
+  highlight the same way.
+- **One slot, not a per-layer map.** Only one thing is under the cursor at a time, so
+  "moved to a different labels layer" and "moved off" are the same transition.
+- **`resolveHighlightedLabel` refuses background and hidden labels** before the value
+  reaches the shader, so an id that went stale between the pick and the frame cannot light
+  up something the filter hides.
+- **The tint reuses deck's `highlightColor`**, with the same meaning (alpha is the blend
+  weight), so one prop name covers shapes and labels. The labels default is declared in
+  `defaultProps`; see the anti-patterns below for why it cannot be a use-site fallback.
+
 ### Anti-patterns (labels)
 
 | Anti-pattern | Why it's wrong |
@@ -335,6 +363,8 @@ only the small table, **never the tiles**.
 | Building the LUT per tile sublayer | Duplicates a multi-megabyte table across every tile |
 | Returning a fresh `FeatureColorBuffer` wrapper each render | Re-uploads the texture every frame; keep the `colors` identity stable |
 | Keying a colour resource by element alone | Two layers, two columns, one element → eviction ping-pong that never settles |
+| Carrying the hovered label in the colour LUT | Re-uploads a multi-megabyte texture on every pointer move; use the uniform |
+| Defaulting a prop deck also defines with `props.x ?? MY_DEFAULT` | deck fills its own default in, so the prop is never absent and your fallback never runs. This drew every labels hover in deck's navy `highlightColor`. Redefine it in the layer's `defaultProps`, which does override deck's |
 
 ## Shape/table annotation controls
 

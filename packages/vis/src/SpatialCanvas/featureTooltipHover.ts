@@ -1,4 +1,5 @@
 import { mergeSpatialFeatureTooltips, type SpatialFeatureTooltipData } from '@spatialdata/core';
+import { parseLabelId } from '@spatialdata/layers';
 import type { DeckGLRef, PickingInfo } from 'deck.gl';
 
 const DEFAULT_PICK_RADIUS = 4;
@@ -14,6 +15,52 @@ export type HoverPointerEvent = { srcEvent?: { buttons?: number } | null };
 /** True when the hover event fired while a pointer button is held (pan/drag). */
 export function isHoverDuringDrag(event?: HoverPointerEvent | null): boolean {
   return (event?.srcEvent?.buttons ?? 0) !== 0;
+}
+
+/** The labels layer and label id drawn as hovered, or `null` for nothing. */
+export interface HoveredLabel {
+  layerId: string;
+  labelId: number;
+}
+
+/**
+ * The label under the cursor, from a deck hover pick.
+ *
+ * Shared because there are TWO hover implementations — `SpatialCanvasViewer`
+ * (headless/embedded) and `SpatialCanvas` (full UI) — each with its own
+ * `handleHover`. The highlight shipped working on the first and dead on the
+ * second; one function both must call is what stops that recurring.
+ *
+ * Deliberately cheap: it reads the id straight off the pick object rather than
+ * going through `getFeaturePickEvent`, which also builds a tooltip. This runs on
+ * every pointer move, and the full UI already pays for tooltip resolution
+ * separately.
+ *
+ * `isLabelsLayer` is the guard that the pick belongs to a labels layer at all —
+ * only `LabelsBitmaskTileLayer` puts a `labelId` on a picked object, but a config
+ * check costs nothing and keeps a stray object shape from lighting something up.
+ */
+export function resolveHoveredLabel(
+  info: { picked?: boolean; layer?: { id?: unknown } | null; object?: unknown },
+  isLabelsLayer: (layerId: string) => boolean
+): HoveredLabel | null {
+  if (!info.picked || !info.object || typeof info.object !== 'object') {
+    return null;
+  }
+  const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+  if (!rawLayerId) {
+    return null;
+  }
+  const layerId = normalizeDeckLayerId(rawLayerId);
+  if (!isLabelsLayer(layerId)) {
+    return null;
+  }
+  const rawLabelId = Reflect.get(info.object, 'labelId');
+  if (rawLabelId === undefined || rawLabelId === null) {
+    return null;
+  }
+  const labelId = parseLabelId(String(rawLabelId));
+  return labelId === undefined ? null : { layerId, labelId };
 }
 
 export interface PickMultipleObjectsCapable {

@@ -6,6 +6,7 @@
 const labelsUniformBlock = `\
 uniform labelsBitmaskUniforms {
   vec4 color0;
+  vec4 highlightColor;
   float channelOpacity0;
   float channelOutlineOpacity0;
   float channelStrokeWidth0;
@@ -16,6 +17,7 @@ uniform labelsBitmaskUniforms {
   float useFeatureColors;
   float featureTexWidth;
   float featureCount;
+  float highlightedLabelId;
 } labelsBitmask;
 `;
 
@@ -24,6 +26,13 @@ export const labelsBitmaskUniforms = {
   fs: labelsUniformBlock,
   uniformTypes: {
     color0: 'vec4<f32>',
+    /**
+     * Hover highlight tint, RGB 0–1 with alpha as the MIX WEIGHT (not an opacity).
+     * Kept next to `color0` because both are `vec4`: std140 aligns a `vec4` to 16
+     * bytes, so grouping them ahead of the scalars keeps the block free of padding
+     * holes.
+     */
+    highlightColor: 'vec4<f32>',
     channelOpacity0: 'f32',
     channelOutlineOpacity0: 'f32',
     channelStrokeWidth0: 'f32',
@@ -37,6 +46,14 @@ export const labelsBitmaskUniforms = {
     featureTexWidth: 'f32',
     /** Number of addressable label ids; ids at or beyond this are unannotated. */
     featureCount: 'f32',
+    /**
+     * The label id under the cursor, or `-1` for none.
+     *
+     * A uniform rather than a bit in the LUT: hover changes on every pointer move,
+     * and re-uploading a table that is megabytes for a large segmentation to carry
+     * one changed entry is the thing this whole design avoids.
+     */
+    highlightedLabelId: 'f32',
   },
 } as const;
 
@@ -206,6 +223,26 @@ void main() {
     labelsBitmask.channelOutlineOpacity0 * featureStyle.a,
     labelsBitmask.channelFilled0
   );
+
+  // Hover highlight — the labels analogue of deck's \`autoHighlight\` on shapes.
+  //
+  // Resolved per FRAGMENT from the sampled instance id, because a tile's deck
+  // picking colour covers the whole quad: there is no per-label deck object for
+  // \`picking_filterHighlightColor\` to act on, so enabling deck's own autoHighlight
+  // here would light up the entire tile. Placed after the hidden-label discard, so
+  // a filtered-out label cannot highlight even if a stale id points at it.
+  if (labelMatch(dat0.y, labelsBitmask.highlightedLabelId) > 0.5) {
+    vec4 highlight = labelsBitmask.highlightColor;
+    fragColor.rgb = mix(fragColor.rgb, highlight.rgb, highlight.a);
+    // Tinting alone is nearly invisible at the default fill opacity (0.18), so the
+    // hovered label's fill is lifted to at least the highlight's own weight. The
+    // coverage factor keeps the boundary anti-aliased, and \`channelFilled0\` gates
+    // it so outline-only mode highlights the outline instead of growing a fill the
+    // display mode says should not be there.
+    float fillBoost = highlight.a * dat0.z * step(0.5, labelsBitmask.channelFilled0);
+    fragColor.a = max(fragColor.a, fillBoost);
+  }
+
   fragColor.a = fragColor.a * labelsBitmask.labelOpacity;
 
   fragColor = picking_filterHighlightColor(fragColor);
