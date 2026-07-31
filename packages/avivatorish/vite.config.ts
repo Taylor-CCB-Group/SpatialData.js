@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWorkspaceSourceAliases, defineViteConfig } from '../../vite.config.base';
 import { mergeConfig } from 'vite';
+import { createWorkspaceSourceAliases, defineViteConfig } from '../../vite.config.base';
 
 const pkgRoot = fileURLToPath(new URL('.', import.meta.url));
 const workspaceRoot = path.resolve(pkgRoot, '../..');
@@ -9,7 +9,17 @@ const workspaceRoot = path.resolve(pkgRoot, '../..');
 const baseConfig = defineViteConfig({
   pkgRoot,
   libName: 'SpatialDataAvivatorish',
-  external: ['@hms-dbmi/viv', '@math.gl/core', 'geotiff', 'zarrita', 'zarrextra', /^zustand(?:\/.*)?$/],
+  external: [
+    '@hms-dbmi/viv',
+    '@math.gl/core',
+    'geotiff',
+    'zarrita',
+    // Subpaths too (`zarrextra/workers`): a string entry matches the exact
+    // specifier only, which would leave a subpath import to be resolved — and
+    // the workspace source alias below would then inline it into the bundle.
+    /^zarrextra(?:\/.*)?$/,
+    /^zustand(?:\/.*)?$/,
+  ],
 });
 
 export default mergeConfig(baseConfig, {
