@@ -12,6 +12,7 @@ export type {
   RenderStackHostEntry,
   RenderStackSpatialElementType,
   RenderStackSpatialEntry,
+  SpatialLabelsSublayer,
   SpatialLayerProps,
   SpatialShapesSublayer,
 } from '@spatialdata/core';
@@ -48,7 +49,6 @@ export type {
 } from './featureColorEncoding';
 export {
   assignFeatureColors,
-  CLASSIC_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_CATEGORICAL_PALETTE,
   DEFAULT_FEATURE_NUMERIC_RAMP,
   featureColorAt,

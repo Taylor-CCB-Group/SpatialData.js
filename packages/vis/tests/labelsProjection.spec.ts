@@ -7,6 +7,14 @@ import {
 } from '../src/SpatialCanvas/labelsProjection';
 import type { LabelsLayerConfig } from '../src/SpatialCanvas/types';
 
+/** A small fixed palette, for tests whose subject is row alignment rather than
+ *  colour choice — the default scheme is procedural, so colours must be pinned. */
+const FIXED_PALETTE: [number, number, number][] = [
+  [0, 0, 255],
+  [0, 255, 0],
+  [255, 0, 255],
+];
+
 /**
  * The labels LUT projection cache.
  *
@@ -44,7 +52,7 @@ describe('buildLabelFillColorEntry', () => {
         fillColorByColumn: {
           columnName: 'cell_type',
           mode: 'categorical',
-          categoricalPalette: 'classic',
+          categoricalPalette: FIXED_PALETTE,
         },
       }),
       rows(['tumour', 'stroma'])
@@ -82,7 +90,7 @@ describe('buildLabelFillColorEntry', () => {
     const sameRows = rows(['tumour', 'stroma']);
     const a = buildLabelFillColorEntry(config({ fillColorByColumn: base }), sameRows);
     const b = buildLabelFillColorEntry(
-      config({ fillColorByColumn: { ...base, categoricalPalette: 'classic' } }),
+      config({ fillColorByColumn: { ...base, categoricalPalette: FIXED_PALETTE } }),
       sameRows
     );
     // Same column, same rows — only the signature can tell these apart, and it must.

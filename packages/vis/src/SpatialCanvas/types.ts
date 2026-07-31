@@ -24,8 +24,8 @@ export interface FillColorByColumn<TMode> {
   /**
    * Categorical scheme. Defaults to `'oklab'` — the same unbounded golden-angle
    * OKLCh scheme points uses for colour-by-feature, so a column with more
-   * categories than a fixed list has colours does not repeat them. Pass
-   * `'classic'` for the original six-colour cycle, or your own RGB list.
+   * categories than a fixed list has colours does not repeat them. Pass your own
+   * RGB list to override it; the list cycles.
    */
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   /** Endpoints of the continuous ramp, `[low, high]` as RGB 0–255. */

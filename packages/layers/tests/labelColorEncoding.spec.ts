@@ -7,6 +7,14 @@ import {
 } from '../src/labelColorEncoding';
 import { featureCodeToRgb } from '../src/pointsFeatureColor';
 
+/** A small fixed palette, for tests whose subject is row alignment rather than
+ *  colour choice — the default scheme is procedural, so colours must be pinned. */
+const FIXED_PALETTE: [number, number, number][] = [
+  [0, 0, 255],
+  [0, 255, 0],
+  [255, 0, 255],
+];
+
 const WHITE: [number, number, number] = [255, 255, 255];
 
 function rgbaAt(colors: Uint8Array, labelId: number): number[] {
@@ -24,7 +32,7 @@ describe('label fill colour encoding', () => {
       ]),
       column: ['tumour', 'stroma', 'tumour'],
       mode: 'categorical',
-      categoricalPalette: 'classic',
+      categoricalPalette: FIXED_PALETTE,
     });
 
     expect(colors).toEqual({

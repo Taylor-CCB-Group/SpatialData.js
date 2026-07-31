@@ -5,6 +5,14 @@ import {
   resolveShapeFillColorMode,
 } from '../src/shapeColorEncoding';
 
+/** A small fixed palette, for tests whose subject is row alignment rather than
+ *  colour choice — the default scheme is procedural, so colours must be pinned. */
+const FIXED_PALETTE: [number, number, number][] = [
+  [0, 0, 255],
+  [0, 255, 0],
+  [255, 0, 255],
+];
+
 describe('shape fill colour encoding', () => {
   it('maps categorical values deterministically through feature row indices', () => {
     const colors = buildShapeFillColorByFeatureId({
@@ -13,7 +21,7 @@ describe('shape fill colour encoding', () => {
       column: ['type-x', 'type-y', 'type-z'],
       mode: 'categorical',
       alpha: 180,
-      categoricalPalette: 'classic',
+      categoricalPalette: FIXED_PALETTE,
     });
 
     expect(colors).toEqual({
@@ -40,7 +48,7 @@ describe('shape fill colour encoding', () => {
     });
   });
 
-  it('does not repeat colours past the length of the classic palette', () => {
+  it('does not repeat colours across many categories', () => {
     const count = 12;
     const colors = buildShapeFillColorByFeatureId({
       featureIds: Array.from({ length: count }, (_, i) => `cell-${i}`),
@@ -110,7 +118,7 @@ describe('shape fill colour encoding', () => {
       mode: 'categorical',
       alpha: 180,
       // Fixed palette: this test is about row alignment, so pin the colours.
-      categoricalPalette: 'classic',
+      categoricalPalette: FIXED_PALETTE,
     });
 
     expect(colors).toEqual({
@@ -126,7 +134,7 @@ describe('shape fill colour encoding', () => {
       column: ['type-a', 'type-b', 'type-c'],
       mode: 'categorical',
       alpha: 180,
-      categoricalPalette: 'classic',
+      categoricalPalette: FIXED_PALETTE,
     });
 
     expect(colors).toEqual({

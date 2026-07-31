@@ -66,34 +66,17 @@ export function featureColorAt(
 }
 
 /**
- * The original six-colour cycle.
- *
- * Kept because it is what saved configs written before schemes existed rendered
- * with, and because a small hand-picked set is occasionally what you want. It
- * **cycles**, so a column with more than six categories reuses colours — which is
- * why it is no longer the default.
- */
-export const CLASSIC_FEATURE_CATEGORICAL_PALETTE: readonly FeatureRgbColor[] = [
-  [0, 0, 255],
-  [0, 255, 0],
-  [255, 0, 255],
-  [255, 0, 0],
-  [0, 255, 255],
-  [255, 255, 0],
-];
-
-/**
  * How to colour categories. JSON-serializable on purpose — this travels in a saved
  * layer config, so it is a name or a plain list of colours, never a function.
  *
- *  - `'oklab'`   — the points colour-by-feature scheme: OKLCh at fixed lightness and
- *                  chroma, hue stepped by the golden angle. **Unbounded** — every
- *                  category index gets its own well-separated hue, so a 30-category
- *                  annotation does not repeat colours. The default.
- *  - `'classic'` — {@link CLASSIC_FEATURE_CATEGORICAL_PALETTE}, cycled.
- *  - a list      — your own colours, cycled.
+ *  - `'oklab'` — the points colour-by-feature scheme: OKLCh at fixed lightness and
+ *               chroma, hue stepped by the golden angle. **Unbounded** — every
+ *               category index gets its own well-separated hue, so a 30-category
+ *               annotation does not repeat colours. The default.
+ *  - a list    — your own colours, cycled. An empty list falls back to `'oklab'`
+ *               rather than colouring nothing.
  */
-export type FeatureCategoricalPaletteSpec = 'oklab' | 'classic' | readonly FeatureRgbColor[];
+export type FeatureCategoricalPaletteSpec = 'oklab' | readonly FeatureRgbColor[];
 
 export type FeatureNumericRampSpec = readonly [FeatureRgbColor, FeatureRgbColor];
 
@@ -119,7 +102,7 @@ export function resolveCategoricalPalette(
   if (spec === 'oklab') {
     return featureCodeToRgb;
   }
-  const colors = spec === 'classic' ? CLASSIC_FEATURE_CATEGORICAL_PALETTE : spec;
+  const colors = spec;
   if (colors.length === 0) {
     return featureCodeToRgb;
   }
