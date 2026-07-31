@@ -508,9 +508,6 @@ importers:
       zarrita:
         specifier: 'catalog:'
         version: 0.7.1
-      zod:
-        specifier: 'catalog:'
-        version: 4.1.13
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

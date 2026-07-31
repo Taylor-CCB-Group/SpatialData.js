@@ -70,8 +70,8 @@ export type ZarrV2ArrayNode = {
  *
  * Only `shape` and `data_type` are required here: the rest are optional in the
  * specification or omitted by real writers, and this type describes metadata as
- * it arrives from a store rather than metadata that has been through
- * {@link validateV3Zarray}.
+ * it arrives from a store — parsed, but not validated or normalised. Nothing
+ * validates it on the way in, by design: see {@link ZarrArrayMetadata}.
  */
 export type ZarrV3ArrayNode = {
   shape: number[];
@@ -114,37 +114,6 @@ export type ZarrV3ArrayNode = {
  * getting `undefined` no longer type-checks.
  */
 export type ZarrArrayMetadata = ZarrV2ArrayNode | ZarrV3ArrayNode | ZAttrsAny;
-
-/**
- * Zarr v3 group node metadata
- */
-export type ZarrV3GroupNode = {
-  attributes: Record<string, unknown>;
-  zarr_format: number;
-  consolidated_metadata: {
-    kind: string;
-    must_understand: boolean;
-    metadata: Record<string, unknown>;
-  };
-  node_type: 'group';
-};
-
-/**
- * Zarr v3 consolidated metadata structure (zarr.json)
- * The actual structure has metadata nested under consolidated_metadata.metadata
- * with path keys like "images/blobs_image", "labels/blobs_labels", etc.
- * Each entry can be either a group node or an array node.
- */
-export type ZarrV3Metadata = {
-  attributes: Record<string, unknown>;
-  zarr_format: number;
-  consolidated_metadata: {
-    kind: string;
-    must_understand: boolean;
-    metadata: Record<string, ZarrV3GroupNode | ZarrV3ArrayNode>;
-  };
-  node_type: 'group';
-};
 
 /**
  * This type is liable to change in future - for now, it has `zarritaStore` which is the `ListableStore` from `zarrita`,

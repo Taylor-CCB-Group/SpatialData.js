@@ -32,8 +32,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "zarrita": "catalog:",
-    "zod": "catalog:"
+    "zarrita": "catalog:"
   },
   "devDependencies": {
     "@fideus-labs/fizarrita": "^1.4.1",
