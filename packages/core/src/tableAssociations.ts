@@ -186,13 +186,21 @@ export async function loadAssociatedTableFeatureRows({
   // degrades to the same path rather than failing the whole association load.
   const [columns, columnKinds] = await Promise.all([
     table.loadObsColumns(requestedColumns),
+    // `undefined`, not `[]`: absent metadata and "no columns have a kind" are
+    // different claims, and only the first is true here. An empty array would also
+    // break the positional alignment `extraColumnKinds` promises.
     typeof table.loadObsColumnKinds === 'function'
-      ? table.loadObsColumnKinds(requestedColumns).catch(() => [])
-      : Promise.resolve([]),
+      ? table.loadObsColumnKinds(requestedColumns).catch(() => undefined)
+      : Promise.resolve(undefined),
   ]);
   const regionColumn = columns[0];
   const extraColumns = columns.slice(1);
-  const extraColumnKinds = columnKinds.slice(1);
+  // Built from `uniqueExtra` rather than by slicing the response, so the result is
+  // exactly as long as `extraColumns` even if a source returns a short array — the
+  // alignment is a contract, not a coincidence of matching lengths.
+  const extraColumnKinds = columnKinds
+    ? uniqueExtra.map((_name, index) => columnKinds[index + 1])
+    : undefined;
   const filteredRowIds: string[] = [];
   const rowIndexByFeatureId = new Map<string, number>();
 

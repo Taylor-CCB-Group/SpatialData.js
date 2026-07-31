@@ -282,7 +282,7 @@ describe('LabelsResolver', () => {
     // No spatialData injected, so the association helper returns empty rows —
     // still a settled resource, which is what stops the replan.
     await resolver.load(task as NonNullable<typeof task>, withColumn, signal());
-    expect(resolver.getFillColorRows('cell_labels')).toBeDefined();
+    expect(resolver.getFillColorRows('cell_labels', 'cell_type')).toBeDefined();
     expect(resolver.plan(withColumn).map((t) => t.resource)).not.toContain('fillColor');
 
     // Switching columns supersedes: the column is part of the task id.
@@ -290,6 +290,29 @@ describe('LabelsResolver', () => {
       fillColorByColumn: { columnName: 'area', mode: 'auto' },
     });
     expect(resolver.plan(otherColumn).map((t) => t.id)).toContain('cell_labels#fillColor:area');
+  });
+
+  it("holds two layers' columns for one element without evicting each other", async () => {
+    // An element-keyed cache made these ping-pong: each plan() saw the other
+    // layer's column cached, scheduled a reload, and overwrote it — forever.
+    const resolver = new LabelsResolver();
+    const byType = labelsCtx(labelsElement(), {
+      fillColorByColumn: { columnName: 'cell_type', mode: 'auto' },
+    });
+    const byArea = labelsCtx(labelsElement(), {
+      fillColorByColumn: { columnName: 'area', mode: 'auto' },
+    });
+
+    for (const ctx of [byType, byArea]) {
+      const task = resolver.plan(ctx).find((t) => t.resource === 'fillColor');
+      await resolver.load(task as NonNullable<typeof task>, ctx, signal());
+    }
+
+    expect(resolver.getFillColorRows('cell_labels', 'cell_type')).toBeDefined();
+    expect(resolver.getFillColorRows('cell_labels', 'area')).toBeDefined();
+    // Neither replans: both columns are served, so nothing is reloading anything.
+    expect(resolver.plan(byType).map((t) => t.resource)).not.toContain('fillColor');
+    expect(resolver.plan(byArea).map((t) => t.resource)).not.toContain('fillColor');
   });
 });
 

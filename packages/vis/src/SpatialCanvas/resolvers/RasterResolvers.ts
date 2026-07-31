@@ -329,11 +329,24 @@ export class LabelsResolver
     { signature: string; resolution: Resolution<LabelsTooltipMetadata> }
   >();
 
-  /** Associated-table rows for the fill-colour column, keyed by element. */
+  /**
+   * Associated-table rows for the fill-colour column, keyed by element AND column.
+   *
+   * Both, not just the element: two layers can draw one labels element coloured by
+   * different columns, and an element-only key makes them evict each other on every
+   * plan — a reload ping-pong that never settles. (The tooltip caches above still
+   * have that shape; it is the pre-existing issue `ShapesResolver`'s class doc
+   * records for Track B, and is not made worse here.)
+   */
   private readonly fillColors = new Map<
     string,
     { column: string; resolution: Resolution<AssociatedTableFeatureRows> }
   >();
+
+  /** Cache key for a (element, column) pair. NUL-joined: neither part can contain it. */
+  private static fillColorKey(elementKey: string, column: string): string {
+    return `${elementKey}\u0000${column}`;
+  }
 
   plan(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): readonly ResolveTask[] {
     const key = ctx.elementKey;
@@ -354,7 +367,7 @@ export class LabelsResolver
       }
     }
     const column = ctx.config.fillColorByColumn?.columnName;
-    if (column && this.fillColors.get(key)?.column !== column) {
+    if (column && !this.fillColors.has(LabelsResolver.fillColorKey(key, column))) {
       // The column is IN the id: switching columns supersedes rather than queues.
       tasks.push({
         id: `${key}#fillColor:${column}`,
@@ -391,10 +404,13 @@ export class LabelsResolver
           key,
           extraColumnNames: [column],
         });
-        this.fillColors.set(key, { column, resolution: Resolution.ready(rows) });
+        this.fillColors.set(LabelsResolver.fillColorKey(key, column), {
+          column,
+          resolution: Resolution.ready(rows),
+        });
       } catch (cause) {
         if (isCancellation(cause)) return;
-        this.fillColors.set(key, {
+        this.fillColors.set(LabelsResolver.fillColorKey(key, column), {
           column,
           resolution: Resolution.failed(
             toSpatialEntryError(cause, {
@@ -448,15 +464,31 @@ export class LabelsResolver
     return held ? Resolution.lastGood(held.resolution) : undefined;
   }
 
-  /** The raw table rows. The COLOURS are built by the projection — as for shapes. */
-  getFillColorRows(key: string): AssociatedTableFeatureRows | undefined {
-    const held = this.fillColors.get(key);
+  /**
+   * The raw table rows for one element's fill-colour COLUMN. The colours are built
+   * by the projection — as for shapes.
+   *
+   * The column is part of the lookup, not just the element: a caller asking without
+   * it could be handed another layer's column.
+   */
+  getFillColorRows(key: string, column: string): AssociatedTableFeatureRows | undefined {
+    const held = this.fillColors.get(LabelsResolver.fillColorKey(key, column));
     return held ? Resolution.lastGood(held.resolution) : undefined;
   }
 
   snapshot(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): EntryResources {
-    // Key by entry (layers may share an element) and transform (it moves the bounds).
-    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, '');
+    // This entry's own column — two entries over one element may differ.
+    const fillColorColumn = ctx.config.fillColorByColumn?.columnName;
+    // Key by entry (layers may share an element), transform (it moves the bounds),
+    // and the fill column — the snapshot now names a specific column's rows, so a
+    // config change must not be served the previous column's resolution while the
+    // new one loads.
+    const cached = this.snapshots.get(
+      ctx.entryId,
+      this.version,
+      ctx.transform,
+      fillColorColumn ?? ''
+    );
     if (cached) return cached;
 
     const entry = this.entries.get(ctx.elementKey);
@@ -466,20 +498,26 @@ export class LabelsResolver
       resources: {
         loader: entry?.loader ?? Resolution.idle(),
         tooltip: this.tooltips.get(ctx.elementKey)?.resolution ?? Resolution.idle(),
-        fillColor: this.fillColors.get(ctx.elementKey)?.resolution ?? Resolution.idle(),
+        fillColor: fillColorColumn
+          ? (this.fillColors.get(LabelsResolver.fillColorKey(ctx.elementKey, fillColorColumn))
+              ?.resolution ?? Resolution.idle())
+          : Resolution.idle(),
       },
       notices: entry?.notices ?? [],
       bounds: this.boundsFor(ctx.elementKey, ctx.transform),
       revision: this.version,
     };
-    this.snapshots.set(ctx.entryId, this.version, ctx.transform, '', value);
+    this.snapshots.set(ctx.entryId, this.version, ctx.transform, fillColorColumn ?? '', value);
     return value;
   }
 
   override evict(key: string): void {
     super.evict(key);
     this.tooltips.delete(key);
-    this.fillColors.delete(key);
+    // Keyed by element+column, so every column held for this element goes.
+    for (const cacheKey of this.fillColors.keys()) {
+      if (cacheKey.startsWith(`${key}\u0000`)) this.fillColors.delete(cacheKey);
+    }
   }
 
   override dispose(): void {

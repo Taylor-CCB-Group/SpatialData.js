@@ -204,7 +204,10 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
   }
 
   finalizeState(context: unknown) {
-    this.state.fallbackFeatureTexture?.delete?.();
+    // `destroy()`, luma 9's spelling; `delete()` still exists but is deprecated.
+    // (The channel-texture cleanup below predates this file's changes and still
+    // uses the old name.)
+    this.state.fallbackFeatureTexture?.destroy();
     this.state.fallbackFeatureTexture = null;
     // The LUT texture itself belongs to the parent `LabelsLayer`; deleting it here
     // would pull it out from under every sibling tile.

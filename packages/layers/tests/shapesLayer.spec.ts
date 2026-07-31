@@ -745,6 +745,22 @@ describe('host-supplied feature colour buffer', () => {
     expect(layers[0].props.featureColors).toBe(twoFeatures.colors);
   });
 
+  it('renders an uncovered feature transparent on every geometry path', () => {
+    // The binary path pads a short buffer with transparent, so the object paths
+    // must agree — otherwise one buffer looks different depending on which
+    // representation the element happened to load as.
+    const short = { colors: new Uint8Array([255, 0, 0, 255]), count: 1 };
+    const layer = createShapesDeckLayer(
+      renderData,
+      { kind: 'shapes', elementKey: 'cells', visible: true, defaultFillColor: [9, 9, 9, 255] },
+      { id: 'shapes-short-buffer', featureColors: short }
+    );
+
+    const props = layer!.props as any;
+    expect(props.getFillColor(props.data[0])).toEqual([255, 0, 0, 255]);
+    expect(props.getFillColor(props.data[1])).toEqual([0, 0, 0, 0]);
+  });
+
   it('pads a short buffer rather than reading past its end', () => {
     const short = { colors: new Uint8Array([255, 0, 0, 255]), count: 1 };
     const binaryRenderData: ShapesRenderDataLike = {

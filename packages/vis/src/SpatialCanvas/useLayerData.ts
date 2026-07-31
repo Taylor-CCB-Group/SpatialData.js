@@ -773,7 +773,9 @@ export function useLayerData(
         cache.delete(layerId);
         return undefined;
       }
-      const rows = labelsResolver.getFillColorRows(key);
+      // Ask for THIS layer's column: two layers may colour one element differently,
+      // and the resolver holds their rows separately.
+      const rows = labelsResolver.getFillColorRows(key, config.fillColorByColumn.columnName);
       if (!rows) return undefined;
       const signature = getLabelFillColorSignature(config);
       const cached = cache.get(layerId);

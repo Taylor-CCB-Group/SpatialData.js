@@ -956,7 +956,12 @@ function createPolygonDeckLayer(
   const fillAt = (d: ShapePolygonRenderDatum): [number, number, number, number] =>
     (buffer && featureColorAt(buffer, d.featureIndex)) ??
     (buffer
-      ? defaultFillColor
+      ? // A buffer that does not cover this feature leaves it TRANSPARENT, not on
+        // the layer default — the same thing the binary path does, where a short
+        // buffer is padded with transparent. Falling back to the default here would
+        // mean one buffer rendered differently depending on which geometry
+        // representation the element happened to load as.
+        TRANSPARENT_RGBA
       : resolveFeatureColor(
           d.featureId,
           featureState.fillColorByFeatureId,
@@ -1122,8 +1127,9 @@ function createCircleDeckLayer(
     getRadius: (d) => d.radius,
     radiusUnits,
     getFillColor: (d) => {
+      // Uncovered features go transparent, as on the polygon and binary paths.
       const fromBuffer = options.featureColors
-        ? (featureColorAt(options.featureColors, d.featureIndex) ?? defaultFillColor)
+        ? (featureColorAt(options.featureColors, d.featureIndex) ?? TRANSPARENT_RGBA)
         : undefined;
       if (fromBuffer) return fromBuffer;
       const base = featureState.fillColorByFeatureId.get(d.featureId) ?? defaultFillColor;

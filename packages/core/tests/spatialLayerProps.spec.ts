@@ -114,10 +114,11 @@ describe('migrateSpatialLayerProps', () => {
     });
   });
 
-  it('rejects a labels stroke override, which the bitmask shader derives', () => {
+  it('strips a labels stroke override, which the bitmask shader derives', () => {
     // A label's outline is a derivation of its fill in the shader, so there is no
-    // per-label stroke to set — and the schema is strict enough to say so rather
-    // than accept a field that would silently do nothing.
+    // per-label stroke to set. The config still parses — this is not an error worth
+    // failing a whole saved stack over — but the unsupported field is dropped
+    // rather than carried along to silently do nothing.
     const result = spatialLabelsSublayerSchema.safeParse({
       kind: 'labels',
       featureState: { strokeColorByFeatureId: { '1': [1, 2, 3, 4] } },

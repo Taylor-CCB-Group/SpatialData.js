@@ -73,6 +73,16 @@ export interface LabelsLayerProps {
 }
 
 /**
+ * The disposal surface of a GPU texture, with `destroy` REQUIRED.
+ *
+ * Declared locally rather than imported: `@luma.gl/core` is not a dependency of
+ * this package (only `@luma.gl/engine` is), and the point of the type is the
+ * non-optional method — an optional `destroy?.()` would silently skip disposal if
+ * the shape were ever wrong, and a leaked texture is not something anything reports.
+ */
+type DestroyableTexture = { destroy(): void };
+
+/**
  * Memoised `featureState → LUT`, so a bare re-render (a hover, a pan) does not
  * rebuild a table that can be megabytes. Keyed by the feature-state's identity and
  * then by the default colour, which is baked into every unannotated entry — the
@@ -347,7 +357,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
    */
   _resolveFeatureColorLut(): LabelColorLut | undefined {
     const { featureColorLut, featureState, channelColors } = this.props;
-    const defaultColor = (channelColors?.[0] ?? [255, 255, 255]) as LabelRgbColor;
+    const defaultColor: LabelRgbColor = channelColors?.[0] ?? [255, 255, 255];
     return featureColorLut ?? resolveFeatureColorLut(featureState, defaultColor);
   }
 
@@ -371,8 +381,8 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       return;
     }
 
-    (this.state?.featureColorTexture as { destroy?: () => void } | null)?.destroy?.();
-    let texture: unknown = null;
+    this._destroyFeatureColorTexture();
+    let texture: DestroyableTexture | null = null;
     if (lut) {
       const height = Math.max(1, Math.ceil(lut.count / LABEL_COLOR_LUT_WIDTH));
       // Pad to the full texel grid: the shader addresses by row/column, so the tail
@@ -391,8 +401,21 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     this.setState({ featureColorLut: lut, featureColorTexture: texture });
   }
 
+  /**
+   * Release the LUT texture.
+   *
+   * `destroy()` unconditionally, not `destroy?.()`: luma's `Resource` declares it,
+   * so an optional call would only ever hide a wrong type — and the failure mode it
+   * hides is a leaked GPU texture that nothing reports. (`delete()` is the luma 8
+   * spelling and is deprecated in 9.)
+   */
+  _destroyFeatureColorTexture(): void {
+    const texture = this.state?.featureColorTexture as DestroyableTexture | null | undefined;
+    texture?.destroy();
+  }
+
   finalizeState(context: unknown): void {
-    (this.state?.featureColorTexture as { destroy?: () => void } | null)?.destroy?.();
+    this._destroyFeatureColorTexture();
     // biome-ignore lint/suspicious/noExplicitAny: CompositeLayer's finalizeState is optional in its public types.
     (super.finalizeState as any)?.(context);
   }

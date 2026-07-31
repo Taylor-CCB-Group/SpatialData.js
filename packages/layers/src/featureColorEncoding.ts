@@ -48,12 +48,23 @@ export interface FeatureColorBuffer {
   count: number;
 }
 
-/** Read one RGBA out of a buffer; `undefined` when the index is not covered. */
+/**
+ * Read one RGBA out of a buffer; `undefined` when the index is not covered.
+ *
+ * Bounded by the bytes actually present, not by `count` alone. `count` is a
+ * caller's claim about its own buffer, and an over-stated one would otherwise
+ * return a tuple of `undefined`s typed as a colour — which reaches deck as a
+ * malformed attribute rather than as an error anyone can see.
+ */
 export function featureColorAt(
   buffer: FeatureColorBuffer | undefined,
   index: number
 ): FeatureRgbaColor | undefined {
-  if (!buffer || !Number.isInteger(index) || index < 0 || index >= buffer.count) {
+  if (!buffer || !Number.isInteger(index) || index < 0) {
+    return undefined;
+  }
+  const covered = Math.min(buffer.count, Math.floor(buffer.colors.length / 4));
+  if (index >= covered) {
     return undefined;
   }
   const offset = index * 4;

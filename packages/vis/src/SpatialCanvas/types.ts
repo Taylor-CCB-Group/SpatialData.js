@@ -15,6 +15,21 @@ import type {
 } from '@spatialdata/layers';
 
 /**
+ * Per-feature filtering and colouring, keyed by feature id.
+ *
+ * Shared by shapes and labels because the fields mean the same thing on both — that
+ * sameness is the point of the API, so it is expressed as one type rather than two
+ * that happen to match today. Only the id differs: a shape's is its geometry id, a
+ * label's is its integer instance id as a string.
+ */
+export interface FeatureStateConfig {
+  fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+  hiddenFeatureIds?: string[];
+  fadedFeatureIds?: string[];
+  filteredOpacityMultiplier?: number;
+}
+
+/**
  * How a table column is turned into colours. Shared verbatim by shapes and labels
  * so one column reads the same way on either kind, and JSON-serializable so it
  * survives a saved Render Stack.
@@ -112,12 +127,9 @@ export interface ShapesLayerConfig extends BaseLayerConfig {
   strokeWidthMaxPixels?: number;
   /** Table obs columns to display for a picked feature in this shapes layer. */
   tooltipFields?: string[];
-  featureState?: {
-    fillColorByFeatureId?: Record<string, [number, number, number, number]>;
+  featureState?: FeatureStateConfig & {
+    /** Shapes only: a label's outline is derived from its fill in the shader. */
     strokeColorByFeatureId?: Record<string, [number, number, number, number]>;
-    hiddenFeatureIds?: string[];
-    fadedFeatureIds?: string[];
-    filteredOpacityMultiplier?: number;
   };
 }
 
@@ -183,12 +195,7 @@ export interface LabelsLayerConfig extends BaseLayerConfig {
    * integer instance id as a string (the same id the tooltip resolves against the
    * associated table).
    */
-  featureState?: {
-    fillColorByFeatureId?: Record<string, [number, number, number, number]>;
-    hiddenFeatureIds?: string[];
-    fadedFeatureIds?: string[];
-    filteredOpacityMultiplier?: number;
-  };
+  featureState?: FeatureStateConfig;
   channels?: {
     channelIds?: string[];
     colors?: [number, number, number][];

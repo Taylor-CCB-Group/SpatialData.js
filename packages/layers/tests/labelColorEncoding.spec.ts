@@ -21,6 +21,12 @@ function rgbaAt(colors: Uint8Array, labelId: number): number[] {
   return Array.from(colors.subarray(labelId * 4, labelId * 4 + 4));
 }
 
+/** Narrow a built LUT, failing loudly rather than asserting the type away. */
+function lutColors(lut: ReturnType<typeof buildLabelColorLut>): Uint8Array {
+  if (!lut) throw new Error('expected buildLabelColorLut to produce a table');
+  return lut.colors;
+}
+
 describe('label fill colour encoding', () => {
   it('maps categorical values through the associated table rows, keyed by label id', () => {
     const colors = buildLabelFillColorByFeatureId({
@@ -101,9 +107,9 @@ describe('label colour lookup table', () => {
     });
 
     expect(lut?.count).toBe(4);
-    expect(rgbaAt(lut?.colors as Uint8Array, 3)).toEqual([10, 20, 30, 255]);
+    expect(rgbaAt(lutColors(lut), 3)).toEqual([10, 20, 30, 255]);
     // Labels 0..2 are addressable but unannotated: default colour, fully opaque.
-    expect(rgbaAt(lut?.colors as Uint8Array, 1)).toEqual([255, 255, 255, 255]);
+    expect(rgbaAt(lutColors(lut), 1)).toEqual([255, 255, 255, 255]);
   });
 
   it('hides hidden labels and scales faded ones', () => {
@@ -116,8 +122,8 @@ describe('label colour lookup table', () => {
       defaultColor: WHITE,
     });
 
-    expect(rgbaAt(lut?.colors as Uint8Array, 1)).toEqual([255, 255, 255, 102]);
-    expect(rgbaAt(lut?.colors as Uint8Array, 2)).toEqual([255, 255, 255, 0]);
+    expect(rgbaAt(lutColors(lut), 1)).toEqual([255, 255, 255, 102]);
+    expect(rgbaAt(lutColors(lut), 2)).toEqual([255, 255, 255, 0]);
   });
 
   it('lets hide win over fade for a label in both sets', () => {
@@ -126,7 +132,7 @@ describe('label colour lookup table', () => {
       defaultColor: WHITE,
     });
 
-    expect(rgbaAt(lut?.colors as Uint8Array, 5)).toEqual([255, 255, 255, 0]);
+    expect(rgbaAt(lutColors(lut), 5)).toEqual([255, 255, 255, 0]);
   });
 
   it('filters without any colouring at all', () => {
@@ -135,9 +141,9 @@ describe('label colour lookup table', () => {
       defaultColor: [7, 8, 9],
     });
 
-    expect(rgbaAt(lut?.colors as Uint8Array, 1)).toEqual([7, 8, 9, 0]);
-    expect(rgbaAt(lut?.colors as Uint8Array, 2)).toEqual([7, 8, 9, 255]);
-    expect(rgbaAt(lut?.colors as Uint8Array, 3)).toEqual([7, 8, 9, 0]);
+    expect(rgbaAt(lutColors(lut), 1)).toEqual([7, 8, 9, 0]);
+    expect(rgbaAt(lutColors(lut), 2)).toEqual([7, 8, 9, 255]);
+    expect(rgbaAt(lutColors(lut), 3)).toEqual([7, 8, 9, 0]);
   });
 
   it('declines to build when the feature state addresses nothing', () => {
@@ -160,7 +166,7 @@ describe('label colour lookup table', () => {
     });
 
     expect(lut?.count).toBe(3);
-    expect(rgbaAt(lut?.colors as Uint8Array, 2)).toEqual([255, 255, 255, 0]);
+    expect(rgbaAt(lutColors(lut), 2)).toEqual([255, 255, 255, 0]);
   });
 
   it('reports visibility for the picking path', () => {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assignFeatureColors, resolveFeatureFillColorMode } from '../src/featureColorEncoding';
+import {
+  assignFeatureColors,
+  featureColorAt,
+  resolveFeatureFillColorMode,
+} from '../src/featureColorEncoding';
 
 const RED: [number, number, number, number] = [255, 0, 0, 255];
 const GREY: [number, number, number, number] = [128, 128, 128, 255];
@@ -138,5 +142,23 @@ describe('missing-value policy', () => {
     expect(colors[0]).toEqual([0, 64, 255, 255]);
     expect(colors[1]).toEqual(GREY);
     expect(colors[2]).toEqual([255, 220, 0, 255]);
+  });
+});
+
+describe('featureColorAt bounds', () => {
+  it('refuses to read past the bytes present, whatever count claims', () => {
+    // `count` is the caller's claim about its own buffer. Trusting it alone
+    // returned a tuple of undefineds typed as a colour, which reaches deck as a
+    // malformed attribute rather than as an error anyone can see.
+    const lying = { colors: new Uint8Array([1, 2, 3, 4]), count: 100 };
+    expect(featureColorAt(lying, 0)).toEqual([1, 2, 3, 4]);
+    expect(featureColorAt(lying, 1)).toBeUndefined();
+    expect(featureColorAt(lying, 99)).toBeUndefined();
+  });
+
+  it('still honours a count smaller than the buffer', () => {
+    const padded = { colors: new Uint8Array(8), count: 1 };
+    expect(featureColorAt(padded, 0)).toEqual([0, 0, 0, 0]);
+    expect(featureColorAt(padded, 1)).toBeUndefined();
   });
 });
