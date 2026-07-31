@@ -118,9 +118,27 @@ export function featureColorSchemeSignature(
   return JSON.stringify([categoricalPalette ?? null, numericRamp ?? null]);
 }
 
-/** A cell rendered as the canonical string form; `''` means "no usable value". */
+/**
+ * A cell rendered as the canonical string form; `''` means "no usable value".
+ *
+ * A non-finite NUMBER is a missing value, not the text `"NaN"`. In this domain
+ * `NaN` is how a float column spells NA — a cell that failed a computation, an
+ * embedding that did not converge — so it has to normalise the way `null` does.
+ *
+ * Getting this wrong was not a cosmetic bug: `'auto'` mode asks whether *every*
+ * non-empty value parses as a finite number, so a single `NaN` in a `UMAP1` column
+ * of half a million floats made the whole column categorical, and categorical mode
+ * then gave every distinct float its own category — half a million hues of noise.
+ * One bad cell, and the layer rendered as static.
+ *
+ * Deliberately typed rather than textual: only an actual `number` is treated this
+ * way. The *string* `"NaN"` in a string column is left alone, because there we have
+ * no way to tell a missing float from a category that happens to be spelled that
+ * way, and silently dropping a real category is its own bug.
+ */
 export function normalizeFeatureCellValue(value: unknown): string {
   if (value === null || value === undefined) return '';
+  if (typeof value === 'number' && !Number.isFinite(value)) return '';
   return String(value);
 }
 
