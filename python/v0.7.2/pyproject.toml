@@ -5,6 +5,9 @@ description = "Test fixture generation for SpatialData.ts using spatialdata 0.7.
 requires-python = ">=3.12"
 dependencies = [
     "spatialdata==0.7.2",
+    # Unlike v0.5.0 and v0.6.1, this release runs fine on setuptools 83, so it
+    # takes GHSA-h35f-9h28-mq5c's fix and needs no cap. `uv lock --upgrade` is
+    # still unsafe: a newer anndata breaks TableModel.parse on <0.8.0. Upgrade
+    # named packages instead, and regenerate to confirm the fixture is unchanged.
     "setuptools",
 ]
-

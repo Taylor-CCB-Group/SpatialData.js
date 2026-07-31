@@ -5,6 +5,15 @@ description = "Test fixture generation for SpatialData.ts using spatialdata 0.6.
 requires-python = ">=3.12"
 dependencies = [
     "spatialdata==0.6.1",
-    "setuptools",
+    # setuptools 81 removed pkg_resources, which this release's dependency stack
+    # still imports at runtime: 83 fails with ModuleNotFoundError before writing
+    # anything (verified). GHSA-h35f-9h28-mq5c, first patched in 83, is an
+    # sdist-build issue, and this environment only installs wheels and runs one
+    # script, so it never reaches the affected path. v0.7.2 and v0.8.0 do not
+    # need this cap and are deliberately left uncapped.
+    #
+    # `uv lock --upgrade` is unsafe here for a related reason: a newer anndata
+    # breaks TableModel.parse on spatialdata <0.8.0. Upgrade named packages
+    # instead, and regenerate the fixture to confirm it is unchanged.
+    "setuptools<81",
 ]
-
