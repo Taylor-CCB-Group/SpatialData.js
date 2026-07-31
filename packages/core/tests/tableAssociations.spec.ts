@@ -252,7 +252,10 @@ describe('column kinds travel with the values', () => {
         [0.5, Number.NaN],
         ['tumour', 'stroma'],
       ],
-      loadObsColumnKinds: async () => ['categorical', 'numeric', 'categorical'],
+      // Synchronous, from consolidated metadata — and asked for the EXTRA columns
+      // only, so no region-key entry to slice off.
+      getObsColumnKinds: (names: string[]) =>
+        names.map((name) => (name === 'UMAP1' ? 'numeric' : 'categorical')),
     };
     const spatialData = {
       getAssociatedTable: () => ['cells_table', table],

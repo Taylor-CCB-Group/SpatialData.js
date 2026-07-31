@@ -7,9 +7,12 @@
 Decide continuous vs categorical from the column's declared kind, and let callers
 configure missing values.
 
-`TableElement.loadObsColumnKinds` reports what the store says each obs column is —
+`TableElement.getObsColumnKinds` reports what the store says each obs column is —
 `numeric`, `categorical`, `string` or `boolean` — and `loadAssociatedTableFeatureRows`
-carries it alongside the values as `extraColumnKinds`. `'auto'` mode now trusts that in
+carries it alongside the values as `extraColumnKinds`. It is **synchronous**: opening a
+store already reads every node's attributes and array metadata into the tree, so a caller
+can ask what a column is before deciding whether to load it. Both zarr generations are
+read (v3 `data_type`, v2 numpy typestrings). `'auto'` mode now trusts that in
 preference to sniffing stringified values, which was wrong at both edges: one `NaN` made a
 float column look non-numeric, and integer cluster codes looked like a continuum. Value
 sniffing remains only as the fallback when no kind is available.

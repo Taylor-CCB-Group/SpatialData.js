@@ -1,4 +1,5 @@
 import { getImageSize } from '@hms-dbmi/viv';
+import type { Texture } from '@luma.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import {
   CompositeLayer,
@@ -71,16 +72,6 @@ export interface LabelsLayerProps {
   onHover?: (info: unknown) => void;
   _subLayerProps?: CompositeLayerProps['_subLayerProps'];
 }
-
-/**
- * The disposal surface of a GPU texture, with `destroy` REQUIRED.
- *
- * Declared locally rather than imported: `@luma.gl/core` is not a dependency of
- * this package (only `@luma.gl/engine` is), and the point of the type is the
- * non-optional method — an optional `destroy?.()` would silently skip disposal if
- * the shape were ever wrong, and a leaked texture is not something anything reports.
- */
-type DestroyableTexture = { destroy(): void };
 
 /**
  * Memoised `featureState → LUT`, so a bare re-render (a hover, a pan) does not
@@ -382,7 +373,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     }
 
     this._destroyFeatureColorTexture();
-    let texture: DestroyableTexture | null = null;
+    let texture: Texture | null = null;
     if (lut) {
       const height = Math.max(1, Math.ceil(lut.count / LABEL_COLOR_LUT_WIDTH));
       // Pad to the full texel grid: the shader addresses by row/column, so the tail
@@ -404,13 +395,13 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
   /**
    * Release the LUT texture.
    *
-   * `destroy()` unconditionally, not `destroy?.()`: luma's `Resource` declares it,
-   * so an optional call would only ever hide a wrong type — and the failure mode it
-   * hides is a leaked GPU texture that nothing reports. (`delete()` is the luma 8
-   * spelling and is deprecated in 9.)
+   * `destroy()` unconditionally, not `destroy?.()`: luma's `Texture` declares it,
+   * so an optional call could only ever hide a wrong type — and what it would hide
+   * is a leaked GPU texture that nothing reports. (`delete()` is the luma 8
+   * spelling, deprecated in 9.)
    */
   _destroyFeatureColorTexture(): void {
-    const texture = this.state?.featureColorTexture as DestroyableTexture | null | undefined;
+    const texture = this.state?.featureColorTexture as Texture | null | undefined;
     texture?.destroy();
   }
 

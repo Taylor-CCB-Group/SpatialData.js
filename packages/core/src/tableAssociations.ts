@@ -178,29 +178,20 @@ export async function loadAssociatedTableFeatureRows({
   });
   const requestedColumns = [regionKey, ...uniqueExtra];
   const rowIds = await table.loadObsIndex();
-  // Values and kinds share the loader's per-column cache, so this is one decode.
-  //
-  // Kinds are best-effort: a table source that predates them (or cannot determine
-  // them) must still serve values. Consumers already have to handle an absent kind,
-  // since a column that fails to resolve has none either — so an unavailable method
-  // degrades to the same path rather than failing the whole association load.
-  const [columns, columnKinds] = await Promise.all([
-    table.loadObsColumns(requestedColumns),
-    // `undefined`, not `[]`: absent metadata and "no columns have a kind" are
-    // different claims, and only the first is true here. An empty array would also
-    // break the positional alignment `extraColumnKinds` promises.
-    typeof table.loadObsColumnKinds === 'function'
-      ? table.loadObsColumnKinds(requestedColumns).catch(() => undefined)
-      : Promise.resolve(undefined),
-  ]);
+  const columns = await table.loadObsColumns(requestedColumns);
   const regionColumn = columns[0];
   const extraColumns = columns.slice(1);
-  // Built from `uniqueExtra` rather than by slicing the response, so the result is
-  // exactly as long as `extraColumns` even if a source returns a short array — the
-  // alignment is a contract, not a coincidence of matching lengths.
-  const extraColumnKinds = columnKinds
-    ? uniqueExtra.map((_name, index) => columnKinds[index + 1])
-    : undefined;
+  // Kinds come from consolidated metadata, already in memory — no I/O, and asked
+  // for the extra columns directly so the result aligns with `extraColumns` by
+  // construction rather than by matching lengths.
+  //
+  // Still guarded: `undefined` (not `[]`) when a table cannot answer, because
+  // "we do not know" and "no column has a kind" are different claims and only the
+  // first is true. Consumers already handle an absent kind.
+  const extraColumnKinds =
+    typeof table.getObsColumnKinds === 'function'
+      ? table.getObsColumnKinds(uniqueExtra)
+      : undefined;
   const filteredRowIds: string[] = [];
   const rowIndexByFeatureId = new Map<string, number>();
 

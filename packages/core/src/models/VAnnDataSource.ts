@@ -1,5 +1,5 @@
 import { get as zarrGet, open as zarrOpen } from 'zarrita';
-import type { TableColumnData, TableColumnKind } from '../types';
+import type { TableColumnData } from '../types';
 import type { DataSourceParams } from '../Vutils';
 import { dirname } from '../Vutils';
 import ZarrDataSource from './VZarrDataSource';
@@ -21,35 +21,12 @@ function prependSlash(path: string) {
  */
 export default class AnnDataSource extends ZarrDataSource {
   promises: Map<string, Promise<TableColumnData | TableColumnData[] | undefined>>;
-  /**
-   * The declared kind of each loaded column, keyed by the same path
-   * {@link promises} is keyed by, and written as {@link _loadColumn} decodes.
-   *
-   * A side map rather than a richer `_loadColumn` return type on purpose:
-   * `_loadColumn` is on the obs-index and shapes-index paths too, and those want
-   * the values and nothing else. Keying by path (a string) keeps the two caches in
-   * lockstep without changing what any existing caller receives.
-   */
-  columnKinds: Map<string, TableColumnKind>;
   obsIndex?: Promise<string[]>;
   varIndex?: Promise<string[]>;
   varAlias?: string[];
   constructor(params: DataSourceParams) {
     super(params);
     this.promises = new Map();
-    this.columnKinds = new Map();
-  }
-
-  /**
-   * The kind of each named column, awaiting the same per-column load
-   * {@link loadObsColumns} uses — so asking for kinds after (or instead of) values
-   * costs one decode, not two.
-   *
-   * `undefined` for a column that failed to load or was never resolved.
-   */
-  async loadObsColumnKinds(paths: string[]): Promise<Array<TableColumnKind | undefined>> {
-    await this._loadColumns(paths);
-    return paths.map((path) => this.columnKinds.get(path));
   }
 
   /**
@@ -115,11 +92,6 @@ export default class AnnDataSource extends ZarrDataSource {
     const { categories, 'encoding-type': encodingType } = await this.getJson(`${path}/.zattrs`);
     let categoriesValues: string[] | undefined;
     let codesPath: string | undefined;
-    // Each branch below already establishes what this column IS in order to decode
-    // it; recording that is the whole of the dtype plumbing (see `TableColumnKind`).
-    const noteKind = (kind: TableColumnKind) => {
-      this.columnKinds.set(pathOrig, kind);
-    };
     if (categories) {
       const { dtype } = await zarrOpen(storeRoot.resolve(`${prefix}/${categories}`), {
         kind: 'array',
@@ -127,26 +99,19 @@ export default class AnnDataSource extends ZarrDataSource {
       if (dtype === 'v2:object') {
         categoriesValues = await this.getFlatArrDecompressed(`${prefix}/${categories}`);
       }
-      noteKind('categorical');
     } else if (encodingType === 'categorical') {
       const { dtype } = await zarrOpen(storeRoot.resolve(`${path}/categories`), { kind: 'array' });
       if (dtype === 'v2:object') {
         categoriesValues = await this.getFlatArrDecompressed(`${path}/categories`);
       }
       codesPath = `${path}/codes`;
-      noteKind('categorical');
     } else if (encodingType === 'string-array') {
-      noteKind('string');
       return this.getFlatArrDecompressed(path);
     } else {
       const { dtype } = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
       if (dtype === 'v2:object') {
-        noteKind('string');
         return this.getFlatArrDecompressed(path);
       }
-      // `bool` is two levels, so it behaves as categorical downstream even though
-      // zarr hands it back in a numeric-looking typed array.
-      noteKind(dtype === 'bool' ? 'boolean' : 'numeric');
     }
     const arr = await zarrOpen(storeRoot.resolve(codesPath || path), { kind: 'array' });
     const values = await zarrGet(arr, [null]);
