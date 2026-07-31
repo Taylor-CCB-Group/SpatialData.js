@@ -3,9 +3,11 @@ import { picking, project32 } from '@deck.gl/core';
 import { XRLayer } from '@hms-dbmi/viv';
 import { Matrix4 } from '@math.gl/core';
 import {
+  DEFAULT_LABEL_HIGHLIGHT_COLOR,
   isLabelVisibleInLut,
   LABEL_COLOR_LUT_WIDTH,
   type LabelColorLut,
+  resolveHighlightedLabel,
 } from './labelColorEncoding';
 import { fs, labelsBitmaskUniforms, vs } from './labelsBitmaskLayerShaders';
 
@@ -91,6 +93,14 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     // already megabytes for a large segmentation.
     featureColorLut: { type: 'object', value: null, compare: false },
     featureColorTexture: { type: 'object', value: null, compare: false },
+    // Hover state. A scalar prop rather than anything in the LUT, so a pointer move
+    // changes a uniform and nothing is re-uploaded. `-1` means "nothing hovered";
+    // label 0 is background and is discarded before the highlight runs anyway.
+    highlightedLabelId: { type: 'number', value: -1, compare: true },
+    // `labelHighlightColor`, not `highlightColor`: deck's own `Layer` already owns that
+    // name and defaults it to navy `[0, 0, 128, 128]`, so a same-named prop here would
+    // never be absent and this default could never win.
+    labelHighlightColor: { type: 'array', value: DEFAULT_LABEL_HIGHLIGHT_COLOR, compare: true },
   };
 
   // biome-ignore lint/complexity/noUselessConstructor: widens the base UntypedXRLayer constructor so `new LabelsBitmaskTileLayer(props)` typechecks.
@@ -259,6 +269,8 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
       channelStrokeWidths,
       featureColorLut,
       featureColorTexture,
+      highlightedLabelId,
+      labelHighlightColor,
       maxZoom,
       opacity = 1,
       zoom,
@@ -274,8 +286,18 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     const lut = featureColorLut as LabelColorLut | undefined;
     const useFeatureColors = lut && featureColorTexture ? 1 : 0;
 
+    const highlighted = resolveHighlightedLabel(highlightedLabelId as number | null, lut);
+    const highlightRgba = (labelHighlightColor as readonly number[] | undefined) ?? [];
+    const highlightNormalized = getNormalizedColor(
+      highlightRgba.length >= 3 ? highlightRgba : DEFAULT_LABEL_HIGHLIGHT_COLOR
+    );
+    const highlightWeight =
+      (highlightRgba.length >= 4 ? highlightRgba[3] : DEFAULT_LABEL_HIGHLIGHT_COLOR[3]) / 255;
+
     const labelsBitmask = {
       color0: [...color, 1] as const,
+      highlightColor: [...highlightNormalized, highlightWeight] as const,
+      highlightedLabelId: highlighted,
       channelFilled0: (channelsFilled?.[0] ?? true) ? 1 : 0,
       channelOpacity0: channelOpacities?.[0] ?? 0.18,
       channelOutlineOpacity0: channelOutlineOpacities?.[0] ?? 0.95,

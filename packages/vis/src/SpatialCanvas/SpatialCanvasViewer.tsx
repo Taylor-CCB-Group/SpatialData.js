@@ -1,5 +1,5 @@
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
-import type { RenderStack } from '@spatialdata/layers';
+import { parseLabelId, type RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
@@ -533,8 +533,14 @@ function SpatialCanvasViewerInner({
       // changing the view, not inspecting features, so suppress tooltip work.
       if (isHoverDuringDrag(event)) {
         clearTooltip();
+        // Drop the highlight too: the pointer is steering the camera, so a label
+        // left lit under it would read as a selection the gesture did not make.
+        renderer.setHoveredLabel(null);
         return;
       }
+      // Cleared unless this hover lands on a label below — moving onto empty space,
+      // onto a different layer kind, or off the canvas all arrive here.
+      let nextHoveredLabel: { layerId: string; labelId: number } | null = null;
       if (info.picked && typeof info.x === 'number' && typeof info.y === 'number') {
         const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
         const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
@@ -543,6 +549,12 @@ function SpatialCanvasViewerInner({
           object: info.object,
         });
         if (featurePickEvent) {
+          if (featurePickEvent.elementKind === 'labels') {
+            const labelId = parseLabelId(featurePickEvent.featureId);
+            if (labelId !== undefined) {
+              nextHoveredLabel = { layerId: featurePickEvent.layerId, labelId };
+            }
+          }
           onFeatureHover?.({
             ...featurePickEvent,
             coordinateSystem,
@@ -562,6 +574,7 @@ function SpatialCanvasViewerInner({
           });
         }
       }
+      renderer.setHoveredLabel(nextHoveredLabel);
       resolveTooltip(info);
     },
     [

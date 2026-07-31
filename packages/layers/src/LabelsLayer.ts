@@ -12,10 +12,13 @@ import {
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
 import {
   buildLabelColorLut,
+  DEFAULT_LABEL_HIGHLIGHT_COLOR,
   LABEL_COLOR_LUT_WIDTH,
   type LabelColorLut,
   type LabelFeatureStateInput,
+  type LabelRgbaColor,
   type LabelRgbColor,
+  NO_HIGHLIGHTED_LABEL,
 } from './labelColorEncoding';
 
 /** One instance-ID raster per labels element (see `LabelsBitmaskTileLayer`). */
@@ -68,6 +71,23 @@ export interface LabelsLayerProps {
    * that {@link featureState} would otherwise do inside the layer.
    */
   featureColorLut?: LabelColorLut;
+  /**
+   * The label id under the cursor, or `-1` / omitted for none.
+   *
+   * Runtime render state, not config: it changes on every pointer move and must
+   * never be serialized into a saved view. It reaches the shader as a uniform, so
+   * hovering re-uploads nothing — the LUT and the tiles are both untouched.
+   */
+  highlightedLabelId?: number | null;
+  /**
+   * Hover tint; defaults to {@link DEFAULT_LABEL_HIGHLIGHT_COLOR} (shapes' yellow).
+   *
+   * NOT `highlightColor` — that name belongs to deck's own `Layer`, which defaults it
+   * to navy `[0, 0, 128, 128]` and feeds it to `autoHighlight`. A prop of that name
+   * here is never absent (deck's default fills it in), so the labels default could
+   * never apply and every hover drew in deck's navy instead.
+   */
+  labelHighlightColor?: LabelRgbaColor;
   onClick?: (info: unknown) => void;
   onHover?: (info: unknown) => void;
   _subLayerProps?: CompositeLayerProps['_subLayerProps'];
@@ -172,6 +192,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
       selections: selectionsProp,
       featureColorLut,
       featureColorTexture,
+      highlightedLabelId,
+      labelHighlightColor,
     } = this.props;
     const selections = [firstSelection(selectionsProp)];
     const channelColors = stylePlane(channelColorsProp, [255, 255, 255]);
@@ -210,6 +232,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
         selections,
         featureColorLut,
         featureColorTexture,
+        highlightedLabelId: highlightedLabelId ?? NO_HIGHLIGHTED_LABEL,
+        labelHighlightColor: labelHighlightColor ?? DEFAULT_LABEL_HIGHLIGHT_COLOR,
         bounds,
         id: `image-sub-layer-${bounds}-${id}`,
         interpolation: 'nearest',
@@ -424,6 +448,8 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       channelOutlineOpacities = [0.95],
       channelsFilled = [true],
       channelStrokeWidths = [1.5],
+      highlightedLabelId,
+      labelHighlightColor,
       onClick,
       onHover,
     } = this.props;
@@ -447,6 +473,8 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       opacity,
       featureColorLut,
       featureColorTexture: this.state?.featureColorTexture ?? null,
+      highlightedLabelId: highlightedLabelId ?? NO_HIGHLIGHTED_LABEL,
+      labelHighlightColor: labelHighlightColor ?? DEFAULT_LABEL_HIGHLIGHT_COLOR,
       channelsVisible: stylePlane(channelsVisible, true),
       channelColors: stylePlane(channelColors, [255, 255, 255]),
       channelOpacities: stylePlane(channelOpacities, 0.18),

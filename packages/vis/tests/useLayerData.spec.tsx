@@ -1,6 +1,6 @@
 import { Matrix4 } from '@math.gl/core';
 import type { PointsElement, ShapesElement, SpatialData } from '@spatialdata/core';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AvailableElement, ElementsByType, LayerConfig } from '../src/SpatialCanvas/types.js';
 import { useLayerData } from '../src/SpatialCanvas/useLayerData.js';
@@ -10,11 +10,11 @@ import { useLayerData } from '../src/SpatialCanvas/useLayerData.js';
  *
  * Until this file, nothing did. Two specs import from the module — one takes a
  * type, one takes two module-scope helpers — but the 1,873-line hook itself was
- * never invoked by any test in the repo. Its entire public surface, seventeen
+ * never invoked by any test in the repo. Its entire public surface, eighteen
  * members that reach MDV through a `...layerData` spread, was unguarded.
  *
  * That is untenable for the Resource Resolver work, which dissolves six of the
- * hook's seven kind-switch ladders and re-points all seventeen members at a
+ * hook's seven kind-switch ladders and re-points all eighteen members at a
  * resolver snapshot. This file is the net. It is written against the CURRENT
  * hook — it must be green before the refactor and stay green through it.
  *
@@ -24,7 +24,7 @@ import { useLayerData } from '../src/SpatialCanvas/useLayerData.js';
  * whether the shim is honest.
  */
 
-/** The seventeen members MDV consumes. This list IS the compat contract. */
+/** The eighteen members MDV consumes. This list IS the compat contract. */
 const PUBLIC_SURFACE = [
   'getLayers',
   'getVivLayerProps',
@@ -38,6 +38,7 @@ const PUBLIC_SURFACE = [
   'getFeatureTooltip',
   'getFeaturePickEvent',
   'getShapePickEvent',
+  'setHoveredLabel',
   'isLoading',
   'isBlocking',
   'reloadElement',
@@ -102,11 +103,11 @@ const shapesConfig = (id: string, elementKey: string): LayerConfig => ({
 const render = (layers: Record<string, LayerConfig>, elements: ElementsByType) =>
   renderHook(() => useLayerData(layers, Object.keys(layers), elements, null));
 
-describe('useLayerData — the 17-member public surface', () => {
+describe('useLayerData — the 18-member public surface', () => {
   // ADR 0004 promises MDV that this surface survives the refactor behind a compat
   // shim. MDV gets it via `...layerData` in SpatialCanvasViewer, so a member that
   // silently vanishes is a downstream break with no local failure.
-  it('exposes exactly the seventeen members, and no more', () => {
+  it('exposes exactly the eighteen members, and no more', () => {
     const { result } = render({}, EMPTY_ELEMENTS);
 
     expect(Object.keys(result.current).sort()).toEqual([...PUBLIC_SURFACE].sort());
@@ -540,5 +541,82 @@ describe('useLayerData — selection show/hide + colour', () => {
       expect(basePreloadedCodes()).toBeDefined();
     });
     expect(basePreloadedCodes()?.length).toBe(3);
+  });
+});
+
+describe('useLayerData — the hover highlight channel', () => {
+  // Hover is runtime render state, and deck fires it on every pointer move. The
+  // channel is a ref plus a version counter precisely so that motion WITHIN one
+  // label is free; only crossing into a different label may re-render.
+  const renderCounting = () => {
+    let renders = 0;
+    const hook = renderHook(() => {
+      renders += 1;
+      return useLayerData({}, [], EMPTY_ELEMENTS, null);
+    });
+    return { hook, getRenders: () => renders };
+  };
+
+  it('does not re-render when the hovered label is unchanged', async () => {
+    const { hook, getRenders } = renderCounting();
+
+    await act(async () => {
+      hook.result.current.setHoveredLabel({ layerId: 'labels-1', labelId: 4 });
+    });
+    const afterFirst = getRenders();
+
+    // The same label again — the pointer moved, the highlight did not.
+    await act(async () => {
+      hook.result.current.setHoveredLabel({ layerId: 'labels-1', labelId: 4 });
+    });
+
+    expect(getRenders()).toBe(afterFirst);
+  });
+
+  it('re-renders when the hovered label changes, and when it clears', async () => {
+    const { hook, getRenders } = renderCounting();
+
+    await act(async () => {
+      hook.result.current.setHoveredLabel({ layerId: 'labels-1', labelId: 4 });
+    });
+    const afterFirst = getRenders();
+
+    await act(async () => {
+      hook.result.current.setHoveredLabel({ layerId: 'labels-1', labelId: 5 });
+    });
+    expect(getRenders()).toBeGreaterThan(afterFirst);
+    const afterSecond = getRenders();
+
+    await act(async () => {
+      hook.result.current.setHoveredLabel(null);
+    });
+    expect(getRenders()).toBeGreaterThan(afterSecond);
+  });
+
+  it('treats the same label id on a different layer as a change', async () => {
+    const { hook, getRenders } = renderCounting();
+
+    await act(async () => {
+      hook.result.current.setHoveredLabel({ layerId: 'labels-1', labelId: 4 });
+    });
+    const afterFirst = getRenders();
+
+    // Two labels elements can share an id space; only the hovered LAYER highlights.
+    await act(async () => {
+      hook.result.current.setHoveredLabel({ layerId: 'labels-2', labelId: 4 });
+    });
+
+    expect(getRenders()).toBeGreaterThan(afterFirst);
+  });
+
+  it('clearing when nothing is hovered is free', async () => {
+    const { hook, getRenders } = renderCounting();
+    const baseline = getRenders();
+
+    await act(async () => {
+      hook.result.current.setHoveredLabel(null);
+    });
+
+    expect(getRenders()).toBe(baseline);
   });
 });

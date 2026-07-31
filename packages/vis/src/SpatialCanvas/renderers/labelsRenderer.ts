@@ -29,6 +29,14 @@ export interface LabelsLayerRenderConfig {
    * feature state" — the layer draws every label in the channel colour.
    */
   featureColorLut?: LabelColorLut;
+  /**
+   * The label id under the cursor, or `-1` / omitted for none.
+   *
+   * Runtime render state rather than layer config — it changes on every pointer
+   * move and must never reach a saved Render Stack. It becomes a shader uniform,
+   * so hovering re-uploads neither the LUT nor the tiles.
+   */
+  highlightedLabelId?: number;
 }
 
 export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null {
@@ -46,6 +54,7 @@ export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null
     channelStrokeWidths,
     selections,
     featureColorLut,
+    highlightedLabelId,
   } = config;
 
   if (!visible || !loader) {
@@ -66,5 +75,6 @@ export function renderLabelsLayer(config: LabelsLayerRenderConfig): Layer | null
     channelStrokeWidths,
     selections,
     ...(featureColorLut ? { featureColorLut } : {}),
+    ...(highlightedLabelId !== undefined ? { highlightedLabelId } : {}),
   });
 }
