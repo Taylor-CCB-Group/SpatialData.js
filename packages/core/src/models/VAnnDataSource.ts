@@ -1,7 +1,9 @@
+import * as zarr from 'zarrita';
 import { get as zarrGet, open as zarrOpen } from 'zarrita';
 import type { TableColumnData } from '../types';
 import type { DataSourceParams } from '../Vutils';
 import { dirname } from '../Vutils';
+import { isNullableEncoding, readNullableArray } from './nullableArrays';
 import ZarrDataSource from './VZarrDataSource';
 
 function prependSlash(path: string) {
@@ -93,20 +95,20 @@ export default class AnnDataSource extends ZarrDataSource {
     let categoriesValues: string[] | undefined;
     let codesPath: string | undefined;
     if (categories) {
-      const { dtype } = await zarrOpen(storeRoot.resolve(`${prefix}/${categories}`), {
-        kind: 'array',
-      });
-      if (dtype === 'v2:object') {
-        categoriesValues = await this.getFlatArrDecompressed(`${prefix}/${categories}`);
+      const categoriesPath = `${prefix}/${categories}`;
+      if (await this.hasTextValues(categoriesPath)) {
+        categoriesValues = await this.getFlatArrDecompressed(categoriesPath);
       }
     } else if (encodingType === 'categorical') {
-      const { dtype } = await zarrOpen(storeRoot.resolve(`${path}/categories`), { kind: 'array' });
-      if (dtype === 'v2:object') {
-        categoriesValues = await this.getFlatArrDecompressed(`${path}/categories`);
+      const categoriesPath = `${path}/categories`;
+      if (await this.hasTextValues(categoriesPath)) {
+        categoriesValues = await this.getFlatArrDecompressed(categoriesPath);
       }
       codesPath = `${path}/codes`;
     } else if (encodingType === 'string-array') {
       return this.getFlatArrDecompressed(path);
+    } else if (isNullableEncoding(encodingType)) {
+      return readNullableArray(storeRoot.resolve(path));
     } else {
       const { dtype } = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
       if (dtype === 'v2:object') {
@@ -119,7 +121,24 @@ export default class AnnDataSource extends ZarrDataSource {
     if (!categoriesValues) {
       return data as TableColumnData;
     }
-    return Array.from(data, (i) => categoriesValues[i as number]);
+    // Pandas encodes a missing categorical as code -1, which indexes nothing.
+    return Array.from(data, (code) => {
+      const index = Number(code);
+      return index < 0 ? null : categoriesValues[index];
+    });
+  }
+
+  /**
+   * Whether the array at *path* holds text, and so needs decoding to strings.
+   *
+   * Covers zarr v3 `string` arrays as well as v2's `object` and fixed-width
+   * unicode. Testing for `v2:object` alone silently leaves categorical columns
+   * resolving to their raw integer codes, which look like plausible data rather
+   * than an error.
+   */
+  private async hasTextValues(path: string): Promise<boolean> {
+    const arr = await zarrOpen(this.storeRoot.resolve(path), { kind: 'array' });
+    return arr.is('string') || arr.is('object');
   }
 
   /**
@@ -168,9 +187,21 @@ export default class AnnDataSource extends ZarrDataSource {
    */
   async getFlatArrDecompressed(path: string) {
     const { storeRoot } = this;
-    const arr = await zarrOpen(storeRoot.resolve(path), { kind: 'array' });
+    const location = storeRoot.resolve(path);
+    // A nullable column is a group, so opening it as an array throws. Resolve the
+    // node first rather than assuming, since index paths reach here directly.
+    const node = await zarrOpen(location);
+    if (node instanceof zarr.Group) {
+      if (!isNullableEncoding(node.attrs['encoding-type'])) {
+        throw new Error(
+          `Expected an array at ${path}, but found a group encoded as ` +
+            `${String(node.attrs['encoding-type'] ?? 'unknown')}.`
+        );
+      }
+      return (await readNullableArray(location)) as string[];
+    }
     // Zarrita supports decoding vlen-utf8-encoded string arrays.
-    const data = await zarrGet(arr);
+    const data = await zarrGet(node);
     if (data.data?.[Symbol.iterator]) {
       return Array.from(data.data) as string[];
     }

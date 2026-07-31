@@ -173,6 +173,30 @@ describe('obs column kinds from consolidated metadata', () => {
     ).toEqual(['numeric', 'numeric', 'boolean', 'string', 'categorical']);
   });
 
+  it('classifies nullable columns from the encoding alone', () => {
+    // A nullable column is a GROUP of `values` + `mask`, so the node carries no
+    // array metadata of its own — the encoding name is the only thing on it that
+    // says what the column holds. AnnData 0.13 writes string columns this way by
+    // default on zarr v3, so this is the common shape, not an exotic one.
+    const nullableNode = (encodingType: string, valuesDataType: string) => ({
+      [ATTRS_KEY]: { 'encoding-type': encodingType, 'encoding-version': '0.1.0' },
+      values: arrayNode({ data_type: valuesDataType }),
+      mask: arrayNode({ data_type: 'bool' }),
+    });
+
+    const table = tableWithObs({
+      barcode: nullableNode('nullable-string-array', 'string'),
+      qc_count: nullableNode('nullable-integer', 'int64'),
+      passes_qc: nullableNode('nullable-boolean', 'bool'),
+    });
+
+    expect(table.getObsColumnKinds(['barcode', 'qc_count', 'passes_qc'])).toEqual([
+      'string',
+      'numeric',
+      'boolean',
+    ]);
+  });
+
   it('returns undefined for absent or unrecognised columns', () => {
     const table = tableWithObs({
       mystery: { [ATTRS_KEY]: { 'encoding-type': 'something-new' } },
