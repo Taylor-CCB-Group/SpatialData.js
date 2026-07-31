@@ -122,9 +122,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: test-fixtures
-          key: ${{ runner.os }}-test-fixtures-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.5.0/**', 'python/v0.6.1/**', 'python/v0.7.2/**') }}
+          key: ${{ runner.os }}-test-fixtures-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.5.0/**', 'python/v0.6.1/**', 'python/v0.7.2/**', 'python/v0.8.0/**') }}
 
-      - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.2)
+      - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, 0.7.2 and 0.8.0)
         if: steps.cache-fixtures.outputs.cache-hit != 'true'
         run: pnpm test:fixtures:generate
 
@@ -204,14 +204,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: test-fixtures-production-browser
-          key: ${{ runner.os }}-production-browser-fixtures-0.7.2-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.7.2/**') }}
+          key: ${{ runner.os }}-production-browser-fixtures-0.8.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.8.0/**') }}
 
-      - name: Generate test fixtures (Python spatialdata 0.7.2)
+      - name: Generate test fixtures (Python spatialdata 0.8.0)
         if: steps.cache-production-browser-fixtures.outputs.cache-hit != 'true'
         # No `--` before the flags: pnpm forwards the separator through to the
         # script verbatim, and argparse treats everything after a bare `--` as
         # positional, so `-- --output-dir X` fails with "unrecognized arguments".
-        run: pnpm test:fixtures:generate:0.7.2 --output-dir test-fixtures-production-browser
+        run: pnpm test:fixtures:generate:0.8.0 --output-dir test-fixtures-production-browser
 
       - name: Expose production browser fixtures
         run: ln -s test-fixtures-production-browser test-fixtures

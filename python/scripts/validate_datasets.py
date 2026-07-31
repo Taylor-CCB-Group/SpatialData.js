@@ -17,6 +17,11 @@ from typing import Optional
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
 
+# The spatialdata releases to validate against, oldest first. Each needs a
+# matching python/v<version>/ environment; keep in step with VERSIONS in
+# generate_fixtures.py.
+VERSIONS = ["0.5.0", "0.6.1", "0.7.2", "0.8.0"]
+
 
 @dataclass
 class ValidationResult:
@@ -216,24 +221,24 @@ def generate_markdown_table(results: list[ValidationResult]) -> str:
     lines.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     lines.append("## Summary")
     lines.append("")
-    lines.append("| Dataset | v0.5.0 | v0.6.1 | v0.7.2 | URL |")
-    lines.append("|---------|--------|--------|--------|-----|")
+    lines.append("| Dataset | " + " | ".join(f"v{v}" for v in VERSIONS) + " | URL |")
+    lines.append("|---------|" + "|".join("--------" for _ in VERSIONS) + "|-----|")
 
     for dataset_name in sorted(datasets.keys()):
         versions = datasets[dataset_name]
-        v050 = versions.get("0.5.0")
-        v061 = versions.get("0.6.1")
-        v072 = versions.get("0.7.2")
+        per_version = [versions.get(v) for v in VERSIONS]
 
-        v050_status = "✅" if v050 and v050.success else "❌" if v050 else "⏭️"
-        v061_status = "✅" if v061 and v061.success else "❌" if v061 else "⏭️"
-        v072_status = "✅" if v072 and v072.success else "❌" if v072 else "⏭️"
+        statuses = [
+            "✅" if r and r.success else "❌" if r else "⏭️"
+            for r in per_version
+        ]
 
         # Get URL from first available result
-        url = (v050 or v061 or v072).dataset_url if (v050 or v061 or v072) else ""
+        first = next((r for r in per_version if r), None)
+        url = first.dataset_url if first else ""
         url_short = url.split("spatialdata-sandbox/")[-1] if "spatialdata-sandbox/" in url else url
 
-        lines.append(f"| {dataset_name} | {v050_status} | {v061_status} | {v072_status} | `{url_short}` |")
+        lines.append(f"| {dataset_name} | " + " | ".join(statuses) + f" | `{url_short}` |")
 
     lines.append("")
     lines.append("Legend: ✅ Success | ❌ Failed | ⏭️ Not tested")
@@ -248,7 +253,7 @@ def generate_markdown_table(results: list[ValidationResult]) -> str:
         lines.append(f"### {dataset_name}")
         lines.append("")
 
-        for version in ["0.5.0", "0.6.1", "0.7.2"]:
+        for version in VERSIONS:
             result = versions.get(version)
             if not result:
                 continue
@@ -341,7 +346,7 @@ def main():
     parser.add_argument(
         "--version",
         type=str,
-        choices=["0.5.0", "0.6.1", "0.7.2"],
+        choices=VERSIONS,
         default=None,
         help="SpatialData version to test (default: all)",
     )
@@ -398,7 +403,7 @@ def main():
             sys.exit(1)
 
     # Determine versions to test
-    versions = [args.version] if args.version else ["0.5.0", "0.6.1", "0.7.2"]
+    versions = [args.version] if args.version else VERSIONS
 
     # Ensure environments are set up
     for version in versions:

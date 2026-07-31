@@ -9,7 +9,7 @@ Core library for interfacing with SpatialData stores in TypeScript/JavaScript.
 If you are working inside this monorepo, note that `test-fixtures/` is gitignored. Generate the sample fixture first, then build so the package entrypoint exists:
 
 ```bash
-pnpm test:fixtures:generate:0.7.2
+pnpm test:fixtures:generate:0.8.0
 pnpm build
 node
 ```
@@ -26,7 +26,7 @@ const { FileSystemStore } = await import('@zarrita/storage');
 Pass an explicit zarrita store instance. Plain filesystem path strings are not supported by `readZarr`.
 
 ```js
-const store = new FileSystemStore('./test-fixtures/v0.7.2/blobs.zarr');
+const store = new FileSystemStore('./test-fixtures/v0.8.0/blobs.zarr');
 const sdata = await readZarr(store);
 
 sdata.toString();
@@ -40,7 +40,7 @@ Pass the store URL directly:
 
 ```js
 const { readZarr } = await import('./packages/core/dist/index.js');
-const sdata = await readZarr('http://localhost:38473/v0.7.2/blobs.zarr');
+const sdata = await readZarr('http://localhost:38473/v0.8.0/blobs.zarr');
 
 sdata.url;
 Object.keys(sdata.images ?? {});
@@ -49,7 +49,7 @@ Object.keys(sdata.images ?? {});
 If you want to try that example against this repo's generated fixtures:
 
 ```bash
-pnpm test:fixtures:generate:0.7.2
+pnpm test:fixtures:generate:0.8.0
 pnpm test:server
 ```
 

@@ -21,7 +21,7 @@ the worker pool.
 ## Local fixture demos
 
 ```bash
-pnpm test:fixtures:generate:0.7.2
+pnpm test:fixtures:generate:0.8.0
 pnpm test:fixtures:generate:codecs
 pnpm --filter @spatialdata/vis dev
 ```
