@@ -76,13 +76,23 @@ def _collect_consolidated_metadata(store_path: Path, *, zarr_format: int = 3) ->
         rel = meta_path.parent.relative_to(store_path).as_posix()
         metadata[rel] = read_json(meta_path)
 
+    _fill_implicit_parents(metadata, zarr_format)
+    return metadata
+
+
+def _fill_implicit_parents(metadata: dict[str, Any], zarr_format: int) -> None:
+    """Add a group entry for every ancestor path that has none, in place.
+
+    Listing `points/transcripts` without `points` leaves an orphan that zarr
+    cannot attach to the hierarchy, and it rejects the *whole* store rather than
+    the one element — so every writer of this map has to close the gap.
+    """
     for rel in list(metadata):
         parts = rel.split("/")
         for depth in range(1, len(parts)):
             parent = "/".join(parts[:depth])
             if parent not in metadata:
                 metadata[parent] = _implicit_group(zarr_format)
-    return metadata
 
 
 def consolidated_metadata_orphans(metadata: dict[str, Any]) -> list[str]:
@@ -270,6 +280,19 @@ def register_points_elements_in_consolidated_metadata(
     )
     for key in element_keys:
         metadata[f"points/{key}"] = deepcopy(template_entry)
+
+    # Adding `points/<key>` to a listing with no `points` entry orphans it, and
+    # zarr then refuses the whole store — the same failure `refresh_consolidated_
+    # metadata` guards against, reachable here because this writes the map
+    # directly. A source store missing the parent is exactly the case this module
+    # exists to handle, so it cannot be assumed away.
+    _fill_implicit_parents(metadata, int(doc.get("zarr_format", 3)))
+    orphans = consolidated_metadata_orphans(metadata)
+    if orphans:
+        raise ValueError(
+            f"Refusing to write consolidated metadata with orphaned entries for {store_path}: "
+            f"{', '.join(orphans)}"
+        )
     write_json(root_json, doc)
 
 

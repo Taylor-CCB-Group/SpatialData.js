@@ -263,6 +263,40 @@ class TestConsolidatedMetadataSurvivesConversion:
         assert meta["points"]["node_type"] == "group"
         assert sd.read_zarr(store) is not None
 
+    def test_registering_siblings_fills_in_a_missing_points_parent(self, tmp_path: Path) -> None:
+        """The same orphan, reached by the other writer of the listing.
+
+        `register_points_elements_in_consolidated_metadata` edits the map
+        directly rather than rebuilding it from disk, so it does not go through
+        `refresh_consolidated_metadata`'s guard — and a source store whose
+        listing omits `points` is the case this module exists for.
+        """
+        import shutil
+
+        from spatialdata_js_util.store import (
+            consolidated_metadata_orphans,
+            register_points_elements_in_consolidated_metadata,
+        )
+
+        store = self._store_with_points(tmp_path / "src.zarr")
+        shutil.copytree(
+            store / "points" / "transcripts", store / "points" / "transcripts_morton"
+        )
+
+        root_json = store / "zarr.json"
+        doc = json.loads(root_json.read_text())
+        doc["consolidated_metadata"]["metadata"].pop("points", None)
+        root_json.write_text(json.dumps(doc, indent=2))
+
+        register_points_elements_in_consolidated_metadata(
+            store, ["transcripts_morton"], template_key="transcripts"
+        )
+
+        meta = json.loads(root_json.read_text())["consolidated_metadata"]["metadata"]
+        assert consolidated_metadata_orphans(meta) == []
+        assert meta["points"]["node_type"] == "group"
+        assert sorted(sd.read_zarr(store).points) == ["transcripts", "transcripts_morton"]
+
     def test_refresh_refuses_to_write_orphaned_entries(self, monkeypatch, tmp_path: Path) -> None:
         """The guard itself — an orphan that reconstruction cannot fill in.
 
