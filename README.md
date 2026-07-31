@@ -137,18 +137,19 @@ Each environment:
 
 #### Editor Setup
 
-The project includes editor configuration files (`.vscode/settings.json` and `.cursor/settings.json`) that configure the Python interpreter to use one of the version-specific environments (defaults to v0.8.0).
+The project includes editor configuration files (`.vscode/settings.json` and `.cursor/settings.json`) that point the Python interpreter at `python/spatialdata-js-util/.venv`. That is the package with source, tests and a CLI to edit, so it is what imports should resolve against; the `python/v*/` environments exist only to run one release's `generate_fixtures.py` and are not a useful default.
 
 **VS Code / Cursor:**
 - The Python interpreter is automatically configured when you open the workspace
-- To switch versions: `Cmd/Ctrl+Shift+P` → "Python: Select Interpreter" → Choose:
+- To work on fixture generation instead: `Cmd/Ctrl+Shift+P` → "Python: Select Interpreter" → Choose:
   - `./python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `./python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
   - `./python/v0.7.2/.venv/bin/python3` for spatialdata 0.7.2
   - `./python/v0.8.0/.venv/bin/python3` for spatialdata 0.8.0
 
 **Other editors:**
-- Choose the appropriate virtual environment:
+- Default to `python/spatialdata-js-util/.venv/bin/python3`
+- Or choose a fixture environment:
   - `python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
   - `python/v0.7.2/.venv/bin/python3` for spatialdata 0.7.2
@@ -196,6 +197,8 @@ pnpm test:fixtures:generate:0.8.0
 - This ensures fixtures are generated with the exact spatialdata version being tested
 
 **Note:** Integration tests will automatically generate fixtures if they're missing, but you can pre-generate them for faster test runs.
+
+**What the matrix does and does not prove:** each environment pins spatialdata and lets everything else float, so a fixture is spatialdata-X against whatever anndata / zarr / pyarrow its lock resolved on the day — one sample from a much larger writer space, not a characterisation of the release. Permuting that space (spatialdata × anndata × zarr × …) is not the answer: it costs ~70s of generation per cell for a combinatorial number of cells, still is not exhaustive, and aims at the wrong target, since what matters is which *encodings* land on disk rather than which writer combination produced them. Use the matrix to discover that an encoding exists, then pin the encoding in a writer-independent unit test — `packages/core/tests/nullableStringArray.spec.ts` is the worked example. See the comment on `FIXTURE_VERSIONS` in [tests/integration/fixtureVersions.ts](./tests/integration/fixtureVersions.ts) for the longer version.
 
 ### Test Servers
 
