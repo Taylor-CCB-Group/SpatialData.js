@@ -70,8 +70,8 @@ export type ZarrV2ArrayNode = {
  *
  * Only `shape` and `data_type` are required here: the rest are optional in the
  * specification or omitted by real writers, and this type describes metadata as
- * it arrives from a store rather than metadata that has been through
- * {@link validateV3Zarray}.
+ * it arrives from a store — parsed, but not validated or normalised. Nothing
+ * validates it on the way in, by design: see {@link ZarrArrayMetadata}.
  */
 export type ZarrV3ArrayNode = {
   shape: number[];
