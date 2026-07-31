@@ -104,3 +104,35 @@ The short version: in Node, call `registerJpeg2kCodec()` / `registerExperimental
 on the main thread. In a browser using `@spatialdata/vis`, do nothing — the renderer
 path enables the bundled codec worker for you. In a browser without vis, call
 `enableWorkerChunkDecode()` from `zarrextra/workers` before loading codec-backed data.
+
+## Weight
+
+`zarrita` is deliberately minimal. `zarrextra` is not, and it is worth being explicit
+about where that lands before depending on it.
+
+Measured from the current build:
+
+| Entry | Raw | Gzipped |
+|---|---|---|
+| `zarrextra` | 15.4 kB | 5.2 kB |
+| `zarrextra/codec-worker` | 3.2 MB | 899 kB |
+
+The main entry is small, and the WASM codec packages are `optionalDependencies` whose
+decoders are injected by the caller — so importing `zarrextra` does not drag
+OpenJPEG or OpenJPH in. What is heavy is the codec worker, and it is one bundle
+carrying every codec: enabling worker decode for JP2K also ships OpenJPH, and vice
+versa. An application reading uncompressed or blosc-compressed stores — which is most
+of them — gets no benefit from either.
+
+The install footprint is also larger than the import graph suggests. `zod` is a hard
+dependency used by a single internal schema module, so every consumer installs it
+whether or not anything reaches it.
+
+:::caution subject to redesign
+
+None of this is settled. Splitting the worker so applications can opt into lighter
+bundles when they do not need JP2K or HTJ2K is the obvious first move, and is already
+noted as future work in the package README. Treat the packaging — not the APIs on
+this page — as the part most likely to change.
+
+:::
