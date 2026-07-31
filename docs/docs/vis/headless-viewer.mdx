@@ -201,6 +201,11 @@ Runtime attachments live beside the stack:
 
 - `hostLayerResolver(entry)` turns a host descriptor into one or more deck.gl
   layers for this running application.
+- `featureColorResolver(ctx)` returns precomputed per-feature RGBA for a shapes
+  or labels layer — colour driven by data a saved config cannot carry. It lives
+  here rather than in `entry.props` for exactly the reason above: a `Uint8Array`
+  in the serializable contract would be a lie about what a saved config is. See
+  [Precomputed colour buffers](#precomputed-colour-buffers).
 - `onFeatureHover` / `onFeatureClick` receive a typed SpatialData feature event
   for shapes and labels. The payload includes the stable stack `layerId`,
   `elementKind` for TypeScript narrowing, resolved `spatialElement` (use
@@ -231,7 +236,7 @@ custom deck.gl layers. This planned API does not add custom SpatialData-aware
 host layer events or invent feature semantics for images and points beyond what
 deck's `pickInfo` already provides.
 
-## Shapes: table-driven colour and filter state
+## Shapes and labels: table-driven colour and filter state
 
 MDV should drive styling by updating the target stack entry props — not by
 reaching into vis internals:
@@ -252,6 +257,107 @@ entry.props = {
 Row alignment comes from `@spatialdata/core` (`createFeatureTableAlignment`);
 colour encoding from `@spatialdata/layers` (`buildShapeFillColorByFeatureId`).
 `SpatialCanvasViewer` wires these when `fillColorByColumn` is set.
+
+### Labels take the same API
+
+A `labels` entry accepts the same `fillColorByColumn` and the same
+`featureState` fields, with the same meanings, resolved against the same
+associated table. The one omission is `strokeColorByFeatureId`: a label's
+outline is derived from its fill in the bitmask shader, so there is no per-label
+stroke to override.
+
+The only thing to know is what a labels feature id *is*: the label's integer
+instance id **as a string** — the raster's own pixel value, and the same id the
+tooltip already resolves against the table.
+
+```ts
+labelsEntry.props = {
+  ...labelsEntry.props,
+  fillColorByColumn: { columnName: 'cell_type', mode: 'auto' },
+  featureState: { hiddenFeatureIds: ['3', '17'], filteredOpacityMultiplier: 0.2 },
+};
+```
+
+Shapes resolve per-feature colour from a texture indexed by feature index; a
+label has no geometry, so the analogue is a lookup table indexed by label id
+that the fragment shader samples. The property that matters is the same on both:
+a feature-state change re-uploads only the small table, never the tiles. Picking
+consults that table too, so a hidden label cannot be picked.
+
+### Choosing the colour scheme
+
+`fillColorByColumn` carries the scheme, not just the column name. Every field is
+JSON, so it survives a saved Render Stack:
+
+```ts
+fillColorByColumn: {
+  columnName: 'leiden',
+  // 'auto' trusts the column's declared dtype; see below.
+  mode: 'auto',
+  // 'oklab' (default) or your own RGB list, which cycles.
+  categoricalPalette: [[220, 30, 30], [30, 120, 220]],
+  // Continuous endpoints, [low, high] as RGB 0-255.
+  numericRamp: [[0, 64, 255], [255, 220, 0]],
+  missingValues: {
+    // Sentinel STRINGS this pipeline writes. Empty by default — one dataset's
+    // placeholder is another's real category.
+    treatAsMissing: ['NA', 'unknown'],
+    // 'default' (keep the layer colour), 'hide', or an explicit RGBA.
+    render: 'hide',
+  },
+},
+```
+
+:::info Behaviour change: the categorical default
+The default categorical palette is now `'oklab'` — the unbounded golden-angle
+scheme already used for points colour-by-feature, whose colour is a pure
+function of the category index. The previous default was a six-colour list that
+*cycled*, so a column with more than six categories drew two categories the same
+colour — a failure that is invisible in the render. Pass `categoricalPalette` to
+pin specific colours.
+:::
+
+`mode: 'auto'` uses the column's declared kind rather than guessing from decoded
+values, which is what makes integer cluster codes read as categories instead of
+a continuum. `null` and `NaN` are always missing and are not configurable;
+`treatAsMissing` only adds the store-specific sentinel strings. Sentinels
+resolve before the mode decision, the numeric extent and the category set, so
+one can never become a category or drag a ramp.
+
+### Precomputed colour buffers
+
+When colour comes from data a config cannot carry — a computed column, an
+external annotation, a live selection — supply the bytes directly instead of a
+`featureId → colour` dictionary. `featureColorResolver` is a runtime prop on
+`SpatialCanvasViewer`, not part of the Render Stack:
+
+```tsx
+<SpatialCanvasViewer
+  featureColorResolver={({ kind, elementKey, featureIds }) => {
+    if (elementKey !== 'cell_shapes') return undefined; // fall back to the config
+    // shapes: index by position in `featureIds`, which the loader decides.
+    // labels: index by the label's own pixel value; `featureIds` is absent.
+    return { colors: myRgbaBytes, count: myFeatureCount };
+  }}
+/>
+```
+
+Two contracts worth reading twice:
+
+- **What the index means differs by kind.** For labels it is the raster's own
+  pixel value, so a host can author the buffer from the table alone. For shapes
+  it is the feature's position in the loaded geometry — the loader's decision,
+  not the data's — so build against the `featureIds` ordering you are handed,
+  never one you assume.
+- **Return a stable identity when nothing changed.** This is consulted on every
+  render (a hover re-renders for the tooltip), so a fresh buffer each time means
+  a GPU upload each time. The viewer collapses on the `colors` identity to make
+  the easy mistake cheap, but returning the same object is the contract.
+
+Alpha is a modulation, not an opacity: `0` hides the feature, anything else
+scales what the layer would otherwise draw. Bake hide/fade into the buffer — it
+wins over `featureState` rather than merging with it, since merging would
+reinstate the per-feature lookup this exists to remove.
 
 ## Points: feature selection and colour
 
@@ -413,6 +519,8 @@ Before treating the API as stable for MDV:
 - [x] Host overlay descriptors with `hostLayerResolver`; `deckLayers` / `deckProps` passthrough remains for compatibility
 - [x] `renderTooltip={false}` for external tooltip ownership
 - [x] Points feature selection persisted by NAME (`featureNames`), with `featureColorOverrides` keyed by name
+- [x] Labels per-feature filtering and colouring through the same `fillColorByColumn` / `featureState` API as shapes
+- [x] Host-supplied precomputed colour via `featureColorResolver` (runtime, not serialized)
 - [x] `demo/headless` route with local `blobs.zarr` fixture
 - [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)
 - [ ] Tooltip/pick row resolution fully on shared `FeatureTableAlignment` (in progress)

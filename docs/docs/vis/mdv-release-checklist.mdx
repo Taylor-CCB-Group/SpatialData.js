@@ -32,9 +32,11 @@ MDV is the **source of truth** for viewer state. `SpatialCanvasViewer` is a **co
 MDV passes and updates (from chart / datastore / MobX):
 
 - `spatialData`, `coordinateSystem`
-- `renderStack.entries` — canonical order plus visibility, opacity, per-layer style, and (for shapes v1) filter/colour driven by table rows
+- `renderStack.entries` — canonical order plus visibility, opacity, per-layer style, and (for shapes and labels) filter/colour driven by table rows
 - `viewState` + `onViewStateChange`
 - `hostLayerResolver` for overlays MDV builds directly, plus optional `deckProps`
+- `featureColorResolver` when MDV wants to hand over precomputed per-feature
+  RGBA instead of a per-id record (runtime, not serialized)
 
 When MDV selection or colour mappings change, MDV updates the relevant stack
 entry props and React re-renders the viewer. This repo loads SpatialData
@@ -62,7 +64,7 @@ geometry/images and maps **MDV’s render stack** to Viv/deck output.
 |------------|----|
 | Images | Yes (Viv) |
 | Shapes | Yes — MDV drives style/filter via `layers` state |
-| Labels | Render when configured; segmentation vs shapes experiment is not a release gate |
+| Labels | Yes — same `featureState` / `fillColorByColumn` API as shapes; segmentation vs shapes experiment is not a release gate |
 | Points | v1.1 — feature selection and colour are config-driven and serializable; tiling/index strategy still in progress |
 
 ### Custom deck layers (additive, not a replacement for state)
@@ -94,6 +96,29 @@ Current local state:
   contract as stable.
 
 Optional later: MDV-only `PolygonLayer` built from exported geometry helpers; not required if config-driven styling is sufficient.
+
+### Labels: filter and colour via the same `layers` state
+
+Labels take the same API, so MDV drives them the same way — no separate code path:
+
+- [x] `LabelsLayerConfig` accepts `featureState` and `fillColorByColumn`, with the
+      same field names and meanings as shapes. The one omission is
+      `strokeColorByFeatureId`: a label's outline is derived from its fill in the
+      bitmask shader.
+- [x] `spatialLabelsSublayerSchema` carries `featureState`, so the older
+      `SpatialLayerProps` surface can express per-label filtering too.
+- [x] Colour resolves through a label-id-indexed LUT the shader samples, so a
+      selection change re-uploads a small table rather than the tiles; picking
+      consults the same table, so a hidden label cannot be picked.
+
+The one thing MDV must get right is the id: a labels feature id is the label's
+**integer instance id as a string** — the raster's own pixel value, and the same
+id the tooltip resolves against the associated table.
+
+For colour MDV computes itself (a derived column, a live selection), prefer the
+runtime `featureColorResolver` on `SpatialCanvasViewer` over a
+`featureId → colour` record; it takes the RGBA bytes directly. It is deliberately
+**not** part of the saved Render Stack.
 
 ### Points v1.1: feature selection and colour via `layers` state
 

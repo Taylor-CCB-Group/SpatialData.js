@@ -238,6 +238,8 @@ frame.
 functions and objects must stay outside that bag:
 
 - host overlay factories belong in `hostLayerResolver`
+- precomputed per-feature colour bytes belong in `featureColorResolver` — a
+  `Uint8Array` in `entry.props` would be a lie about what a saved config is
 - feature listeners belong in `onFeatureHover` / `onFeatureClick`
 - raw deck listeners belong in `onHover` / `onClick` or `deckProps`
 - tooltip portals belong in `tooltipContainer`
@@ -304,6 +306,35 @@ Deferred: emitting texture-ready (padded) buffers from the worker to shrink the
 main-thread GPU-upload cost; a WGSL variant (WebGPU can use storage buffers instead of
 texture-packing); a true polygon SDF path. See
 [`docs/plans/shapes-nonblocking-tiled-loading.md`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/plans/shapes-nonblocking-tiled-loading.md).
+
+### Labels render path: a label-id-indexed LUT
+
+Labels reuse the primitive above, with the one substitution their data forces. A
+shape's colour texture is indexed by **feature index**; a label has no geometry —
+it *is* a raster pixel value — so its table is indexed by the **label's own
+integer instance id**, and the bitmask fragment shader samples the instance-id
+raster and looks the integer up.
+
+What carries over is the property that matters: a feature-state change re-uploads
+only the small table, **never the tiles**.
+
+- **The LUT texture is owned by `LabelsLayer`** and shared across tile sublayers.
+  Per-tile textures would multiply a table that is already megabytes for a large
+  segmentation.
+- **Picking consults the same table**, so a hidden label can never be picked.
+- **Label `0` is background** and never drawn, but is still filled in the table,
+  so the shader reads it without a bounds branch per fragment.
+- `LabelsResolver.fillColors` is keyed by element **and column** — keying by
+  element alone let two layers colouring one element by different columns evict
+  each other on every plan.
+
+### Anti-patterns (labels)
+
+| Anti-pattern | Why it's wrong |
+|---|---|
+| Building the LUT per tile sublayer | Duplicates a multi-megabyte table across every tile |
+| Returning a fresh `FeatureColorBuffer` wrapper each render | Re-uploads the texture every frame; keep the `colors` identity stable |
+| Keying a colour resource by element alone | Two layers, two columns, one element → eviction ping-pong that never settles |
 
 ## Shape/table annotation controls
 
