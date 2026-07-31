@@ -3,7 +3,28 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { createWorkspaceSourceAliases } from '../../vite.config.base';
 
-const rollupExternals = ['zarrita', 'zod', 'anndata.js', 'zarrextra', 'apache-arrow'];
+/**
+ * Every runtime dependency this package declares — all of them `dependencies`,
+ * so a consumer installs them transitively and needs to do nothing.
+ *
+ * The list is the whole set on purpose. Externalizing some and bundling others
+ * is the arrangement that produces two copies of a library in one application:
+ * `@math.gl/core` in particular is also a direct dependency of `layers` and
+ * `vis`, and `Matrix4` instances have to survive being passed between them.
+ *
+ * `ol` is only ever reached as `ol/format/WKB.js` — a subpath, and so external
+ * only by way of the matching below.
+ */
+const rollupExternals = [
+  'zarrita',
+  'zod',
+  'anndata.js',
+  'zarrextra',
+  'apache-arrow',
+  '@math.gl/core',
+  'earcut',
+  'ol',
+];
 
 /**
  * Left for the consumer to resolve — the package itself, and any subpath of it.
