@@ -21,7 +21,7 @@ import SpatialDataTableSource from '../src/models/VTableSource.js';
  * the directory path does (return null vs. throw), and both must find the parts.
  */
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const writerRoot = join(__dirname, '../../../python/spatialdata-experimental-writer');
+const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
 
 async function writeMultipartParquetFixture(root: string, partRows: [number, number]) {
   execSync(

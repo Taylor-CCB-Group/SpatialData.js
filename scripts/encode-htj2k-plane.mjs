@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Encode one 2D image plane to HTJ2K for Python spatialdata-codec-writer.
+ * Encode one 2D image plane to HTJ2K for Python spatialdata-js-util.
  *
  * stdin: JSON { width, height, dtype, reversible?, quality?, plane: base64 }
  * stdout: raw HTJ2K bytes

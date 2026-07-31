@@ -82,7 +82,7 @@ chunk's `[..., z, y, x]` layout. The `mandelbulb` test fixture exercises this:
 each chunk is a single codestream spanning 4 z-planes (`(1, 1, 4, 128, 128)`).
 
 For offline encode (fixtures, recompress), use `encodeHtj2kPlane()` or
-`createOpenJphEncoder()` from the same package. Python `spatialdata-codec-writer`
+`createOpenJphEncoder()` from the same package. Python `spatialdata-js-util`
 uses vendored OpenJPH WASM with a persistent Node worker pool; new stores use
 codec id `experimental.openjph_htj2k`.
 

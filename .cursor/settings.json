@@ -10,7 +10,7 @@
   },
   "python.analysis.extraPaths": [
     "${workspaceFolder}/python",
-    "${workspaceFolder}/python/spatialdata-codec-writer/scripts"
+    "${workspaceFolder}/python/spatialdata-js-util/scripts"
   ]
 }
 

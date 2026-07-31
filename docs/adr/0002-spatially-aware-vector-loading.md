@@ -113,7 +113,7 @@ silently swap sort order under the existing `morton-points` format id.
 Generate comparable permutations with:
 
 ```bash
-spatialdata-experimental-writer write-index-permutations SOURCE_ZARR DEST_ZARR
+spatialdata-js-util points index-permutations SOURCE_ZARR DEST_ZARR
 ```
 
 The derivative store includes sibling `points/<condition>/` elements and

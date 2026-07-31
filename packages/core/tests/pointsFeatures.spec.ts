@@ -8,7 +8,7 @@ import SpatialDataPointsSource from '../src/models/VPointsSource.js';
 import * as pointsWorkerClient from '../src/workers/pointsWorkerClient.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const writerRoot = join(__dirname, '../../../python/spatialdata-experimental-writer');
+const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
 
 async function writePointsFeatureFixture(root: string) {
   const elementDir = join(root, 'points', 'transcripts');
