@@ -3,7 +3,12 @@
 Wrapper script to generate test fixtures for all spatialdata versions.
 
 This script coordinates running the version-specific fixture generation scripts
-located in python/v0.5.0/, python/v0.6.1/, and python/v0.7.2/.
+located in python/v0.5.0/, python/v0.6.1/, python/v0.7.2/ and python/v0.8.0/.
+
+To add a release: create python/v<version>/ (pyproject.toml pinning
+spatialdata==<version>, plus generate_fixtures.py), add it to VERSIONS below, and
+add it to FIXTURE_VERSIONS in tests/integration/fixtureVersions.ts. The CI cache
+key in .github/workflows/test.yml hashes python/v*/, so it invalidates itself.
 """
 
 import argparse
@@ -11,6 +16,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+# Oldest first; the last entry is the current release that docs and
+# single-version CI jobs track.
+VERSIONS = ["0.5.0", "0.6.1", "0.7.2", "0.8.0"]
 
 
 def main():
@@ -20,7 +29,7 @@ def main():
     parser.add_argument(
         "--version",
         type=str,
-        choices=["0.5.0", "0.6.1", "0.7.2"],
+        choices=VERSIONS,
         default=None,
         help="SpatialData version to generate fixtures for (default: all)",
     )
@@ -38,7 +47,7 @@ def main():
     project_root = script_path.parent.parent.parent
     output_dir = project_root / args.output_dir
     
-    versions = [args.version] if args.version else ["0.5.0", "0.6.1", "0.7.2"]
+    versions = [args.version] if args.version else VERSIONS
     
     success = True
     for version in versions:

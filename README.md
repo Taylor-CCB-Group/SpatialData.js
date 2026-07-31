@@ -61,7 +61,7 @@ pnpm docs:dev
 To try `readZarr` in a Node REPL from this repo, first generate the example fixture. `test-fixtures/` is gitignored, so a fresh checkout will not have it yet:
 
 ```bash
-pnpm test:fixtures:generate:0.7.2
+pnpm test:fixtures:generate:0.8.0
 pnpm build
 node
 ```
@@ -71,7 +71,7 @@ Then:
 ```js
 const { readZarr } = await import('./packages/core/dist/index.js');
 const { FileSystemStore } = await import('@zarrita/storage');
-const sdata = await readZarr(new FileSystemStore('./test-fixtures/v0.7.2/blobs.zarr'));
+const sdata = await readZarr(new FileSystemStore('./test-fixtures/v0.8.0/blobs.zarr'));
 
 sdata.toString();
 ```
@@ -117,6 +117,9 @@ uv sync --directory python/v0.6.1
 # Set up environment for spatialdata 0.7.2
 uv sync --directory python/v0.7.2
 
+# Set up environment for spatialdata 0.8.0
+uv sync --directory python/v0.8.0
+
 # Or set up all at once (the fixture generation script will do this automatically)
 ```
 
@@ -130,23 +133,27 @@ Each environment:
 **Version Mapping:**
 - **spatialdata 0.5.0** uses **OME-NGFF 0.4** format (multiscales at top level) in **zarr v2** stores (consolidated `zmetadata`)
 - **spatialdata 0.6.0+** uses **OME-NGFF 0.5** format (multiscales nested under `ome` key) in **zarr v3** stores (consolidated `zarr.json`)
+- **spatialdata 0.8.0** keeps that layout but renames multiscale dataset paths from `0`/`1`/`2` to `s0`/`s1`/`s2`, and writes the AnnData `obs`/`var` index as a `nullable-string-array` group (a `values` array beside a `mask` array) rather than a plain `string-array` array
 
 #### Editor Setup
 
-The project includes editor configuration files (`.vscode/settings.json` and `.cursor/settings.json`) that configure the Python interpreter to use one of the version-specific environments (defaults to v0.6.1).
+The project includes editor configuration files (`.vscode/settings.json` and `.cursor/settings.json`) that point the Python interpreter at `python/spatialdata-js-util/.venv`. That is the package with source, tests and a CLI to edit, so it is what imports should resolve against; the `python/v*/` environments exist only to run one release's `generate_fixtures.py` and are not a useful default.
 
 **VS Code / Cursor:**
 - The Python interpreter is automatically configured when you open the workspace
-- To switch versions: `Cmd/Ctrl+Shift+P` → "Python: Select Interpreter" → Choose:
+- To work on fixture generation instead: `Cmd/Ctrl+Shift+P` → "Python: Select Interpreter" → Choose:
   - `./python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `./python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
   - `./python/v0.7.2/.venv/bin/python3` for spatialdata 0.7.2
+  - `./python/v0.8.0/.venv/bin/python3` for spatialdata 0.8.0
 
 **Other editors:**
-- Choose the appropriate virtual environment:
+- Default to `python/spatialdata-js-util/.venv/bin/python3`
+- Or choose a fixture environment:
   - `python/v0.5.0/.venv/bin/python3` for spatialdata 0.5.0
   - `python/v0.6.1/.venv/bin/python3` for spatialdata 0.6.1
   - `python/v0.7.2/.venv/bin/python3` for spatialdata 0.7.2
+  - `python/v0.8.0/.venv/bin/python3` for spatialdata 0.8.0
 
 
 ### Running Tests
@@ -172,7 +179,7 @@ Test fixtures are generated on-demand using the Python `spatialdata` library. Ea
 Fixtures are stored in `test-fixtures/` (excluded from git).
 
 ```bash
-# Generate fixtures for all spatialdata versions (0.5.0, 0.6.1, and 0.7.2)
+# Generate fixtures for all spatialdata versions (0.5.0, 0.6.1, 0.7.2 and 0.8.0)
 # This will automatically set up the version-specific environments if needed
 pnpm test:fixtures:generate
 
@@ -180,15 +187,18 @@ pnpm test:fixtures:generate
 pnpm test:fixtures:generate:0.5.0
 pnpm test:fixtures:generate:0.6.1
 pnpm test:fixtures:generate:0.7.2
+pnpm test:fixtures:generate:0.8.0
 ```
 
 **How it works:**
-- The script uses separate environments: `python/v0.5.0/`, `python/v0.6.1/`, and `python/v0.7.2/`
+- The script uses separate environments: `python/v0.5.0/`, `python/v0.6.1/`, `python/v0.7.2/` and `python/v0.8.0/`
 - Each environment has its own `pyproject.toml` with the spatialdata version pinned
 - The script automatically runs `uv sync` for each environment before generating fixtures
 - This ensures fixtures are generated with the exact spatialdata version being tested
 
 **Note:** Integration tests will automatically generate fixtures if they're missing, but you can pre-generate them for faster test runs.
+
+**What the matrix does and does not prove:** each environment pins spatialdata and lets everything else float, so a fixture is spatialdata-X against whatever anndata / zarr / pyarrow its lock resolved on the day — one sample from a much larger writer space, not a characterisation of the release. Permuting that space (spatialdata × anndata × zarr × …) is not the answer: it costs ~70s of generation per cell for a combinatorial number of cells, still is not exhaustive, and aims at the wrong target, since what matters is which *encodings* land on disk rather than which writer combination produced them. Use the matrix to discover that an encoding exists, then pin the encoding in a writer-independent unit test — `packages/core/tests/nullableStringArray.spec.ts` is the worked example. See the comment on `FIXTURE_VERSIONS` in [tests/integration/fixtureVersions.ts](./tests/integration/fixtureVersions.ts) for the longer version.
 
 ### Test Servers
 
@@ -207,6 +217,7 @@ Once running, fixtures are accessible at:
 - `http://localhost:38473/test-fixtures/v0.5.0/blobs.zarr`
 - `http://localhost:38473/test-fixtures/v0.6.1/blobs.zarr`
 - `http://localhost:38473/test-fixtures/v0.7.2/blobs.zarr`
+- `http://localhost:38473/test-fixtures/v0.8.0/blobs.zarr`
 
 The server provides directory listings and serves all zarr metadata files with appropriate CORS headers.
 

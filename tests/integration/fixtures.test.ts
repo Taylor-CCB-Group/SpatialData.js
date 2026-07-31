@@ -1,7 +1,5 @@
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { FileSystemStore } from '@zarrita/storage';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -10,37 +8,13 @@ import {
   type SpatialData,
 } from '../../packages/core/src/store/index.js';
 import { fixtureServerOrigin } from '../../scripts/fixture-server-port.mjs';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const projectRoot = join(__dirname, '../..');
-const uvCacheDir = join(projectRoot, '.tmp', 'uv-cache');
-
-function ensureFixtures(version: string): string {
-  const fixturePath = join(projectRoot, 'test-fixtures', `v${version}`, 'blobs.zarr');
-
-  if (!existsSync(fixturePath)) {
-    console.log(`Fixtures not found for version ${version}, generating...`);
-    try {
-      mkdirSync(uvCacheDir, { recursive: true });
-      execSync(`uv run python/scripts/generate_fixtures.py --version ${version}`, {
-        cwd: projectRoot,
-        env: {
-          ...process.env,
-          UV_CACHE_DIR: uvCacheDir,
-        },
-        stdio: 'inherit',
-      });
-    } catch (error) {
-      throw new Error(
-        `Failed to generate fixtures for version ${version}. ` +
-          `Make sure uv is installed and spatialdata is available. Error: ${error}`
-      );
-    }
-  }
-
-  return fixturePath;
-}
+import {
+  CURRENT_FIXTURE_VERSION,
+  ensureFixtures,
+  FIXTURE_VERSIONS,
+  fixturePath,
+  projectRoot,
+} from './fixtureVersions.js';
 
 function getFirstElement(sdata: SpatialData): AnyElement | undefined {
   for (const elementType of ['images', 'labels', 'points', 'shapes', 'tables'] as const) {
@@ -52,21 +26,17 @@ function getFirstElement(sdata: SpatialData): AnyElement | undefined {
   return undefined;
 }
 
-const versions = ['0.5.0', '0.6.1', '0.7.2'] as const;
-
 beforeAll(() => {
-  for (const version of versions) {
+  for (const version of FIXTURE_VERSIONS) {
     ensureFixtures(version);
   }
 }, 300000);
 
-describe.each(versions)('Integration Tests - spatialdata v%s (file store)', (version) => {
-  let fixturePath: string;
+describe.each(FIXTURE_VERSIONS)('Integration Tests - spatialdata v%s (file store)', (version) => {
   let fixtureStore: FileSystemStore;
 
   beforeAll(() => {
-    fixturePath = join(projectRoot, 'test-fixtures', `v${version}`, 'blobs.zarr');
-    fixtureStore = new FileSystemStore(fixturePath);
+    fixtureStore = new FileSystemStore(fixturePath(version));
   });
 
   it('should load spatialdata store from a FileSystemStore', async () => {
@@ -144,7 +114,7 @@ describe.each(versions)('Integration Tests - spatialdata v%s (file store)', (ver
 });
 
 describe('Integration Tests - HTTP smoke test', () => {
-  const version = '0.7.2';
+  const version = CURRENT_FIXTURE_VERSION;
   let fixtureUrl: string;
 
   beforeAll(() => {
@@ -175,28 +145,13 @@ describe('Integration Tests - HTTP smoke test', () => {
 
 describe('Fixture Generation', () => {
   it('should generate fixtures for all versions', () => {
-    const v050Path = join(projectRoot, 'test-fixtures', 'v0.5.0', 'blobs.zarr');
-    const v061Path = join(projectRoot, 'test-fixtures', 'v0.6.1', 'blobs.zarr');
-    const v072Path = join(projectRoot, 'test-fixtures', 'v0.7.2', 'blobs.zarr');
-
-    if (!existsSync(v050Path)) {
-      ensureFixtures('0.5.0');
-    } else {
-      console.log('using existing fixture for 0.5.0');
+    for (const version of FIXTURE_VERSIONS) {
+      if (existsSync(fixturePath(version))) {
+        console.log(`using existing fixture for ${version}`);
+      } else {
+        ensureFixtures(version);
+      }
+      expect(existsSync(join(projectRoot, 'test-fixtures', `v${version}`))).toBe(true);
     }
-    if (!existsSync(v061Path)) {
-      ensureFixtures('0.6.1');
-    } else {
-      console.log('using existing fixture for 0.6.1');
-    }
-    if (!existsSync(v072Path)) {
-      ensureFixtures('0.7.2');
-    } else {
-      console.log('using existing fixture for 0.7.2');
-    }
-
-    expect(existsSync(join(projectRoot, 'test-fixtures', 'v0.5.0'))).toBe(true);
-    expect(existsSync(join(projectRoot, 'test-fixtures', 'v0.6.1'))).toBe(true);
-    expect(existsSync(join(projectRoot, 'test-fixtures', 'v0.7.2'))).toBe(true);
   }, 90000);
 });

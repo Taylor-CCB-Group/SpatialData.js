@@ -3,7 +3,7 @@ import { createShapesDeckLayer } from '@spatialdata/layers';
 import { useEffect, useRef, useState } from 'react';
 
 const fixtureMetadataUrl = new URL(
-  '/test-fixtures/v0.7.2/blobs.zarr/shapes/blobs_polygons/zarr.json',
+  '/test-fixtures/v0.8.0/blobs.zarr/shapes/blobs_polygons/zarr.json',
   window.location.href
 ).href;
 

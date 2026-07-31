@@ -112,21 +112,75 @@ jobs:
         run: pnpm build
 
       # Fixtures rarely change, so cache the generated output and only regenerate
-      # when the generation code or its pinned deps change. The key hashes the
-      # orchestrator plus each version's script + pyproject.toml + uv.lock; an
-      # exact-match key (no restore-keys) means any of those changes forces a
-      # full regeneration rather than restoring stale fixtures. (uv's own cache is
-      # handled by astral-sh/setup-uv, not here.)
-      - name: Cache generated test fixtures
-        id: cache-fixtures
+      # when the generation code or its pinned deps change. Each version is cached
+      # SEPARATELY, keyed on the orchestrator plus that version's own script +
+      # pyproject.toml + uv.lock. One cache over the whole matrix would mean
+      # touching any single version re-ran all of them, and generation is the
+      # expensive part: ~70s per version, against ~2s for its `uv sync` (uv's own
+      # download cache is handled by astral-sh/setup-uv, not here). Per-version
+      # keys make a change cost one regeneration rather than the whole matrix,
+      # which is what keeps adding a release cheap.
+      #
+      # Exact-match keys, no restore-keys: a changed generator must regenerate
+      # rather than restore a stale store. Keep these steps in step with
+      # FIXTURE_VERSIONS in tests/integration/fixtureVersions.ts.
+      - name: Cache generated test fixtures (0.5.0)
+        id: cache-fixtures-050
         uses: actions/cache@v5
         with:
-          path: test-fixtures
-          key: ${{ runner.os }}-test-fixtures-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.5.0/**', 'python/v0.6.1/**', 'python/v0.7.2/**') }}
+          path: test-fixtures/v0.5.0
+          key: ${{ runner.os }}-fixtures-v0.5.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.5.0/**') }}
 
-      - name: Generate test fixtures (Python spatialdata 0.5.0, 0.6.1, and 0.7.2)
-        if: steps.cache-fixtures.outputs.cache-hit != 'true'
-        run: pnpm test:fixtures:generate
+      - name: Generate test fixtures (Python spatialdata 0.5.0)
+        if: steps.cache-fixtures-050.outputs.cache-hit != 'true'
+        run: pnpm test:fixtures:generate:0.5.0
+
+      - name: Cache generated test fixtures (0.6.1)
+        id: cache-fixtures-061
+        uses: actions/cache@v5
+        with:
+          path: test-fixtures/v0.6.1
+          key: ${{ runner.os }}-fixtures-v0.6.1-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.6.1/**') }}
+
+      - name: Generate test fixtures (Python spatialdata 0.6.1)
+        if: steps.cache-fixtures-061.outputs.cache-hit != 'true'
+        run: pnpm test:fixtures:generate:0.6.1
+
+      - name: Cache generated test fixtures (0.7.2)
+        id: cache-fixtures-072
+        uses: actions/cache@v5
+        with:
+          path: test-fixtures/v0.7.2
+          key: ${{ runner.os }}-fixtures-v0.7.2-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.7.2/**') }}
+
+      - name: Generate test fixtures (Python spatialdata 0.7.2)
+        if: steps.cache-fixtures-072.outputs.cache-hit != 'true'
+        run: pnpm test:fixtures:generate:0.7.2
+
+      # Same path and key as the production-browser job's cache, deliberately:
+      # both jobs want the same 0.8.0 blobs store, so whichever runs first
+      # populates it and the other hits instead of generating it a second time.
+      - name: Cache generated test fixtures (0.8.0)
+        id: cache-fixtures-080
+        uses: actions/cache@v5
+        with:
+          path: test-fixtures/v0.8.0
+          key: ${{ runner.os }}-fixtures-v0.8.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.8.0/**') }}
+
+      - name: Generate test fixtures (Python spatialdata 0.8.0)
+        if: steps.cache-fixtures-080.outputs.cache-hit != 'true'
+        run: pnpm test:fixtures:generate:0.8.0
+
+      # The codec fixtures are generated on demand by codecFixtures.test.ts during
+      # the integration run, not by a step here. The old single `test-fixtures`
+      # cache therefore picked them up by accident — restored, but keyed on the
+      # *blobs* generators, so a codec-generator change did not invalidate them.
+      # Caching them explicitly keeps the saving and fixes the key.
+      - name: Cache generated codec fixtures
+        uses: actions/cache@v5
+        with:
+          path: test-fixtures/codecs
+          key: ${{ runner.os }}-fixtures-codecs-${{ hashFiles('scripts/vendor-openjph-for-python.mjs', 'python/spatialdata-js-util/scripts/**', 'python/spatialdata-js-util/src/**', 'python/spatialdata-js-util/pyproject.toml', 'python/spatialdata-js-util/uv.lock') }}
 
       - name: Run spatialdata-js-util tests
         run: uv run --directory python/spatialdata-js-util --extra write --extra tui pytest
@@ -199,22 +253,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache generated production browser fixtures
+      # Same path and key as the `test` job's 0.8.0 cache. This job only needs a
+      # v0.8.0 blobs store, which is exactly what that job already builds, so
+      # sharing the entry means the store is generated once per key rather than
+      # once per job. Whichever job runs first populates it; on a cold cache both
+      # may generate, which actions/cache tolerates (the second save is a no-op).
+      #
+      # Generating straight into test-fixtures/ is also why there is no longer a
+      # symlink step: the browser consumer serves /test-fixtures/v0.8.0/... and
+      # now finds it in place.
+      - name: Cache generated production browser fixtures (0.8.0)
         id: cache-production-browser-fixtures
         uses: actions/cache@v5
         with:
-          path: test-fixtures-production-browser
-          key: ${{ runner.os }}-production-browser-fixtures-0.7.2-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.7.2/**') }}
+          path: test-fixtures/v0.8.0
+          key: ${{ runner.os }}-fixtures-v0.8.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.8.0/**') }}
 
-      - name: Generate test fixtures (Python spatialdata 0.7.2)
+      - name: Generate test fixtures (Python spatialdata 0.8.0)
         if: steps.cache-production-browser-fixtures.outputs.cache-hit != 'true'
-        # No `--` before the flags: pnpm forwards the separator through to the
-        # script verbatim, and argparse treats everything after a bare `--` as
-        # positional, so `-- --output-dir X` fails with "unrecognized arguments".
-        run: pnpm test:fixtures:generate:0.7.2 --output-dir test-fixtures-production-browser
-
-      - name: Expose production browser fixtures
-        run: ln -s test-fixtures-production-browser test-fixtures
+        run: pnpm test:fixtures:generate:0.8.0
 
       - name: Install Chromium and Linux dependencies
         run: pnpm exec playwright install --with-deps chromium
