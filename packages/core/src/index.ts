@@ -7,6 +7,16 @@
 // Resource Resolver contracts (ADR 0004).
 export * from './engine/index.js';
 export * from './models/index.js';
+// The semantics that need the tree guards, not just the guards themselves: a
+// consumer enumerating obs columns has to know that a group might be a
+// categorical or a nullable column, and how to read each one. Exported so that
+// knowledge lives here rather than being hand-rolled per consumer — see
+// `classifyObsColumnNode` for the classification half.
+export {
+  isNullableEncoding,
+  NULLABLE_ENCODING_KINDS,
+  readNullableArray,
+} from './models/nullableArrays.js';
 export {
   type GeopandasGeoParquetMetadata,
   inferShapesGeometryKindFromParquet,

@@ -1,6 +1,6 @@
 import * as zarr from 'zarrita';
 import { get as zarrGet, open as zarrOpen } from 'zarrita';
-import type { TableColumnData } from '../types';
+import { isTextDataType, type TableColumnData } from '../types';
 import type { DataSourceParams } from '../Vutils';
 import { dirname } from '../Vutils';
 import { isNullableEncoding, readNullableArray } from './nullableArrays';
@@ -135,10 +135,14 @@ export default class AnnDataSource extends ZarrDataSource {
    * unicode. Testing for `v2:object` alone silently leaves categorical columns
    * resolving to their raw integer codes, which look like plausible data rather
    * than an error.
+   *
+   * The same predicate the tree-metadata classifier uses, applied to an opened
+   * array's dtype — one definition, so a column classified as text before
+   * loading is decoded as text when it loads.
    */
   private async hasTextValues(path: string): Promise<boolean> {
     const arr = await zarrOpen(this.storeRoot.resolve(path), { kind: 'array' });
-    return arr.is('string') || arr.is('object');
+    return isTextDataType(arr.dtype);
   }
 
   /**

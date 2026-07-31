@@ -97,8 +97,36 @@ export type ZGroup = zarr.Group<Store>;
 // These are used in SDataProps and models, so we keep them accessible from core/types
 // Re-export Result type and utilities from zarrextra for convenience
 // Result is used throughout core for explicit error handling
-export type { LazyZarrArray, Result, ZAttrsAny, ZarrTree } from 'zarrextra';
-export { ATTRS_KEY, Err, isErr, isOk, Ok, unwrap, unwrapOr, ZARRAY_KEY } from 'zarrextra';
+export type {
+  LazyZarrArray,
+  Result,
+  ZAttrsAny,
+  ZarrArrayMetadata,
+  ZarrDataType,
+  ZarrTree,
+  ZarrV2ArrayNode,
+  ZarrV3ArrayNode,
+} from 'zarrextra';
+export {
+  ATTRS_KEY,
+  Err,
+  getArrayDtype,
+  getArrayMetadata,
+  getChildArray,
+  getChildGroup,
+  getChildNode,
+  getNodeAttrs,
+  isErr,
+  isLazyZarrArray,
+  isOk,
+  isTextDataType,
+  isZarrGroup,
+  normalizeDtype,
+  Ok,
+  unwrap,
+  unwrapOr,
+  ZARRAY_KEY,
+} from 'zarrextra';
 
 /**
  * Used internally when passing around properties of a spatialdata object to be used by the models/loaders.
