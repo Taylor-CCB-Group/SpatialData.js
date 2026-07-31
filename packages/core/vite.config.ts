@@ -1,10 +1,24 @@
 import { cpSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
+import { createWorkspaceSourceAliases } from '../../vite.config.base';
 
 const rollupExternals = new Set(['zarrita', 'zod', 'anndata.js', 'zarrextra', 'apache-arrow']);
 
 export default defineConfig({
+  // Resolve sibling packages to their sources, as `vis` already does.
+  //
+  // Without this, a test here importing `zarrextra` gets whatever is in that
+  // package's `dist` — so editing `packages/zarrextra/src` changes nothing until
+  // it is rebuilt, and the suite silently keeps testing the previous build. The
+  // failure is invisible: tests pass or fail against stale code with no hint
+  // that the source under the cursor is not the source under test.
+  //
+  // Harmless for `build`: rollup consults `external` with the unresolved
+  // specifier, so `zarrextra` is externalized before an alias could apply.
+  resolve: {
+    alias: createWorkspaceSourceAliases(resolve(__dirname, '../..')),
+  },
   build: {
     lib: {
       entry: {
