@@ -17,7 +17,13 @@ anndata = pytest.importorskip("anndata")
 sparse = pytest.importorskip("scipy.sparse")
 sd = pytest.importorskip("spatialdata")
 
-from textual.widgets import Button, Checkbox, Input, ListView  # noqa: E402
+from textual.app import App, ComposeResult  # noqa: E402
+from textual.css.query import NoMatches  # noqa: E402
+from textual.widget import Widget  # noqa: E402
+from textual.widgets import Button, Checkbox, Header, Input, ListView  # noqa: E402
+from textual.widgets._header import HeaderTitle  # noqa: E402
+
+from spatialdata_js_util.tui.widgets import SafeHeader  # noqa: E402
 
 from spatialdata_js_util.codecs import htj2k_available  # noqa: E402
 from spatialdata_js_util.tui.app import WriterApp  # noqa: E402
@@ -398,3 +404,61 @@ class TestRecompressPyramidControls:
             app.screen.query_one("#run", Button).press()
             await pilot.pause()
             assert isinstance(app.screen, RecompressImagesScreen)
+
+
+class TestSafeHeader:
+    """`SafeHeader` guards a race in Textual's own `Header`.
+
+    `Header._on_mount` registers title watchers whose callback does
+    `query_one(HeaderTitle)` guarded only against `NoScreen`. `HeaderTitle` is a
+    compose child, so a watcher running before it mounts raises `NoMatches` into
+    the app's message pump. Removing the child and then touching a watched
+    reactive reproduces that window deterministically.
+    """
+
+    @staticmethod
+    def _app_with(header_class: type[Widget]) -> App:
+        class _HeaderApp(App):
+            def compose(self) -> ComposeResult:
+                yield header_class()
+
+        return _HeaderApp()
+
+    @pytest.mark.asyncio
+    async def test_title_change_survives_a_missing_header_title(self) -> None:
+        app = self._app_with(SafeHeader)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.query_one(SafeHeader).query_one(HeaderTitle).remove()
+            app.title = "changed"
+            await pilot.pause()  # must not raise NoMatches
+
+    @pytest.mark.asyncio
+    async def test_title_still_renders_like_the_stock_header(self) -> None:
+        """The guard must not cost the behaviour it guards."""
+        rendered = {}
+        for header_class in (SafeHeader, Header):
+            app = self._app_with(header_class)
+            async with app.run_test() as pilot:
+                app.title = "My Title"
+                app.sub_title = "sub"
+                await pilot.pause()
+                title = app.query_one(header_class).query_one(HeaderTitle)
+                rendered[header_class.__name__] = str(title.render())
+
+        assert rendered["SafeHeader"] == rendered["Header"]
+        assert "My Title" in rendered["SafeHeader"]
+
+    @pytest.mark.asyncio
+    async def test_stock_header_still_has_the_defect(self) -> None:
+        """Tripwire: delete `SafeHeader` when this starts failing.
+
+        A newer Textual that catches `NoMatches` makes the workaround dead code.
+        """
+        app = self._app_with(Header)
+        with pytest.raises(NoMatches):
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.query_one(Header).query_one(HeaderTitle).remove()
+                app.title = "changed"
+                await pilot.pause()
