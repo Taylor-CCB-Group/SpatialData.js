@@ -338,7 +338,9 @@ def _warn_if_quality_below_input_resolution(quality: float, dtype: np.dtype | No
     """Warn when a step is finer than one input LSB, which encodes larger than
     lossless for a bit-identical image. Only an explicit ``quality`` can ask for
     this; presets stay above the floor."""
-    if dtype is None:
+    # Nothing to compare against for a dtype with no LSB (see `dtype_quantum`);
+    # an explicit step stays legal there, so this stays silent rather than raising.
+    if dtype is None or dtype.kind not in ("i", "u"):
         return
     floor = HTJ2K_QUALITY_FLOOR_LSB * dtype_quantum(dtype)
     if quality >= floor:

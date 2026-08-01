@@ -21,7 +21,11 @@ from spatialdata_js_util import (
     recompress_spatialdata,
     resolve_recompression_config,
 )
-from spatialdata_js_util.codecs import decode_htj2k_plane, encode_image_plane
+from spatialdata_js_util.codecs import (
+    decode_htj2k_plane,
+    encode_image_plane,
+    htj2k_encode_options,
+)
 from spatialdata_js_util.images import _preset_encode_options
 
 from synthetic_images import mandelbrot_plane
@@ -288,6 +292,35 @@ def test_explicit_quality_finer_than_the_input_lsb_warns() -> None:
         _preset_encode_options(
             {"quality": 0.0002}, codec=CODEC_HTJ2K_OPENJPH, dtype=np.dtype("uint16")
         )
+
+
+def test_dtype_quantum_rejects_dtypes_with_no_lsb() -> None:
+    """The message must read as a current limit, not a permanent one."""
+    with pytest.raises(TypeError, match="no LSB to scale by") as excinfo:
+        dtype_quantum(np.dtype("float32"))
+    assert "currently" in str(excinfo.value)
+
+
+def test_explicit_step_encodes_a_dtype_that_has_no_derived_step() -> None:
+    """Only the *derived* default needs an LSB.
+
+    An explicit `quality` is an absolute step, so it must not be rejected for a
+    dtype the preset machinery cannot scale — otherwise widening dtype support
+    would be blocked on the default rather than on the codec.
+    """
+    float32 = np.dtype("float32")
+    assert htj2k_encode_options({"reversible": False, "quality": 0.001}, dtype=float32) == (
+        False,
+        0.001,
+    )
+    assert htj2k_encode_options({"reversible": False, "level": 0.001}, dtype=float32) == (
+        False,
+        0.001,
+    )
+    assert htj2k_encode_options({"reversible": True}, dtype=float32) == (True, 0.0)
+
+    with pytest.raises(TypeError, match="no LSB to scale by"):
+        htj2k_encode_options({"reversible": False}, dtype=float32)
 
 
 @pytest.mark.skipif(

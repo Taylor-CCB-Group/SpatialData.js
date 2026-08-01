@@ -30,8 +30,20 @@ def dtype_quantum(dtype: np.dtype) -> float:
 
     OpenJPH's quantization step is normalised to the dtype's full range, so this
     is the unit that makes a step comparable across bit depths.
+
+    Only integer dtypes have an LSB to be relative to. That reflects what this
+    codec path writes today, not a limit of HTJ2K — if float support is added,
+    give those dtypes a quantum here rather than reading the error as permanent.
     """
-    info = np.iinfo(dtype)
+    resolved = np.dtype(dtype)
+    if resolved.kind not in ("i", "u"):
+        raise TypeError(
+            f"HTJ2K quantization steps are relative to an integer dtype's full range, "
+            f"and {resolved} has no LSB to scale by. Images are currently written as "
+            f"<=16-bit integers, so no step is derived for this dtype yet — pass an "
+            f"explicit `quality` (an absolute step) or `reversible=True` to encode it."
+        )
+    info = np.iinfo(resolved)
     return 1.0 / (int(info.max) - int(info.min) + 1)
 
 
@@ -41,15 +53,21 @@ def htj2k_encode_options(
     """Map encode options to the OpenJPH ``(reversible, quality)`` pair.
 
     ``quality`` is the OpenJPH quantization step: lower means higher fidelity and
-    a larger codestream. It is *not* a JPEG-style 0–100 quality. It is relative
-    to *dtype*'s full dynamic range, so the default is derived from *dtype* when
-    one is given rather than being a bit-depth-blind constant.
+    a larger codestream. It is *not* a JPEG-style 0–100 quality.
+
+    A caller-supplied ``quality``/``level`` is used as given. Only the fallback
+    is derived from *dtype*, so that the default scales with bit depth instead of
+    being a bit-depth-blind constant; deriving it needs an integer dtype.
     """
     reversible = bool(encode_options.get("reversible", True))
     if reversible:
         return True, 0.0
-    default = HTJ2K_DEFAULT_QUALITY_LSB * dtype_quantum(dtype) if dtype is not None else 0.0002
-    quality = encode_options.get("quality", encode_options.get("level", default))
+    quality = encode_options.get("quality", encode_options.get("level"))
+    if quality is None:
+        # Derived only when the caller gave no step. An explicit `quality` is an
+        # absolute value, so it must not depend on the dtype — deriving eagerly
+        # would reject dtypes that can be encoded perfectly well by naming a step.
+        quality = HTJ2K_DEFAULT_QUALITY_LSB * dtype_quantum(dtype) if dtype is not None else 0.0002
     return False, float(quality)
 
 
