@@ -17,7 +17,6 @@ from textual.widgets import (
     Checkbox,
     DataTable,
     Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -50,6 +49,7 @@ from ..verify import (
 )
 from ..store import list_points_keys, read_points_element_attrs
 from .app import WriterApp
+from .widgets import SafeHeader
 from .models import CommandId, TaskSpec
 
 
@@ -113,7 +113,7 @@ class HomeScreen(WriterScreen):
         self.query_one("#command-list", ListView).focus()
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static(
             "spatialdata-js-util — pick a command.",
             id="home-title",
@@ -200,7 +200,7 @@ class ZarrPathScreen(InputFormScreen):
         self.command = command
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("SpatialData Zarr store path", classes="screen-title")
         yield Input(placeholder="/path/to/store.zarr", id="zarr-path")
         with Horizontal():
@@ -258,7 +258,7 @@ class PointsKeyScreen(WriterScreen):
         self.command = command
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Select Points element", classes="screen-title")
         yield ListView(id="points-key-list")
         with Horizontal():
@@ -318,7 +318,7 @@ class MortonFromZarrScreen(InputFormScreen):
     INPUT_ORDER = ("feature-key", "row-group-size", "compression", "output-element")
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Morton-sort Points from Zarr", classes="screen-title")
         with VerticalScroll():
             yield Label("Feature key column (optional)")
@@ -455,7 +455,7 @@ class MortonFileScreen(InputFormScreen):
     )
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Morton-sort CSV/Parquet", classes="screen-title")
         with VerticalScroll():
             yield Label("Input path")
@@ -527,7 +527,7 @@ class MultiscaleScreen(InputFormScreen):
     )
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Multiscale Points Parquet", classes="screen-title")
         with VerticalScroll():
             yield Label("Input path")
@@ -604,7 +604,7 @@ class IndexPermutationsScreen(InputFormScreen):
         self.from_zarr_context = from_zarr_context
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Write index permutations", classes="screen-title")
         with VerticalScroll():
             yield Label("Source Zarr")
@@ -742,7 +742,7 @@ class RecompressImagesScreen(InputFormScreen):
     )
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Recompress images", classes="screen-title")
         with VerticalScroll():
             yield Label("Source store")
@@ -920,7 +920,7 @@ class TablesToCscScreen(InputFormScreen):
     INPUT_ORDER = ("source", "dest", "tables")
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Convert tables to CSC", classes="screen-title")
         with VerticalScroll():
             yield Static(
@@ -1027,7 +1027,7 @@ class ConfirmScreen(WriterScreen):
         self._handled = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Confirm in-place write", classes="screen-title")
         yield Static(self.task_spec.confirm_message, id="confirm-message")
         with Horizontal():
@@ -1071,7 +1071,7 @@ class RunScreen(WriterScreen):
         self.task_spec = task_spec
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static(self.task_spec.title, classes="screen-title")
         yield RichLog(id="run-log", highlight=True, markup=False)
         yield Footer()
@@ -1154,7 +1154,7 @@ class VerifyReportScreen(WriterScreen):
         self._handled = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield SafeHeader()
         yield Static("Run complete", classes="screen-title")
         with VerticalScroll():
             if self.error:
