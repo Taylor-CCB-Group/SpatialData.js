@@ -2309,7 +2309,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anndata", marker = "extra == 'write'", specifier = ">=0.12" },
-    { name = "dask", extras = ["array"], marker = "extra == 'write'", specifier = ">=2025.0" },
+    { name = "dask", extras = ["array"], marker = "extra == 'write'", specifier = ">=2026.7.1" },
     { name = "imagecodecs", specifier = ">=2025.8.2" },
     { name = "numcodecs", specifier = ">=0.16" },
     { name = "numpy", specifier = ">=2.0" },

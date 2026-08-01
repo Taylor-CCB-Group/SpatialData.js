@@ -29,7 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 write = [
     "anndata>=0.12",
-    "dask[array]>=2025.0",
+    "dask[array]>=2026.7.1",
     "ome-zarr>=0.16",
     "scipy>=1.11",
     "spatialdata>=0.8.0",
