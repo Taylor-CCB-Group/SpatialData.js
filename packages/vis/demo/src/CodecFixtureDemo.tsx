@@ -306,7 +306,8 @@ function Htj2kEncodeDemoPanel({
       {htj2kDemo ? (
         <div style={{ color: '#888', marginBottom: 8 }}>
           Toggle <code>mandelbrot_*</code> layers to compare HTJ2K presets (balanced{' '}
-          <code>q=0.0002</code>, small <code>q=0.001</code>). Interactive per-<code>q</code>{' '}
+          <code>2 LSB</code>, small <code>5 LSB</code> — on this <code>uint16</code> plane,{' '}
+          <code>q=3.05e-5</code> and <code>q=7.63e-5</code>). Interactive per-<code>q</code>{' '}
           transcoding in the viewer is planned for a later pass.
         </div>
       ) : null}

@@ -12,6 +12,7 @@ from spatialdata_js_util.codecs import (
     htj2k_available,
 )
 from spatialdata_js_util.codecs.htj2k_wasm import encode_htj2k_wasm
+from spatialdata_js_util.images import htj2k_preset_quality
 from spatialdata_js_util.store import write_json
 
 from fixture_writer import CodecImageWrite, WrittenFixture, write_codec_spatialdata, write_codec_spatialdata_images
@@ -34,18 +35,25 @@ HTJ2K_QUALITY_SWEEP: tuple[dict[str, Any], ...] = (
 
 HTJ2K_ENCODE_DEMO_SIZE = 512
 HTJ2K_ENCODE_DEMO_CHUNKS: tuple[int, int, int, int, int] = (1, 1, 1, 64, 64)
-HTJ2K_ENCODE_DEMO_PRESETS: tuple[dict[str, Any], ...] = (
-    {"label": "lossless", "suffix": "lossless", "encode_options": {"reversible": True}},
-    {
-        "label": "balanced (q=0.0002)",
-        "suffix": "balanced",
-        "encode_options": {"reversible": False, "quality": 0.0002},
-    },
-    {
-        "label": "small (q=0.001)",
-        "suffix": "small",
-        "encode_options": {"reversible": False, "quality": 0.001},
-    },
+
+# The demo plane is uint16, and presets are relative to the input's bit depth, so
+# resolve them here rather than restating absolute steps that would drift.
+HTJ2K_ENCODE_DEMO_DTYPE = np.dtype("uint16")
+
+
+def _demo_preset(preset: str) -> dict[str, Any]:
+    quality = htj2k_preset_quality(preset, HTJ2K_ENCODE_DEMO_DTYPE)
+    if quality is None:
+        return {"label": preset, "suffix": preset, "encode_options": {"reversible": True}}
+    return {
+        "label": f"{preset} (q={quality:g})",
+        "suffix": preset,
+        "encode_options": {"reversible": False, "quality": quality},
+    }
+
+
+HTJ2K_ENCODE_DEMO_PRESETS: tuple[dict[str, Any], ...] = tuple(
+    _demo_preset(preset) for preset in ("lossless", "balanced", "small")
 )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import imagecodecs
@@ -12,8 +13,11 @@ from spatialdata_js_util import (
     CODEC_HTJ2K_OPENJPH,
     CODEC_JPEG2K,
     HTJ2K_PRESETS,
+    HTJ2K_QUALITY_FLOOR_LSB,
     JP2K_PRESETS,
+    dtype_quantum,
     htj2k_available,
+    htj2k_preset_quality,
     recompress_spatialdata,
     resolve_recompression_config,
 )
@@ -221,10 +225,12 @@ def test_preset_encode_options_quality_implies_lossy_htj2k() -> None:
     assert _preset_encode_options(
         {"quality": 0.001},
         codec=CODEC_HTJ2K_OPENJPH,
+        dtype=np.dtype("uint16"),
     ) == {"reversible": False, "quality": 0.001}
     assert _preset_encode_options(
         {"preset": "lossless", "quality": 0.001},
         codec=CODEC_HTJ2K_OPENJPH,
+        dtype=np.dtype("uint16"),
     ) == {"reversible": False, "quality": 0.001}
 
 
@@ -234,17 +240,54 @@ def test_lossy_presets_are_not_extreme_low_bitrate() -> None:
 
 
 def test_htj2k_presets_do_not_pass_jp2k_rate_control_levels() -> None:
-    assert HTJ2K_PRESETS["balanced"] == {"reversible": False, "quality": 0.0002}
-    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality": 0.001}
+    assert HTJ2K_PRESETS["balanced"] == {"reversible": False, "quality_lsb": 2.0}
+    assert HTJ2K_PRESETS["small"] == {"reversible": False, "quality_lsb": 5.0}
     assert "level" not in HTJ2K_PRESETS["balanced"]
     assert _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_OPENJPH,
-    ) == {"reversible": False, "quality": 0.0002}
+        dtype=np.dtype("uint16"),
+    ) == {"reversible": False, "quality": 2.0 / 65536}
     assert _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_JPEG2K,
     ) == {"reversible": False, "level": 100}
+
+
+def test_htj2k_preset_quality_scales_with_bit_depth() -> None:
+    """A preset is a fidelity target in LSB, so its step tracks the bit depth."""
+    for preset, lsb in (("balanced", 2.0), ("small", 5.0)):
+        assert htj2k_preset_quality(preset, np.dtype("uint8")) == lsb / 256
+        assert htj2k_preset_quality(preset, np.dtype("int8")) == lsb / 256
+        assert htj2k_preset_quality(preset, np.dtype("uint16")) == lsb / 65536
+        assert htj2k_preset_quality(preset, np.dtype("int16")) == lsb / 65536
+    assert htj2k_preset_quality("lossless", np.dtype("uint8")) is None
+
+
+def test_lossy_presets_stay_above_the_input_resolution_floor() -> None:
+    """Below ~1 LSB the irreversible path is strictly dominated by reversible."""
+    for dtype in (np.dtype("uint8"), np.dtype("int8"), np.dtype("uint16"), np.dtype("int16")):
+        floor = HTJ2K_QUALITY_FLOOR_LSB * dtype_quantum(dtype)
+        for preset in ("balanced", "small"):
+            assert htj2k_preset_quality(preset, dtype) > floor
+
+
+def test_resolving_an_htj2k_preset_without_a_dtype_is_an_error() -> None:
+    with pytest.raises(ValueError, match="needs the input dtype"):
+        _preset_encode_options({"preset": "balanced"}, codec=CODEC_HTJ2K_OPENJPH)
+
+
+def test_explicit_quality_finer_than_the_input_lsb_warns() -> None:
+    with pytest.warns(UserWarning, match="finer than one uint8 LSB"):
+        _preset_encode_options(
+            {"quality": 0.0002}, codec=CODEC_HTJ2K_OPENJPH, dtype=np.dtype("uint8")
+        )
+    # The same step is a sane request for uint16, where it is ~13 LSB.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _preset_encode_options(
+            {"quality": 0.0002}, codec=CODEC_HTJ2K_OPENJPH, dtype=np.dtype("uint16")
+        )
 
 
 @pytest.mark.skipif(
@@ -256,9 +299,85 @@ def test_htj2k_balanced_preset_produces_reasonable_chunk_size() -> None:
     options = _preset_encode_options(
         {"preset": "balanced"},
         codec=CODEC_HTJ2K_OPENJPH,
+        dtype=plane.dtype,
     )
     encoded = encode_image_plane(plane, CODEC_HTJ2K_OPENJPH, options)
     assert 1_000 < len(encoded) < plane.nbytes
+
+
+def _encoded_preset_sizes(plane: np.ndarray) -> dict[str, int]:
+    sizes = {}
+    for preset in ("lossless", "balanced", "small"):
+        options = _preset_encode_options(
+            {"preset": preset}, codec=CODEC_HTJ2K_OPENJPH, dtype=plane.dtype
+        )
+        sizes[preset] = len(encode_image_plane(plane, CODEC_HTJ2K_OPENJPH, options))
+    return sizes
+
+
+@pytest.mark.skipif(
+    not htj2k_available(),
+    reason="No HTJ2K encoder is available in this environment.",
+)
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_htj2k_lossy_presets_are_smaller_than_lossless(dtype: str) -> None:
+    """size(small) <= size(balanced) <= size(lossless), at every bit depth.
+
+    This ordering is what a user asking for a smaller file assumes. It used to
+    be reversed for uint8: the presets were absolute quantization steps tuned on
+    uint16, so on 8-bit input they asked for a step ~20x finer than the data's
+    own resolution and the irreversible path spent more bits than the reversible
+    one to return a bit-identical image. `balanced` encoded 2.8x LARGER than
+    `lossless` on this plane.
+    """
+    plane = mandelbrot_plane(256)
+    if dtype == "uint8":
+        plane = (plane >> 8).astype(np.uint8)
+
+    sizes = _encoded_preset_sizes(plane)
+
+    assert sizes["small"] <= sizes["balanced"] <= sizes["lossless"], sizes
+    # Not merely ordered — a lossy preset has to actually buy something.
+    assert sizes["small"] < sizes["lossless"], sizes
+
+
+@pytest.mark.skipif(
+    not htj2k_available(),
+    reason="No HTJ2K encoder is available in this environment.",
+)
+def test_htj2k_presets_hold_fidelity_across_bit_depths() -> None:
+    """The same preset costs the same error *in LSB* whatever the dtype.
+
+    That equivalence is the point of expressing presets as an LSB multiple: the
+    uint8 plane and the uint16 plane holding the same picture must degrade
+    alike, rather than the uint16 one being quantized 256x more coarsely.
+    """
+    plane8 = (mandelbrot_plane(256) >> 8).astype(np.uint8)
+    plane16 = plane8.astype(np.uint16)
+
+    options8 = _preset_encode_options(
+        {"preset": "balanced"}, codec=CODEC_HTJ2K_OPENJPH, dtype=plane8.dtype
+    )
+    options16 = _preset_encode_options(
+        {"preset": "balanced"}, codec=CODEC_HTJ2K_OPENJPH, dtype=plane16.dtype
+    )
+    assert options16["quality"] == options8["quality"] / 256
+
+    error8 = np.abs(
+        decode_htj2k_plane(encode_image_plane(plane8, CODEC_HTJ2K_OPENJPH, options8))
+        .reshape(plane8.shape)
+        .astype(np.int64)
+        - plane8.astype(np.int64)
+    )
+    error16 = np.abs(
+        decode_htj2k_plane(encode_image_plane(plane16, CODEC_HTJ2K_OPENJPH, options16))
+        .reshape(plane16.shape)
+        .astype(np.int64)
+        - plane16.astype(np.int64)
+    )
+    # Same picture, same preset, same absolute error — the uint16 container
+    # does not make the encode coarser.
+    assert error16.mean() == pytest.approx(error8.mean(), abs=0.05)
 
 
 def test_recompress_spatialdata_rewrites_image_and_labels(tmp_path: Path) -> None:

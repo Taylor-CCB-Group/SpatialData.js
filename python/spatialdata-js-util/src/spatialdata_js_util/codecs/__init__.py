@@ -14,9 +14,12 @@ from .backends import (
 )
 from .chunks import chunk_grid, chunk_slices, pad_chunk
 from .encoding import (
+    HTJ2K_DEFAULT_QUALITY_LSB,
+    HTJ2K_QUALITY_FLOOR_LSB,
     decode_htj2k_plane,
     decode_image_chunk,
     decode_image_plane,
+    dtype_quantum,
     encode_image_chunk,
     encode_image_plane,
     htj2k_encode_options,
@@ -38,7 +41,9 @@ __all__ = [
     "CODEC_HTJ2K_LEGACY",
     "CODEC_HTJ2K_OPENJPH",
     "CODEC_JPEG2K",
+    "HTJ2K_DEFAULT_QUALITY_LSB",
     "HTJ2K_ENCODER",
+    "HTJ2K_QUALITY_FLOOR_LSB",
     "SUPPORTED_IMAGE_CODECS",
     "Htj2kCodec",
     "Jpeg2kCodec",
@@ -50,6 +55,7 @@ __all__ = [
     "decode_htj2k_plane",
     "decode_image_chunk",
     "decode_image_plane",
+    "dtype_quantum",
     "encode_image_chunk",
     "encode_image_plane",
     "htj2k_available",

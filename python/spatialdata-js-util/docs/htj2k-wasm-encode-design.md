@@ -48,35 +48,56 @@ to copy `openjph-wasm` dist assets (`index.mjs` + `wasm/`) into the Python packa
 wheel. The copied `vendor/openjph/` blobs are gitignored; CI and
 `pnpm test:python` run the vendor step after `pnpm install`.
 
-Preset mapping:
+Preset mapping — the lossy steps are **relative to the input's bit depth**:
 
-| Preset | `encode({ reversible, quality })` |
-|--------|-----------------------------------|
-| `lossless` | `{ reversible: true }` |
-| `balanced` | `{ reversible: false, quality: 0.0002 }` |
-| `small` | `{ reversible: false, quality: 0.001 }` |
+| Preset | `quality` in LSB | `uint8` step | `uint16` step |
+|--------|------------------|--------------|---------------|
+| `lossless` | — (`reversible: true`) | — | — |
+| `balanced` | 2 | `0.0078125` | `0.000030518` |
+| `small` | 5 | `0.01953125` | `0.000076294` |
 
-`quality` is a float quantization factor (lower = better fidelity, larger output).
-Integer values above ~15 with `reversible=false` produce degenerate output.
+`quality` is a float quantization step, normalised to the dtype's **full dynamic
+range** (lower = better fidelity, larger output). Integer values above ~15 with
+`reversible=false` produce degenerate output.
 
-### Preset calibration (rough)
+### Why presets are bit-depth relative
 
-Early presets (`balanced: 0.005`, `small: 0.01`) were tuned on 64×64 Mandelbrot
-fixtures. On full-range Xenium morphology `uint16` chunks (1024×1024 planes), that
-`balanced` setting was far more lossy than JP2K `balanced` (`level=100`).
+One input LSB is `1 / 2**bits`, so the same absolute `quality` means different
+things at different depths. Measured on 1024² planes (`imagecodecs` 2026.6.26;
+size as a ratio to the reversible encode of the same plane):
 
-Spot checks on one morphology pyramid chunk (`RMSE` on decoded vs source):
+| Step, in LSB | `uint8` H&E | `uint8` retina | `uint16` cells3d | mean error |
+|--------------|-------------|----------------|------------------|-----------|
+| 0.05 | **1.89×** | **2.76×** | — | 0 |
+| 0.26 | **1.39×** | **1.60×** | — | 0 |
+| 1 | 0.92× | 0.58× | 1.00× | ~0.2 LSB |
+| 2 (`balanced`) | 0.68× | 0.29× | 0.93× | ~0.6 LSB |
+| 5 (`small`) | 0.39× | 0.13× | 0.83× | ~1.6 LSB |
 
-| Setting | Encoded (1024² `uint16`) | RMSE |
-|---------|--------------------------|------|
-| JP2K `balanced` | ~722 KiB | ~0.3 |
-| HTJ2K `q=0.0002` (new `balanced`) | ~419 KiB | ~5 |
-| HTJ2K `q=0.001` (new `small`) | ~128 KiB | ~22 |
-| HTJ2K `q=0.005` (old `balanced`) | ~39 KiB | ~60 |
+Both effects are content-independent: a step measured in LSB is the
+dtype-independent knob, and below ~1 LSB (`HTJ2K_QUALITY_FLOOR_LSB`) the
+irreversible 9/7 path is strictly dominated — it returns a bit-identical image
+for more bytes than reversible 5/3. Presets stay above that floor; an explicit
+`quality` below it warns.
 
-Preset names are aligned **roughly** with JP2K intent on real morphology data,
-not bit-identical rate control. For per-dataset tuning, prefer explicit `quality`
-rather than presets alone.
+The earlier absolute presets (`balanced: 0.0002`, `small: 0.001`) were
+calibrated only on full-range Xenium morphology `uint16`, where they are 13.1
+and 65.5 LSB. On `uint8` they are 0.05 and 0.26 LSB, so both encoded *larger*
+than `lossless` for a bit-identical image — the expected size ordering reversed.
+
+Preset names track JP2K intent **roughly**, not bit-identical rate control. For
+per-dataset tuning prefer an explicit `quality`, remembering it is an absolute
+step rather than an LSB multiple.
+
+### Known defect: saturated samples wrap on the lossy path
+
+Lossy HTJ2K reconstructs samples at the dtype ceiling slightly out of range, and
+**both** decoders (`imagecodecs` and `openjph-wasm`) wrap rather than clamp:
+`255 → 0` for `uint8`, `65535 → 0` for `uint16`. On an H&E plane with a
+saturated white background that is isolated black pixels — 14 of 1,048,576 at
+`balanced`. Clipping the source to `254` removes them entirely and the
+reversible path is unaffected, so encode `lossless` where data touches the dtype
+maximum until this is fixed upstream.
 
 ### CLI and JSON
 

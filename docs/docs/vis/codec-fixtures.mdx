@@ -138,11 +138,15 @@ JP2K and HTJ2K share preset names (`lossless`, `balanced`, `small`). HTJ2K encod
 uses OpenJPH WASM (`experimental.openjph_htj2k`) via
 `HTJ2KEncoder.setQuality(reversible, quality)`. The quality argument is a float
 quantization factor (lower = higher fidelity, larger output) — not JP2K-style
-0–100. Presets map to `balanced: 0.0002`, `small: 0.001` (calibrated roughly on
-Xenium morphology; see `python/spatialdata-js-util/docs/htj2k-wasm-encode-design.md`).
-Override with CLI `--quality 0.001` or per-image JSON `"quality": 0.001` (implies
-lossy unless `"reversible": true`). A future codec-demo UI may add interactive `q`
-exploration on sample regions.
+0–100. The step is relative to the dtype's full range, so HTJ2K presets are
+expressed as a multiple of the input's LSB and resolve from the raster's dtype:
+`balanced: 2 LSB`, `small: 5 LSB` — `0.0078125`/`0.01953125` for `uint8`,
+`0.000030518`/`0.000076294` for `uint16`. A step below one LSB encodes *larger*
+than lossless for a bit-identical image, so the presets stay clear above that
+floor; see `python/spatialdata-js-util/docs/htj2k-wasm-encode-design.md`.
+Override with CLI `--quality 0.001` or per-image JSON `"quality": 0.001` (an
+absolute step, not an LSB multiple; implies lossy unless `"reversible": true`).
+A future codec-demo UI may add interactive `q` exploration on sample regions.
 
 `generate_codec_fixtures.py --experimental-htj2k` also writes
 `htj2k-quality-sweep.manifest.json`, encoding the same Mandelbrot plane at several

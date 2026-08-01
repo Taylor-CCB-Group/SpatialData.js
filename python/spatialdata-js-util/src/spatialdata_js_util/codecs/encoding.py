@@ -15,21 +15,46 @@ from .backends import require_backend
 from .names import CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K, is_htj2k_codec
 
 
-def htj2k_encode_options(encode_options: dict[str, Any]) -> tuple[bool, float]:
+# A quantization step below one input LSB cannot buy fidelity the input does not
+# have: the irreversible 9/7 path returns a bit-identical image while spending
+# more bytes than the reversible 5/3 path. See `images.HTJ2K_PRESETS`.
+HTJ2K_QUALITY_FLOOR_LSB = 1.0
+
+# Fallback for `reversible=False` with no step given, in LSB. Matches the
+# `balanced` preset.
+HTJ2K_DEFAULT_QUALITY_LSB = 2.0
+
+
+def dtype_quantum(dtype: np.dtype) -> float:
+    """Return one LSB of *dtype* as a fraction of its full dynamic range.
+
+    OpenJPH's quantization step is normalised to the dtype's full range, so this
+    is the unit that makes a step comparable across bit depths.
+    """
+    info = np.iinfo(dtype)
+    return 1.0 / (int(info.max) - int(info.min) + 1)
+
+
+def htj2k_encode_options(
+    encode_options: dict[str, Any], *, dtype: np.dtype | None = None
+) -> tuple[bool, float]:
     """Map encode options to the OpenJPH ``(reversible, quality)`` pair.
 
     ``quality`` is the OpenJPH quantization step: lower means higher fidelity and
-    a larger codestream. It is *not* a JPEG-style 0–100 quality.
+    a larger codestream. It is *not* a JPEG-style 0–100 quality. It is relative
+    to *dtype*'s full dynamic range, so the default is derived from *dtype* when
+    one is given rather than being a bit-depth-blind constant.
     """
     reversible = bool(encode_options.get("reversible", True))
     if reversible:
         return True, 0.0
-    quality = encode_options.get("quality", encode_options.get("level", 0.0002))
+    default = HTJ2K_DEFAULT_QUALITY_LSB * dtype_quantum(dtype) if dtype is not None else 0.0002
+    quality = encode_options.get("quality", encode_options.get("level", default))
     return False, float(quality)
 
 
 def _encode_htj2k(volume: np.ndarray, encode_options: dict[str, Any] | None = None) -> bytes:
-    reversible, quality = htj2k_encode_options(encode_options or {})
+    reversible, quality = htj2k_encode_options(encode_options or {}, dtype=volume.dtype)
     return require_backend().encode(volume, reversible=reversible, quality=quality)
 
 

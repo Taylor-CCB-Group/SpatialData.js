@@ -27,8 +27,11 @@ from .codecs import (
 )
 from .images import (
     HTJ2K_PRESETS,
+    HTJ2K_QUALITY_FLOOR_LSB,
     JP2K_PRESETS,
     RecompressedSpatialData,
+    dtype_quantum,
+    htj2k_preset_quality,
     recompress_spatialdata,
     resolve_recompression_config,
 )
@@ -58,6 +61,7 @@ __all__ = [
     "CODEC_HTJ2K_OPENJPH",
     "CODEC_JPEG2K",
     "HTJ2K_PRESETS",
+    "HTJ2K_QUALITY_FLOOR_LSB",
     "JP2K_PRESETS",
     "MORTON_CODE_2D_COLUMN",
     "MORTON_CODE_EXTREME_VALUE_INDICATOR",
@@ -69,8 +73,10 @@ __all__ = [
     "backend_report",
     "build_spatialdata_multiscale_metadata",
     "convert_store_tables_to_csc",
+    "dtype_quantum",
     "has_pyramid",
     "htj2k_available",
+    "htj2k_preset_quality",
     "is_htj2k_codec",
     "morton_sort_points",
     "recompress_spatialdata",

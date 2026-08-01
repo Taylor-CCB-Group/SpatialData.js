@@ -153,13 +153,28 @@ working.
 ### Presets and `--quality`
 
 `--quality` is the OpenJPH quantization step: **lower means higher fidelity and a
-larger codestream** — not a JPEG-style 0–100 scale.
+larger codestream** — not a JPEG-style 0–100 scale. The step is relative to the
+dtype's full dynamic range, so one input LSB is `1/256` for 8-bit data and
+`1/65536` for 16-bit.
 
-| Preset | JPEG 2000 | HTJ2K |
-|--------|-----------|-------|
-| `lossless` | reversible, round-trip verified | `reversible=True` |
-| `balanced` | `level=100` | `quality=0.0002` |
-| `small` | `level=75` | `quality=0.001` |
+HTJ2K presets are therefore expressed as a **multiple of the input's LSB**, and
+resolve to a concrete step from the raster's dtype:
+
+| Preset | JPEG 2000 | HTJ2K | `uint8` | `uint16` |
+|--------|-----------|-------|---------|----------|
+| `lossless` | reversible, round-trip verified | `reversible=True` | — | — |
+| `balanced` | `level=100` | 2 LSB | `0.0078125` | `0.000030518` |
+| `small` | `level=75` | 5 LSB | `0.01953125` | `0.000076294` |
+
+A step **below one input LSB is strictly worse than lossless**: it cannot buy
+fidelity the data does not have, so the irreversible transform returns a
+bit-identical image while encoding *larger* than `--preset lossless`. Passing
+such a `--quality` warns and names the floor. The resolved step is recorded in
+the manifest under `encode_options`.
+
+An explicit `--quality` is an absolute step, not an LSB multiple, so pick it for
+the raster's dtype — `0.0005` below is ~33 LSB of `uint16` morphology, but would
+be 0.13 LSB (worse than lossless) on 8-bit input:
 
 ```bash
 spatialdata-js-util images recompress input.zarr out.zarr \

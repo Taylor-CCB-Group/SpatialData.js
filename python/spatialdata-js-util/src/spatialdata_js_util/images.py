@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,10 +17,12 @@ from .codecs import (
     CODEC_HTJ2K_OPENJPH,
     CODEC_JPEG2K,
     HTJ2K_ENCODER,
+    HTJ2K_QUALITY_FLOOR_LSB,
     SUPPORTED_IMAGE_CODECS,
     chunk_grid,
     chunk_slices,
     decode_image_plane,
+    dtype_quantum,
     encode_image_plane,
     is_htj2k_codec,
     pad_chunk,
@@ -51,11 +54,27 @@ JP2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "small": {"reversible": False, "level": 75},
 }
 
+# Lossy HTJ2K presets are a multiple of the input's LSB, not an absolute step.
+# OpenJPH's `quality` is normalised to the dtype's full range, so size and error
+# both track the step measured in LSB — the same multiple costs the same on uint8
+# and uint16. Below ~1 LSB (`HTJ2K_QUALITY_FLOOR_LSB`) the irreversible path is
+# strictly dominated: it returns a bit-identical image for more bytes than
+# reversible. See docs/htj2k-wasm-encode-design.md for the measurements.
 HTJ2K_PRESETS: dict[ImagePreset, dict[str, Any]] = {
     "lossless": {"reversible": True},
-    "balanced": {"reversible": False, "quality": 0.0002},
-    "small": {"reversible": False, "quality": 0.001},
+    # Mean error ~0.6 LSB, p99 2 LSB.
+    "balanced": {"reversible": False, "quality_lsb": 2.0},
+    # Mean error ~1.6 LSB, p99 5 LSB.
+    "small": {"reversible": False, "quality_lsb": 5.0},
 }
+
+
+def htj2k_preset_quality(preset: ImagePreset, dtype: np.dtype) -> float | None:
+    """Resolve an HTJ2K preset to a quantization step, or ``None`` if reversible."""
+    quality_lsb = HTJ2K_PRESETS[preset].get("quality_lsb")
+    if quality_lsb is None:
+        return None
+    return float(quality_lsb) * dtype_quantum(dtype)
 
 
 @dataclass(frozen=True)
@@ -265,7 +284,14 @@ def _array_metadata_from_source(
     return meta
 
 
-def _preset_encode_options(config: dict[str, Any], *, codec: str) -> dict[str, Any]:
+def _preset_encode_options(
+    config: dict[str, Any], *, codec: str, dtype: np.dtype | None = None
+) -> dict[str, Any]:
+    """Resolve config plus preset into concrete encode options.
+
+    HTJ2K presets are bit-depth relative, so *dtype* is required to resolve one;
+    it also lets an explicit ``quality`` be checked against the input's LSB.
+    """
     presets = HTJ2K_PRESETS if codec == CODEC_HTJ2K_OPENJPH else JP2K_PRESETS
     preset_family = "HTJ2K" if codec == CODEC_HTJ2K_OPENJPH else "JP2K"
     encode_options = dict(config.get("encode_options", {}))
@@ -289,10 +315,42 @@ def _preset_encode_options(config: dict[str, Any], *, codec: str) -> dict[str, A
             options[key] = config[key]
 
     explicit_lossless = config.get("reversible") is True or encode_options.get("reversible") is True
+
+    # An explicit `quality` overrides the preset, including its LSB multiple.
+    preset_quality_lsb = options.pop("quality_lsb", None)
+    if preset_quality_lsb is not None and options.get("quality") is None:
+        if dtype is None:
+            described = f"{preset!r} preset" if preset is not None else "quality_lsb setting"
+            raise ValueError(
+                f"Resolving the HTJ2K {described} needs the input dtype: the "
+                "quantization step is relative to the input's bit depth."
+            )
+        options["quality"] = float(preset_quality_lsb) * dtype_quantum(dtype)
+
     if options.get("quality") is not None and not explicit_lossless:
         options["reversible"] = False
+        _warn_if_quality_below_input_resolution(options["quality"], dtype)
 
     return options
+
+
+def _warn_if_quality_below_input_resolution(quality: float, dtype: np.dtype | None) -> None:
+    """Warn when a step is finer than one input LSB, which encodes larger than
+    lossless for a bit-identical image. Only an explicit ``quality`` can ask for
+    this; presets stay above the floor."""
+    if dtype is None:
+        return
+    floor = HTJ2K_QUALITY_FLOOR_LSB * dtype_quantum(dtype)
+    if quality >= floor:
+        return
+    warnings.warn(
+        f"HTJ2K quality={quality:g} is finer than one {dtype} LSB ({dtype_quantum(dtype):g}); "
+        f"the irreversible transform will return a bit-identical image while encoding "
+        f"LARGER than lossless. Use quality>={floor:g} for a genuinely smaller file, "
+        f"or reversible=True (preset 'lossless') for the smallest exact one.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def _sibling_image_label(image_config: dict[str, Any]) -> str:
@@ -383,7 +441,7 @@ def _recompress_image_array(
 
     chunks = _normalize_chunks(config.get("chunks", "auto"), shape, image=True)
     _validate_browser_image_codec_chunks(chunks, raster_path)
-    encode_options = _preset_encode_options(config, codec=codec)
+    encode_options = _preset_encode_options(config, codec=codec, dtype=dtype)
     is_lossless = bool(encode_options.get("reversible", False))
 
     if dest_array_path.exists():
