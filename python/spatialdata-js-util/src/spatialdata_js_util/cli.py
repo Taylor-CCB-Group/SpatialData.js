@@ -227,9 +227,11 @@ def _add_images_commands(subparsers: argparse._SubParsersAction) -> None:
         type=float,
         metavar="Q",
         help=(
-            "HTJ2K quantization factor (lower = better fidelity, larger output). "
-            "Implies lossy encoding; use with --codec experimental.openjph_htj2k. "
-            "Overrides preset quality."
+            "HTJ2K quantization step, relative to the dtype's full range "
+            "(lower = better fidelity, larger output). Implies lossy encoding; use "
+            "with --codec experimental.openjph_htj2k. Overrides preset quality. "
+            "Below one input LSB (1/256 for 8-bit, 1/65536 for 16-bit) the output "
+            "is bit-identical but LARGER than --preset lossless; that warns."
         ),
     )
     recompress.add_argument(

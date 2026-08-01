@@ -772,7 +772,11 @@ class RecompressImagesScreen(InputFormScreen):
                 allow_blank=False,
                 id="preset",
             )
-            yield Label("HTJ2K quality — quantization step, lower = better (blank = use preset)")
+            yield Label(
+                "HTJ2K quality — quantization step relative to the dtype's full range, "
+                "lower = better (blank = use preset). Below one input LSB "
+                "(1/256 for 8-bit, 1/65536 for 16-bit) it encodes larger than lossless."
+            )
             yield Input(placeholder="0.0002", id="quality")
             yield Label("Chunks")
             yield Input(value="auto", placeholder="auto, or one integer per axis", id="chunks")

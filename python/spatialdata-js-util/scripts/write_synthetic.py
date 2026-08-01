@@ -16,8 +16,11 @@ if _SRC_DIR not in sys.path:
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import numpy as np
+
 from spatialdata_js_util.codecs import CODEC_HTJ2K_OPENJPH, CODEC_JPEG2K
 from spatialdata_js_util.codecs import htj2k_available
+from spatialdata_js_util.images import htj2k_preset_quality
 
 from fixture_writer import WrittenFixture, write_codec_spatialdata
 from synthetic_images import fractal_tczyx_image, mandelbrot_plane, volume_tczyx
@@ -67,7 +70,8 @@ def _encode_options(args: argparse.Namespace) -> dict[str, Any] | None:
         return {"reversible": True}
     if args.quality is not None:
         return {"reversible": False, "quality": args.quality}
-    preset_quality = {"balanced": 0.0002, "small": 0.001}.get(args.preset)
+    # Presets are relative to the input's bit depth; synthetic planes are uint16.
+    preset_quality = htj2k_preset_quality(args.preset, np.dtype("uint16"))
     if preset_quality is not None:
         return {"reversible": False, "quality": preset_quality}
     return {"reversible": True}
