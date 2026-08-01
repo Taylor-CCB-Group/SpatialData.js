@@ -1,0 +1,114 @@
+# Dependabot version updates.
+#
+# Why this file exists: every one of the 36 npm security alerts open in July 2026
+# was a *transitive* dependency of a stale pnpm-lock.yaml, not a vulnerable direct
+# dependency. Nothing was opening bump PRs, so the lockfile drifted for months
+# while the manifests stayed permissive enough to have resolved the fixes on their
+# own. Keeping the lockfile moving is what stops that from recurring.
+#
+# Security updates are a separate, always-on GitHub feature and do not need to be
+# listed here. This file only adds the routine version updates, plus the grouping
+# that keeps both kinds of PR reviewable.
+
+version: 2
+
+updates:
+  # --- JavaScript: one entry covers the whole pnpm workspace -----------------
+  # Dependabot reads pnpm-workspace.yaml from the root, so packages/*, docs and
+  # the catalog are all in scope without separate entries per package.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    # Only widen a range when the new version actually falls outside it. The
+    # default (`increase`) rewrites every manifest range on every bump, which is
+    # pure churn for a library whose ranges are deliberately permissive.
+    versioning-strategy: increase-if-necessary
+    groups:
+      # These move as a unit. deck.gl, luma.gl, loaders.gl and viv share peer
+      # ranges, and bumping one without the others produces a tree that installs
+      # cleanly but breaks at runtime on mismatched GL context internals.
+      deckgl-stack:
+        patterns:
+          - 'deck.gl'
+          - '@deck.gl/*'
+          - '@luma.gl/*'
+          - '@loaders.gl/*'
+          - '@math.gl/*'
+          - '@hms-dbmi/viv'
+          - '@vivjs/*'
+      # Docusaurus drags in the entire webpack build stack, which is where most
+      # of the historical alert noise came from. Keeping it in one PR means one
+      # `pnpm docs:build` verifies the lot.
+      docs-stack:
+        patterns:
+          - '@docusaurus/*'
+          - '@mdx-js/*'
+          - 'prism-react-renderer'
+      # Everything else, split so a dev-tooling bump never sits behind a runtime
+      # one in review.
+      production-dependencies:
+        dependency-type: production
+      development-dependencies:
+        dependency-type: development
+      # Security fixes arrive outside the weekly cadence; batch them so a sweep
+      # like the one this file was written for is a single PR, not thirty-six.
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - '*'
+    ignore:
+      # The TypeScript setup here is a deliberate two-package arrangement:
+      # `typescript` is aliased to the TS 6 compat package because TS 7 (the
+      # native port) ships no JS API and breaks typescript-eslint, while
+      # `@typescript/native` supplies the TS 7 tsc used by the build scripts.
+      # Majors have to be migrated by hand, not merged.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: '@typescript/native'
+        update-types: [version-update:semver-major]
+
+  # --- GitHub Actions --------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  # --- Python: the reader/writer utility package -----------------------------
+  - package-ecosystem: uv
+    directory: /python/spatialdata-js-util
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      python:
+        patterns:
+          - '*'
+
+  # --- Python: the spatialdata version matrix --------------------------------
+  # Each of these directories pins one exact spatialdata release so the fixture
+  # generator can emit stores in that version's on-disk layout. Their transitive
+  # deps still need patching (the open setuptools alerts live here), but the pin
+  # itself is the entire point of the directory and must never be bumped.
+  - package-ecosystem: uv
+    directories:
+      - /python/v0.5.0
+      - /python/v0.6.1
+      - /python/v0.7.2
+      - /python/v0.8.0
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      fixtures:
+        patterns:
+          - '*'
+    ignore:
+      - dependency-name: spatialdata
