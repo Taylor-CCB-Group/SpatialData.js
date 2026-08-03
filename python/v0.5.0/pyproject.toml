@@ -15,5 +15,5 @@ dependencies = [
     # `uv lock --upgrade` is unsafe here for a related reason: a newer anndata
     # breaks TableModel.parse on spatialdata <0.8.0. Upgrade named packages
     # instead, and regenerate the fixture to confirm it is unchanged.
-    "setuptools<81",
+    "setuptools<84",
 ]
