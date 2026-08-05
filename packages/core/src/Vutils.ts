@@ -27,6 +27,20 @@ export function basename(path: string) {
   return result;
 }
 
+/**
+ * Resident-byte ceilings for the two parquet caches a source holds.
+ *
+ * Both default to values chosen to bound a leak, not to fit a measured working
+ * set — ADR 0005 is explicit that the numbers stay guesses until something
+ * measures them. Raise or lower them per source when you know better.
+ */
+export type ParquetCacheLimits = {
+  /** Ceiling for cached compressed parquet file bytes. */
+  encodedMaxBytes?: number;
+  /** Ceiling for cached decoded Arrow tables. */
+  decodedMaxBytes?: number;
+};
+
 export type DataSourceParams = {
   url?: string;
   /** Options to pass to fetch calls. */
@@ -35,4 +49,6 @@ export type DataSourceParams = {
   store?: Readable;
   /** The file type. */
   fileType: string; // '.zip' | '.h5ad' etc...
+  /** Optional overrides for the parquet cache byte ceilings. */
+  parquetCacheLimits?: ParquetCacheLimits;
 };
