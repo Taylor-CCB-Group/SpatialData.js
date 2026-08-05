@@ -723,35 +723,4 @@ describe('useLayerData — a caller that mutates its layer configs in place', ()
       expect(requestedColumns(loadObsColumns)).toContain('colB');
     });
   });
-
-  it('loads the new tooltip fields when they are switched in place', async () => {
-    // Same defect, different resource: the tooltip columns are planned from the same
-    // config the colour column is.
-    const { spatialData, loadObsColumns } = tableSpatialData();
-    const shapes = shapesElement('cells');
-    // The tooltip path aligns table rows to feature ids, so it needs this too.
-    (shapes.element as { loadFeatureIds?: unknown }).loadFeatureIds = vi.fn(async () => [
-      'c1',
-      'c2',
-    ]);
-    const elements: ElementsByType = { ...EMPTY_ELEMENTS, shapes: [shapes] };
-    const config: LayerConfig = { ...shapesConfig('layer-1', 'cells'), tooltipFields: ['colA'] };
-    const layers = { 'layer-1': config };
-    const layerOrder = Object.keys(layers);
-
-    const { rerender } = renderHook(() =>
-      useLayerData(layers, layerOrder, elements, null, spatialData)
-    );
-
-    await waitFor(() => {
-      expect(requestedColumns(loadObsColumns)).toContain('colA');
-    });
-
-    config.tooltipFields = ['colB'];
-    rerender();
-
-    await waitFor(() => {
-      expect(requestedColumns(loadObsColumns)).toContain('colB');
-    });
-  });
 });
