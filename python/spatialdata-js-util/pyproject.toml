@@ -20,7 +20,7 @@ dependencies = [
     "numpy>=2.0",
     "pandas>=2.2",
     "pyarrow>=18",
-    "zarr>=3.1",
+    "zarr>=3.3.0",
 ]
 
 # The base install is deliberately light enough to serve as a *reader* shim: it
@@ -29,7 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 write = [
     "anndata>=0.12",
-    "dask[array]>=2025.0",
+    "dask[array]>=2026.7.1",
     "ome-zarr>=0.16",
     "scipy>=1.11",
     "spatialdata>=0.8.0",
