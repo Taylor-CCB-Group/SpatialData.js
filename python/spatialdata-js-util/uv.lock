@@ -2309,7 +2309,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anndata", marker = "extra == 'write'", specifier = ">=0.12" },
-    { name = "dask", extras = ["array"], marker = "extra == 'write'", specifier = ">=2025.0" },
+    { name = "dask", extras = ["array"], marker = "extra == 'write'", specifier = ">=2026.7.1" },
     { name = "imagecodecs", specifier = ">=2025.8.2" },
     { name = "numcodecs", specifier = ">=0.16" },
     { name = "numpy", specifier = ">=2.0" },
@@ -2320,7 +2320,7 @@ requires-dist = [
     { name = "spatialdata", marker = "extra == 'write'", specifier = ">=0.8.0" },
     { name = "spatialdata-js-util", extras = ["write", "tui"], marker = "extra == 'all'" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=1.0" },
-    { name = "zarr", specifier = ">=3.1" },
+    { name = "zarr", specifier = ">=3.3.0" },
 ]
 provides-extras = ["write", "tui", "all"]
 
@@ -2660,7 +2660,7 @@ wheels = [
 
 [[package]]
 name = "zarr"
-version = "3.2.1"
+version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "donfig" },
@@ -2670,9 +2670,9 @@ dependencies = [
     { name = "packaging" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/8d/aeb164004f87543b06ef54f885d02c342c31ceb274e2bbec470a98927621/zarr-3.2.1.tar.gz", hash = "sha256:71565b738a0e7e8ed226f0516eba8c6bb53440ad7669a8c48ebb3534a161d035", size = 675161, upload-time = "2026-05-05T12:37:22.383Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/15/436cb1d3bbe86173bd44ce7a34ecb210d0c0416946e337858149a905ef5a/zarr-3.3.0.tar.gz", hash = "sha256:cd0c8cf738b4bb4807815bc1255acad5bdf1a7b7264b606c5a1bc0d0392a306b", size = 943626, upload-time = "2026-07-30T16:35:10.491Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/0a/469e2bd01be1490336e6c8707386845655d59261543315778a3ccc7e8019/zarr-3.2.1-py3-none-any.whl", hash = "sha256:f78cdd3d9687ad0e9f9cba2c5683b64f0c52589c19f685eeabe872e93cc0d2c7", size = 319617, upload-time = "2026-05-05T12:37:20.66Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/c6/6b726ddf4c3ac5a123f285c3650fa8268902c28ea541a0282867f1336e65/zarr-3.3.0-py3-none-any.whl", hash = "sha256:323bf5366d4f909052ef6e2e03e7481a7434c3ee75d3a981eb3a71fc1ae22cef", size = 363685, upload-time = "2026-07-30T16:35:08.794Z" },
 ]
 
 [[package]]
