@@ -39,6 +39,31 @@ export interface ShapeFillColorEntry {
   rowsSource?: unknown;
   /** The render data this map was built from. Rebuild on identity change. */
   renderSource?: ShapesRenderData;
+  /**
+   * The element these colours were built against. Feature ids are only unique
+   * within an element, so a cached entry may be re-served as last-good only while
+   * the layer still points at the same element.
+   */
+  elementKey?: string;
+}
+
+/**
+ * What to serve while the resolver has no rows for this layer's fill column.
+ *
+ * Keep the last-good entry rather than dropping to `undefined`: a selected column
+ * whose rows have not landed (a fresh column, a reload, a failed load) must not
+ * blank the colours already on screen. Its stale identity is also what makes the
+ * feature-state runtime rebuild when the real rows arrive.
+ *
+ * The element must match. Feature ids are unique only within an element, so an
+ * entry built for a different element would paint the wrong shapes; there, having
+ * no colours is the honest answer.
+ */
+export function lastGoodShapeFillColorEntry(
+  cached: ShapeFillColorEntry | undefined,
+  elementKey: string
+): ShapeFillColorEntry | undefined {
+  return cached?.elementKey === elementKey ? cached : undefined;
 }
 
 export function getShapeFillColorAlpha(config: ShapesLayerConfig): number {
@@ -86,7 +111,15 @@ function mergeShapeFeatureStateForRender(
   if (!config.fillColorByColumn?.columnName) {
     return config.featureState;
   }
-  const fillColorByFeatureId = fillColorEntry?.fillColorByFeatureId ?? {};
+  // A column is selected but its rows have not landed yet (no entry, and no
+  // last-good entry to fall back on). Leave the caller's feature-state alone
+  // rather than overwriting it with `{}`: writing an empty map here clears
+  // whatever is currently drawn for the whole load window, so the layer flashes
+  // back to its flat fill and the caller's own per-feature colours are lost.
+  if (!fillColorEntry) {
+    return config.featureState;
+  }
+  const fillColorByFeatureId = fillColorEntry.fillColorByFeatureId;
   return {
     ...config.featureState,
     fillColorByFeatureId,

@@ -56,6 +56,7 @@ import {
   getStableLabelColorLut,
   type LabelColorLutEntry,
   type LabelFillColorEntry,
+  lastGoodLabelFillColorEntry,
 } from './labelsProjection';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { renderShapesLayer } from './renderers/shapesRenderer';
@@ -65,6 +66,7 @@ import {
   getShapeFillColorAlpha,
   getShapeFillColorSignature,
   getStableShapeFeatureStateRuntime,
+  lastGoodShapeFillColorEntry,
   type ShapeFillColorEntry,
   type ShapePrebuiltEntry,
   serializeHiddenIds,
@@ -750,15 +752,18 @@ export function useLayerData(
         cache.delete(layerId);
         return undefined;
       }
-      // No entry until the resolver's rows are actually loaded. The feature-state
+      // No NEW entry until the resolver's rows are actually loaded. The feature-state
       // runtime is memoised on a signature whose only fill term is this entry's
       // presence (`fillColorEntry?.signature`), so an eager empty-map entry with the
       // full signature would suppress the rebuild that makes fill colours appear when
       // the rows settle. Mirrors the old async path: entry exists only once loaded.
       const rows = shapesResolver.getFillColorRows(key);
-      if (!rows) return undefined;
-      const signature = getShapeFillColorSignature(config);
       const cached = cache.get(layerId);
+      // Rows pending (or the column's load failed): keep the colours already on
+      // screen instead of blinking back to the flat fill. A failed load is not
+      // retried from here; it surfaces through the resolver's own notices.
+      if (!rows) return lastGoodShapeFillColorEntry(cached, key);
+      const signature = getShapeFillColorSignature(config);
       if (
         cached &&
         cached.signature === signature &&
@@ -769,6 +774,7 @@ export function useLayerData(
       }
       const entry: ShapeFillColorEntry = {
         signature,
+        elementKey: key,
         fillColorByFeatureId: buildShapeFillColorByFeatureId({
           featureIds: renderData.featureIds,
           rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
@@ -808,19 +814,30 @@ export function useLayerData(
       // Ask for THIS layer's column: two layers may colour one element differently,
       // and the resolver holds their rows separately.
       const rows = labelsResolver.getFillColorRows(key, config.fillColorByColumn.columnName);
-      if (!rows) return undefined;
-      const signature = getLabelFillColorSignature(config);
       const cached = cache.get(layerId);
+      // Rows pending (or the column's load failed): keep the colours already on
+      // screen. This is the ordinary first frame of a column SWITCH here — the
+      // resolver holds rows per element+column, so the new column has nothing yet
+      // and the old column's entry is the only thing standing between the user and
+      // a flash back to the channel colour.
+      if (!rows) return lastGoodLabelFillColorEntry(cached, key);
+      const signature = getLabelFillColorSignature(config);
       // Both terms are needed: the rows change when the COLUMN changes, and the
       // signature changes when the mode does (same rows, different encoding).
-      if (cached && cached.rowsSource === rows && cached.signature === signature) {
+      if (
+        cached &&
+        cached.elementKey === key &&
+        cached.rowsSource === rows &&
+        cached.signature === signature
+      ) {
         return cached;
       }
-      const entry = buildLabelFillColorEntry(config, rows);
-      if (!entry) {
+      const built = buildLabelFillColorEntry(config, rows);
+      if (!built) {
         cache.delete(layerId);
         return undefined;
       }
+      const entry: LabelFillColorEntry = { ...built, elementKey: key };
       cache.set(layerId, entry);
       return entry;
     },

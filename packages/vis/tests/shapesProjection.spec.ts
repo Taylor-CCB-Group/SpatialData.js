@@ -2,6 +2,7 @@ import type { ShapeFeatureStateRuntime } from '@spatialdata/layers';
 import { describe, expect, it } from 'vitest';
 import {
   getStableShapeFeatureStateRuntime,
+  lastGoodShapeFillColorEntry,
   type ShapeFillColorEntry,
 } from '../src/SpatialCanvas/shapesProjection';
 import type { ShapesLayerConfig } from '../src/SpatialCanvas/types';
@@ -73,5 +74,45 @@ describe('getStableShapeFeatureStateRuntime', () => {
     const a = getStableShapeFeatureStateRuntime('layer-1', config, sameEntry, cache);
     const b = getStableShapeFeatureStateRuntime('layer-1', config, sameEntry, cache);
     expect(b).toBe(a);
+  });
+
+  it('leaves the caller’s per-feature colours alone while the column’s rows are pending', () => {
+    // A selected column with no entry yet is a LOADING state, not an instruction to
+    // clear. Overwriting `fillColorByFeatureId` with `{}` here wiped the caller's own
+    // colours for the whole load window — the bug MDV had to work around.
+    const withOwnColors = {
+      ...config,
+      featureState: { fillColorByFeatureId: { f1: [9, 8, 7, 255] } },
+    } as unknown as ShapesLayerConfig;
+
+    const runtime = getStableShapeFeatureStateRuntime(
+      'layer-1',
+      withOwnColors,
+      undefined,
+      new Map()
+    );
+
+    expect(runtime.fillColorByFeatureId.get('f1')).toEqual([9, 8, 7, 255]);
+  });
+});
+
+describe('lastGoodShapeFillColorEntry', () => {
+  const forElement = (elementKey: string): ShapeFillColorEntry => ({
+    ...entry({ f1: [10, 20, 30, 255] }),
+    elementKey,
+  });
+
+  it('keeps serving the previous colours while the rows are unavailable', () => {
+    const served = lastGoodShapeFillColorEntry(forElement('cells'), 'cells');
+
+    expect(served?.fillColorByFeatureId).toEqual({ f1: [10, 20, 30, 255] });
+  });
+
+  it('refuses an entry built against a different element (feature ids do not carry)', () => {
+    expect(lastGoodShapeFillColorEntry(forElement('nuclei'), 'cells')).toBeUndefined();
+  });
+
+  it('has nothing to serve before the first load', () => {
+    expect(lastGoodShapeFillColorEntry(undefined, 'cells')).toBeUndefined();
   });
 });

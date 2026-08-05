@@ -33,6 +33,13 @@ export interface LabelFillColorEntry {
   signature: string;
   /** The resolver fill-colour rows this map was built from. Rebuild on identity change. */
   rowsSource?: unknown;
+  /**
+   * The element these colours were built against. Label ids are only unique within
+   * an element (they are small integers, so they collide freely across elements),
+   * so a cached entry may be re-served as last-good only while the layer still
+   * points at the same element.
+   */
+  elementKey?: string;
 }
 
 export interface LabelColorLutEntry {
@@ -51,6 +58,25 @@ export interface LabelColorLutEntry {
  * silently halve the channel sliders' range.
  */
 const LABEL_FILL_COLOR_ALPHA = 255;
+
+/**
+ * What to serve while the resolver has no rows for this layer's fill column.
+ *
+ * The labels twin of `lastGoodShapeFillColorEntry`, and load-bearing here in a way
+ * it is not for shapes: `LabelsResolver` caches rows per element+column with no
+ * cross-column stale value, so a plain column switch has a window with no rows at
+ * all. Dropping the entry there flashes every label back to its channel colour
+ * until the new column settles.
+ *
+ * The element must match — label ids are small integers that collide freely across
+ * elements, so another element's entry would colour the wrong labels.
+ */
+export function lastGoodLabelFillColorEntry(
+  cached: LabelFillColorEntry | undefined,
+  elementKey: string
+): LabelFillColorEntry | undefined {
+  return cached?.elementKey === elementKey ? cached : undefined;
+}
 
 export function getLabelFillColorSignature(config: LayerConfig | undefined): string {
   if (config?.type !== 'labels' || !config.fillColorByColumn?.columnName) {
@@ -128,10 +154,18 @@ function mergeLabelFeatureStateForRender(
   if (!config.fillColorByColumn?.columnName) {
     return config.featureState;
   }
+  // A column is selected but its rows have not landed yet (no entry, and no
+  // last-good entry to fall back on). Return the caller's feature-state untouched
+  // rather than writing an empty map: an empty `fillColorByFeatureId` is a real
+  // instruction to the LUT builder, so it clears the colours currently drawn for
+  // the whole load window and the labels flash back to their channel colour.
+  if (!fillColorEntry) {
+    return config.featureState;
+  }
   return {
     ...config.featureState,
     fillColorByFeatureId: {
-      ...(fillColorEntry?.fillColorByFeatureId ?? {}),
+      ...fillColorEntry.fillColorByFeatureId,
       ...config.featureState?.fillColorByFeatureId,
     },
   };
