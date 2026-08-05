@@ -12,7 +12,6 @@ const baseConfig = defineViteConfig({
   external: [
     '@hms-dbmi/viv',
     '@math.gl/core',
-    'geotiff',
     'zarrita',
     // Subpaths too (`zarrextra/workers`): a string entry matches the exact
     // specifier only, which would leave a subpath import to be resolved — and

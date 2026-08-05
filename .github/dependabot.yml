@@ -49,10 +49,26 @@ updates:
           - 'prism-react-renderer'
       # Everything else, split so a dev-tooling bump never sits behind a runtime
       # one in review.
+      #
+      # Majors are deliberately excluded from both groups so they arrive as
+      # individual PRs. A group is a single merge decision, and a batch is only
+      # worth reviewing as one if every member is safe to take on the same
+      # evidence — a green CI run. That holds for minor/patch; it does not hold
+      # for a major, which needs its own judgement and would otherwise hold the
+      # whole batch hostage while it is being made. (The August 2026 batch put
+      # a geotiff 2 -> 3 major, which viv cannot yet take, in the same PR as
+      # eight uncontroversial bumps.) Security updates are unaffected: they are
+      # matched by the `security-updates` group below, which stays unrestricted.
       production-dependencies:
         dependency-type: production
+        update-types:
+          - minor
+          - patch
       development-dependencies:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
       # Security fixes arrive outside the weekly cadence; batch them so a sweep
       # like the one this file was written for is a single PR, not thirty-six.
       security-updates:
@@ -112,3 +128,13 @@ updates:
           - '*'
     ignore:
       - dependency-name: spatialdata
+      # The `setuptools<81` cap in the v0.5.0 and v0.6.1 pyproject.toml files is
+      # load-bearing — see the comment there for why. It has to be repeated here
+      # because that comment is not something Dependabot can read: unlike the npm
+      # entry above, the uv ecosystem has no `versioning-strategy`, so the bot is
+      # free to widen a declared constraint. It did exactly that in #112,
+      # rewriting `<81` to `<84` and leaving the paragraph explaining the cap
+      # sitting directly above the line that now contradicted it. CI caught it,
+      # but only after the fixture build failed on the missing `pkg_resources`.
+      - dependency-name: setuptools
+        versions: ['>=81']

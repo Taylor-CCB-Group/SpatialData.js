@@ -18,7 +18,6 @@ const baseConfig = defineViteConfig({
     '@hms-dbmi/viv',
     '@math.gl/core',
     'deck.gl',
-    'geotiff',
     'anndata.js',
     'zarrita',
     /^zarrextra(?:\/.*)?$/,
