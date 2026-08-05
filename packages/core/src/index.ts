@@ -6,6 +6,8 @@
 
 // Resource Resolver contracts (ADR 0004).
 export * from './engine/index.js';
+// Memory accounting (ADR 0005).
+export * from './memory/index.js';
 export * from './models/index.js';
 // The semantics that need the tree guards, not just the guards themselves: a
 // consumer enumerating obs columns has to know that a group might be a
