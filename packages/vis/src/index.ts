@@ -21,7 +21,12 @@ export {
   SpatialLayer,
   spatialLayerPropsSchema,
 } from '@spatialdata/layers';
-export { ensureCodecWorkers } from './codecWorkers';
+export {
+  DEFAULT_CHUNK_CACHE_MAX_BYTES,
+  type EnsureCodecWorkersOptions,
+  ensureCodecWorkers,
+  getChunkCache,
+} from './codecWorkers';
 export { default as ImageView } from './ImageView';
 export { default as Shapes } from './Shapes';
 export { default as Sketch } from './Sketch';
