@@ -143,6 +143,54 @@ describe('ByteLruCache', () => {
     expect(cache.byteLength).toBe(100);
   });
 
+  it('refuses a ceiling that would disable eviction', () => {
+    // NaN is the one that matters: every `resident > max` comparison against it
+    // is false, so the cache would report nonsense and never evict again.
+    expect(() => bytesCache(Number.NaN)).toThrow(RangeError);
+    expect(() => bytesCache(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => bytesCache(-1)).toThrow(RangeError);
+  });
+
+  it('refuses a size that would corrupt the running total', () => {
+    const cache = new ByteLruCache<string>({ maxBytes: 100, sizeOf: () => Number.NaN });
+
+    expect(() => cache.set('a', 'x')).toThrow(RangeError);
+    expect(cache.byteLength).toBe(0);
+  });
+
+  it('finishes evicting even when disposal throws', () => {
+    const disposed: string[] = [];
+    const cache = bytesCache(200, (_value, key) => {
+      disposed.push(key);
+      throw new Error(`dispose failed for ${key}`);
+    });
+    cache.set('a', new Uint8Array(100));
+    cache.set('b', new Uint8Array(100));
+
+    // Admitting 500 bytes has to evict both 100-byte entries to get under 200.
+    expect(() => cache.set('c', new Uint8Array(500))).toThrow('dispose failed for a');
+
+    expect(disposed).toEqual(['a', 'b']);
+    expect(cache.size).toBe(1);
+    expect(cache.byteLength).toBe(500);
+  });
+
+  it('finishes clearing even when disposal throws', () => {
+    const disposed: string[] = [];
+    const cache = bytesCache(1000, (_value, key) => {
+      disposed.push(key);
+      throw new Error(`dispose failed for ${key}`);
+    });
+    cache.set('a', new Uint8Array(10));
+    cache.set('b', new Uint8Array(10));
+
+    expect(() => cache.clear()).toThrow('dispose failed for a');
+
+    expect(disposed).toEqual(['a', 'b']);
+    expect(cache.size).toBe(0);
+    expect(cache.byteLength).toBe(0);
+  });
+
   it('satisfies MemoryReporting', () => {
     const cache: MemoryReporting = bytesCache(100);
     expect(cache.byteLength).toBe(0);

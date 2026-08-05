@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ATTRS_KEY } from 'zarrextra';
+import type * as zarr from 'zarrita';
 import { ImageElement } from '../src/models/index.js';
 
 /**
@@ -31,20 +32,27 @@ function createTree() {
   };
 }
 
-function createImageElement(zarritaStore: { get: (key: string) => Promise<null> } = fakeStore()) {
+/** The narrowest thing satisfying `ConsolidatedStore['zarritaStore']`. */
+function fakeStore() {
+  return {
+    get: vi.fn(async (_key: zarr.AbsolutePath): Promise<Uint8Array | undefined> => undefined),
+    contents: vi.fn((): { path: zarr.AbsolutePath; kind: 'array' | 'group' }[] => []),
+  };
+}
+
+function createImageElement(zarritaStore: ReturnType<typeof fakeStore> = fakeStore()) {
   return new ImageElement({
     sdata: {
+      source: 'test://sdata.zarr',
       rootStore: { tree: createTree(), zarritaStore },
-      // biome-ignore lint/suspicious/noExplicitAny: minimal SDataProps test double
-    } as any,
+    },
     name: 'images',
     key: 'morphology',
   });
 }
 
-function fakeStore() {
-  return { get: vi.fn(async () => null) };
-}
+/** A chunk key rooted at the element, in zarrita's branded absolute-path form. */
+const CHUNK_KEY: zarr.AbsolutePath = '/0/c/0/0';
 
 describe('RasterElement.getStore', () => {
   it('hands out one stable store view per element', () => {
@@ -54,15 +62,18 @@ describe('RasterElement.getStore', () => {
   });
 
   it('gives different elements different views', () => {
-    expect(createImageElement().getStore()).not.toBe(createImageElement().getStore());
+    // One backing store, so the assertion is about the per-element *view* rather
+    // than about the two elements happening to hold different stores.
+    const shared = fakeStore();
+
+    expect(createImageElement(shared).getStore()).not.toBe(createImageElement(shared).getStore());
   });
 
   it('still resolves keys under the element path', async () => {
     const store = fakeStore();
     const element = createImageElement(store);
 
-    // biome-ignore lint/suspicious/noExplicitAny: zarrita brands absolute paths
-    await element.getStore().get('/0/c/0/0' as any);
+    await element.getStore().get(CHUNK_KEY);
 
     expect(store.get).toHaveBeenCalledWith('/images/morphology/0/c/0/0', undefined);
   });

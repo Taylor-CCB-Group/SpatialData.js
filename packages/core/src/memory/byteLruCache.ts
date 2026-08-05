@@ -32,6 +32,24 @@ interface Entry<V> {
 }
 
 /**
+ * Reject a byte count that would corrupt the accounting rather than merely be wrong.
+ *
+ * `NaN` is the dangerous one: every `residentBytes > maxBytes` comparison against
+ * it is false, so a single `NaN` — from a ceiling passed through an unparsed
+ * config value, or from a `sizeOf` that met an unexpected payload — silently
+ * disables eviction for the lifetime of the cache. A bounded cache quietly
+ * becomes an unbounded one, which is the exact failure it exists to prevent.
+ * Infinity and negatives are the same class of mistake and equally cheap to
+ * refuse here, at the one place a bad number can enter.
+ */
+function assertByteCount(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`${label} must be a finite, non-negative byte count; received ${value}`);
+  }
+  return value;
+}
+
+/**
  * A byte-bounded LRU cache that reports what it is holding.
  *
  * Framework-free and deliberately small — [ADR 0005](../../../../docs/adr/0005-memory-accounting-before-management.md)
@@ -67,9 +85,41 @@ export class ByteLruCache<V> implements MemoryReporting {
   private residentBytes = 0;
 
   constructor(options: ByteLruCacheOptions<V>) {
-    this.maxBytes = options.maxBytes;
+    this.maxBytes = assertByteCount(options.maxBytes, 'maxBytes');
     this.sizeOf = options.sizeOf;
     this.onDispose = options.onDispose;
+  }
+
+  /** `sizeOf`, with the result checked before it can reach the running total. */
+  private measure(value: V): number {
+    return assertByteCount(this.sizeOf(value), 'sizeOf(value)');
+  }
+
+  /**
+   * Run `onDispose`, returning what it threw instead of throwing.
+   *
+   * Disposal is a courtesy at the end of a removal that has already happened;
+   * letting it propagate mid-loop would abandon an eviction pass partway and
+   * leave the cache over budget, or skip the rest of a `clear`. Callers finish
+   * the structural work, then rethrow.
+   */
+  private disposeQuietly(value: V, key: string): unknown {
+    if (!this.onDispose) {
+      return undefined;
+    }
+    try {
+      this.onDispose(value, key);
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  }
+
+  /** Drop an entry and its bytes, returning any error `onDispose` threw. */
+  private removeEntry(key: string, entry: Entry<V>): unknown {
+    this.entries.delete(key);
+    this.residentBytes -= entry.bytes;
+    return this.disposeQuietly(entry.value, key);
   }
 
   /** Resident bytes, maintained incrementally — never a scan of the residents. */
@@ -120,13 +170,14 @@ export class ByteLruCache<V> implements MemoryReporting {
       this.entries.delete(key);
       this.residentBytes -= previous.bytes;
     }
-    const bytes = this.sizeOf(value);
+    const bytes = this.measure(value);
     this.entries.set(key, { value, bytes });
     this.residentBytes += bytes;
-    if (previous) {
-      this.onDispose?.(previous.value, key);
-    }
+    const disposeError = previous ? this.disposeQuietly(previous.value, key) : undefined;
     this.evictToBudget();
+    if (disposeError !== undefined) {
+      throw disposeError;
+    }
   }
 
   /**
@@ -142,7 +193,7 @@ export class ByteLruCache<V> implements MemoryReporting {
     if (!entry) {
       return;
     }
-    const bytes = this.sizeOf(entry.value);
+    const bytes = this.measure(entry.value);
     this.residentBytes += bytes - entry.bytes;
     entry.bytes = bytes;
     this.entries.delete(key);
@@ -156,35 +207,62 @@ export class ByteLruCache<V> implements MemoryReporting {
     if (!entry) {
       return false;
     }
-    this.entries.delete(key);
-    this.residentBytes -= entry.bytes;
-    this.onDispose?.(entry.value, key);
+    const disposeError = this.removeEntry(key, entry);
+    if (disposeError !== undefined) {
+      throw disposeError;
+    }
     return true;
   }
 
-  /** Drop everything, disposing each entry. */
+  /**
+   * Drop everything, disposing each entry.
+   *
+   * Every entry is disposed even if one of them throws; the first error is
+   * rethrown once the cache is empty, so a single bad payload cannot strand the
+   * rest.
+   */
   clear(): void {
     const disposing = [...this.entries];
     this.entries.clear();
     this.residentBytes = 0;
-    if (this.onDispose) {
-      for (const [key, entry] of disposing) {
-        this.onDispose(entry.value, key);
+    let firstError: unknown;
+    for (const [key, entry] of disposing) {
+      const error = this.disposeQuietly(entry.value, key);
+      if (firstError === undefined) {
+        firstError = error;
       }
+    }
+    if (firstError !== undefined) {
+      throw firstError;
     }
   }
 
   /**
    * Evict from the least-recently-used end until within budget, stopping while
    * one entry remains so that an oversized value is kept rather than refused.
+   *
+   * A throwing `onDispose` does not stop the pass — abandoning it halfway would
+   * leave the cache over its ceiling, which is worse than the failed disposal.
+   * The first error surfaces once the cache is back within budget.
    */
   private evictToBudget(): void {
+    let firstError: unknown;
     while (this.residentBytes > this.maxBytes && this.entries.size > 1) {
       const oldest = this.entries.keys().next();
       if (oldest.done) {
-        return;
+        break;
       }
-      this.delete(oldest.value);
+      const entry = this.entries.get(oldest.value);
+      if (!entry) {
+        break;
+      }
+      const error = this.removeEntry(oldest.value, entry);
+      if (firstError === undefined) {
+        firstError = error;
+      }
+    }
+    if (firstError !== undefined) {
+      throw firstError;
     }
   }
 }
