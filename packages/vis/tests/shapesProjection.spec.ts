@@ -83,7 +83,7 @@ describe('getStableShapeFeatureStateRuntime', () => {
     const withOwnColors = {
       ...config,
       featureState: { fillColorByFeatureId: { f1: [9, 8, 7, 255] } },
-    } as unknown as ShapesLayerConfig;
+    } satisfies ShapesLayerConfig;
 
     const runtime = getStableShapeFeatureStateRuntime(
       'layer-1',
