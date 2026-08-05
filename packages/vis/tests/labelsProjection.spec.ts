@@ -4,6 +4,7 @@ import {
   getStableLabelColorLut,
   type LabelColorLutEntry,
   type LabelFillColorEntry,
+  lastGoodLabelFillColorEntry,
 } from '../src/SpatialCanvas/labelsProjection';
 import type { LabelsLayerConfig } from '../src/SpatialCanvas/types';
 
@@ -174,5 +175,44 @@ describe('getStableLabelColorLut', () => {
 
   it('has no table at all when the layer has no feature state', () => {
     expect(getStableLabelColorLut('layer-1', config(), undefined, WHITE, cache())).toBeUndefined();
+  });
+
+  it('keeps the explicit per-label colours while the column’s rows are pending', () => {
+    // A selected column with no entry yet is a LOADING state, not an instruction to
+    // clear: the caller's own colours must survive the window untouched.
+    const cfg = config({
+      fillColorByColumn: { columnName: 'cell_type', mode: 'categorical' },
+      featureState: { fillColorByFeatureId: { '1': [1, 2, 3, 255] } },
+    });
+
+    const lut = getStableLabelColorLut('layer-1', cfg, undefined, WHITE, cache());
+
+    expect(Array.from(lut?.colors.subarray(4, 8) ?? [])).toEqual([1, 2, 3, 255]);
+  });
+});
+
+describe('lastGoodLabelFillColorEntry', () => {
+  const forElement = (elementKey: string): LabelFillColorEntry => ({
+    signature: 'cell_typecategorical',
+    fillColorByFeatureId: { '1': [10, 20, 30, 255] },
+    rowsSource: {},
+    elementKey,
+  });
+
+  it('keeps serving the previous column’s colours across a column switch', () => {
+    // The switch itself is the gap: rows are cached per element+column, so the newly
+    // selected column has nothing until it settles. Serving the old entry is what
+    // stops every label flashing back to its channel colour in between.
+    const served = lastGoodLabelFillColorEntry(forElement('cells'), 'cells');
+
+    expect(served?.fillColorByFeatureId).toEqual({ '1': [10, 20, 30, 255] });
+  });
+
+  it('refuses an entry built against a different element (label ids collide)', () => {
+    expect(lastGoodLabelFillColorEntry(forElement('nuclei'), 'cells')).toBeUndefined();
+  });
+
+  it('has nothing to serve before the first load', () => {
+    expect(lastGoodLabelFillColorEntry(undefined, 'cells')).toBeUndefined();
   });
 });
