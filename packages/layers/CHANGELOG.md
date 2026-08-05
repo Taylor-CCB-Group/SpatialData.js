@@ -1,5 +1,12 @@
 # @spatialdata/layers
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @spatialdata/core@0.5.1
+
 ## 0.5.0
 
 ### Patch Changes
