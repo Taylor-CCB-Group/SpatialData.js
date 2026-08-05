@@ -5,4 +5,6 @@
  * accounting first, management only where something is already unbounded.
  */
 
+export type { ByteLruCacheOptions } from './byteLruCache.js';
+export { ByteLruCache } from './byteLruCache.js';
 export type { MemoryReporting } from './memoryReporting.js';
