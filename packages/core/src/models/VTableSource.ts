@@ -1049,12 +1049,29 @@ export default class SpatialDataTableSource extends AnnDataSource {
       return this.parquetTableCache[parquetPath];
     }
 
-    const tablePromise = this._loadParquetTableUncached(parquetPath, columns);
-
-    if (!columns?.length) {
-      this.parquetTableCache[parquetPath] = tablePromise;
+    const uncached = this._loadParquetTableUncached(parquetPath, columns);
+    if (columns?.length) {
+      return uncached;
     }
 
+    // Cached BEFORE it settles, so concurrent callers share one WASM decode — but
+    // what they share must not be a rejection kept forever. Uncleaned, a single
+    // transient fetch failure pins a rejected promise at this path for the
+    // lifetime of the source, and every later read replays a network error that
+    // cleared long ago.
+    //
+    // This is a cache-liveness fix, not a change to the skip-vs-fail policy in
+    // `docs/plans/parquet-io-error-handling.md`: the rejection still propagates
+    // unchanged to this caller, it just stops being the answer for the next one.
+    const tablePromise = uncached.catch((error: unknown) => {
+      // Only if still current — a retry that superseded this entry must not be
+      // clobbered by this promise's late rejection (see {@link evictIfCurrent}).
+      if (this.parquetTableCache[parquetPath] === tablePromise) {
+        delete this.parquetTableCache[parquetPath];
+      }
+      throw error;
+    });
+    this.parquetTableCache[parquetPath] = tablePromise;
     return tablePromise;
   }
 
