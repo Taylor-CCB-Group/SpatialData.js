@@ -113,10 +113,11 @@ updates:
   # generator can emit stores in that version's on-disk layout. Their transitive
   # deps still need patching (the open setuptools alerts live here), but the pin
   # itself is the entire point of the directory and must never be bumped.
+  #
+  # Split in two only because of the setuptools cap below. The two entries are
+  # otherwise identical, and anything that changes one should change both.
   - package-ecosystem: uv
     directories:
-      - /python/v0.5.0
-      - /python/v0.6.1
       - /python/v0.7.2
       - /python/v0.8.0
     schedule:
@@ -128,13 +129,34 @@ updates:
           - '*'
     ignore:
       - dependency-name: spatialdata
-      # The `setuptools<81` cap in the v0.5.0 and v0.6.1 pyproject.toml files is
-      # load-bearing — see the comment there for why. It has to be repeated here
-      # because that comment is not something Dependabot can read: unlike the npm
-      # entry above, the uv ecosystem has no `versioning-strategy`, so the bot is
-      # free to widen a declared constraint. It did exactly that in #112,
-      # rewriting `<81` to `<84` and leaving the paragraph explaining the cap
-      # sitting directly above the line that now contradicted it. CI caught it,
-      # but only after the fixture build failed on the missing `pkg_resources`.
+
+  # The older two releases cap setuptools below 81, which removed `pkg_resources`
+  # while their dependency stack still imports it at runtime — see the comment in
+  # each pyproject.toml. That comment is not something Dependabot reads, and its
+  # default versioning strategy widens a declared constraint to admit the version
+  # it wants: in #112 it rewrote `<81` to `<84`, leaving the paragraph explaining
+  # the cap sitting directly above the line that now contradicted it. CI caught
+  # it, but only after the fixture build died on the missing `pkg_resources`.
+  #
+  # `versioning-strategy: lockfile-only` is the tempting fix and the wrong one.
+  # It would leave the cap alone, but for uv it also stops transitive updates
+  # (dependabot-core#14073) — and receiving those is what these directories are
+  # here for. Ignoring the one dependency keeps the rest of the stack moving.
+  #
+  # v0.7.2 and v0.8.0 are deliberately excluded: both already run setuptools 83
+  # uncapped, so this rule would pin them there for good, security fixes included.
+  - package-ecosystem: uv
+    directories:
+      - /python/v0.5.0
+      - /python/v0.6.1
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      fixtures:
+        patterns:
+          - '*'
+    ignore:
+      - dependency-name: spatialdata
       - dependency-name: setuptools
         versions: ['>=81']
