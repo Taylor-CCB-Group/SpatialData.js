@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git"
   },
-  "packageManager": "pnpm@11.12.0",
+  "packageManager": "pnpm@11.20.0",
   "scripts": {
     "clean": "rm -rf packages/*/dist packages/vis/demo/dist packages/zarrextra/src/*.d.ts packages/zarrextra/src/*.d.ts.map",
     "build": "pnpm -r --filter='!docs' run build",
