@@ -620,3 +620,138 @@ describe('useLayerData — the hover highlight channel', () => {
     expect(getRenders()).toBe(baseline);
   });
 });
+
+describe('useLayerData — a caller that mutates its layer configs in place', () => {
+  // MDV's render-stack adapter keeps ONE `LayerConfig` object per stack entry and
+  // patches it in place, so a cosmetic edit does not re-enter async geometry loads.
+  // The `layers` record it hands over therefore keeps its identity across an edit —
+  // which means config identity is NOT a "the load inputs changed" signal, and any
+  // load the hook plans off that identity silently never happens.
+  //
+  // The symptom that got here: switching an already-loaded shapes/labels layer to a
+  // different `fillColorByColumn` left the colours on the previous column forever.
+  // The projection had no rows for the new column, so (correctly, per #119) it kept
+  // serving the last-good entry — but nothing ever asked the resolver to load the
+  // new column, so "last good" was all there would ever be.
+  function tableSpatialData() {
+    const columnValues: Record<string, string[]> = {
+      region: ['cells', 'cells'],
+      colA: ['a', 'a'],
+      colB: ['b', 'b'],
+    };
+    const loadObsColumns = vi.fn(async (names: string[]) =>
+      names.map((name) => columnValues[name] ?? [])
+    );
+    const table = {
+      getTableKeys: () => ({ region: ['cells'], regionKey: 'region' }),
+      loadObsIndex: vi.fn(async () => ['c1', 'c2']),
+      loadObsColumns,
+    };
+    const spatialData = {
+      getAssociatedTable: vi.fn(() => ['table', table]),
+    } as unknown as SpatialData;
+    return { spatialData, loadObsColumns };
+  }
+
+  /** Every column name the hook has asked the associated table for, in order. */
+  const requestedColumns = (loadObsColumns: ReturnType<typeof vi.fn>): string[] =>
+    loadObsColumns.mock.calls.flatMap((call) => call[0] as string[]);
+
+  it('loads the new fill-colour column when a shapes config is switched in place', async () => {
+    const { spatialData, loadObsColumns } = tableSpatialData();
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, shapes: [shapesElement('cells')] };
+    // ONE config object, ONE record — both keep their identity for the whole test,
+    // exactly as they do under the render-stack adapter.
+    const config: LayerConfig = {
+      ...shapesConfig('layer-1', 'cells'),
+      fillColorByColumn: { columnName: 'colA', mode: 'categorical' },
+    };
+    const layers = { 'layer-1': config };
+    const layerOrder = Object.keys(layers);
+
+    const { rerender } = renderHook(() =>
+      useLayerData(layers, layerOrder, elements, null, spatialData)
+    );
+
+    await waitFor(() => {
+      expect(requestedColumns(loadObsColumns)).toContain('colA');
+    });
+
+    // The switch the user makes in the panel: same config object, new column.
+    config.fillColorByColumn = { columnName: 'colB', mode: 'categorical' };
+    rerender();
+
+    await waitFor(() => {
+      expect(requestedColumns(loadObsColumns)).toContain('colB');
+    });
+  });
+
+  it('loads the new fill-colour column when a labels config is switched in place', async () => {
+    const { spatialData, loadObsColumns } = tableSpatialData();
+    const labels: AvailableElement = {
+      key: 'segmentation',
+      type: 'labels',
+      // The loader load will fail (no real zarr behind it) and that is fine: the
+      // fill-colour column is a resource of its own and must load regardless.
+      element: { key: 'segmentation' } as unknown as AvailableElement['element'],
+      transform: new Matrix4(),
+    };
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, labels: [labels] };
+    const config: LayerConfig = {
+      id: 'layer-l',
+      type: 'labels',
+      elementKey: 'segmentation',
+      visible: true,
+      opacity: 1,
+      fillColorByColumn: { columnName: 'colA', mode: 'categorical' },
+    };
+    const layers = { 'layer-l': config };
+    const layerOrder = Object.keys(layers);
+
+    const { rerender } = renderHook(() =>
+      useLayerData(layers, layerOrder, elements, null, spatialData)
+    );
+
+    await waitFor(() => {
+      expect(requestedColumns(loadObsColumns)).toContain('colA');
+    });
+
+    config.fillColorByColumn = { columnName: 'colB', mode: 'categorical' };
+    rerender();
+
+    await waitFor(() => {
+      expect(requestedColumns(loadObsColumns)).toContain('colB');
+    });
+  });
+
+  it('loads the new tooltip fields when they are switched in place', async () => {
+    // Same defect, different resource: the tooltip columns are planned from the same
+    // config the colour column is.
+    const { spatialData, loadObsColumns } = tableSpatialData();
+    const shapes = shapesElement('cells');
+    // The tooltip path aligns table rows to feature ids, so it needs this too.
+    (shapes.element as { loadFeatureIds?: unknown }).loadFeatureIds = vi.fn(async () => [
+      'c1',
+      'c2',
+    ]);
+    const elements: ElementsByType = { ...EMPTY_ELEMENTS, shapes: [shapes] };
+    const config: LayerConfig = { ...shapesConfig('layer-1', 'cells'), tooltipFields: ['colA'] };
+    const layers = { 'layer-1': config };
+    const layerOrder = Object.keys(layers);
+
+    const { rerender } = renderHook(() =>
+      useLayerData(layers, layerOrder, elements, null, spatialData)
+    );
+
+    await waitFor(() => {
+      expect(requestedColumns(loadObsColumns)).toContain('colA');
+    });
+
+    config.tooltipFields = ['colB'];
+    rerender();
+
+    await waitFor(() => {
+      expect(requestedColumns(loadObsColumns)).toContain('colB');
+    });
+  });
+});
