@@ -20,7 +20,7 @@ function chunkOf(bytes: number): Chunk<DataType> {
     data: new Uint8Array(bytes),
     shape: [bytes],
     stride: [1],
-  } as Chunk<DataType>;
+  };
 }
 
 /** The cache handed to fizarrita on the most recent call. */
