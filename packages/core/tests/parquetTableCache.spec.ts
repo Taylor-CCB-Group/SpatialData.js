@@ -1,7 +1,7 @@
 import { tableFromArrays, tableToIPC } from 'apache-arrow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ParquetCacheLimits } from '../src/Vutils.js';
 import SpatialDataTableSource from '../src/models/VTableSource.js';
+import type { ParquetCacheLimits } from '../src/Vutils.js';
 
 const PARQUET_PATH = 'points/cells/points.parquet';
 const OTHER_PARQUET_PATH = 'points/nuclei/points.parquet';
