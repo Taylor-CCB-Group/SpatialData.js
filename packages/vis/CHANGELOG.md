@@ -1,5 +1,46 @@
 # @spatialdata/vis
 
+## 0.5.0
+
+### Patch Changes
+
+- [#119](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/119) [`1c1984d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/1c1984d3e7f45603c7bfced8c646043b0c8f2a13) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Keep the last-good fill colours while a `fillColorByColumn` column's rows are loading.
+
+  A selected column with no rows yet was treated as "no colours": the projection wrote
+  `fillColorByFeatureId: {}`, so features dropped to the flat fill (shapes) or channel
+  colour (labels) for the whole load window. Labels blinked on every column _switch_ —
+  `LabelsResolver` caches rows per element+column, so a switch always has a frame with
+  no rows.
+
+  Not-ready is now a loading state. The entry getters keep serving the previous entry
+  (same element only — label ids collide across elements), and the feature-state merges
+  leave the caller's `featureState` alone when there is no entry at all instead of
+  clearing it. The stale entry's identity still drives the rebuild, so the real colours
+  appear as soon as the rows settle; a failed load keeps the last good colours and
+  surfaces through the resolver's notices as before.
+
+- [#109](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/109) [`3215b3b`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3215b3b5346f7f751a04f51a8a3d9e3623fa2505) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Track spatialdata 0.8.0 in the fixture matrix; README quick-starts now point at
+  `test-fixtures/v0.8.0/blobs.zarr`.
+
+  No source changes — 0.8.0 reads correctly today. It does change the store on disk
+  in two ways worth knowing about, both now covered by the integration matrix:
+
+  - multiscale dataset paths are `s0`/`s1`/`s2` rather than `0`/`1`/`2`, so level
+    names must come from `multiscales[0].datasets[].path` and never from position;
+  - the AnnData `obs`/`var` index is written as a `nullable-string-array` _group_
+    (a `values` array beside a `mask` array) instead of a plain `string-array`
+    array. `loadObsIndex()` and the table source's `loadVarIndex()` both decode it.
+
+  Note that `anndata.js`'s `varNames()` cannot read the new index at all — read var
+  names through the table source, not the AnnData wrapper.
+
+- Updated dependencies [[`423448b`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/423448b13e6a2cb07324faa9b318dca2c6ba1c59), [`8453d3c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/8453d3ce1effba9078cc8b782804cb6a69bce654), [`3215b3b`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3215b3b5346f7f751a04f51a8a3d9e3623fa2505), [`2c7e3c3`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/2c7e3c31ab3ce4c0fd509ff325bc8c02445fdfb0)]:
+  - zarrextra@0.4.0
+  - @spatialdata/layers@0.5.0
+  - @spatialdata/core@0.5.0
+  - @spatialdata/avivatorish@0.5.0
+  - @spatialdata/react@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
