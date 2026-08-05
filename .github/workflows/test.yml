@@ -27,7 +27,7 @@ jobs:
       # apart — that ambiguity is how a duplicate `with:` key landed in this job
       # in #92 and broke the whole workflow.
       - name: Check out repository (react-lint)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -37,7 +37,7 @@ jobs:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
@@ -59,7 +59,7 @@ jobs:
     # narrower than `pnpm lint` (biome check .).
     steps:
       - name: Check out repository (biome-lint)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -69,7 +69,7 @@ jobs:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository (test)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v5
@@ -92,7 +92,7 @@ jobs:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
@@ -126,7 +126,7 @@ jobs:
       # FIXTURE_VERSIONS in tests/integration/fixtureVersions.ts.
       - name: Cache generated test fixtures (0.5.0)
         id: cache-fixtures-050
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-fixtures/v0.5.0
           key: ${{ runner.os }}-fixtures-v0.5.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.5.0/**') }}
@@ -137,7 +137,7 @@ jobs:
 
       - name: Cache generated test fixtures (0.6.1)
         id: cache-fixtures-061
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-fixtures/v0.6.1
           key: ${{ runner.os }}-fixtures-v0.6.1-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.6.1/**') }}
@@ -148,7 +148,7 @@ jobs:
 
       - name: Cache generated test fixtures (0.7.2)
         id: cache-fixtures-072
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-fixtures/v0.7.2
           key: ${{ runner.os }}-fixtures-v0.7.2-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.7.2/**') }}
@@ -162,7 +162,7 @@ jobs:
       # populates it and the other hits instead of generating it a second time.
       - name: Cache generated test fixtures (0.8.0)
         id: cache-fixtures-080
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-fixtures/v0.8.0
           key: ${{ runner.os }}-fixtures-v0.8.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.8.0/**') }}
@@ -177,7 +177,7 @@ jobs:
       # *blobs* generators, so a codec-generator change did not invalidate them.
       # Caching them explicitly keeps the saving and fixes the key.
       - name: Cache generated codec fixtures
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-fixtures/codecs
           key: ${{ runner.os }}-fixtures-codecs-${{ hashFiles('scripts/vendor-openjph-for-python.mjs', 'python/spatialdata-js-util/scripts/**', 'python/spatialdata-js-util/src/**', 'python/spatialdata-js-util/pyproject.toml', 'python/spatialdata-js-util/uv.lock') }}
@@ -230,7 +230,7 @@ jobs:
       contents: read
     steps:
       - name: Check out repository (production-browser)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -240,7 +240,7 @@ jobs:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24.14.1'
           cache: 'pnpm'
@@ -264,7 +264,7 @@ jobs:
       # now finds it in place.
       - name: Cache generated production browser fixtures (0.8.0)
         id: cache-production-browser-fixtures
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-fixtures/v0.8.0
           key: ${{ runner.os }}-fixtures-v0.8.0-${{ hashFiles('python/scripts/generate_fixtures.py', 'python/v0.8.0/**') }}
@@ -281,7 +281,7 @@ jobs:
 
       - name: Upload production browser artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: production-browser-artifacts
           path: test-results
