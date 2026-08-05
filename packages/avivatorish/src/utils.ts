@@ -6,7 +6,6 @@ import {
   RENDERING_MODES,
 } from '@hms-dbmi/viv';
 import { Matrix4 } from '@math.gl/core';
-import { fromBlob, fromUrl } from 'geotiff';
 import { useEffect, useState } from 'react';
 
 import { GLOBAL_SLIDER_DIMENSION_FIELDS } from './constants';
@@ -54,50 +53,17 @@ function _isMultiTiff(urlOrFiles: UrlOrFiles) {
   return true;
 }
 
-/**
- * Turns an input string of one or many urls, file, or file array into a uniform array.
- */
-async function generateMultiTiffFileArray(urlOrFiles: UrlOrFiles) {
-  if (Array.isArray(urlOrFiles)) {
-    return urlOrFiles;
-  }
-  if (urlOrFiles instanceof File) {
-    return [urlOrFiles];
-  }
-  return urlOrFiles.split(',');
-}
-
-/**
- * Gets the basic image count for a TIFF using geotiff's getImageCount.
- */
-async function getTiffImageCount(src: string | File) {
-  const from = typeof src === 'string' ? fromUrl : fromBlob;
-  //@ts-expect-error - wtf why is the inference not working here?
-  const tiff = await from(src);
-  return tiff.getImageCount();
-}
 /** addresses `c` channel, `z` z-stack index, `t`: time index */
 export type VivSelection = { c: number; z: number; t: number };
 // all very clever but unnecessary abstraction and also wrong:
 // type VivSelection = { [Key in typeof GLOBAL_SLIDER_DIMENSION_FIELDS[number]]?: number };
-/**
- * Guesses whether string URL or File is one or multiple standard TIFF images.
- */
-async function _generateMultiTiffSources(urlOrFiles: UrlOrFiles) {
-  const multiTiffFiles = await generateMultiTiffFileArray(urlOrFiles);
-  const sources: [VivSelection[], any][] = [];
-  let c = 0;
-  for (const tiffFile of multiTiffFiles) {
-    const selections: VivSelection[] = [];
-    const numImages = await getTiffImageCount(tiffFile);
-    for (let i = 0; i < numImages; i++) {
-      selections.push({ c, z: 0, t: 0 });
-      c += 1;
-    }
-    sources.push([selections, tiffFile]);
-  }
-  return sources;
-}
+
+// `generateMultiTiffFileArray` / `getTiffImageCount` / `_generateMultiTiffSources`
+// lived here, and were the package's only use of `geotiff`. They were Avivator
+// scaffolding for building selections over a multi-file plain-TIFF input, and
+// were never reachable: `createLoader` below is OME-NGFF-only by design. Removing
+// them drops `geotiff` from this package's dependencies — see the changeset for
+// why that matters beyond dead-code hygiene.
 
 class UnsupportedBrowserError extends Error {
   constructor(message: string) {
