@@ -12,7 +12,14 @@ import type { Chunk, DataType } from 'zarrita';
 export const DEFAULT_CHUNK_CACHE_MAX_BYTES = 256 * 1024 * 1024;
 
 export type EnsureCodecWorkersOptions = {
-  /** Override {@link DEFAULT_CHUNK_CACHE_MAX_BYTES}. Only read on the first call. */
+  /**
+   * Override {@link DEFAULT_CHUNK_CACHE_MAX_BYTES}.
+   *
+   * Read on the first call that actually enables the workers, and ignored
+   * afterwards — calls that no-op because `Worker` is unavailable read nothing,
+   * so a later call in a worker-capable context still gets to set it. Must be a
+   * finite, non-negative byte count; `ByteLruCache` rejects anything else.
+   */
   chunkCacheMaxBytes?: number;
 };
 
@@ -22,11 +29,17 @@ let chunkCache: ByteLruCache<Chunk<DataType>> | undefined;
 /** Bytes a decoded chunk holds. */
 function chunkByteLength(chunk: Chunk<DataType>): number {
   // Numeric dtypes give a typed array, which reports `byteLength` for free —
-  // that structural match is the whole point of `MemoryReporting`. String dtypes
-  // give a plain array instead, and `length` is the conservative floor there: one
-  // byte per element at minimum. Reporting zero would make such entries invisible
-  // to the budget and so unevictable by size, which is the one way a bounded
-  // cache quietly goes back to being unbounded.
+  // that structural match is the whole point of `MemoryReporting`. And numeric
+  // is all this cache ever sees: the sole route in is zarrextra's
+  // `ZarrPixelSource`, i.e. OME-Zarr pixel data, which is rejected long before
+  // here if it is not a numeric raster.
+  //
+  // The `length` arm is therefore a floor for a payload that should not arrive
+  // rather than a real measurement of one — element count, not UTF-8 bytes. It
+  // exists because reporting zero would make such entries invisible to the
+  // budget and so unevictable by size, which is the one way a bounded cache
+  // quietly goes back to being unbounded. If string chunks ever do reach this
+  // cache, this needs to become a real measurement.
   const data: { byteLength?: number; length: number } = chunk.data;
   return typeof data.byteLength === 'number' ? data.byteLength : data.length;
 }
