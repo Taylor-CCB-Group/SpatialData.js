@@ -50,6 +50,31 @@ updates:
       # Everything else, split so a dev-tooling bump never sits behind a runtime
       # one in review.
       #
+      # The `exclude-patterns` below are what make the two stack groups above
+      # work at all. Between them these groups match `dependency-type: production`
+      # and `dependency-type: development`, which is every dependency there is.
+      # The documented rule is that the first matching group wins and both stack
+      # groups are declared first, but that is not the observed behaviour: in
+      # practice these two claimed everything, and neither `deckgl-stack` nor
+      # `docs-stack` had opened a single PR in the lifetime of this file.
+      #
+      # Docusaurus 3.10.2 is what exposed it. `@docusaurus/core` and
+      # `preset-classic` are runtime deps of docs/ and went to production; the
+      # matching `types`, `tsconfig` and `module-type-aliases` are dev deps and
+      # went to development. Two PRs (#123, #124), each mergeable alone, each
+      # leaving the docs site half-upgraded — precisely what `docs-stack` was
+      # written to prevent. On the deck.gl side the same split is worse than
+      # cosmetic; see the note above that group.
+      #
+      # An exclusion has to be listed here for every pattern in a stack group,
+      # in both of these groups. If a pattern is added above and not in both
+      # lists below, that group silently stops claiming it and the dependency is
+      # quietly absorbed back into these two. The lists are spelled out rather
+      # than shared through a YAML anchor on purpose: dependabot-core is Ruby,
+      # and `YAML.safe_load` rejects aliases with `Psych::BadAlias` unless the
+      # caller opts in. Whether it does is not something this file should bet on
+      # — a parse error here disables every update in the repository.
+      #
       # Majors are deliberately excluded from both groups so they arrive as
       # individual PRs. A group is a single merge decision, and a batch is only
       # worth reviewing as one if every member is safe to take on the same
@@ -64,11 +89,37 @@ updates:
         update-types:
           - minor
           - patch
+        exclude-patterns:
+          # deckgl-stack
+          - 'deck.gl'
+          - '@deck.gl/*'
+          - '@luma.gl/*'
+          - '@loaders.gl/*'
+          - '@math.gl/*'
+          - '@hms-dbmi/viv'
+          - '@vivjs/*'
+          # docs-stack
+          - '@docusaurus/*'
+          - '@mdx-js/*'
+          - 'prism-react-renderer'
       development-dependencies:
         dependency-type: development
         update-types:
           - minor
           - patch
+        exclude-patterns:
+          # deckgl-stack
+          - 'deck.gl'
+          - '@deck.gl/*'
+          - '@luma.gl/*'
+          - '@loaders.gl/*'
+          - '@math.gl/*'
+          - '@hms-dbmi/viv'
+          - '@vivjs/*'
+          # docs-stack
+          - '@docusaurus/*'
+          - '@mdx-js/*'
+          - 'prism-react-renderer'
       # Security fixes arrive outside the weekly cadence; batch them so a sweep
       # like the one this file was written for is a single PR, not thirty-six.
       security-updates:
