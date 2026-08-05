@@ -64,7 +64,7 @@ catalog:
   '@luma.gl/shadertools': ~9.3.6
   '@luma.gl/webgl': ~9.3.6
   '@math.gl/core': ^4.1.0
-  '@types/node': ^22.10.5
+  '@types/node': ^26.1.2
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^6.0.1
@@ -72,7 +72,7 @@ catalog:
   '@vivjs/constants': 0.22.0
   '@vivjs/views': 0.22.0
   anndata.js: ^0.0.2
-  apache-arrow: ^17.0.0
+  apache-arrow: ^21.2.0
   deck.gl: ~9.3.7
   react: ^19.2.1
   react-dom: ^19.2.1
@@ -85,4 +85,4 @@ catalog:
   vitest: ^4.1.4
   zarrita: ^0.7.1
   zod: ^4.1.13
-  jsdom: ^27.4.0
+  jsdom: ^30.0.1
