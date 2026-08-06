@@ -72,7 +72,7 @@ catalog:
   '@vivjs/constants': 0.22.0
   '@vivjs/views': 0.22.0
   anndata.js: ^0.0.2
-  apache-arrow: ^17.0.0
+  apache-arrow: ^21.2.0
   deck.gl: ~9.3.7
   react: ^19.2.1
   react-dom: ^19.2.1
