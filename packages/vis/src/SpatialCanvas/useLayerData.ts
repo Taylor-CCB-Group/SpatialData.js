@@ -814,6 +814,9 @@ export function useLayerData(
             ? { categoricalPalette: fillColorByColumn.categoricalPalette }
             : {}),
           ...(fillColorByColumn.numericRamp ? { numericRamp: fillColorByColumn.numericRamp } : {}),
+          ...(fillColorByColumn.numericDomain
+            ? { numericDomain: fillColorByColumn.numericDomain }
+            : {}),
         }),
         rowsSource: rows,
         renderSource: renderData,

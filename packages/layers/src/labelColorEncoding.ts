@@ -39,6 +39,7 @@ import {
   type FeatureColumnKind,
   type FeatureFillColorMode,
   type FeatureMissingValueOptions,
+  type FeatureNumericDomain,
   type FeatureNumericRampSpec,
   type FeatureRgbaColor,
   type FeatureRgbColor,
@@ -213,6 +214,8 @@ export interface BuildLabelFillColorByFeatureIdOptions {
   alpha?: number;
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
+  /** Pin the ramp's endpoints instead of measuring them across the loaded features. */
+  numericDomain?: FeatureNumericDomain;
   /** What the store declares the column to be; `'auto'` trusts it over the values. */
   columnKind?: FeatureColumnKind;
   missingValues?: FeatureMissingValueOptions;
@@ -232,6 +235,7 @@ export function buildLabelFillColorByFeatureId({
   alpha = 255,
   categoricalPalette,
   numericRamp,
+  numericDomain,
   columnKind,
   missingValues,
 }: BuildLabelFillColorByFeatureIdOptions): Record<string, LabelRgbaColor> {
@@ -250,6 +254,7 @@ export function buildLabelFillColorByFeatureId({
     alpha,
     ...(categoricalPalette ? { categoricalPalette } : {}),
     ...(numericRamp ? { numericRamp } : {}),
+    ...(numericDomain ? { numericDomain } : {}),
     ...(columnKind ? { columnKind } : {}),
     ...(missingValues ? { missingValues } : {}),
   });

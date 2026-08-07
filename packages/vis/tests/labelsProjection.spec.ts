@@ -60,8 +60,8 @@ describe('buildLabelFillColorEntry', () => {
     );
 
     expect(entry?.fillColorByFeatureId).toEqual({
-      '1': [0, 0, 255, 255],
-      '2': [0, 255, 0, 255],
+      '1': [0, 255, 0, 255],
+      '2': [0, 0, 255, 255],
     });
   });
 
@@ -81,8 +81,8 @@ describe('buildLabelFillColorEntry', () => {
     );
 
     expect(entry?.fillColorByFeatureId).toEqual({
-      '1': [10, 20, 30, 255],
-      '2': [40, 50, 60, 255],
+      '1': [40, 50, 60, 255],
+      '2': [10, 20, 30, 255],
     });
   });
 

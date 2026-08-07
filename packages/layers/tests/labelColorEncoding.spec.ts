@@ -8,6 +8,7 @@ import {
   resolveHighlightedLabel,
 } from '../src/labelColorEncoding';
 import { featureCodeToRgb } from '../src/pointsFeatureColor';
+import { buildShapeFillColorByFeatureId } from '../src/shapeColorEncoding';
 
 /** A small fixed palette, for tests whose subject is row alignment rather than
  *  colour choice — the default scheme is procedural, so colours must be pinned. */
@@ -44,29 +45,44 @@ describe('label fill colour encoding', () => {
     });
 
     expect(colors).toEqual({
-      '1': [0, 0, 255, 255],
-      '2': [0, 255, 0, 255],
-      '3': [0, 0, 255, 255],
+      // `stroma` sorts before `tumour`, so it takes palette slot 0.
+      '1': [0, 255, 0, 255],
+      '2': [0, 0, 255, 255],
+      '3': [0, 255, 0, 255],
     });
   });
 
   it('gives a label the same colour the same category gets on a shapes layer', () => {
-    const shared = {
+    // The two kinds walk their features in orders neither controls: a labels layer
+    // walks the raster's ids, a shapes layer walks the loader's geometry. Here they
+    // walk the SAME two rows in OPPOSITE orders, which is the whole test — under
+    // first-seen category indices `tumour` would be slot 0 on one kind and slot 1
+    // on the other, and one annotation would render in two different colour schemes.
+    const column = ['tumour', 'stroma'];
+
+    const labelColors = buildLabelFillColorByFeatureId({
       rowIds: ['1', '2'],
       rowIndexByFeatureId: new Map([
         ['1', 0],
         ['2', 1],
       ]),
-      column: ['tumour', 'stroma'],
-      mode: 'categorical' as const,
-    };
+      column,
+      mode: 'categorical',
+    });
+    const shapeColors = buildShapeFillColorByFeatureId({
+      featureIds: ['stroma-shape', 'tumour-shape'],
+      rowIndexByFeatureIndex: new Int32Array([1, 0]),
+      column,
+      mode: 'categorical',
+      alpha: 255,
+    });
 
+    expect(labelColors['1']).toEqual(shapeColors['tumour-shape']);
+    expect(labelColors['2']).toEqual(shapeColors['stroma-shape']);
     // Default scheme, no palette passed: the OkLab colours points uses for codes
     // 0 and 1. One scheme across points, shapes and labels.
-    expect(buildLabelFillColorByFeatureId(shared)).toEqual({
-      '1': [...featureCodeToRgb(0), 255],
-      '2': [...featureCodeToRgb(1), 255],
-    });
+    expect(labelColors['2']).toEqual([...featureCodeToRgb(0), 255]);
+    expect(labelColors['1']).toEqual([...featureCodeToRgb(1), 255]);
   });
 
   it('uses the same palette and ramp as shapes for the same column', () => {

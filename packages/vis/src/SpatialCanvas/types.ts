@@ -7,6 +7,7 @@ import type { SpatialElement } from '@spatialdata/core';
 import type {
   FeatureCategoricalPaletteSpec,
   FeatureMissingValueOptions,
+  FeatureNumericDomain,
   FeatureNumericRampSpec,
   LabelFillColorMode,
   ShapeFillColorMode,
@@ -40,12 +41,23 @@ export interface FillColorByColumn<TMode> {
   /**
    * Categorical scheme. Defaults to `'oklab'` — the same unbounded golden-angle
    * OKLCh scheme points uses for colour-by-feature, so a column with more
-   * categories than a fixed list has colours does not repeat them. Pass your own
-   * RGB list to override it; the list cycles.
+   * categories than a fixed list has colours does not repeat them.
+   *
+   * Pass `{ byValue }` to name the colours — `{ Tumour: [200, 30, 30] }` — which is
+   * the form to prefer in a saved stack, and the only one an embedding application
+   * can use to make this layer agree with its own charts. An RGB list is also
+   * accepted and cycles, but it is positional: which category gets which entry
+   * depends on the categories present.
    */
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   /** Endpoints of the continuous ramp, `[low, high]` as RGB 0–255. */
   numericRamp?: FeatureNumericRampSpec;
+  /**
+   * The values those endpoints stand for. Defaults to the extent of the features
+   * that loaded — pin it to the column's own range when you know it, so two layers
+   * over different parts of one annotation stay comparable.
+   */
+  numericDomain?: FeatureNumericDomain;
   /**
    * What counts as missing in this column, and how a feature with no value should
    * render — keep the layer default, hide it, or take an explicit colour.

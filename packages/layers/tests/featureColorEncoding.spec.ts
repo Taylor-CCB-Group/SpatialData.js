@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignFeatureColors,
   featureColorAt,
+  featureColorSchemeSignature,
   resolveFeatureFillColorMode,
 } from '../src/featureColorEncoding';
 
@@ -85,11 +86,12 @@ describe('missing-value policy', () => {
       missingValues: { treatAsMissing: ['NA'] },
     });
 
-    expect(withSentinel[0]).toEqual(RED);
+    // Two real categories take the first two palette slots between them: the
+    // sentinel never entered the category set, so it did not consume one. (Which
+    // of the two is slot 0 is decided by value order — 'stroma' before 'tumour'.)
+    expect(withSentinel[0]).toEqual([0, 255, 0, 255]);
     expect(withSentinel[1]).toBeUndefined();
-    // 'stroma' is the SECOND real category, not the third — the sentinel never
-    // entered the category set, so it did not consume a palette slot.
-    expect(withSentinel[2]).toEqual([0, 255, 0, 255]);
+    expect(withSentinel[2]).toEqual(RED);
   });
 
   it('matches sentinels after trimming, case-insensitively', () => {
@@ -160,5 +162,196 @@ describe('featureColorAt bounds', () => {
     const padded = { colors: new Uint8Array(8), count: 1 };
     expect(featureColorAt(padded, 0)).toEqual([0, 0, 0, 0]);
     expect(featureColorAt(padded, 1)).toBeUndefined();
+  });
+});
+
+/**
+ * The encoding must be a function of the COLUMN, not of the features that
+ * happened to load. Everything here is a case where it used not to be, and where
+ * the symptom was two views of one annotation disagreeing about what a colour
+ * means — which reads as a data difference, not as a bug.
+ */
+describe('an encoding that does not depend on which features loaded', () => {
+  const palette: [number, number, number][] = [
+    [255, 0, 0],
+    [0, 255, 0],
+    [0, 0, 255],
+  ];
+
+  it('gives a category the same colour whatever order the features arrive in', () => {
+    const forward = assignFeatureColors({
+      values: ['tumour', 'stroma'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: palette,
+    });
+    const reversed = assignFeatureColors({
+      values: ['stroma', 'tumour'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: palette,
+    });
+
+    expect(forward[0]).toEqual(reversed[1]);
+    expect(forward[1]).toEqual(reversed[0]);
+  });
+
+  it('does not shift a category when another one is absent from the view', () => {
+    // A layer over a subset that happens to contain no `stroma` must still draw
+    // `tumour` in the colour the full view draws it in.
+    const all = assignFeatureColors({
+      values: ['alpha', 'stroma', 'tumour'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: palette,
+    });
+    const subset = assignFeatureColors({
+      values: ['alpha', 'tumour'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: palette,
+    });
+
+    expect(subset[0]).toEqual(all[0]);
+    // Positional palettes cannot survive this — `tumour` genuinely is the second
+    // category present. Naming the colours is the only fix, which is what the
+    // named-palette tests below cover; here we pin the shift so it stays visible.
+    expect(subset[1]).not.toEqual(all[2]);
+  });
+
+  it('orders numeric-looking categories numerically, not lexicographically', () => {
+    // Cluster 10 belongs after cluster 9. Under string order it lands between 1
+    // and 2, and a 12-cluster annotation renders with a shuffled palette.
+    const colors = assignFeatureColors({
+      values: ['1', '2', '10'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: palette,
+    });
+
+    expect(colors).toEqual([
+      [255, 0, 0, 255],
+      [0, 255, 0, 255],
+      [0, 0, 255, 255],
+    ]);
+  });
+
+  it('holds the ramp to a pinned domain instead of the loaded extent', () => {
+    const pinned = { mode: 'continuous' as const, alpha: 255, numericDomain: [0, 10] as const };
+
+    // The same value, on two layers covering different parts of the column.
+    const full = assignFeatureColors({ values: ['0', '3', '10'], ...pinned });
+    const subset = assignFeatureColors({ values: ['0', '3'], ...pinned });
+
+    expect(subset[1]).toEqual(full[1]);
+    // And without the domain it does not hold: in the subset, `3` is the top of
+    // the range rather than three tenths of the way up it.
+    const unpinned = assignFeatureColors({
+      values: ['0', '3'],
+      mode: 'continuous',
+      alpha: 255,
+    });
+    expect(unpinned[1]).not.toEqual(full[1]);
+  });
+
+  it('clamps values outside a pinned domain rather than extrapolating', () => {
+    const colors = assignFeatureColors({
+      values: ['-100', '0', '10', '900'],
+      mode: 'continuous',
+      alpha: 255,
+      numericDomain: [0, 10],
+    });
+
+    expect(colors[0]).toEqual(colors[1]);
+    expect(colors[3]).toEqual(colors[2]);
+  });
+});
+
+describe('a palette that names its categories', () => {
+  it('colours by value, so two views agree even on different category sets', () => {
+    const byValue = { tumour: [200, 30, 30] as [number, number, number] };
+    const all = assignFeatureColors({
+      values: ['alpha', 'stroma', 'tumour'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: { byValue },
+    });
+    const subset = assignFeatureColors({
+      values: ['tumour'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: { byValue },
+    });
+
+    expect(all[2]).toEqual([200, 30, 30, 255]);
+    expect(subset[0]).toEqual(all[2]);
+  });
+
+  it('gives an unnamed category its own hue rather than merging them', () => {
+    const colors = assignFeatureColors({
+      values: ['tumour', 'stroma', 'other'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: { byValue: { tumour: [200, 30, 30] } },
+    });
+
+    expect(colors[1]).not.toEqual(colors[2]);
+  });
+
+  it('honours an explicit fallback colour for everything unnamed', () => {
+    const colors = assignFeatureColors({
+      values: ['tumour', 'stroma', 'other'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: { byValue: { tumour: [200, 30, 30] }, fallback: [90, 90, 90] },
+    });
+
+    expect(colors[0]).toEqual([200, 30, 30, 255]);
+    expect(colors[1]).toEqual([90, 90, 90, 255]);
+    expect(colors[2]).toEqual([90, 90, 90, 255]);
+  });
+
+  it('does not name missing values into a category', () => {
+    // A named palette must not resurrect a sentinel: `isMissing` runs first, so an
+    // entry for the sentinel string is simply never consulted.
+    const colors = assignFeatureColors({
+      values: ['tumour', 'NA'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: { byValue: { tumour: [200, 30, 30], NA: [1, 2, 3] } },
+      missingValues: { treatAsMissing: ['NA'] },
+    });
+
+    expect(colors[1]).toBeUndefined();
+  });
+});
+
+describe('featureColorSchemeSignature', () => {
+  it('separates schemes that differ only in a pinned domain', () => {
+    expect(featureColorSchemeSignature({ numericDomain: [0, 10] })).not.toBe(
+      featureColorSchemeSignature({ numericDomain: [0, 20] })
+    );
+  });
+
+  it('reads two equal named palettes as one scheme whatever order they were built in', () => {
+    // Object key order is insertion order, and a host rebuilding its palette per
+    // render need not insert in a stable one. A signature that moved would rebuild
+    // the whole colour buffer on renders where nothing changed.
+    const a = featureColorSchemeSignature({
+      categoricalPalette: { byValue: { tumour: [1, 2, 3], stroma: [4, 5, 6] } },
+    });
+    const b = featureColorSchemeSignature({
+      categoricalPalette: { byValue: { stroma: [4, 5, 6], tumour: [1, 2, 3] } },
+    });
+
+    expect(a).toBe(b);
+  });
+
+  it('still separates named palettes that differ in a colour', () => {
+    expect(
+      featureColorSchemeSignature({ categoricalPalette: { byValue: { tumour: [1, 2, 3] } } })
+    ).not.toBe(
+      featureColorSchemeSignature({ categoricalPalette: { byValue: { tumour: [9, 9, 9] } } })
+    );
   });
 });

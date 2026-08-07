@@ -85,11 +85,7 @@ export function getLabelFillColorSignature(config: LayerConfig | undefined): str
   const mode: LabelFillColorMode = config.fillColorByColumn.mode;
   // The scheme is part of the key: swapping a palette changes every colour without
   // touching the column, so a column-only key would keep serving the old colours.
-  const scheme = featureColorSchemeSignature(
-    config.fillColorByColumn.categoricalPalette,
-    config.fillColorByColumn.numericRamp,
-    config.fillColorByColumn.missingValues
-  );
+  const scheme = featureColorSchemeSignature(config.fillColorByColumn);
   return [config.fillColorByColumn.columnName, mode, scheme].join('');
 }
 
@@ -137,6 +133,9 @@ export function buildLabelFillColorEntry(
         ? { categoricalPalette: fillColorByColumn.categoricalPalette }
         : {}),
       ...(fillColorByColumn.numericRamp ? { numericRamp: fillColorByColumn.numericRamp } : {}),
+      ...(fillColorByColumn.numericDomain
+        ? { numericDomain: fillColorByColumn.numericDomain }
+        : {}),
     }),
     rowsSource: rows,
   };
