@@ -124,7 +124,32 @@ export type FeatureCategoricalPaletteSpec =
   | readonly FeatureRgbColor[]
   | FeatureNamedCategoricalPalette;
 
-export type FeatureNumericRampSpec = readonly [FeatureRgbColor, FeatureRgbColor];
+/**
+ * The colours a continuous column ramps through, low to high.
+ *
+ * Two or more stops, spaced evenly across the domain and interpolated in RGB. Two
+ * is the common case and the default; more exists because the ramps people
+ * actually want are not two-stop — viridis, a diverging red/white/blue, and any
+ * palette a host has already chosen for the same column elsewhere in its own UI
+ * all need more, and approximating them with their endpoints does not just look
+ * different, it loses the midpoint that made them meaningful.
+ */
+export type FeatureNumericRampSpec = readonly [
+  FeatureRgbColor,
+  FeatureRgbColor,
+  ...FeatureRgbColor[],
+];
+
+/**
+ * How a value's position along the ramp is measured.
+ *
+ *  - `'linear'` (default) — position is proportional to the value.
+ *  - `'symlog'` — proportional to `sign(v)·log(1+|v|)`, so a column whose mass sits
+ *    near zero with a long tail (counts, expression) spreads out instead of
+ *    collapsing into the ramp's first stop. Symmetric log rather than plain log
+ *    because it is defined at and below zero, which real columns reach.
+ */
+export type FeatureNumericScale = 'linear' | 'symlog';
 
 /**
  * The values the ramp's endpoints stand for, `[low, high]`.
@@ -186,6 +211,7 @@ export interface FeatureColorScheme {
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
   numericDomain?: FeatureNumericDomain;
+  numericScale?: FeatureNumericScale;
   missingValues?: FeatureMissingValueOptions;
 }
 
@@ -203,12 +229,14 @@ export function featureColorSchemeSignature({
   categoricalPalette,
   numericRamp,
   numericDomain,
+  numericScale,
   missingValues,
 }: FeatureColorScheme = {}): string {
   if (
     categoricalPalette === undefined &&
     numericRamp === undefined &&
     numericDomain === undefined &&
+    numericScale === undefined &&
     missingValues === undefined
   ) {
     return '';
@@ -217,6 +245,7 @@ export function featureColorSchemeSignature({
     serializeCategoricalPalette(categoricalPalette),
     numericRamp ?? null,
     numericDomain ?? null,
+    numericScale ?? null,
     missingValues ? [missingValues.treatAsMissing ?? null, missingValues.render ?? null] : null,
   ]);
 }
@@ -281,6 +310,39 @@ function interpolateRgb(
     Math.round(low[1] + (high[1] - low[1]) * clamped),
     Math.round(low[2] + (high[2] - low[2]) * clamped),
   ];
+}
+
+/**
+ * Sample a multi-stop ramp at `t ∈ [0, 1]`, stops spaced evenly.
+ *
+ * `t` at exactly 1 has to land on the last stop rather than reading past it, which
+ * is what the `length - 2` clamp is for — the top of the domain is the value most
+ * likely to be looked at, and reading past the end would silently return the last
+ * segment interpolated at 1 anyway on some inputs and `undefined` on others.
+ */
+function sampleRamp(stops: FeatureNumericRampSpec, t: number): FeatureRgbColor {
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = clamped * (stops.length - 1);
+  const lowIndex = Math.min(Math.floor(scaled), stops.length - 2);
+  return interpolateRgb(stops[lowIndex], stops[lowIndex + 1], scaled - lowIndex);
+}
+
+/** Symmetric log, defined at and below zero. Matches d3's `scaleSymlog` at C = 1. */
+function symlog(value: number): number {
+  return Math.sign(value) * Math.log1p(Math.abs(value));
+}
+
+/** Where a value sits in `[min, max]`, as `t ∈ [0, 1]` before clamping. */
+function rampPosition(value: number, min: number, max: number, scale: FeatureNumericScale): number {
+  if (scale === 'symlog') {
+    const low = symlog(min);
+    const high = symlog(max);
+    // A degenerate domain has no position to report; the midpoint is the one
+    // answer that does not imply the value is at an extreme of a range it is not
+    // actually spread over.
+    return high === low ? 0.5 : (symlog(value) - low) / (high - low);
+  }
+  return max === min ? 0.5 : (value - min) / (max - min);
 }
 
 function getFiniteExtent(values: Array<number | undefined>): [number, number] | undefined {
@@ -393,6 +455,8 @@ export interface AssignFeatureColorsOptions {
   numericRamp?: FeatureNumericRampSpec;
   /** Pin the ramp's endpoints instead of measuring them. See {@link FeatureNumericDomain}. */
   numericDomain?: FeatureNumericDomain;
+  /** How position along the ramp is measured. See {@link FeatureNumericScale}. */
+  numericScale?: FeatureNumericScale;
   /**
    * What the store declares this column to be. Supply it whenever you have it —
    * `'auto'` trusts it in preference to sniffing the values. See
@@ -449,6 +513,7 @@ export function assignFeatureColors({
   categoricalPalette,
   numericRamp = DEFAULT_FEATURE_NUMERIC_RAMP,
   numericDomain,
+  numericScale = 'linear',
   columnKind,
   missingValues,
 }: AssignFeatureColorsOptions): Array<FeatureRgbaColor | undefined> {
@@ -490,7 +555,6 @@ export function assignFeatureColors({
       return colors;
     }
     const [min, max] = extent;
-    const range = max - min;
     for (let index = 0; index < values.length; index += 1) {
       const value = numericValues[index];
       if (value === undefined) {
@@ -499,8 +563,10 @@ export function assignFeatureColors({
         applyMissing(index);
         continue;
       }
-      const t = range === 0 ? 0.5 : (value - min) / range;
-      colors[index] = rgba(interpolateRgb(numericRamp[0], numericRamp[1], t), alpha);
+      colors[index] = rgba(
+        sampleRamp(numericRamp, rampPosition(value, min, max, numericScale)),
+        alpha
+      );
     }
     return colors;
   }

@@ -26,6 +26,15 @@ as a data difference rather than as a bug:
 - The continuous ramp measured its extent from the loaded features. `numericDomain`
   pins it to the column's own range; values outside clamp rather than extrapolate.
 
+`numericRamp` also takes more than two stops now, spaced evenly across the domain,
+because the ramps people actually use are not two-stop — viridis, a diverging
+red/white/blue, or whatever a host has already chosen for the same column in its
+own UI. Approximating one by its endpoints loses the midpoint that made it
+meaningful. `numericScale: 'symlog'` goes with it: a counts or expression column
+whose mass sits near zero with a long tail collapses into the first stop under a
+linear position. Symmetric log rather than plain log, because these columns reach
+zero and below.
+
 `featureColorSchemeSignature` now takes the scheme as one object
 (`featureColorSchemeSignature(config.fillColorByColumn)`) rather than three
 positional arguments, so adding a term to the encoding cannot leave a call site

@@ -49,6 +49,7 @@ export type {
   FeatureNamedCategoricalPalette,
   FeatureNumericDomain,
   FeatureNumericRampSpec,
+  FeatureNumericScale,
   FeatureRgbaColor,
   FeatureRgbColor,
 } from './featureColorEncoding';

@@ -136,6 +136,7 @@ export function buildLabelFillColorEntry(
       ...(fillColorByColumn.numericDomain
         ? { numericDomain: fillColorByColumn.numericDomain }
         : {}),
+      ...(fillColorByColumn.numericScale ? { numericScale: fillColorByColumn.numericScale } : {}),
     }),
     rowsSource: rows,
   };

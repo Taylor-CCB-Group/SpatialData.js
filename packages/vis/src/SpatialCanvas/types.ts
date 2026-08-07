@@ -9,6 +9,7 @@ import type {
   FeatureMissingValueOptions,
   FeatureNumericDomain,
   FeatureNumericRampSpec,
+  FeatureNumericScale,
   LabelFillColorMode,
   ShapeFillColorMode,
   ShapeStrokeWidthUnits,
@@ -58,6 +59,11 @@ export interface FillColorByColumn<TMode> {
    * over different parts of one annotation stay comparable.
    */
   numericDomain?: FeatureNumericDomain;
+  /**
+   * How a value's position along the ramp is measured — `'linear'` by default, or
+   * `'symlog'` for a column whose mass sits near zero with a long tail.
+   */
+  numericScale?: FeatureNumericScale;
   /**
    * What counts as missing in this column, and how a feature with no value should
    * render — keep the layer default, hide it, or take an explicit colour.

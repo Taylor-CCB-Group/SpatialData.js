@@ -355,3 +355,84 @@ describe('featureColorSchemeSignature', () => {
     );
   });
 });
+
+describe('a ramp with more than two stops', () => {
+  const diverging: [number, number, number][] = [
+    [0, 0, 255],
+    [255, 255, 255],
+    [255, 0, 0],
+  ];
+
+  it('passes through the middle stop at the middle of the domain', () => {
+    // The whole reason to allow more than two: a diverging ramp's midpoint is the
+    // meaning. Interpolating its endpoints alone would put grey-purple here.
+    const colors = assignFeatureColors({
+      values: ['0', '5', '10'],
+      mode: 'continuous',
+      alpha: 255,
+      numericRamp: diverging,
+      numericDomain: [0, 10],
+    });
+
+    expect(colors).toEqual([
+      [0, 0, 255, 255],
+      [255, 255, 255, 255],
+      [255, 0, 0, 255],
+    ]);
+  });
+
+  it('lands on the last stop at the top of the domain, not past it', () => {
+    const colors = assignFeatureColors({
+      values: ['10'],
+      mode: 'continuous',
+      alpha: 255,
+      numericRamp: diverging,
+      numericDomain: [0, 10],
+    });
+
+    expect(colors[0]).toEqual([255, 0, 0, 255]);
+  });
+
+  it('spreads a long tail with a symlog scale', () => {
+    const values = ['0', '1', '10', '1000'];
+    const opts = {
+      mode: 'continuous' as const,
+      alpha: 255,
+      numericRamp: diverging,
+      numericDomain: [0, 1000] as const,
+    };
+
+    const linear = assignFeatureColors({ values, ...opts });
+    const log = assignFeatureColors({ values, ...opts, numericScale: 'symlog' as const });
+
+    /** Largest per-channel difference — how far apart two colours actually look. */
+    const apart = (a?: number[], b?: number[]) =>
+      Math.max(...[0, 1, 2].map((i) => Math.abs((a?.[i] ?? 0) - (b?.[i] ?? 0))));
+
+    // Linear: 1 and 10 both sit within 1% of the bottom of the domain, so the
+    // whole low end of the column collapses into one indistinguishable colour.
+    expect(apart(linear[1], linear[0])).toBeLessThan(10);
+    expect(apart(linear[2], linear[0])).toBeLessThan(10);
+    // Symlog pulls them apart into colours a reader can actually tell apart.
+    expect(apart(log[1], log[0])).toBeGreaterThan(40);
+    expect(apart(log[2], log[1])).toBeGreaterThan(40);
+    // The endpoints still pin to the ends of the ramp.
+    expect(log[0]).toEqual([0, 0, 255, 255]);
+    expect(log[3]).toEqual([255, 0, 0, 255]);
+  });
+
+  it('handles a domain that crosses zero, where a plain log could not', () => {
+    const colors = assignFeatureColors({
+      values: ['-100', '0', '100'],
+      mode: 'continuous',
+      alpha: 255,
+      numericRamp: diverging,
+      numericDomain: [-100, 100],
+      numericScale: 'symlog',
+    });
+
+    expect(colors[0]).toEqual([0, 0, 255, 255]);
+    expect(colors[1]).toEqual([255, 255, 255, 255]);
+    expect(colors[2]).toEqual([255, 0, 0, 255]);
+  });
+});

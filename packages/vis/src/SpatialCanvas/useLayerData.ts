@@ -817,6 +817,9 @@ export function useLayerData(
           ...(fillColorByColumn.numericDomain
             ? { numericDomain: fillColorByColumn.numericDomain }
             : {}),
+          ...(fillColorByColumn.numericScale
+            ? { numericScale: fillColorByColumn.numericScale }
+            : {}),
         }),
         rowsSource: rows,
         renderSource: renderData,
