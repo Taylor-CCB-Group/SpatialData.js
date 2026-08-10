@@ -85,4 +85,4 @@ catalog:
   vitest: ^4.1.4
   zarrita: ^0.7.1
   zod: ^4.1.13
-  jsdom: ^27.4.0
+  jsdom: ^30.0.1
