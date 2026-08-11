@@ -2,7 +2,12 @@
   // This file is not used in compilation. It is here just for a nice editor experience.
   "extends": "@docusaurus/tsconfig",
   "compilerOptions": {
-    "baseUrl": "."
+    // `baseUrl` is what anchors the inherited `@site/*` path mapping to this
+    // directory, so it has to stay until @docusaurus/tsconfig drops its own
+    // `baseUrl`. TS 6 deprecates the option (TS 7 removes it outright), hence the
+    // opt-out below and the `tsc6` typecheck script.
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0"
   },
   "exclude": [".docusaurus", "build"]
 }
