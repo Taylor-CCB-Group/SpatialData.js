@@ -80,7 +80,7 @@ jobs:
       - name: Biome lint/format (packages/*/src)
         run: pnpm lint:biome
 
-  docs-typecheck:
+  docs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,9 +88,11 @@ jobs:
     # PR used to compile it. Its own `typecheck` script was broken for long enough
     # to go unnoticed (it called `tsc`, which the TS 6 compat package does not
     # provide), and the Docs workflow that would have caught it only runs on main —
-    # by which point a type error is already deploying.
+    # by which point the failure is already blocking a Pages deploy. This job is
+    # that workflow's Build steps minus the deploy, so the same breakage fails on
+    # the PR instead.
     steps:
-      - name: Check out repository (docs-typecheck)
+      - name: Check out repository (docs)
         uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -118,6 +120,12 @@ jobs:
 
       - name: Typecheck docs site
         run: pnpm --filter docs typecheck
+
+      # Catches what the typecheck cannot: broken MDX, dead internal links, and
+      # Docusaurus config/plugin regressions. Kept after the typecheck so the
+      # cheap check reports first. Same order as the Docs workflow's Build job.
+      - name: Build docs site
+        run: pnpm docs:build
 
   test:
     runs-on: ubuntu-latest
