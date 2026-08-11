@@ -4,6 +4,16 @@ packages:
 
 allowBuilds:
   '@biomejs/biome': false
+  # Pulled in by @docusaurus/faster (rspack/swc). On a healthy install the postinstall
+  # is a no-op: it loads binding.js, asserts the target triple, and returns. It only
+  # acts when the native binding fails to load, and all 12 platform bindings are in the
+  # lockfile, so every machine we build on gets one via optionalDependencies.
+  # Its @swc/wasm fallback would not survive this repo anyway — it shells out to
+  # `npm install` and drops the result in $INIT_CWD/node_modules, which pnpm does not
+  # manage and the lockfile does not record, so CI's --frozen-lockfile install could
+  # never reproduce it. If we ever do need the fallback, declare @swc/wasm as a real
+  # dependency rather than re-enabling this script.
+  '@swc/core': false
   '@vaadin/vaadin-usage-statistics': false
   core-js: false
   core-js-pure: false
