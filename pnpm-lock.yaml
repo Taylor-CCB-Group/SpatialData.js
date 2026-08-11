@@ -299,8 +299,8 @@ importers:
         specifier: 'catalog:'
         version: '@typescript/typescript6@6.0.2'
       unzipit:
-        specifier: ^1.4.3
-        version: 1.4.3
+        specifier: ^2.0.3
+        version: 2.0.3
       vite:
         specifier: 'catalog:'
         version: 8.2.0(@types/node@26.1.2)(jiti@1.21.7)(terser@5.49.0)
@@ -8245,6 +8245,10 @@ packages:
 
   unzipit@2.0.0:
     resolution: {integrity: sha512-DVeVIWUZCAQPNzm5sB0hpsG1GygTTdBnzNtYYEpInkttx5evkyqRgZi6rTczoySqp8hO5jHVKzrH0f23X8FZLg==}
+    engines: {node: '>=18'}
+
+  unzipit@2.0.3:
+    resolution: {integrity: sha512-e6+ftgSQRj9Hwf2mIWFwYIGqBoKV7AziG/d7pep2Uv3NCzHbhLO5d9dGRwpahVlnpQ7aQC+5kWk72dnWocdYyA==}
     engines: {node: '>=18'}
 
   update-browserslist-db@1.2.3:
@@ -18440,6 +18444,8 @@ snapshots:
       uzip-module: 1.0.3
 
   unzipit@2.0.0: {}
+
+  unzipit@2.0.3: {}
 
   update-browserslist-db@1.2.3(browserslist@4.28.7):
     dependencies:

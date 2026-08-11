@@ -51,7 +51,7 @@
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
-    "unzipit": "^1.4.3",
+    "unzipit": "^2.0.3",
     "vite": "catalog:",
     "vitest": "catalog:"
   },
