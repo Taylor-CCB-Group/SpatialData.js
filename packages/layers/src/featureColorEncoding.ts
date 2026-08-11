@@ -187,23 +187,35 @@ function isNamedCategoricalPalette(
  *
  * Both arguments are passed because the spec decides which one is authoritative: a
  * named palette answers from the value, the positional forms from the index.
+ *
+ * **Always returns a colour.** A spec arrives from a saved Render Stack — JSON, so
+ * the type is a claim, not a guarantee — and returning `undefined` for one it does
+ * not recognise puts the failure several frames away, in the arithmetic that reads
+ * `rgb[0]`. That is the shape of crash you cannot diagnose from a stack trace. An
+ * unrecognised spec falls back to the default scheme instead: wrong colours are
+ * visible and reportable, a `TypeError` deep in a bundled dependency is not.
  */
 export function resolveCategoricalPalette(
   spec: FeatureCategoricalPaletteSpec = DEFAULT_FEATURE_CATEGORICAL_PALETTE
 ): (value: string, categoryIndex: number) => FeatureRgbColor {
+  const byIndex = (_value: string, categoryIndex: number) => featureCodeToRgb(categoryIndex);
   if (spec === 'oklab') {
-    return (_value, categoryIndex) => featureCodeToRgb(categoryIndex);
+    return byIndex;
   }
   if (isNamedCategoricalPalette(spec)) {
     const { byValue, fallback = 'oklab' } = spec;
+    if (!byValue || typeof byValue !== 'object') {
+      return byIndex;
+    }
     const colorForUnnamed = fallback === 'oklab' ? featureCodeToRgb : (_index: number) => fallback;
     return (value, categoryIndex) => byValue[value] ?? colorForUnnamed(categoryIndex);
   }
   const colors = spec;
-  if (colors.length === 0) {
-    return (_value, categoryIndex) => featureCodeToRgb(categoryIndex);
+  if (!Array.isArray(colors) || colors.length === 0) {
+    return byIndex;
   }
-  return (_value, categoryIndex) => colors[categoryIndex % colors.length];
+  return (_value, categoryIndex) =>
+    colors[categoryIndex % colors.length] ?? byIndex('', categoryIndex);
 }
 
 /** Everything about a column's encoding that is not the column itself. */
@@ -321,6 +333,12 @@ function interpolateRgb(
  * segment interpolated at 1 anyway on some inputs and `undefined` on others.
  */
 function sampleRamp(stops: FeatureNumericRampSpec, t: number): FeatureRgbColor {
+  // The two-stop minimum is a type-level claim about JSON that came out of a saved
+  // Render Stack, so it is checked. With one stop the arithmetic below indexes -1
+  // and the failure surfaces as `low[0]` of undefined, several frames from here.
+  if (!Array.isArray(stops) || stops.length < 2) {
+    return stops?.[0] ?? DEFAULT_FEATURE_NUMERIC_RAMP[0];
+  }
   const clamped = Math.max(0, Math.min(1, t));
   const scaled = clamped * (stops.length - 1);
   const lowIndex = Math.min(Math.floor(scaled), stops.length - 2);

@@ -67,6 +67,10 @@ export function defineViteConfig(options: DefineConfigOptions) {
     ],
     build: {
       outDir: path.resolve(pkgRoot, 'dist'),
+      // Published so a consumer's stack trace names our source, not `Le` at
+      // `.vite/deps/@spatialdata_layers.js:396`. An embedding application debugs
+      // against the built artifact — it is the only form of this code it has.
+      sourcemap: true,
       lib: {
         entry: path.resolve(pkgRoot, 'src/index.ts'),
         name: libName,

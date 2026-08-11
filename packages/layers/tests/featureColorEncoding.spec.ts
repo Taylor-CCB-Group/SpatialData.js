@@ -436,3 +436,62 @@ describe('a ramp with more than two stops', () => {
     expect(colors[2]).toEqual([255, 0, 0, 255]);
   });
 });
+
+/**
+ * A scheme arrives from a saved Render Stack, so its type is a claim about JSON
+ * rather than a guarantee. Every case here used to reach the colour arithmetic and
+ * fail there — `Cannot read properties of undefined (reading '0')`, several frames
+ * from the malformed field, inside a bundled dependency. Wrong colours can be
+ * reported by whoever sees them; that TypeError cannot.
+ */
+describe('a scheme that does not match its own type', () => {
+  const malformed = (categoricalPalette: unknown) =>
+    assignFeatureColors({
+      values: ['tumour', 'stroma'],
+      mode: 'categorical',
+      alpha: 255,
+      categoricalPalette: categoricalPalette as never,
+    });
+
+  it('falls back to the default scheme for a palette object with no byValue', () => {
+    const colors = malformed({ fallback: 'oklab' });
+
+    expect(colors[0]).toBeDefined();
+    expect(colors[1]).toBeDefined();
+    expect(colors[0]).not.toEqual(colors[1]);
+  });
+
+  it('survives a list with a hole in it', () => {
+    const colors = malformed([[1, 2, 3], undefined]);
+
+    expect(colors[0]).toBeDefined();
+    expect(colors[1]).toBeDefined();
+  });
+
+  it('survives a ramp with fewer stops than its type allows', () => {
+    const one = assignFeatureColors({
+      values: ['0', '5', '10'],
+      mode: 'continuous',
+      alpha: 255,
+      numericRamp: [[7, 8, 9]] as never,
+    });
+
+    expect(one).toEqual([
+      [7, 8, 9, 255],
+      [7, 8, 9, 255],
+      [7, 8, 9, 255],
+    ]);
+  });
+
+  it('survives an empty ramp', () => {
+    const none = assignFeatureColors({
+      values: ['0', '10'],
+      mode: 'continuous',
+      alpha: 255,
+      numericRamp: [] as never,
+    });
+
+    expect(none[0]).toBeDefined();
+    expect(none[1]).toBeDefined();
+  });
+});
