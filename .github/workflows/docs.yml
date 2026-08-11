@@ -34,6 +34,7 @@ jobs:
       - run: |
           pnpm install --frozen-lockfile
           pnpm build
+          pnpm --filter docs typecheck
           pnpm docs:build
       - uses: actions/upload-pages-artifact@v5
         with:

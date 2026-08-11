@@ -200,6 +200,9 @@ importers:
       '@docusaurus/types':
         specifier: 3.10.2
         version: 3.10.2(@swc/core@1.15.47)(@swc/html@1.15.47)(clean-css@5.3.3)(cssnano@6.1.2(postcss@8.5.26))(csso@5.0.5)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.26)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@8.1.1)
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.18
       typescript:
         specifier: 'catalog:'
         version: '@typescript/typescript6@6.0.2'
