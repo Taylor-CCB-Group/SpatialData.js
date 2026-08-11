@@ -11,7 +11,12 @@ const config: Config = {
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
-    v4: true, // Improve compatibility with the upcoming Docusaurus v4
+    // Improve compatibility with the upcoming Docusaurus v4.
+    // Since 3.10 this shorthand also turns on `v4.fasterByDefault`, which enables
+    // every `future.faster.*` option (Rspack, SWC, Lightning CSS). Those live in the
+    // separate `@docusaurus/faster` package, which is therefore a hard dependency
+    // of this site — without it the dev server and build fail at startup.
+    v4: true,
   },
 
   // Set the production url of your site here

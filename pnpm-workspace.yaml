@@ -4,6 +4,10 @@ packages:
 
 allowBuilds:
   '@biomejs/biome': false
+  # Pulled in by @docusaurus/faster (rspack/swc). Its postinstall only probes the
+  # native binding and falls back to @swc/wasm; the platform-specific optional dep
+  # installs fine on its own, so skip the script.
+  '@swc/core': false
   '@vaadin/vaadin-usage-statistics': false
   core-js: false
   core-js-pure: false
