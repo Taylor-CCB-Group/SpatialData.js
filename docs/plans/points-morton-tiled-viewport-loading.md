@@ -1,6 +1,6 @@
 # Points: Morton-tiled viewport-driven loading (D5)
 
-Status: **step 1 implemented** (2026-08-12); steps 2–5 design.
+Status: **steps 1–3 implemented** (2026-08-12); steps 4–5 design.
 Implements [points-redesign-punchlist](./points-redesign-punchlist.md) **D5** and the
 "Morton is still dark" line in [points-mvp-and-roadmap](./points-mvp-and-roadmap.md).
 Format contract: [ADR 0002](../adr/0002-spatially-aware-vector-loading.md).
@@ -218,13 +218,22 @@ through `mortonTiledStrategy` with flat colour and no feature filter.
 *Acceptance: a Morton fixture frames correctly on load, pans/zooms with tiles loading in,
 "Center on layer" works, no "Loading layer data…" hang, non-Morton elements unchanged.*
 
-**Step 3 — Per-point codes on tile batches.**
-Emit the feature-code column from both scan paths (`scanMortonTableInBounds` gains a
-codes buffer; `scanMortonRowGroupsInBoundsInWorker` transfers it alongside the geometry),
-carry it onto `ColumnarNdarrayPointsBatch.featureCodes`, and forward the colour props
-through `mortonTiledStrategy`'s `scatterStyleProps`.
-*Acceptance: colour-by-feature, palette overrides and Feature Highlight look identical on
-tiled and preloaded elements.*
+**Step 3 — Per-point codes on tile batches. ✅ done.**
+`scanMortonTableInBounds` takes an optional codes buffer and appends in lockstep with
+the geometry; the worker handler builds one and returns it (the protocol's
+`PointsWorkerColumnarResult.featureCodes` and its transferable already existed, so the
+boundary needed nothing). `loadMortonPointsInBounds` projects the code column whenever
+the artifact HAS one rather than only when filtering — the no-filter "all features"
+view was exactly the case arriving without codes — and both its worker and
+main-thread returns carry them. `mortonTiledStrategy` forwards the colour props, and
+vis stops forcing `colorByFeature: false`.
+
+Short codes are dropped rather than padded, on both paths: a partial array would leave
+the tail reading code 0 — a *valid* feature — and mis-colour it with conviction.
+
+*Acceptance met: on a real 12.1M-point element a tiled layer draws per-feature colours
+matching the preloaded path; tests pin one code per point, every code a real catalog
+entry, and codes still returned (and all equal to the selection) under a filter.*
 
 **Step 4 — Feature filter + catalog on the tiled path.**
 Plan the catalog explicitly for tiled elements (dictionary-page scan); exclude tiled

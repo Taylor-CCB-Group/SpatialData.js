@@ -145,7 +145,9 @@ describe('row codes — cap alignment with the resident batch', () => {
 
     release();
     await inFlight;
-    expect((el.loadRowFeatureCodes as ReturnType<typeof vi.fn>).mock.calls.length).toBe(readsBefore);
+    expect((el.loadRowFeatureCodes as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      readsBefore
+    );
     // It did NOT supply them (dict-only), so now the gate asks.
     expect(rowCodesTasks(resolver, el, LARGE_CAP)).toHaveLength(1);
   });

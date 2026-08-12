@@ -55,6 +55,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       pointRadiusMinPixels,
       pointRadiusMaxPixels,
       color = [255, 100, 100, 200],
+      colorByFeature,
+      featureCodeSpaceSize,
+      featureColorOverrides,
+      highlightFeatureCode,
       use3d,
     } = layer.props;
 
@@ -64,6 +68,9 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
     }
 
     const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
+    // Colour rides the per-tile batch: the scan returns a feature code per point
+    // (D5 step 3), so a tile carries everything the colour extension needs and the
+    // tiled path stops being the odd one out that only ever drew flat.
     const scatterStyleProps = {
       color,
       pointSize,
@@ -71,6 +78,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       pointRadiusMaxPixels,
       opacity,
       modelMatrix: layer.props.modelMatrix,
+      colorByFeature,
+      ...(featureCodeSpaceSize !== undefined ? { featureCodeSpaceSize } : {}),
+      ...(featureColorOverrides ? { featureColorOverrides } : {}),
+      ...(highlightFeatureCode !== undefined ? { highlightFeatureCode } : {}),
       use3d,
     };
 
@@ -96,6 +107,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               color,
               opacity,
               layer.props.modelMatrix,
+              colorByFeature,
+              featureCodeSpaceSize,
+              featureColorOverrides,
+              highlightFeatureCode,
               use3d,
             ],
           },

@@ -221,6 +221,65 @@ describe('Morton points tiling (canonical parquet)', () => {
     expect(result.shape[1]).toBe(expected);
   });
 
+  /**
+   * Per-point feature codes ride the tile batch (D5 step 3).
+   *
+   * Without them a tiled layer has nothing to colour by, so it drew flat while the
+   * preloaded path drew per-feature — the same element looking like two different
+   * datasets depending on a checkbox. The scan already READ this column to filter on
+   * it and threw the value away.
+   *
+   * Alignment is the contract worth pinning: index i of the codes names the feature
+   * of point i in the geometry, so the count must match exactly and every code must
+   * be one the catalog knows.
+   */
+  it('returns a feature code per point, aligned with the geometry', async () => {
+    const full = await source.loadPoints('points/transcripts');
+    const xs = full.data[0];
+    const ys = full.data[1];
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const bounds = { minX: minX + 10, maxX: minX + 80, minY: minY + 10, maxY: minY + 80 };
+
+    const result = await source.loadPointsInBounds('points/transcripts', { bounds });
+    const pointCount = result.shape[1] ?? 0;
+    expect(pointCount).toBeGreaterThan(0);
+
+    expect(result.featureCodes).toBeDefined();
+    expect(result.featureCodes?.length).toBe(pointCount);
+
+    // The fixture has three genes, so every code is a real catalog entry — never the
+    // -1 "unknown feature" sentinel, and never a stray 0 left by a short buffer.
+    const catalog = await source.listPointsFeaturesWithCounts('points/transcripts');
+    const known = new Set((catalog?.entries ?? []).map((entry) => entry.code));
+    expect(known.size).toBeGreaterThan(0);
+    for (let i = 0; i < pointCount; i += 1) {
+      expect(known.has(result.featureCodes?.[i] as number)).toBe(true);
+    }
+  });
+
+  it('still returns codes when a feature filter is active, for the filtered rows only', async () => {
+    const catalog = await source.listPointsFeaturesWithCounts('points/transcripts');
+    const wanted = catalog?.entries[0]?.code;
+    expect(wanted).toBeDefined();
+
+    const full = await source.loadPoints('points/transcripts');
+    const minX = Math.min(...full.data[0]);
+    const minY = Math.min(...full.data[1]);
+    const bounds = { minX: minX + 10, maxX: minX + 80, minY: minY + 10, maxY: minY + 80 };
+
+    const result = await source.loadPointsInBounds('points/transcripts', {
+      bounds,
+      featureCodes: [wanted as number],
+    });
+    const pointCount = result.shape[1] ?? 0;
+
+    expect(result.featureCodes?.length).toBe(pointCount);
+    for (let i = 0; i < pointCount; i += 1) {
+      expect(result.featureCodes?.[i]).toBe(wanted);
+    }
+  });
+
   // The bisect index is built lazily, under exactly the load that duplicates it:
   // every viewport tile bisects concurrently over the same row groups. Caching only
   // the settled value dedups nothing while a read is in flight, so each tile used to
