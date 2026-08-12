@@ -14,7 +14,9 @@ import {
   type FeatureColumnKind,
   type FeatureFillColorMode,
   type FeatureMissingValueOptions,
+  type FeatureNumericDomain,
   type FeatureNumericRampSpec,
+  type FeatureNumericScale,
   type FeatureRgbaColor,
   type FeatureRgbColor,
   normalizeFeatureCellValue,
@@ -35,6 +37,10 @@ export interface BuildShapeFillColorByFeatureIdOptions {
   alpha: number;
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
+  /** Pin the ramp's endpoints instead of measuring them across the loaded features. */
+  numericDomain?: FeatureNumericDomain;
+  /** How position along the ramp is measured; `'linear'` by default. */
+  numericScale?: FeatureNumericScale;
   /** What the store declares the column to be; `'auto'` trusts it over the values. */
   columnKind?: FeatureColumnKind;
   missingValues?: FeatureMissingValueOptions;
@@ -54,6 +60,8 @@ export function buildShapeFillColorByFeatureId({
   alpha,
   categoricalPalette,
   numericRamp,
+  numericDomain,
+  numericScale,
   columnKind,
   missingValues,
 }: BuildShapeFillColorByFeatureIdOptions): Record<string, ShapeRgbaColor> {
@@ -70,6 +78,8 @@ export function buildShapeFillColorByFeatureId({
     alpha,
     ...(categoricalPalette ? { categoricalPalette } : {}),
     ...(numericRamp ? { numericRamp } : {}),
+    ...(numericDomain ? { numericDomain } : {}),
+    ...(numericScale ? { numericScale } : {}),
     ...(columnKind ? { columnKind } : {}),
     ...(missingValues ? { missingValues } : {}),
   });

@@ -77,8 +77,37 @@ export function featureColorAt(
 }
 
 /**
+ * A category's colour named by the category itself, rather than by its position.
+ *
+ * This is the only form that survives the data changing. The other two are
+ * positional — a colour is whatever the Nth category gets — and "the Nth category"
+ * is a property of the features that happened to load, not of the column. Two
+ * layers over the same annotation therefore disagree the moment their feature sets
+ * differ, which is the normal case: a shapes layer walks the loader's geometry
+ * order and a labels layer walks its raster ids.
+ *
+ * It is also the only form a host can use to say what it means. A viewer embedded
+ * in an application whose user has already chosen "Tumour is red" cannot express
+ * that as a list, because it does not know — and must not have to know — which
+ * index `Tumour` will land on.
+ *
+ * Values are the column's cells in canonical string form (see
+ * {@link normalizeFeatureCellValue}), so a numeric category is `'3'`, not `3`.
+ */
+export interface FeatureNamedCategoricalPalette {
+  byValue: Readonly<Record<string, FeatureRgbColor>>;
+  /**
+   * Colour for a value the map does not name. Defaults to `'oklab'`, which gives
+   * each unnamed category its own hue — an unnamed category stays visible and
+   * distinguishable rather than silently merging into a single "other" bucket.
+   */
+  fallback?: 'oklab' | FeatureRgbColor;
+}
+
+/**
  * How to colour categories. JSON-serializable on purpose — this travels in a saved
- * layer config, so it is a name or a plain list of colours, never a function.
+ * layer config, so it is a name, a plain list of colours, or a plain object, never
+ * a function.
  *
  *  - `'oklab'` — the points colour-by-feature scheme: OKLCh at fixed lightness and
  *               chroma, hue stepped by the golden angle. **Unbounded** — every
@@ -86,10 +115,53 @@ export function featureColorAt(
  *               annotation does not repeat colours. The default.
  *  - a list    — your own colours, cycled. An empty list falls back to `'oklab'`
  *               rather than colouring nothing.
+ *  - a map     — {@link FeatureNamedCategoricalPalette}. Prefer this whenever you
+ *               know what the categories are; the two positional forms depend on
+ *               which features loaded.
  */
-export type FeatureCategoricalPaletteSpec = 'oklab' | readonly FeatureRgbColor[];
+export type FeatureCategoricalPaletteSpec =
+  | 'oklab'
+  | readonly FeatureRgbColor[]
+  | FeatureNamedCategoricalPalette;
 
-export type FeatureNumericRampSpec = readonly [FeatureRgbColor, FeatureRgbColor];
+/**
+ * The colours a continuous column ramps through, low to high.
+ *
+ * Two or more stops, spaced evenly across the domain and interpolated in RGB. Two
+ * is the common case and the default; more exists because the ramps people
+ * actually want are not two-stop — viridis, a diverging red/white/blue, and any
+ * palette a host has already chosen for the same column elsewhere in its own UI
+ * all need more, and approximating them with their endpoints does not just look
+ * different, it loses the midpoint that made them meaningful.
+ */
+export type FeatureNumericRampSpec = readonly [
+  FeatureRgbColor,
+  FeatureRgbColor,
+  ...FeatureRgbColor[],
+];
+
+/**
+ * How a value's position along the ramp is measured.
+ *
+ *  - `'linear'` (default) — position is proportional to the value.
+ *  - `'symlog'` — proportional to `sign(v)·log(1+|v|)`, so a column whose mass sits
+ *    near zero with a long tail (counts, expression) spreads out instead of
+ *    collapsing into the ramp's first stop. Symmetric log rather than plain log
+ *    because it is defined at and below zero, which real columns reach.
+ */
+export type FeatureNumericScale = 'linear' | 'symlog';
+
+/**
+ * The values the ramp's endpoints stand for, `[low, high]`.
+ *
+ * Without one, the extent is measured from the features that loaded — so the same
+ * column reads as a different scale on a layer covering a subset, and the colours
+ * of two layers over one annotation are not comparable. Pin it to the column's own
+ * range (which the store knows and the render does not) whenever you have it.
+ *
+ * Values outside the domain clamp to its endpoints rather than extrapolating.
+ */
+export type FeatureNumericDomain = readonly [number, number];
 
 export const DEFAULT_FEATURE_CATEGORICAL_PALETTE: FeatureCategoricalPaletteSpec = 'oklab';
 
@@ -99,51 +171,118 @@ export const DEFAULT_FEATURE_NUMERIC_RAMP: FeatureNumericRampSpec = [
 ];
 
 /**
- * Turn a palette spec into `categoryIndex → colour`.
+ * `null` is rejected explicitly, not incidentally: `typeof null === 'object'` and
+ * `Array.isArray(null)` is false, so without this it passes as a named palette and
+ * the destructure in {@link resolveCategoricalPalette} throws on the spot —
+ * defeating that function's whole always-returns-a-colour guarantee, and taking
+ * {@link featureColorSchemeSignature} with it. `{"categoricalPalette": null}` is a
+ * thing JSON says, so a saved Render Stack can say it.
+ */
+function isNamedCategoricalPalette(
+  spec: FeatureCategoricalPaletteSpec
+): spec is FeatureNamedCategoricalPalette {
+  return spec !== null && typeof spec === 'object' && !Array.isArray(spec);
+}
+
+/**
+ * Turn a palette spec into `(value, categoryIndex) → colour`.
  *
  * A function rather than an array because `'oklab'` has no length: its colour is a
  * pure function of the index, so there is no table to run out of. That is the whole
  * point of making it the default — the cycling of a fixed list is invisible in the
  * render (two cell types simply share a colour) and so is exactly the kind of bug
  * that survives review.
+ *
+ * Both arguments are passed because the spec decides which one is authoritative: a
+ * named palette answers from the value, the positional forms from the index.
+ *
+ * **Always returns a colour.** A spec arrives from a saved Render Stack — JSON, so
+ * the type is a claim, not a guarantee — and returning `undefined` for one it does
+ * not recognise puts the failure several frames away, in the arithmetic that reads
+ * `rgb[0]`. That is the shape of crash you cannot diagnose from a stack trace. An
+ * unrecognised spec falls back to the default scheme instead: wrong colours are
+ * visible and reportable, a `TypeError` deep in a bundled dependency is not.
  */
 export function resolveCategoricalPalette(
   spec: FeatureCategoricalPaletteSpec = DEFAULT_FEATURE_CATEGORICAL_PALETTE
-): (categoryIndex: number) => FeatureRgbColor {
+): (value: string, categoryIndex: number) => FeatureRgbColor {
+  const byIndex = (_value: string, categoryIndex: number) => featureCodeToRgb(categoryIndex);
   if (spec === 'oklab') {
-    return featureCodeToRgb;
+    return byIndex;
+  }
+  if (isNamedCategoricalPalette(spec)) {
+    const { byValue, fallback = 'oklab' } = spec;
+    if (!byValue || typeof byValue !== 'object') {
+      return byIndex;
+    }
+    const colorForUnnamed = fallback === 'oklab' ? featureCodeToRgb : (_index: number) => fallback;
+    return (value, categoryIndex) => byValue[value] ?? colorForUnnamed(categoryIndex);
   }
   const colors = spec;
-  if (colors.length === 0) {
-    return featureCodeToRgb;
+  if (!Array.isArray(colors) || colors.length === 0) {
+    return byIndex;
   }
-  return (categoryIndex) => colors[categoryIndex % colors.length];
+  return (_value, categoryIndex) =>
+    colors[categoryIndex % colors.length] ?? byIndex('', categoryIndex);
+}
+
+/** Everything about a column's encoding that is not the column itself. */
+export interface FeatureColorScheme {
+  categoricalPalette?: FeatureCategoricalPaletteSpec;
+  numericRamp?: FeatureNumericRampSpec;
+  numericDomain?: FeatureNumericDomain;
+  numericScale?: FeatureNumericScale;
+  missingValues?: FeatureMissingValueOptions;
 }
 
 /**
  * Stable serialisation of a scheme, for projection cache keys.
  *
+ * Takes the whole scheme as one object so that adding a term to the encoding
+ * cannot leave a call site silently keying on the old set — the failure mode being
+ * a layer that keeps serving the previous colours after the scheme changed.
+ *
  * The missing-value policy belongs here too: changing a sentinel or how a missing
- * feature renders changes colours without touching the column, so a key that
- * omitted it would keep serving the previous table.
+ * feature renders changes colours without touching the column.
  */
-export function featureColorSchemeSignature(
-  categoricalPalette?: FeatureCategoricalPaletteSpec,
-  numericRamp?: FeatureNumericRampSpec,
-  missingValues?: FeatureMissingValueOptions
-): string {
+export function featureColorSchemeSignature({
+  categoricalPalette,
+  numericRamp,
+  numericDomain,
+  numericScale,
+  missingValues,
+}: FeatureColorScheme = {}): string {
   if (
     categoricalPalette === undefined &&
     numericRamp === undefined &&
+    numericDomain === undefined &&
+    numericScale === undefined &&
     missingValues === undefined
   ) {
     return '';
   }
   return JSON.stringify([
-    categoricalPalette ?? null,
+    serializeCategoricalPalette(categoricalPalette),
     numericRamp ?? null,
+    numericDomain ?? null,
+    numericScale ?? null,
     missingValues ? [missingValues.treatAsMissing ?? null, missingValues.render ?? null] : null,
   ]);
+}
+
+/**
+ * A named palette is serialised in sorted key order, because object key order is
+ * insertion order and a caller rebuilding the same map per render need not insert
+ * in a stable one. Two equal maps have to produce one string, or the layer rebuilds
+ * its whole colour buffer on renders where nothing changed.
+ */
+function serializeCategoricalPalette(spec: FeatureCategoricalPaletteSpec | undefined): unknown {
+  if (spec === undefined) return null;
+  if (!isNamedCategoricalPalette(spec)) return spec;
+  return [
+    Object.entries(spec.byValue).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    spec.fallback ?? null,
+  ];
 }
 
 /**
@@ -191,6 +330,45 @@ function interpolateRgb(
     Math.round(low[1] + (high[1] - low[1]) * clamped),
     Math.round(low[2] + (high[2] - low[2]) * clamped),
   ];
+}
+
+/**
+ * Sample a multi-stop ramp at `t ∈ [0, 1]`, stops spaced evenly.
+ *
+ * `t` at exactly 1 has to land on the last stop rather than reading past it, which
+ * is what the `length - 2` clamp is for — the top of the domain is the value most
+ * likely to be looked at, and reading past the end would silently return the last
+ * segment interpolated at 1 anyway on some inputs and `undefined` on others.
+ */
+function sampleRamp(stops: FeatureNumericRampSpec, t: number): FeatureRgbColor {
+  // The two-stop minimum is a type-level claim about JSON that came out of a saved
+  // Render Stack, so it is checked. With one stop the arithmetic below indexes -1
+  // and the failure surfaces as `low[0]` of undefined, several frames from here.
+  if (!Array.isArray(stops) || stops.length < 2) {
+    return stops?.[0] ?? DEFAULT_FEATURE_NUMERIC_RAMP[0];
+  }
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = clamped * (stops.length - 1);
+  const lowIndex = Math.min(Math.floor(scaled), stops.length - 2);
+  return interpolateRgb(stops[lowIndex], stops[lowIndex + 1], scaled - lowIndex);
+}
+
+/** Symmetric log, defined at and below zero. Matches d3's `scaleSymlog` at C = 1. */
+function symlog(value: number): number {
+  return Math.sign(value) * Math.log1p(Math.abs(value));
+}
+
+/** Where a value sits in `[min, max]`, as `t ∈ [0, 1]` before clamping. */
+function rampPosition(value: number, min: number, max: number, scale: FeatureNumericScale): number {
+  if (scale === 'symlog') {
+    const low = symlog(min);
+    const high = symlog(max);
+    // A degenerate domain has no position to report; the midpoint is the one
+    // answer that does not imply the value is at an extreme of a range it is not
+    // actually spread over.
+    return high === low ? 0.5 : (symlog(value) - low) / (high - low);
+  }
+  return max === min ? 0.5 : (value - min) / (max - min);
 }
 
 function getFiniteExtent(values: Array<number | undefined>): [number, number] | undefined {
@@ -301,6 +479,10 @@ export interface AssignFeatureColorsOptions {
   alpha: number;
   categoricalPalette?: FeatureCategoricalPaletteSpec;
   numericRamp?: FeatureNumericRampSpec;
+  /** Pin the ramp's endpoints instead of measuring them. See {@link FeatureNumericDomain}. */
+  numericDomain?: FeatureNumericDomain;
+  /** How position along the ramp is measured. See {@link FeatureNumericScale}. */
+  numericScale?: FeatureNumericScale;
   /**
    * What the store declares this column to be. Supply it whenever you have it —
    * `'auto'` trusts it in preference to sniffing the values. See
@@ -308,6 +490,31 @@ export interface AssignFeatureColorsOptions {
    */
   columnKind?: FeatureColumnKind;
   missingValues?: FeatureMissingValueOptions;
+}
+
+/**
+ * Category ordering, and so — for the positional palettes — category colour.
+ *
+ * Sorted rather than first-seen. First-seen order is a property of the features
+ * that loaded, not of the column, so it made the same annotation render in
+ * different colours on a shapes layer and a labels layer over one table, and made a
+ * saved config's colours drift whenever the data behind it changed.
+ *
+ * Numeric-looking values sort numerically, so cluster `10` follows cluster `9`
+ * rather than cluster `1`; those are the commonest positional categories and
+ * lexicographic order makes their palette look shuffled. Anything else sorts by
+ * code unit — deliberately not `localeCompare`, whose answer depends on the
+ * environment's locale data and would make the colours machine-dependent.
+ */
+function compareCategoryValues(a: string, b: string): number {
+  const numericA = featureNumericValue(a);
+  const numericB = featureNumericValue(b);
+  if (numericA !== undefined && numericB !== undefined && numericA !== numericB) {
+    return numericA - numericB;
+  }
+  if (numericA !== undefined && numericB === undefined) return -1;
+  if (numericA === undefined && numericB !== undefined) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /**
@@ -319,8 +526,11 @@ export interface AssignFeatureColorsOptions {
  * of a dense colour buffer — "unannotated" and "annotated with the first palette
  * entry" have to stay distinguishable.
  *
- * Category indices are assigned in first-seen feature order, so the same column
- * yields the same colours for a given element regardless of which kind draws it.
+ * The encoding is a function of the COLUMN, not of the features that loaded:
+ * categories are ordered by {@link compareCategoryValues} and the ramp can be
+ * pinned with `numericDomain`. That is what lets the same annotation render the
+ * same way on a shapes layer and on a labels layer over the same table, and what
+ * makes a saved config's colours mean the same thing next time it is opened.
  */
 export function assignFeatureColors({
   values,
@@ -328,6 +538,8 @@ export function assignFeatureColors({
   alpha,
   categoricalPalette,
   numericRamp = DEFAULT_FEATURE_NUMERIC_RAMP,
+  numericDomain,
+  numericScale = 'linear',
   columnKind,
   missingValues,
 }: AssignFeatureColorsOptions): Array<FeatureRgbaColor | undefined> {
@@ -361,13 +573,14 @@ export function assignFeatureColors({
     const numericValues = values.map((value) =>
       isMissing(value) ? undefined : featureNumericValue(value)
     );
-    const extent = getFiniteExtent(numericValues);
+    // A pinned domain is used even when nothing in view falls inside it: the point
+    // of pinning is that the scale does not depend on what loaded.
+    const extent = numericDomain ?? getFiniteExtent(numericValues);
     if (!extent) {
       for (let index = 0; index < values.length; index += 1) applyMissing(index);
       return colors;
     }
     const [min, max] = extent;
-    const range = max - min;
     for (let index = 0; index < values.length; index += 1) {
       const value = numericValues[index];
       if (value === undefined) {
@@ -376,25 +589,44 @@ export function assignFeatureColors({
         applyMissing(index);
         continue;
       }
-      const t = range === 0 ? 0.5 : (value - min) / range;
-      colors[index] = rgba(interpolateRgb(numericRamp[0], numericRamp[1], t), alpha);
+      colors[index] = rgba(
+        sampleRamp(numericRamp, rampPosition(value, min, max, numericScale)),
+        alpha
+      );
     }
     return colors;
   }
 
+  // Two passes: the category set has to be complete and ordered before any colour
+  // is assigned, because a positional palette's answer for the first feature
+  // depends on categories that may only appear near the end of the column.
   const categoryIndexByValue = new Map<string, number>();
+  for (const value of new Set(nonEmptyValues)) {
+    categoryIndexByValue.set(value, 0);
+  }
+  const orderedValues = Array.from(categoryIndexByValue.keys()).sort(compareCategoryValues);
+  for (const [categoryIndex, value] of orderedValues.entries()) {
+    categoryIndexByValue.set(value, categoryIndex);
+  }
+
+  // The palette is consulted once per CATEGORY rather than once per feature — a
+  // categorical column is a handful of distinct values over potentially millions of
+  // rows. Each feature still gets its own tuple: these are handed out to callers
+  // that store them per feature, and sharing one array between a category's
+  // features would make any in-place edit recolour all of them.
+  const rgbByValue = new Map<string, FeatureRgbColor>();
+  for (const [value, categoryIndex] of categoryIndexByValue) {
+    rgbByValue.set(value, colorForCategory(value, categoryIndex));
+  }
+
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (isMissing(value)) {
       applyMissing(index);
       continue;
     }
-    let categoryIndex = categoryIndexByValue.get(value);
-    if (categoryIndex === undefined) {
-      categoryIndex = categoryIndexByValue.size;
-      categoryIndexByValue.set(value, categoryIndex);
-    }
-    colors[index] = rgba(colorForCategory(categoryIndex), alpha);
+    const rgb = rgbByValue.get(value);
+    if (rgb) colors[index] = rgba(rgb, alpha);
   }
 
   return colors;

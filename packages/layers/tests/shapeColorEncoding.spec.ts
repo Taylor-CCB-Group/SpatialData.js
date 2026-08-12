@@ -25,9 +25,11 @@ describe('shape fill colour encoding', () => {
     });
 
     expect(colors).toEqual({
-      'cell-a': [0, 0, 255, 180],
-      'cell-b': [0, 255, 0, 180],
-      'cell-c': [0, 0, 255, 180],
+      // Categories are ordered by value, not by which feature was seen first, so
+      // `type-x` takes palette slot 0 even though `type-y` is drawn first.
+      'cell-a': [0, 255, 0, 180],
+      'cell-b': [0, 0, 255, 180],
+      'cell-c': [0, 255, 0, 180],
       'cell-d': [255, 0, 255, 180],
     });
   });
@@ -122,8 +124,9 @@ describe('shape fill colour encoding', () => {
     });
 
     expect(colors).toEqual({
-      'circle-a': [0, 0, 255, 180],
-      'circle-b': [0, 255, 0, 180],
+      // Row 1 is `type-y` (slot 1), row 0 is `type-x` (slot 0).
+      'circle-a': [0, 255, 0, 180],
+      'circle-b': [0, 0, 255, 180],
     });
   });
 

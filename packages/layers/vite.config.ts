@@ -12,6 +12,9 @@ export default defineConfig({
   },
   build: {
     outDir: resolve(__dirname, 'dist'),
+    // See the note in `vite.config.base.ts`: a consumer debugging a crash in here
+    // has only the built artifact, so it has to carry a map back to source.
+    sourcemap: true,
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
       name: 'SpatialDataLayers',

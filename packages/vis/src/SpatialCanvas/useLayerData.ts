@@ -60,6 +60,7 @@ import {
 } from './labelsProjection';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { renderShapesLayer } from './renderers/shapesRenderer';
+import { describeResolveInputs } from './resolveInputs';
 import { createNonOwningResolver } from './resolvers/nonOwningResolver';
 import { ImagesResolver, LabelsResolver } from './resolvers/RasterResolvers';
 import {
@@ -416,6 +417,11 @@ export function useLayerData(
   // eslint-disable-next-line react-hooks/refs -- intentional latest-`layers` mirror consumed during render, see comment above
   layersRef.current = layers;
 
+  // Recomputed every render, NOT memoised on `layers`: a caller that patches its
+  // configs in place changes nothing this hook could memoise on. It is a handful of
+  // scalars per visible layer — see `describeResolveInputs` for what may live in it.
+  const resolveInputsKey = describeResolveInputs(layers, layerOrder);
+
   const [layerLoadStates, setLayerLoadStates] = useState<Record<string, LayerLoadState>>({});
   // Bumped on every resolver settle. The reconcile effect depends on it so that an
   // async settle (e.g. the preload landing, which flips `supportsFeatureScan`) re-runs
@@ -592,12 +598,12 @@ export function useLayerData(
   // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from these
   // resolver getters and never repaints on a late async settle.
   //
-  // Caveat: `SpatialEntryStore` subscribes to its resolvers in its constructor, which
-  // runs inside the `useMemo` above. Under React StrictMode's dev-only double-invoke a
-  // discarded store instance leaks one listener on the (never-disposed) points
-  // resolver per rebuild; each such listener only calls a dead store's `notify()`
-  // (empty listener set), so it is inert. Harmless in production; noted so it is not
-  // mistaken for a real leak.
+  // The cleanup below is why the store's resolver bridge is tied to having listeners
+  // rather than to construction. An effect cleanup is not "the end": StrictMode's
+  // dev double-mount runs it and then re-runs the effect against the SAME memoised
+  // store, so `dispose()` here has to be recoverable — `subscribe` re-attaches. It
+  // also means a store the `useMemo` above builds and discards never subscribed to
+  // anything, so it holds nothing to leak. See `SpatialEntryStore.attachResolvers`.
   useEffect(() => {
     const unsubscribe = store.subscribe(notifyLoadedDataChanged);
     return () => {
@@ -616,12 +622,23 @@ export function useLayerData(
   // element resolution changes without `layers`/`store` changing — e.g. a coordinate
   // system switch that makes a previously unavailable element resolvable. The map is
   // memoised on `availableElements`, so this adds no per-render churn.
+  //
+  // And on `resolveInputsKey`, which is what makes the effect fire for a caller that
+  // edits its configs IN PLACE (MDV's render-stack adapter does, deliberately). For
+  // such a caller neither `layers` nor the config objects inside it ever change
+  // identity, so identity deps alone leave a switched fill-colour column or tooltip
+  // field never requested at all. See `describeResolveInputs`.
   useEffect(() => {
     // Bare reference: `loadedDataRevision` is a re-trigger, not a value we read. A
     // resolver settle (the preload landing flips `supportsFeatureScan`) must replan so
     // the scan/row-codes tasks get emitted; touching it here declares that dependency
     // honestly to exhaustive-deps. The plan/load dedup makes the extra runs convergent.
     void loadedDataRevision;
+    // Bare reference, same reason: the contexts below are read from `layers`, so the
+    // key is never a value this body uses — it is the only thing that CHANGES when a
+    // caller mutates those configs in place. Declaring it here is what makes it a
+    // legitimate dependency rather than an "unnecessary" one.
+    void resolveInputsKey;
     const contexts: AnyResolveContext[] = [];
     for (const layerId of layerOrder) {
       const config = layers[layerId];
@@ -694,7 +711,15 @@ export function useLayerData(
     // the list because the name→code resolution above reads its catalog. The catalog
     // ARRIVING is covered by `loadedDataRevision` (bumped on every resolver settle),
     // which is what re-resolves a name selection that could not be resolved yet.
-  }, [layers, layerOrder, store, elementMapValue, loadedDataRevision, pointsEngine]);
+  }, [
+    layers,
+    layerOrder,
+    resolveInputsKey,
+    store,
+    elementMapValue,
+    loadedDataRevision,
+    pointsEngine,
+  ]);
 
   // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
 
@@ -789,6 +814,12 @@ export function useLayerData(
             ? { categoricalPalette: fillColorByColumn.categoricalPalette }
             : {}),
           ...(fillColorByColumn.numericRamp ? { numericRamp: fillColorByColumn.numericRamp } : {}),
+          ...(fillColorByColumn.numericDomain
+            ? { numericDomain: fillColorByColumn.numericDomain }
+            : {}),
+          ...(fillColorByColumn.numericScale
+            ? { numericScale: fillColorByColumn.numericScale }
+            : {}),
         }),
         rowsSource: rows,
         renderSource: renderData,

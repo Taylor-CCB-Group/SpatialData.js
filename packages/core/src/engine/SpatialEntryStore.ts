@@ -29,28 +29,63 @@ export class SpatialEntryStore {
   private readonly unsubscribes: Array<() => void> = [];
   /** One AbortController per in-flight task id. Superseding cancels the old one. */
   private readonly inFlight = new Map<string, AbortController>();
-  private version = 0;
 
   constructor(resolvers: ResolverRegistry) {
     this.resolvers = resolvers;
-    // The store's version is the sum of its parts: any resolver mutating is a
-    // reason for React to re-read.
-    for (const resolver of Object.values(resolvers)) {
+  }
+
+  /**
+   * The store's version is the sum of its parts: any resolver mutating is a reason
+   * for React to re-read. The bridge that carries that is tied to HAVING LISTENERS,
+   * not to construction — because the store outlives the effect that consumes it.
+   *
+   * Subscribing in the constructor and tearing down in `dispose` looks equivalent
+   * and is not. `dispose()` runs from a React effect cleanup, and an effect cleanup
+   * is not "the end": StrictMode's dev double-mount runs cleanup and then re-runs
+   * the effect against the SAME memoised store. A constructor-time bridge cannot be
+   * rebuilt, so from that moment the store was permanently deaf to its own resolvers
+   * — every async settle after mount was dropped, and a fill-colour column whose
+   * rows landed after the switch never repainted until an unrelated re-render (a
+   * pan) happened to come along. Attaching on the first listener and detaching on
+   * the last makes the bridge exactly as long-lived as someone caring about it, and
+   * survives any number of remounts.
+   */
+  private attachResolvers(): void {
+    if (this.unsubscribes.length > 0) return;
+    for (const resolver of Object.values(this.resolvers)) {
       this.unsubscribes.push(resolver.subscribe(() => this.notify()));
     }
   }
 
+  private detachResolvers(): void {
+    for (const unsubscribe of this.unsubscribes) unsubscribe();
+    this.unsubscribes.length = 0;
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
+    if (this.listeners.size === 1) this.attachResolvers();
     return () => {
       this.listeners.delete(listener);
+      if (this.listeners.size === 0) this.detachResolvers();
     };
   };
 
-  getVersion = (): number => this.version;
+  /**
+   * The sum of its parts, DERIVED rather than counted.
+   *
+   * A counter incremented from the notification bridge would only be correct while
+   * something was subscribed — and the bridge is now listener-driven, so that is not
+   * always. Summing the resolvers' own versions makes this a pure read of the state
+   * it describes: true with a listener, without one, and across a dispose.
+   */
+  getVersion = (): number => {
+    let version = 0;
+    for (const resolver of Object.values(this.resolvers)) version += resolver.getVersion();
+    return version;
+  };
 
   private notify(): void {
-    this.version += 1;
     for (const listener of this.listeners) {
       listener();
     }
@@ -137,9 +172,13 @@ export class SpatialEntryStore {
     this.resolvers[kind]?.evict(elementKey);
   }
 
+  /**
+   * Release everything this store owns. Not a one-way door: a later `subscribe`
+   * re-attaches the resolver bridge, which is what lets a StrictMode remount (or any
+   * effect that re-runs against the same store) recover instead of going silent.
+   */
   dispose(): void {
-    for (const unsubscribe of this.unsubscribes) unsubscribe();
-    this.unsubscribes.length = 0;
+    this.detachResolvers();
     for (const controller of this.inFlight.values()) controller.abort();
     this.inFlight.clear();
     for (const resolver of Object.values(this.resolvers)) resolver.dispose();
