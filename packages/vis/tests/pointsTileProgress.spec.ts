@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import {
   aggregatePointsTileLoadProgress,
   isPointsTileLoading,
-  pointsTileLoadProgressFromDebugState,
   pointsTileLoadingMessage,
+  pointsTileLoadProgressFromDebugState,
 } from '../src/SpatialCanvas/pointsTileProgress.js';
 
 const sampleTile: PointsTileHandle = {

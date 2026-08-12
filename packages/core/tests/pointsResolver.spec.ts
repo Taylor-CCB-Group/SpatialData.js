@@ -847,9 +847,13 @@ describe('D5 step 1 — Morton tiling metadata probe', () => {
 
     expect(resolver.isTiled('transcripts')).toBe(true);
     expect(resolver.getTilingMetadata('transcripts')?.totalRowGroups).toBe(96);
-    // Row codes and the matching scan are resident-batch notions; a tiled element has
-    // no resident batch, so neither is planned (per-tile codes are step 4).
-    expect(resolver.plan(ctx(el, { pointsTiling: 'auto', featureCodes: [0, 1] }))).toEqual([]);
+    // The preload, its row codes and the matching scan are all resident-batch
+    // notions, and a tiled element has none of them. The catalog IS planned: it is
+    // the only way a name-based selection becomes the codes the tile scan filters on
+    // (step 4), and unlike the preloaded path nothing else builds one.
+    expect(
+      resolver.plan(ctx(el, { pointsTiling: 'auto', featureCodes: [0, 1] })).map((t) => t.resource)
+    ).toEqual(['catalog']);
   });
 
   it('settles null when the artifact cannot drive tiles, and falls back to the preload', async () => {
@@ -1170,7 +1174,8 @@ describe('D5 — tiling is per entry, the probe answer is per element', () => {
     expect(resolver.isTiled('transcripts')).toBe(true);
     // …but this entry no longer asked for it, so it plans a preload again…
     expect(resolver.plan(off).map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
-    expect(resolver.plan(on)).toEqual([]);
+    // The tiled entry asks only for the catalog — no preload, no row codes, no scan.
+    expect(resolver.plan(on).map((t) => t.resource)).toEqual(['catalog']);
     // …and its snapshot reports a preload resource (which gates first paint) and no
     // tiling-derived bounds.
     expect(Object.keys(resolver.snapshot(off).resources)).toContain('preload');
@@ -1292,5 +1297,90 @@ describe('D5 — a tiled element releases the resident window', () => {
     await resolver.ensureTilingMetadata(target);
 
     expect(resolver.hasData('transcripts')).toBe(true);
+  });
+});
+
+describe('D5 step 4 — a tiled entry asks for its own catalog', () => {
+  const tiling = (): PointsTilingMetadata => ({
+    kind: 'morton-points',
+    parquetPath: 'points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: MORTON_CODE_2D_COLUMN,
+    totalRows: 12_000_000,
+    totalRowGroups: 96,
+    maxRowsPerGroup: 131_072,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+  });
+
+  const catalog = { featureKey: 'feature_name', entries: [{ code: 0, name: 'GeneA' }] };
+  const tiledElement = (over = {}) =>
+    element({
+      getPointsTilingMetadata: vi.fn(async () => tiling()),
+      listFeaturesWithCounts: vi.fn(async () => catalog),
+      ...over,
+    });
+
+  const store = (resolver: PointsResolver) =>
+    new SpatialEntryStore({
+      points: resolver,
+      shapes: resolver,
+      images: resolver,
+      labels: resolver,
+    });
+  const auto = { pointsTiling: 'auto' as const };
+
+  /**
+   * On the preloaded path the catalog arrives free, as a preview off the geometry
+   * decode. A tiled entry never decodes a resident batch, so without planning it
+   * nothing builds one — and a selection stored as feature NAMES can never become the
+   * codes the tile scan filters on.
+   */
+  it('builds a catalog with no preload in sight', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement();
+    const s = store(resolver);
+
+    await s.reconcile([ctx(el, auto)]); // probe
+    await s.reconcile([ctx(el, auto)]); // catalog
+
+    expect(resolver.getFeatureCatalog('transcripts')).toEqual(catalog);
+    expect(el.loadPoints).not.toHaveBeenCalled();
+  });
+
+  it('asks once, not on every reconcile', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement();
+    const s = store(resolver);
+
+    await s.reconcile([ctx(el, auto)]);
+    await s.reconcile([ctx(el, auto)]);
+    await s.reconcile([ctx(el, auto)]);
+    await s.reconcile([ctx(el, auto)]);
+
+    expect(el.listFeaturesWithCounts).toHaveBeenCalledTimes(1);
+    expect(resolver.plan(ctx(el, auto))).toEqual([]);
+  });
+
+  /**
+   * A failed catalog reports `undefined` exactly as one that never ran, so a gate on
+   * the value alone re-emits the task forever. `retry()` is the way back.
+   */
+  it('does not re-plan a failed catalog on every reconcile', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement({
+      listFeaturesWithCounts: vi.fn(async () => {
+        throw new Error('catalog scan failed');
+      }),
+    });
+    const s = store(resolver);
+
+    await s.reconcile([ctx(el, auto)]);
+    await s.reconcile([ctx(el, auto)]);
+    await s.reconcile([ctx(el, auto)]);
+
+    expect(el.listFeaturesWithCounts).toHaveBeenCalledTimes(1);
+    expect(resolver.plan(ctx(el, auto))).toEqual([]);
   });
 });
