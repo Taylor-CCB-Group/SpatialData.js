@@ -461,6 +461,24 @@ describe('a scheme that does not match its own type', () => {
     expect(colors[0]).not.toEqual(colors[1]);
   });
 
+  it('falls back to the default scheme for a null palette', () => {
+    // The sharp edge: `typeof null === 'object'` and `Array.isArray(null)` is
+    // false, so `null` reads as a named palette to any guard that does not say
+    // otherwise — and then the destructure throws before any colour is assigned.
+    // `{"categoricalPalette": null}` is a thing JSON says.
+    const colors = malformed(null);
+
+    expect(colors[0]).toBeDefined();
+    expect(colors[1]).toBeDefined();
+    expect(colors[0]).not.toEqual(colors[1]);
+  });
+
+  it('takes a signature for a null palette instead of throwing on one', () => {
+    // Same root cause, different entry point: the signature helper narrows with
+    // the same guard, so a null palette used to take the cache key down with it.
+    expect(() => featureColorSchemeSignature({ categoricalPalette: null as never })).not.toThrow();
+  });
+
   it('survives a list with a hole in it', () => {
     const colors = malformed([[1, 2, 3], undefined]);
 

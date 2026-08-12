@@ -170,10 +170,18 @@ export const DEFAULT_FEATURE_NUMERIC_RAMP: FeatureNumericRampSpec = [
   [255, 220, 0],
 ];
 
+/**
+ * `null` is rejected explicitly, not incidentally: `typeof null === 'object'` and
+ * `Array.isArray(null)` is false, so without this it passes as a named palette and
+ * the destructure in {@link resolveCategoricalPalette} throws on the spot —
+ * defeating that function's whole always-returns-a-colour guarantee, and taking
+ * {@link featureColorSchemeSignature} with it. `{"categoricalPalette": null}` is a
+ * thing JSON says, so a saved Render Stack can say it.
+ */
 function isNamedCategoricalPalette(
   spec: FeatureCategoricalPaletteSpec
 ): spec is FeatureNamedCategoricalPalette {
-  return typeof spec === 'object' && !Array.isArray(spec);
+  return spec !== null && typeof spec === 'object' && !Array.isArray(spec);
 }
 
 /**
