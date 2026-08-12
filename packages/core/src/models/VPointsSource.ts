@@ -263,6 +263,7 @@ import {
   type PointsInBoundsResponse,
   type PointsTilingMetadata,
   type SpatialBounds,
+  selectMortonRowGroups,
 } from '../pointsTiling.js';
 import type { Axis } from '../schemas';
 // import { normalizeAxes } from '@vitessce/spatial-utils';
@@ -2385,11 +2386,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // row-group bisect run over it lands arbitrarily — the visible result is a tile
     // holding one or two features and missing the rest. Free to check: the footer
     // statistics are already in `datasetMetadata.parts`.
-    const rowGroupsAreSorted = datasetMetadata
-      ? mortonRowGroupExtentsAreSorted(
-          rowGroupMortonExtents(datasetMetadata.parts, datasetMetadata.totalNumRowGroups)
-        )
-      : true;
+    const mortonExtents = datasetMetadata
+      ? rowGroupMortonExtents(datasetMetadata.parts, datasetMetadata.totalNumRowGroups)
+      : [];
+    const rowGroupsAreSorted = mortonRowGroupExtentsAreSorted(mortonExtents);
     if (!rowGroupsAreSorted) {
       console.warn(
         `Morton tiling disabled for ${elementPath}: its morton_code_2d column is not ` +
@@ -2447,6 +2447,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         datasetMetadata && canLoadRowGroups && bounds && rowGroupsAreSorted
       ),
       bounds,
+      // Carried on the metadata so viewport queries select row groups from memory
+      // instead of bisecting the file. Empty means "no usable statistics" — the
+      // bisect stays as the fallback, so this stays an optimisation, not a
+      // requirement.
+      ...(mortonExtents.length > 0 ? { rowGroupMortonExtents: mortonExtents } : {}),
     };
 
     return metadata;
@@ -2587,6 +2592,46 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     };
   }
 
+  /**
+   * Row groups a set of Morton intervals can touch.
+   *
+   * Prefers the in-memory index the probe read out of the footer: exact, and free.
+   * The bisect below is the fallback for an artifact whose statistics we could not
+   * read — it recovers the same two numbers per row group by range-reading and
+   * decoding the group's bytes, ~2MB a step on a real transcripts artifact, and a
+   * single viewport query walks `log2(rowGroups)` steps for each of a few hundred
+   * intervals. That is the whole reason viewport queries used to be able to pull the
+   * entire file down to answer a question the footer had already answered.
+   */
+  private async selectRowGroupsForIntervals(
+    metadata: PointsTilingMetadata,
+    intervals: ReadonlyArray<readonly [number, number]>
+  ): Promise<number[]> {
+    const extents = metadata.rowGroupMortonExtents;
+    if (extents && extents.length === metadata.totalRowGroups) {
+      return selectMortonRowGroups(extents, intervals);
+    }
+    const rowGroupSet = new Set<number>();
+    for (const [start, end] of intervals) {
+      const first = await this.bisectRowGroupsRight(
+        metadata.parquetPath,
+        metadata.totalRowGroups,
+        start
+      );
+      const last = await this.bisectRowGroupsRight(
+        metadata.parquetPath,
+        metadata.totalRowGroups,
+        end
+      );
+      for (let rowGroup = first; rowGroup <= last; rowGroup++) {
+        if (rowGroup >= 0 && rowGroup < metadata.totalRowGroups) {
+          rowGroupSet.add(rowGroup);
+        }
+      }
+    }
+    return [...rowGroupSet].sort((a, b) => a - b);
+  }
+
   private async bisectRowGroupsRight(
     parquetPath: string,
     totalRowGroups: number,
@@ -2621,25 +2666,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     checkAbort(options.signal);
     const intervals = mortonIntervalsForBounds(metadata.bounds, options.bounds);
-    const rowGroupSet = new Set<number>();
-    for (const [start, end] of intervals) {
-      const first = await this.bisectRowGroupsRight(
-        metadata.parquetPath,
-        metadata.totalRowGroups,
-        start
-      );
-      const last = await this.bisectRowGroupsRight(
-        metadata.parquetPath,
-        metadata.totalRowGroups,
-        end
-      );
-      for (let rowGroup = first; rowGroup <= last; rowGroup++) {
-        if (rowGroup >= 0 && rowGroup < metadata.totalRowGroups) {
-          rowGroupSet.add(rowGroup);
-        }
-      }
-    }
-    const rowGroups = [...rowGroupSet].sort((a, b) => a - b);
+    const rowGroups = await this.selectRowGroupsForIntervals(metadata, intervals);
     const totalRowsUpperBound = rowGroups.reduce(
       (sum, rowGroup) => sum + rowGroupCountForIndex(metadata, rowGroup),
       0
