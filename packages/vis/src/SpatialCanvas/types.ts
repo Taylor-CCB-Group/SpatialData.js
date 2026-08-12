@@ -51,10 +51,15 @@ export interface FillColorByColumn<TMode> {
    * depends on the categories present.
    */
   categoricalPalette?: FeatureCategoricalPaletteSpec;
-  /** Endpoints of the continuous ramp, `[low, high]` as RGB 0–255. */
+  /**
+   * The colours a continuous column ramps through, low to high: two or more RGB
+   * 0–255 stops, spaced evenly across the domain. Two is the default; pass more to
+   * carry a real ramp — viridis, a diverging red/white/blue — whose midpoint is
+   * part of what it means.
+   */
   numericRamp?: FeatureNumericRampSpec;
   /**
-   * The values those endpoints stand for. Defaults to the extent of the features
+   * The values the ramp's ends stand for. Defaults to the extent of the features
    * that loaded — pin it to the column's own range when you know it, so two layers
    * over different parts of one annotation stay comparable.
    */

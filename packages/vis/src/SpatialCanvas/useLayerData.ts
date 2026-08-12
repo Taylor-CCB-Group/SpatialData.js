@@ -598,12 +598,12 @@ export function useLayerData(
   // Compiler (`'use no memo'`) — the compiler otherwise memoizes JSX built from these
   // resolver getters and never repaints on a late async settle.
   //
-  // Caveat: `SpatialEntryStore` subscribes to its resolvers in its constructor, which
-  // runs inside the `useMemo` above. Under React StrictMode's dev-only double-invoke a
-  // discarded store instance leaks one listener on the (never-disposed) points
-  // resolver per rebuild; each such listener only calls a dead store's `notify()`
-  // (empty listener set), so it is inert. Harmless in production; noted so it is not
-  // mistaken for a real leak.
+  // The cleanup below is why the store's resolver bridge is tied to having listeners
+  // rather than to construction. An effect cleanup is not "the end": StrictMode's
+  // dev double-mount runs it and then re-runs the effect against the SAME memoised
+  // store, so `dispose()` here has to be recoverable — `subscribe` re-attaches. It
+  // also means a store the `useMemo` above builds and discards never subscribed to
+  // anything, so it holds nothing to leak. See `SpatialEntryStore.attachResolvers`.
   useEffect(() => {
     const unsubscribe = store.subscribe(notifyLoadedDataChanged);
     return () => {
