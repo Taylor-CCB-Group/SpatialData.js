@@ -445,19 +445,27 @@ describe('a ramp with more than two stops', () => {
  * reported by whoever sees them; that TypeError cannot.
  */
 describe('a scheme that does not match its own type', () => {
+  const values = ['tumour', 'stroma'];
+
   const malformed = (categoricalPalette: unknown) =>
     assignFeatureColors({
-      values: ['tumour', 'stroma'],
+      values,
       mode: 'categorical',
       alpha: 255,
       categoricalPalette: categoricalPalette as never,
     });
 
+  /**
+   * What the same column looks like with no palette at all. "Falls back" means
+   * these exact colours: a scheme the caller cannot read should be indistinguishable
+   * from one they never wrote, not merely something that avoided throwing.
+   */
+  const defaultScheme = assignFeatureColors({ values, mode: 'categorical', alpha: 255 });
+
   it('falls back to the default scheme for a palette object with no byValue', () => {
     const colors = malformed({ fallback: 'oklab' });
 
-    expect(colors[0]).toBeDefined();
-    expect(colors[1]).toBeDefined();
+    expect(colors).toEqual(defaultScheme);
     expect(colors[0]).not.toEqual(colors[1]);
   });
 
@@ -468,8 +476,7 @@ describe('a scheme that does not match its own type', () => {
     // `{"categoricalPalette": null}` is a thing JSON says.
     const colors = malformed(null);
 
-    expect(colors[0]).toBeDefined();
-    expect(colors[1]).toBeDefined();
+    expect(colors).toEqual(defaultScheme);
     expect(colors[0]).not.toEqual(colors[1]);
   });
 
