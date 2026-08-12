@@ -1207,15 +1207,25 @@ export function useLayerData(
           // machinery below applies to it. Its geometry comes from `loadInBounds` per
           // viewport tile, inside deck's own `TileLayer` lifecycle.
           //
-          // Flat colour for now. The tile scan filters by feature code but does not
-          // return the per-point codes, so colour-by-feature and Feature Highlight
-          // have nothing to key on — step 3 emits the code column from both scan
-          // paths, and step 4 wires the filter and catalog.
+          // Colour comes off the tile batch itself: the scan returns a feature code
+          // per point (step 3), so the same colour props the preloaded path uses
+          // apply here. The feature FILTER is still step 4 — a tiled layer draws
+          // every feature in the viewport regardless of the selection.
           const element = elem.element as PointsElement;
           const tiledResource = pointsEngine.getTiledResource(element, elem.key);
           if (tiledResource) {
             const showTileDebugOverlay = config.showTileDebugOverlay === true;
             const tileDebugStore = getTileDebugStore(layerId);
+            // The same three colour inputs the preloaded branch builds. They are
+            // element-scoped (catalog code space, name→rgb overrides, the runtime
+            // hover highlight), so a tiled layer reads them identically — only the
+            // per-point codes arrive by a different route.
+            const featureCodeSpaceSize = pointsEngine.getFeatureCodeSpaceSize(elem.key);
+            const featureColorOverrides = pointsEngine.getFeatureColorOverrideMap(
+              elem.key,
+              config.featureColorOverrides
+            );
+            const highlightFeatureCode = pointsEngine.getHighlightedFeature(elem.key);
             deckLayers.push(
               new PointsLayer({
                 id: layerId,
@@ -1232,7 +1242,10 @@ export function useLayerData(
                 ...(showTileDebugOverlay
                   ? { tileDebugSignature: tileDebugSignature(tileDebugStore) }
                   : {}),
-                colorByFeature: false,
+                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                featureCodeSpaceSize,
+                ...(featureColorOverrides ? { featureColorOverrides } : {}),
+                highlightFeatureCode,
               })
             );
           }

@@ -208,7 +208,6 @@ function pointsScanChunkProgress(
 
 import {
   extractSentinelBoundingBox,
-  featureCodeAllowSet,
   filterPointsToBounds,
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
@@ -2494,7 +2493,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
     checkAbort(options.signal);
-    const allowedFeatureCodes = featureCodeAllowSet(options.featureCodes);
     const intervals = mortonIntervalsForBounds(metadata.bounds, options.bounds);
     const rowGroupSet = new Set<number>();
     for (const [start, end] of intervals) {
@@ -2525,18 +2523,18 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     // Dynamic, like the call site below: keeps the worker scan module out of the
     // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
-    const { Float32PointBuffer, scanMortonTableInBounds } = await import(
+    const { Float32PointBuffer, Int32PointBuffer, scanMortonTableInBounds } = await import(
       '../workers/pointsWorkerScan.js'
     );
     const xs = new Float32PointBuffer();
     const ys = new Float32PointBuffer();
     const zs = new Float32PointBuffer();
     const hasZ = metadata.axisNames.includes('z');
-    const filterByFeature = allowedFeatureCodes !== null;
-    const featureCodeColumnName =
-      filterByFeature && metadata.featureCodeColumnName
-        ? metadata.featureCodeColumnName
-        : undefined;
+    // Project the code column whenever the artifact HAS one — not only when a filter
+    // is active. The codes ride back on the batch so a tiled layer can colour by
+    // feature, and the "all features" view (no filter) is exactly the case that used
+    // to arrive without them and render flat.
+    const featureCodeColumnName = metadata.featureCodeColumnName || undefined;
 
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
@@ -2568,6 +2566,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
               bounds: options.bounds,
               loadMode: 'row-groups',
               tiling: metadata,
+              ...(workerResult.featureCodes ? { featureCodes: workerResult.featureCodes } : {}),
             };
           }
         } catch (error) {
@@ -2586,6 +2585,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       metadata.mortonCodeColumnName,
       ...(featureCodeColumnName ? [featureCodeColumnName] : []),
     ];
+    const codes = featureCodeColumnName ? new Int32PointBuffer() : undefined;
     for (const rowGroup of rowGroups) {
       checkAbort(options.signal);
       const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup, {
@@ -2605,6 +2605,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         xs,
         ys,
         zs,
+        ...(codes ? { codes } : {}),
       });
     }
 
@@ -2612,12 +2613,17 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
 
+    const pointCount = xs.length;
+    const outCodes = codes?.toArray();
     return {
       data: hasZ ? [xs.toArray(), ys.toArray(), zs.toArray()] : [xs.toArray(), ys.toArray()],
-      shape: [hasZ ? 3 : 2, xs.length],
+      shape: [hasZ ? 3 : 2, pointCount],
       bounds: options.bounds,
       loadMode: 'row-groups',
       tiling: metadata,
+      // One code per point or none at all — a short array would leave the tail
+      // reading code 0, a valid feature, and mis-colour it with conviction.
+      ...(outCodes && outCodes.length === pointCount ? { featureCodes: outCodes } : {}),
     };
   }
 }

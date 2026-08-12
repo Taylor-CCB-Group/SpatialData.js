@@ -99,7 +99,10 @@ describe('streaming range probe — cache policy', () => {
   });
 
   it('treats a short body as a refusal — the reader would read the wrong window', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => partialResponse(4)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => partialResponse(4))
+    );
     await expect(probeSource().serverSupportsStreamingRanges(freshUrl('short'))).resolves.toBe(
       false
     );
