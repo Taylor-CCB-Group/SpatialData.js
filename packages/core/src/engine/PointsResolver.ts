@@ -140,6 +140,9 @@ interface PointsEntry {
    * identity. A DATA memo (a Set), not a render resource — it stays in core. */
   residentCodes?: ReadonlySet<number>;
   residentCodesSource?: ArrayLike<number>;
+  /** Memoized per-code tally of the resident {@link rowCodes}, invalidated by the
+   * same identity. Shares `residentCodesSource` — both are derived from one array. */
+  residentCounts?: ReadonlyMap<number, number>;
   /**
    * Whole-dataset points for the active selection — the feature-index scan — as a
    * {@link RequestSlot}. Keyed by `` `${signature}#${cap}` ``: the selected-codes
@@ -514,16 +517,42 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   }
 
   /**
-   * Running per-feature point counts for the resident batch (`code → rows`),
-   * accumulated while the preload streamed. These are counts over the RESIDENT
-   * WINDOW, not the dataset — the authoritative dataset totals come from the catalog
-   * scan — but they are available almost immediately, so the panel can show stats
-   * instead of blanks while that scan runs. Reads the in-flight partial first so the
-   * numbers climb as points arrive.
+   * Per-feature point counts for the resident batch (`code → rows`).
+   *
+   * Counts over the RESIDENT WINDOW, not the dataset — the authoritative totals come
+   * from the catalog scan. Comparing the two is what tells a panel that a feature it
+   * is drawing is only partly there: `resident` means "has at least one point inside
+   * the memory cap", so on a truncated element every feature can be resident while
+   * half the dataset is absent.
+   *
+   * Derived from the settled {@link rowCodes} in preference to the preload result's
+   * own tally, because for a dictionary-only element the codes get re-expressed when
+   * the full catalog supersedes the resident preview ({@link reconcileRowCodes}) and
+   * the preload's frozen map is NOT remapped with them — it would keep answering in
+   * the old code space, attributing one gene's count to another. The preload tally
+   * remains the fallback: it streams, so the numbers climb while points arrive and
+   * before row codes settle, and no remap can have happened yet at that point.
    */
   getResidentFeatureCounts(key: string): ReadonlyMap<number, number> | undefined {
     const entry = this.entries.get(key);
-    return entry?.preload.partial?.featureCodeCounts ?? entry?.preload.lastGood?.featureCodeCounts;
+    if (!entry) {
+      return undefined;
+    }
+    const rowCodes = entry.rowCodes.value;
+    if (rowCodes !== undefined) {
+      if (entry.residentCounts && entry.residentCodesSource === rowCodes) {
+        return entry.residentCounts;
+      }
+      const counts = new Map<number, number>();
+      for (let i = 0; i < rowCodes.length; i += 1) {
+        const code = rowCodes[i] as number;
+        counts.set(code, (counts.get(code) ?? 0) + 1);
+      }
+      entry.residentCounts = counts;
+      entry.residentCodesSource = rowCodes;
+      return counts;
+    }
+    return entry.preload.partial?.featureCodeCounts ?? entry.preload.lastGood?.featureCodeCounts;
   }
 
   /**
@@ -706,6 +735,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
         // in-flight reload for a different cap.
         slot.settle(memoryCap, PointsResolver.sliceResidentBatch(resident, memoryCap));
         entry.residentCodes = undefined;
+        entry.residentCounts = undefined;
         entry.residentCodesSource = undefined;
         const codes = entry.rowCodes.value;
         // Deliberately conditional, and NOT re-keyed unconditionally on a shed.
@@ -765,6 +795,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       // load is exactly the corruption R1/R5 were.
       if (signal.aborted) return data;
       entry.residentCodes = undefined;
+      entry.residentCounts = undefined;
       entry.residentCodesSource = undefined;
       entry.featureCodeColumn = data.hasFeatureCodeColumn === true;
       if (data.featureCatalog !== undefined) {
@@ -1071,6 +1102,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     entry.rowCodes.settle(cap, remapRowFeatureCodes(codes, source, target));
     entry.rowCodesCatalog = target;
     entry.residentCodes = undefined;
+    entry.residentCounts = undefined;
     entry.residentCodesSource = undefined;
   }
 
