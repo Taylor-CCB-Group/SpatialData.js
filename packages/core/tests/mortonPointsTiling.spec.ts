@@ -181,6 +181,56 @@ PY`,
   );
 }
 
+/**
+ * A feature-primary artifact: sorted `(feature, morton)`, written by the real writer.
+ * Every column the probe looks for is present, the sentinel box is correct, the codes
+ * are correct — only the ORDER is wrong for a bisect, and nothing in the file says so.
+ */
+async function writeFeaturePrimaryMortonPointsZarr(root: string) {
+  const elementDir = join(root, 'points', 'transcripts');
+  await mkdir(elementDir, { recursive: true });
+  await writeFile(join(root, 'zarr.json'), JSON.stringify({ zarr_format: 3, node_type: 'group' }));
+  await writeFile(
+    join(elementDir, 'zarr.json'),
+    JSON.stringify({
+      attributes: {
+        'encoding-type': 'ngff:points',
+        axes: ['x', 'y'],
+        spatialdata_attrs: { feature_key: 'feature_name', version: '0.2' },
+      },
+      zarr_format: 3,
+      node_type: 'group',
+    })
+  );
+
+  execSync(
+    `uv run python - <<'PY'
+import numpy as np
+import pandas as pd
+
+from spatialdata_js_util.points import write_morton_points_parquet
+
+rng = np.random.default_rng(1)
+rows = 900
+df = pd.DataFrame(
+    {
+        "x": rng.uniform(0.0, 1000.0, rows),
+        "y": rng.uniform(0.0, 1000.0, rows),
+        "feature_name": pd.Categorical(rng.choice(["gene_a", "gene_b", "gene_c"], rows)),
+    }
+)
+write_morton_points_parquet(
+    df,
+    ${JSON.stringify(join(elementDir, 'points.parquet'))},
+    feature_key="feature_name",
+    sort_order=["feature_name_codes", "morton_code_2d"],
+    row_group_size=100,
+)
+PY`,
+    { cwd: writerRoot, stdio: 'pipe' }
+  );
+}
+
 function createStore(files: Record<string, Uint8Array>) {
   let getRangeCalls = 0;
   let getCalls = 0;
@@ -511,6 +561,44 @@ describe('Morton points tiling (canonical parquet)', () => {
     } finally {
       warn.mockRestore();
       execSync(`rm -rf ${JSON.stringify(badFixtureRoot)}`, { stdio: 'pipe' });
+    }
+  });
+
+  /**
+   * The bisect binary-searches the row-group Morton index, which only means anything
+   * if it ascends. On a feature-primary file it does not, and the search lands
+   * arbitrarily: a tile comes back holding whichever feature blocks happened to be in
+   * the row groups it picked, and missing the rest.
+   */
+  it('does not enable morton tiling on a feature-primary artifact', async () => {
+    const featureFirstRoot = await mkdtemp(join(tmpdir(), 'feature-primary-points-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await writeFeaturePrimaryMortonPointsZarr(featureFirstRoot);
+      const featureFirstStore = createStore({
+        'points/transcripts/points.parquet': new Uint8Array(
+          await readFile(join(featureFirstRoot, 'points/transcripts/points.parquet'))
+        ),
+        'points/transcripts/zarr.json': new Uint8Array(
+          await readFile(join(featureFirstRoot, 'points/transcripts/zarr.json'))
+        ),
+      });
+      const source = new SpatialDataPointsSource({
+        store: featureFirstStore.store,
+        fileType: '.zarr',
+      });
+
+      const metadata = await source.getPointsTilingMetadata('points/transcripts');
+
+      expect(metadata?.supportsRowGroupRangeReads).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not sorted across row groups'));
+      // No bounds either: the sort verdict short-circuits the sampling read that would
+      // verify the sentinel box, and an unverified box is exactly what we stopped
+      // reporting. Nothing consumes bounds without supportsRowGroupRangeReads anyway.
+      expect(metadata?.bounds).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      execSync(`rm -rf ${JSON.stringify(featureFirstRoot)}`, { stdio: 'pipe' });
     }
   });
 });

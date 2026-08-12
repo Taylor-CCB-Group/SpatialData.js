@@ -157,6 +157,40 @@ export function mortonBoundsAgreeWithCodes(
   return { checked, matched };
 }
 
+/** Inclusive `[min, max]` a row group's Morton column spans; `null` when unknown. */
+export type MortonRowGroupExtent = readonly [number, number] | null;
+
+/**
+ * Is the file actually Morton-**sorted**, row group by row group?
+ *
+ * The row-group bisect binary-searches this sequence, which is only meaningful if it
+ * is non-decreasing. A feature-primary artifact — sorted `(feature, morton)` — has a
+ * `morton_code_2d` column that restarts at every feature boundary, so each row group
+ * spans nearly the whole code range and the bisect lands somewhere arbitrary. What
+ * comes back is whichever feature blocks happened to live in the row groups it picked:
+ * a tile shows one or two genes and misses the rest. Measured on the permutations
+ * store, `transcripts_feature_then_morton` descends at 185 of its 244 row-group
+ * boundaries, while both morton-primary elements descend at none.
+ *
+ * Adjacent groups may share a boundary value, so the test is `min >= previous max`.
+ * A `null` extent is unknown rather than out of order: skip it and carry the last
+ * known maximum, so a column without statistics cannot fake a descent.
+ */
+export function mortonRowGroupExtentsAreSorted(extents: readonly MortonRowGroupExtent[]): boolean {
+  let previousMax: number | null = null;
+  for (const extent of extents) {
+    if (!extent) {
+      continue;
+    }
+    const [min, max] = extent;
+    if (previousMax !== null && min < previousMax) {
+      return false;
+    }
+    previousMax = previousMax === null ? max : Math.max(previousMax, max);
+  }
+  return true;
+}
+
 function intersects(
   ax0: number,
   ay0: number,

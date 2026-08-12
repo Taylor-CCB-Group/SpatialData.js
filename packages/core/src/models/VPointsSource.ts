@@ -1,5 +1,9 @@
 import type { Vector } from 'apache-arrow';
-import { decodeIntStat, parseParquetFileMetaData } from '../parquetFooterStats.js';
+import {
+  decodeIntStat,
+  decodeUnsignedIntStat,
+  parseParquetFileMetaData,
+} from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
   featureCodeMapFromCatalog,
@@ -75,6 +79,45 @@ function rowGroupFeatureCodeExtents(
       const min = decodeIntStat(column.minValue, column.physicalType);
       const max = decodeIntStat(column.maxValue, column.physicalType);
       extents.push(min !== null && max !== null ? { min, max } : null);
+    }
+  }
+  return extents.length === expectedRowGroupCount ? extents : [];
+}
+
+/**
+ * Per-row-group `[min, max]` for `morton_code_2d`, from the same footer statistics the
+ * feature-code index reads — so this costs **nothing**: the parts, and their footer
+ * bytes, are already in hand by the time the tiling probe runs.
+ *
+ * Read as UNSIGNED: the column is `uint32`, which parquet stores as INT32 with a
+ * UINT_32 annotation, and Morton codes use the top bit for real.
+ *
+ * Returns `[]` for "unavailable — do not conclude anything", matching
+ * {@link rowGroupFeatureCodeExtents}: a footer that will not parse, a column with no
+ * statistics, or a flattened count that disagrees with the dataset's row-group count.
+ */
+function rowGroupMortonExtents(
+  parts: readonly { schemaBytes: Uint8Array }[],
+  expectedRowGroupCount: number
+): MortonRowGroupExtent[] {
+  const extents: MortonRowGroupExtent[] = [];
+  for (const part of parts) {
+    if (part.schemaBytes.length <= 8) {
+      return [];
+    }
+    // Strip the trailing 4-byte length + "PAR1" to get the FileMetaData thrift.
+    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
+    let footer: ReturnType<typeof parseParquetFileMetaData>;
+    try {
+      footer = parseParquetFileMetaData(metaBytes);
+    } catch {
+      return [];
+    }
+    for (const rowGroup of footer.rowGroups) {
+      const column = rowGroup.columns.find((col) => col.path === MORTON_CODE_2D_COLUMN);
+      const min = decodeUnsignedIntStat(column?.minValue, column?.physicalType ?? null);
+      const max = decodeUnsignedIntStat(column?.maxValue, column?.physicalType ?? null);
+      extents.push(min !== null && max !== null ? [min, max] : null);
     }
   }
   return extents.length === expectedRowGroupCount ? extents : [];
@@ -211,8 +254,10 @@ import {
   filterPointsToBounds,
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
+  type MortonRowGroupExtent,
   mortonBoundsAgreeWithCodes,
   mortonIntervalsForBounds,
+  mortonRowGroupExtentsAreSorted,
   type PointsFeatureCatalog,
   type PointsInBoundsOptions,
   type PointsInBoundsResponse,
@@ -2335,6 +2380,24 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     const canLoadRowGroups = await this.canLoadParquetRowGroups();
+    // Having a morton_code_2d column does not make a file Morton-SORTED. A
+    // feature-primary artifact carries the same column with the same values, and the
+    // row-group bisect run over it lands arbitrarily — the visible result is a tile
+    // holding one or two features and missing the rest. Free to check: the footer
+    // statistics are already in `datasetMetadata.parts`.
+    const rowGroupsAreSorted = datasetMetadata
+      ? mortonRowGroupExtentsAreSorted(
+          rowGroupMortonExtents(datasetMetadata.parts, datasetMetadata.totalNumRowGroups)
+        )
+      : true;
+    if (!rowGroupsAreSorted) {
+      console.warn(
+        `Morton tiling disabled for ${elementPath}: its morton_code_2d column is not ` +
+          'sorted across row groups, so it is indexed by something else (a ' +
+          'feature-primary artifact carries the same column unsorted). The row-group ' +
+          'bisect needs a sorted index; falling back to the capped preload.'
+      );
+    }
     const firstRowGroupRowCount = datasetMetadata?.rowGroupRows?.[0] ?? 0;
     const hasValidSentinelRowGroup = firstRowGroupRowCount >= 2 && firstRowGroupRowCount <= 4;
     const firstRowGroup =
@@ -2347,11 +2410,18 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const claimedBounds = firstRowGroup
       ? (extractSentinelBoundingBox(firstRowGroup) ?? undefined)
       : undefined;
+    // Skip the sampling read when the sort has already ruled the file out — the answer
+    // cannot change the outcome, and this is the probe's only real I/O. The box then
+    // goes unreported rather than reported-unverified, which is the habit that let a
+    // stale sentinel box draw half a slide; nothing reads `bounds` without
+    // `supportsRowGroupRangeReads` in any case.
     const bounds =
-      claimedBounds && (await this.mortonBoundsMatchStoredCodes(parquetPath, claimedBounds))
+      claimedBounds &&
+      rowGroupsAreSorted &&
+      (await this.mortonBoundsMatchStoredCodes(parquetPath, claimedBounds))
         ? claimedBounds
         : undefined;
-    if (claimedBounds && !bounds) {
+    if (claimedBounds && !bounds && rowGroupsAreSorted) {
       console.warn(
         `Morton tiling disabled for ${elementPath}: its sentinel bounding box ` +
           `(${claimedBounds.minX}, ${claimedBounds.minY})-(${claimedBounds.maxX}, ${claimedBounds.maxY}) ` +
@@ -2373,7 +2443,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       totalRowGroups: datasetMetadata?.totalNumRowGroups ?? 0,
       maxRowsPerGroup: rowGroupSizes.length ? Math.max(...rowGroupSizes) : 0,
       rowGroupRowCounts: datasetMetadata?.rowGroupRows,
-      supportsRowGroupRangeReads: Boolean(datasetMetadata && canLoadRowGroups && bounds),
+      supportsRowGroupRangeReads: Boolean(
+        datasetMetadata && canLoadRowGroups && bounds && rowGroupsAreSorted
+      ),
       bounds,
     };
 
