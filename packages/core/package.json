@@ -13,7 +13,8 @@
     },
     "./workers": {
       "types": "./dist/workers/index.d.ts",
-      "default": "./dist/workers.js"
+      "import": "./dist/workers.js",
+      "require": "./dist/workers.cjs"
     },
     "./points-worker": {
       "default": "./dist/points-worker.js"
