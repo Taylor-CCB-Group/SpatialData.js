@@ -1,6 +1,6 @@
 import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it } from 'vitest';
-import { modelMatrixUniformScale } from '../src/pointsScatterLayer.js';
+import { modelMatrixUniformScale, renderColumnarScatterLayer } from '../src/pointsScatterLayer.js';
 
 /**
  * Point size is expressed in the ELEMENT's coordinate units. Deck applies
@@ -44,5 +44,45 @@ describe('modelMatrixUniformScale', () => {
 
   it('falls back to 1 for a degenerate (zero) matrix rather than collapsing points', () => {
     expect(modelMatrixUniformScale(new Matrix4().scale([0, 0, 0]))).toBe(1);
+  });
+});
+
+/**
+ * The Morton tile path used to size in fixed PIXELS (`radiusUnits: 'pixels'`,
+ * transform scale forced to 1) on the reasoning that tiles are already
+ * viewport-bounded. Two consequences, both user-visible: `pointSize` meant
+ * something different depending on a checkbox, and a zoomed-out tiled layer drew
+ * every one of its millions of points as a fixed screen dot — density saturated to
+ * a flat mass, and every tile seam and acquisition boundary hardened into what
+ * looked like a rendering fault.
+ */
+describe('columnar scatter sizing is one behaviour, not two', () => {
+  const batch = {
+    format: 'columnar-ndarray' as const,
+    shape: [2, 3],
+    data: [new Float32Array([0, 1, 2]), new Float32Array([0, 1, 2])],
+    pointCount: 3,
+  };
+
+  it('sizes in world units and folds in the model-matrix scale', () => {
+    const layer = renderColumnarScatterLayer('scatter', batch, {
+      pointSize: 2,
+      modelMatrix: new Matrix4().scale([4, 4, 1]),
+    });
+
+    expect(layer.props.radiusUnits).toBe('common');
+    expect(layer.props.radiusScale).toBeCloseTo(8, 9);
+  });
+
+  it('does not change because the batch came from a tile', () => {
+    const common = { pointSize: 2, modelMatrix: new Matrix4().scale([4, 4, 1]) };
+    const plain = renderColumnarScatterLayer('plain', batch, common);
+    const tiled = renderColumnarScatterLayer('tiled', batch, {
+      ...common,
+      tileBounds: [0, 0, 10, 10],
+    });
+
+    expect(tiled.props.radiusUnits).toBe(plain.props.radiusUnits);
+    expect(tiled.props.radiusScale).toBe(plain.props.radiusScale);
   });
 });

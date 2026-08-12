@@ -196,7 +196,6 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             return renderColumnarScatterLayer(`${props.id}-scatter`, props.data, {
               ...scatterStyleProps,
               tileBounds: tileBbox ? scatterBoundsFromTileBbox(tileBbox) : undefined,
-              tileSubLayer: true,
             });
           },
         })
