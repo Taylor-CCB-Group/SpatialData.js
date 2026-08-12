@@ -42,6 +42,13 @@ export interface PointsTilingMetadata {
   rowGroupRowCounts?: number[];
   supportsRowGroupRangeReads: boolean;
   bounds?: SpatialBounds;
+  /**
+   * Per-row-group `[min, max]` of the Morton column, read from footer statistics
+   * during the probe. Present means viewport queries can select row groups from
+   * memory ({@link selectMortonRowGroups}); absent means falling back to the bisect,
+   * which pays ~2MB per step to recover the same two numbers.
+   */
+  rowGroupMortonExtents?: MortonRowGroupExtent[];
 }
 
 export type PointsInBoundsResponse = PointsColumnarData & {
@@ -189,6 +196,45 @@ export function mortonRowGroupExtentsAreSorted(extents: readonly MortonRowGroupE
     previousMax = previousMax === null ? max : Math.max(previousMax, max);
   }
   return true;
+}
+
+/**
+ * Which row groups can hold a code inside any of `intervals`, from the in-memory
+ * index rather than a bisect over the file.
+ *
+ * The bisect this replaces reads the row group's BYTES to recover two boundary values
+ * — every column, ~2MB on a real transcripts artifact — and one viewport query runs
+ * `log2(rowGroups)` of them per interval. Building the index that way could fetch the
+ * whole 439MB file to recover ~4KB. The same numbers are in the parquet footer, so
+ * with {@link mortonRowGroupExtentsAreSorted}'s index in hand this costs nothing.
+ *
+ * It is also *stricter* than the bisect, which tested only `max` and assumed the
+ * groups tile the code space without gaps: this intersects both ends, so a row group
+ * whose range falls entirely between two intervals is skipped rather than swept in.
+ *
+ * A `null` extent means "no statistics for this group": include it, because the
+ * alternative is dropping rows for a reason that has nothing to do with the query.
+ */
+export function selectMortonRowGroups(
+  extents: readonly MortonRowGroupExtent[],
+  intervals: ReadonlyArray<readonly [number, number]>
+): number[] {
+  const selected = new Set<number>();
+  for (let i = 0; i < extents.length; i++) {
+    const extent = extents[i];
+    if (!extent) {
+      selected.add(i);
+      continue;
+    }
+    const [min, max] = extent;
+    for (const [start, end] of intervals) {
+      if (max >= start && min <= end) {
+        selected.add(i);
+        break;
+      }
+    }
+  }
+  return [...selected].sort((a, b) => a - b);
 }
 
 function intersects(

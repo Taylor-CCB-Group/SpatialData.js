@@ -1,7 +1,8 @@
 # Points: Morton-tiled viewport-driven loading (D5)
 
-Status: **steps 1–5 implemented** (2026-08-12); the default flip (step 7) is **blocked on
-step 6**, the tile grid — see [The tile grid, measured](#the-tile-grid-measured).
+Status: **steps 1–6 implemented** (2026-08-12); step 7 (defaults + docs) is the
+remainder — see [The tile grid, measured](#the-tile-grid-measured) for what step 6
+changed and what it deliberately did not.
 Implements [points-redesign-punchlist](./points-redesign-punchlist.md) **D5** and the
 "Morton is still dark" line in [points-mvp-and-roadmap](./points-mvp-and-roadmap.md).
 Format contract: [ADR 0002](../adr/0002-spatially-aware-vector-loading.md).
@@ -297,18 +298,16 @@ extent   [3.42, 2.45, 10874.72, 3629.29]
 selected 44 tiles (x 0..10, y 0..3), cacheSize 44, all loaded, scheduler idle
 ```
 
-Consequences, all still open:
+Consequences — **all addressed in step 6**, kept here as the statement of the problem:
 
-- **Zooming in never gets more detail.** The same 1024-unit tile is re-used at every
-  scale; a 50 µm viewport still reads a 1024 µm tile. This is the axis the whole plan
-  exists to fix, and it is only half-fixed: loading follows the viewport's *position*
-  but not its *scale*.
-- **Zooming out reads everything.** 44 tiles, 6 at a time
-  (`maxRequests` default 6), each a row-group range read. Nothing budgets this.
-- **1024 units is arbitrary.** It falls out of `tileSize: 512` and `z = -1`, not out of
-  the Morton structure. The natural tile is a Morton cell — `zcoverRectangle` already
-  speaks that language — so the grid and the index currently disagree about what a
-  region is.
+- **Zooming in never got more detail.** The same 1024-unit tile was re-used at every
+  scale; a 50 µm viewport still read a 1024 µm tile. Loading followed the viewport's
+  *position* but not its *scale*.
+- **Nothing budgeted the tile cache.** deck's default `maxCacheSize` is `5 x the
+  selected tile count`, so a coarse viewport of this element could retain ~220 tiles —
+  ~71M rows, against a resident cap of 4M.
+- **1024 units was arbitrary.** It fell out of `tileSize: 512` and `z = -1`, not out of
+  the data.
 
 ### Where the "regions that never get queued" come from
 
@@ -450,16 +449,54 @@ after — so the file was simply older than the writer. The reader-side guard ab
 with it, so the next stale artifact degrades to preload with a warning instead of
 silently drawing part of the map.
 
-**Step 6 — A grid that follows zoom.**
-Replace the fixed `minZoom/maxZoom: -1` with a real zoom range, sized so a tile is a
-Morton cell rather than an arbitrary 1024 units, and decide the tile budget
-(`maxRequests`, `maxCacheSize`) rather than inheriting deck's defaults. Open question 3
-(tile-cache accounting) has to be answered here, not after. Fold the row-group bisect
-onto footer statistics while in here: they turn out to be complete and free for
-`morton_code_2d` (see above), which is what
-[`loadParquetRowGroupColumnExtent`](../../packages/core/src/models/VTableSource.ts) has
-wanted since it was written, and a subdividing grid issues many more bisects than the
-current one does.
+**Step 6 — A grid that follows zoom. ✅ done.**
+
+*The row-group index moved off the file.* `selectMortonRowGroups` picks row groups from
+the footer statistics the probe already read, instead of bisecting. The bisect it
+replaces range-read ~2MB **per step** to recover two numbers, `log2(rowGroups)` steps
+per interval, for a few hundred intervals — which is how a viewport query could pull
+most of a 439MB file to answer a question the footer had already answered. Measured on
+one 1024 µm tile of the 12.1M-point element, both returning the same 643,961 points:
+
+| row-group selection | range reads | bytes | wall |
+|---|---|---|---|
+| bisect | 97 | 175.12 MB | 2911 ms |
+| footer index | **32** | **57.83 MB** | **1035 ms** |
+
+The remaining 32 reads *are* the row-group data. It is also stricter than the bisect,
+which tested only `max` and assumed the groups tile the code space without gaps. The
+bisect stays as the fallback for an artifact whose statistics will not parse.
+
+*The grid comes from the artifact.* [`pointsTileGrid.ts`](../../packages/core/src/pointsTileGrid.ts)
+derives both ends from one number, the point density:
+
+- **finest** — a tile must stay at least as big as one row group's footprint,
+  `sqrt(maxRowsPerGroup / density)`. Reads round up to whole row groups, so below that
+  four tiles fetch what one used to, for the same bytes and more requests. Same
+  argument as `MORTON_ZCOVER_MAX_DEPTH`: resolution finer than the storage granularity
+  is pure cost.
+- **coarsest** — a tile should hold at most `POINTS_TILE_TARGET_ROWS` (400k), so one
+  request stays a fraction of the layer instead of most of it.
+- `zoomOffset = log2(modelMatrixScale)` couples `z` to the viewport: deck picks
+  `z = ceil(viewport.zoom + zoomOffset)` from a zoom in **world** units while tile spans
+  are in **local** units, and the model matrix is exactly that difference. It lands a
+  tile at 256–512 screen pixels instead of at whatever the transform implied.
+
+For this element that is `minZoom -1 … maxZoom 0` — 1024 µm (~324k rows) and 512 µm
+(~81k rows) — with `zoomOffset 2.234`. Two levels, which is worth knowing rather than
+hiding: **the row-group size is the floor**, and 50k-row groups on this artifact put it
+at ~402 µm. The old fixed 1024 was accidentally near-optimal *for this file* and would
+not be for one an order of magnitude smaller or denser. Verified in the app: at
+viewport zoom −7.8 it selects 44 tiles at z −1; at −2.8 it selects 6 at z 0.
+
+*The tile cache is budgeted in rows.* `maxCacheSize` is now
+`cacheRowBudget / estimatedRowsPerTile`, clamped to [16, 512], against
+`DEFAULT_POINTS_MEMORY_CAP` — 16 tiles here, a stated worst case of ~5.2M rows, versus
+deck's default reaching ~220 tiles / ~71M rows. Observed shrinking from 44 to exactly
+16 on zoom-in. `maxRequests` stays at 6, but as a decision rather than an inheritance.
+This answers **open question 3** at the level ADR 0005 asks for — the second pool is now
+*accounted*, not managed: nothing evicts by bytes, and a tile's real footprint is
+whatever its points weigh.
 
 **Step 7 — Defaults + docs.**
 Flip `pointsTiling` default (open question 1), update
@@ -507,11 +544,13 @@ per-element table, close D5 in the punch-list, changeset.
    for instant zoomed-out context while tiles fill in. Attractive, but it re-introduces
    two batches with different code spaces and revives the alignment invariants D5 was
    supposed to escape. Default: no.
-3. **Tile cache eviction / memory accounting.** deck's `TileLayer` has its own cache; the
-   memory cap is expressed in *rows of a resident batch* and does not describe it. Needs a
-   position before this is enabled by default — see
-   [ADR 0005](../adr/0005-memory-accounting-before-management.md) (account first, manage
-   after): the tile cache is a second pool that accounting currently cannot see.
+3. **Tile cache eviction / memory accounting.** *Answered in step 6, at the accounting
+   level.* `maxCacheSize` is derived from a row budget rather than left at deck's
+   `5 x selected`, so the second pool has a stated worst case (~16 tiles / ~5.2M rows
+   on the Xenium element). Still open, and deliberately so per
+   [ADR 0005](../adr/0005-memory-accounting-before-management.md): nothing evicts by
+   *bytes*, and a tile's real footprint is whatever its points weigh, so a dense
+   viewport can still exceed the estimate. Manage after accounting, not before.
 4. **Multi-layer worker contention (D6).** Two tiled layers multiply concurrent row-group
    reads through one points worker. Out of scope here, but D5 makes it reachable.
 5. **Does the resident/matched machinery apply at all on the tiled path?** The

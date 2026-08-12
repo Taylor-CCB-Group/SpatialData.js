@@ -20,6 +20,14 @@ export interface PointsLoaderCapabilities {
   bounds?: SpatialBounds;
   supportsViewportTiles: boolean;
   supportsFeatureCodes?: boolean;
+  /** Rows in the whole artifact, when the loader can know without reading it. */
+  totalRows?: number;
+  /**
+   * Rows per row group — the granularity every viewport read is rounded up to.
+   * With {@link totalRows} and {@link bounds} it is what sizes the tile grid: a tile
+   * finer than one row group's footprint fetches the same bytes in more requests.
+   */
+  maxRowsPerGroup?: number;
 }
 
 export interface ColumnarNdarrayPointsBatch {
@@ -115,6 +123,8 @@ export function createMortonTiledPointsLoader(
     bounds: metadata.bounds,
     supportsViewportTiles: true,
     supportsFeatureCodes: Boolean(metadata.featureKey),
+    totalRows: metadata.totalRows,
+    maxRowsPerGroup: metadata.maxRowsPerGroup,
   };
 
   return {
