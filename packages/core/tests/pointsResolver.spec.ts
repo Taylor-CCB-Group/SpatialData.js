@@ -9,6 +9,7 @@ import {
 } from '../src/engine/index.js';
 import type { PointsElement } from '../src/models/index.js';
 import type { PointsLoadResult } from '../src/pointsLoadOptions.js';
+import { MORTON_CODE_2D_COLUMN, type PointsTilingMetadata } from '../src/pointsTiling.js';
 
 /**
  * The points Resource Resolver, driven headless.
@@ -783,5 +784,201 @@ describe('getMatchingLoadState() — a failed scan is reportable', () => {
     const state = resolver.getMatchingLoadState('transcripts', [1]);
     expect(state?.failed).toBeUndefined();
     expect(state?.matchedRows).toBe(2);
+  });
+});
+
+describe('D5 step 1 — Morton tiling metadata probe', () => {
+  /** Renderable Morton metadata: range reads AND bounds, the two things the tile
+   * path cannot work without. */
+  const tiling = (over: Partial<PointsTilingMetadata> = {}): PointsTilingMetadata => ({
+    kind: 'morton-points',
+    parquetPath: 'points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: MORTON_CODE_2D_COLUMN,
+    totalRows: 12_000_000,
+    totalRowGroups: 96,
+    maxRowsPerGroup: 131_072,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+    ...over,
+  });
+
+  const tiledElement = (metadata: PointsTilingMetadata | null, over = {}) =>
+    element({ getPointsTilingMetadata: vi.fn(async () => metadata), ...over });
+
+  const store = (resolver: PointsResolver) =>
+    new SpatialEntryStore({
+      points: resolver,
+      shapes: resolver,
+      images: resolver,
+      labels: resolver,
+    });
+
+  // The step-1 acceptance criterion, as a test: with tiling off — the default —
+  // nothing about planning changes. Everything else in this file is the regression
+  // net for that claim; this is the direct statement of it.
+  it('is off by default: no probe, and the preload is planned exactly as before', () => {
+    const el = tiledElement(tiling());
+    const tasks = new PointsResolver().plan(ctx(el));
+
+    expect(tasks.map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
+    expect(el.getPointsTilingMetadata).not.toHaveBeenCalled();
+  });
+
+  it('plans a probe — and DEFERS the preload — when tiling is auto', () => {
+    const el = tiledElement(tiling());
+    const tasks = new PointsResolver().plan(ctx(el, { pointsTiling: 'auto' }));
+
+    // Preloading a table we are about to tile wastes the entire read, so until the
+    // probe answers we schedule neither.
+    expect(tasks.map((t) => t.resource)).toEqual(['tiling']);
+    // …and planning still starts nothing.
+    expect(el.getPointsTilingMetadata).not.toHaveBeenCalled();
+  });
+
+  it('settles the metadata for a tileable element, and then plans no preload at all', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
+
+    expect(resolver.isTiled('transcripts')).toBe(true);
+    expect(resolver.getTilingMetadata('transcripts')?.totalRowGroups).toBe(96);
+    // Row codes and the matching scan are resident-batch notions; a tiled element has
+    // no resident batch, so neither is planned (per-tile codes are step 4).
+    expect(resolver.plan(ctx(el, { pointsTiling: 'auto', featureCodes: [0, 1] }))).toEqual([]);
+  });
+
+  it('settles null when the artifact cannot drive tiles, and falls back to the preload', async () => {
+    const resolver = new PointsResolver();
+    // Morton metadata exists but the store cannot serve row-group range reads — the
+    // same renderability gate the render resolver applies, made once, here.
+    const el = tiledElement(tiling({ supportsRowGroupRangeReads: false }));
+    const config = { pointsTiling: 'auto' as const };
+
+    await store(resolver).reconcile([ctx(el, config)]);
+
+    expect(resolver.getTilingMetadata('transcripts')).toBeNull();
+    expect(resolver.isTiled('transcripts')).toBe(false);
+    expect(resolver.plan(ctx(el, config)).map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
+  });
+
+  it('settles null when the element has no Morton artifact', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(null);
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
+
+    expect(resolver.getTilingMetadata('transcripts')).toBeNull();
+  });
+
+  it('a failed probe falls through to the preload instead of stranding the layer', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(null, {
+      getPointsTilingMetadata: vi.fn(async () => {
+        throw new Error('footer read failed');
+      }),
+    });
+    const config = { pointsTiling: 'auto' as const };
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
+
+    // The failure is a state — visible, and retryable…
+    const failed = resolver.snapshot(ctx(el, config)).resources.tiling;
+    expect(Resolution.isFailed(failed as never)).toBe(true);
+    if (failed.status === 'failed') expect(failed.error.retryable).toBe(true);
+    // …but it must not stop anything drawing: it reads as "cannot tile", so the next
+    // plan pass schedules the ordinary preload.
+    expect(resolver.getTilingMetadata('transcripts')).toBeNull();
+    expect(resolver.plan(ctx(el, config)).map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
+  });
+
+  it('does not re-probe a failed element on every reconcile', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(null, {
+      getPointsTilingMetadata: vi.fn(async () => {
+        throw new Error('footer read failed');
+      }),
+    });
+    const s = store(resolver);
+    const config = { pointsTiling: 'auto' as const };
+
+    await s.reconcile([ctx(el, config)]);
+    await s.reconcile([ctx(el, config)]);
+
+    // A failure that re-planned itself would spin forever AND keep the preload it is
+    // standing in front of permanently unscheduled.
+    expect(el.getPointsTilingMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('retry() re-runs a failed probe', async () => {
+    const resolver = new PointsResolver();
+    let attempts = 0;
+    const el = tiledElement(null, {
+      getPointsTilingMetadata: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('footer read failed');
+        return tiling();
+      }),
+    });
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
+    expect(resolver.isTiled('transcripts')).toBe(false);
+
+    await resolver.retry('transcripts');
+
+    expect(resolver.isTiled('transcripts')).toBe(true);
+  });
+
+  it('dedups the probe: one request per element, however many reconciles', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+    const s = store(resolver);
+    const config = { pointsTiling: 'auto' as const };
+
+    await Promise.all([s.reconcile([ctx(el, config)]), s.reconcile([ctx(el, config)])]);
+    await s.reconcile([ctx(el, config)]);
+
+    expect(el.getPointsTilingMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  // The deferral only works because a settle notifies, the host replans, and the
+  // preload is scheduled on that second pass. Without it a non-tileable element would
+  // sit forever behind a probe that already answered.
+  it('schedules the deferred preload on the reconcile after the probe answers', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(null);
+    const s = store(resolver);
+    const config = { pointsTiling: 'auto' as const };
+
+    await s.reconcile([ctx(el, config)]);
+    expect(el.loadPoints).not.toHaveBeenCalled();
+
+    await s.reconcile([ctx(el, config)]);
+    expect(el.loadPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('a tileable element never preloads, however many reconciles run', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+    const s = store(resolver);
+    const config = { pointsTiling: 'auto' as const };
+
+    await s.reconcile([ctx(el, config)]);
+    await s.reconcile([ctx(el, config)]);
+
+    expect(el.loadPoints).not.toHaveBeenCalled();
+  });
+
+  it('evict drops the probe answer with the rest of the entry', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
+    resolver.evict('transcripts');
+
+    expect(resolver.getTilingMetadata('transcripts')).toBeUndefined();
+    expect(resolver.isTilingSettled('transcripts')).toBe(false);
   });
 });
