@@ -15,6 +15,14 @@ export type {
   FeatureColorResolver,
   FeatureColorResolverContext,
 } from './featureColorResolver';
+export type { FeatureRowState, FeatureRowStateInput, FeatureRowTone } from './featureRowState';
+// Feature-row classification. Exported because it is the other half of
+// `usePointsFeatureState`: the hook hands back raw engine signals (resident,
+// rendered, scanning…) and this turns them into the dimming + the sentence that
+// explains it. An embedder building its own feature list would otherwise have to
+// re-derive that precedence, and any drift shows up as a panel telling the user
+// something different from what the canvas is doing.
+export { describeFeatureRowState, featureRowOpacity } from './featureRowState';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
 export type { ImageLayerContextValue } from './ImageLayerContext';
 export { ImageLayerContextProvider, useImageLayerContext } from './ImageLayerContext';
