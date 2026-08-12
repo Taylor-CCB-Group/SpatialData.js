@@ -9,7 +9,12 @@ import {
 } from '../src/engine/index.js';
 import type { PointsElement } from '../src/models/index.js';
 import type { PointsLoadResult } from '../src/pointsLoadOptions.js';
-import { MORTON_CODE_2D_COLUMN, type PointsTilingMetadata } from '../src/pointsTiling.js';
+import {
+  DEFAULT_POINTS_TILING,
+  MORTON_CODE_2D_COLUMN,
+  type PointsTilingMetadata,
+  pointsTilingEnabled,
+} from '../src/pointsTiling.js';
 
 /**
  * The points Resource Resolver, driven headless.
@@ -49,6 +54,15 @@ function element(over: Partial<Record<string, unknown>> = {}) {
   } as unknown as PointsElement;
 }
 
+/**
+ * Default config for these tests is tiling **off**.
+ *
+ * `pointsTiling` defaults to `'auto'` in production (D5 step 7), which makes a fresh
+ * entry plan the probe FIRST and defer the preload until it answers. Everything below
+ * is about preload / rowCodes / matching mechanics, which that deferral would push a
+ * pass later in every single case — so they pin it off and say so, and the default
+ * itself is pinned by its own tests rather than by 40 incidental assertions.
+ */
 const ctx = (
   el: PointsElement,
   config: PointsResolveConfig = {}
@@ -57,7 +71,10 @@ const ctx = (
   elementKey: 'transcripts',
   kind: 'points',
   element: el,
-  config,
+  // Merged, not defaulted: most callers pass a partial config, and a bare default
+  // parameter would hand tiling back to its 'auto' production default for every one
+  // of them.
+  config: { pointsTiling: 'off', ...config },
   transform: new Matrix4(),
 });
 
@@ -820,12 +837,43 @@ describe('D5 step 1 — Morton tiling metadata probe', () => {
   // The step-1 acceptance criterion, as a test: with tiling off — the default —
   // nothing about planning changes. Everything else in this file is the regression
   // net for that claim; this is the direct statement of it.
-  it('is off by default: no probe, and the preload is planned exactly as before', () => {
+  it('is off when asked: no probe, and the preload is planned exactly as before', () => {
     const el = tiledElement(tiling());
-    const tasks = new PointsResolver().plan(ctx(el));
+    const tasks = new PointsResolver().plan(ctx(el, { pointsTiling: 'off' }));
 
     expect(tasks.map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
     expect(el.getPointsTilingMetadata).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The step-7 default. Note what it is NOT: it does not plan a preload alongside the
+   * probe. Deferring is the entire point — planning both would do the full-table read
+   * we are about to discover we do not need, and settle it, so the waste would not
+   * even show up as a second load.
+   */
+  it('is on by default: an unset config probes first and defers the preload', () => {
+    const el = tiledElement(tiling());
+    const resolver = new PointsResolver();
+
+    // `config: {}` — no `pointsTiling` key at all, the shape a caller who has never
+    // heard of D5 passes.
+    const bare = { ...ctx(el), config: {} };
+    expect(resolver.plan(bare).map((t) => t.resource)).toEqual(['tiling']);
+    expect(pointsTilingEnabled(undefined)).toBe(true);
+    expect(DEFAULT_POINTS_TILING).toBe('auto');
+  });
+
+  it('falls through to the preload when the probe says the element is not tileable', async () => {
+    const el = element();
+    el.getPointsTilingMetadata = vi.fn(async () => null);
+    const resolver = new PointsResolver();
+    const bare = { ...ctx(el), config: {} };
+
+    await resolver.load(resolver.plan(bare)[0] as never, bare, new AbortController().signal);
+
+    // The default costs one probe on an element that cannot use it, and then the
+    // preload path is exactly what it always was.
+    expect(resolver.plan(bare).map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
   });
 
   it('plans a probe — and DEFERS the preload — when tiling is auto', () => {

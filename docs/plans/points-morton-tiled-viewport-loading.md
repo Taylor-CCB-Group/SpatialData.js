@@ -1,8 +1,8 @@
 # Points: Morton-tiled viewport-driven loading (D5)
 
-Status: **steps 1–6 implemented** (2026-08-12); step 7 (defaults + docs) is the
-remainder — see [The tile grid, measured](#the-tile-grid-measured) for what step 6
-changed and what it deliberately did not.
+Status: **complete** (2026-08-12) — all seven steps implemented, D5 closed in the
+punch-list. What is deliberately still open is listed under
+[Remaining work](#remaining-work) and the open questions.
 Implements [points-redesign-punchlist](./points-redesign-punchlist.md) **D5** and the
 "Morton is still dark" line in [points-mvp-and-roadmap](./points-mvp-and-roadmap.md).
 Format contract: [ADR 0002](../adr/0002-spatially-aware-vector-loading.md).
@@ -498,10 +498,41 @@ This answers **open question 3** at the level ADR 0005 asks for — the second p
 *accounted*, not managed: nothing evicts by bytes, and a tile's real footprint is
 whatever its points weigh.
 
-**Step 7 — Defaults + docs.**
-Flip `pointsTiling` default (open question 1), update
-[points-preload-feature-filter-status](./points-preload-feature-filter-status.md)'s
-per-element table, close D5 in the punch-list, changeset.
+**Step 7 — Defaults + docs. ✅ done.**
+`pointsTiling` defaults to `'auto'` (`DEFAULT_POINTS_TILING`), read everywhere through
+`pointsTilingEnabled` so `undefined` cannot mean one thing to the resolver and another
+to the panel. The per-element table is in
+[points-preload-feature-filter-status](./points-preload-feature-filter-status.md), and
+D5 is closed in the punch-list.
+
+The argument for flipping is not "the probe is cheap" — that was open question 1's
+framing, and it was the wrong one. It is that **on a Morton artifact the preload is
+not a neutral alternative**: it keeps the first `cap` rows in FILE order, and file
+order there is a prefix of the Z-curve, so the 4M-row default shows a spatially skewed
+chunk of the slide rather than a sample of it. Tiles read what is in view.
+
+The panel keeps the toggle — that comparison is worth being able to make — and now
+hides the memory cap on a tiled layer, which governs nothing there and sat directly
+above a line saying so.
+
+**The cost of the flip, measured, because it is not free.** At the default zoomed-out
+framing of the 12.1M-point element, the tiled path selects all 44 tiles and loads
+**12,165,029 points / ~158 MB** — the whole artifact. The capped preload it replaces
+reads a 4M-row prefix. So the first paint on this element is now ~3x the rows and
+more I/O than before, in exchange for a picture that is *correct* rather than a
+Z-curve prefix, and one that streams in 44 pieces instead of blocking on one decode.
+
+That is the **no-LOD gap** stated plainly: zooming out is the one direction viewport
+tiling does not help, because there is no coarser representation to read — every tile
+is full resolution. The fix is a multi-resolution points pyramid (the writer already
+has a `points multiscale` command), not a finer index, and it is the strongest
+argument for doing that work next. If the trade proves wrong for a given deployment,
+`pointsTiling: 'off'` is one config key away.
+
+Twelve resolver tests changed, which is the honest cost of the flip: a fresh entry now
+plans `['tiling']` and defers the preload until the probe answers. The tests that were
+about preload/rowCodes mechanics pin `pointsTiling: 'off'` and say why; the default has
+its own tests instead of being asserted incidentally forty times.
 
 ---
 
@@ -536,10 +567,13 @@ per-element table, close D5 in the punch-list, changeset.
    every points element before anything renders; `'off'` means nobody gets the feature
    without opting in. Leaning `'auto'`, with the probe made cheap and its failure
    arm falling straight through to preload — but measure the probe on a real Xenium
-   store first. **Not yet.** The default cannot flip while the grid never subdivides
-   (steps 5–6): today `'auto'` would trade a truncated-but-predictable preload for a
-   viewport-following layer that still cannot resolve past 1024 units, and that reads
-   as a regression when you zoom in. The probe cost is not what is holding it up.
+   store first. **Answered in step 7: `'auto'`** — and the framing above was wrong.
+   The probe cost was never the deciding factor (4 range reads / 2.16 MB / ~520 ms,
+   once, cached, and on a non-Morton element it is footer metadata the preload reads
+   anyway). What decides it is that the preload is *not* a neutral alternative on a
+   Morton artifact: file order is a prefix of the Z-curve, so the capped preload shows
+   a spatially skewed chunk of the slide. Both guards make the failure arms loud, so
+   `'auto'` degrades visibly rather than silently.
 2. **Preload *and* tiles?** A tiled element could still preload a small resident window
    for instant zoomed-out context while tiles fill in. Attractive, but it re-introduces
    two batches with different code spaces and revives the alignment invariants D5 was

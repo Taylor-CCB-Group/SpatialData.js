@@ -8,6 +8,34 @@ export const MORTON_CODE_VALUE_MAX = 2 ** MORTON_CODE_BITS_PER_AXIS - 1;
 
 export type SpatialBounds = AxisAlignedBounds;
 
+/** Whether a points layer probes for a Morton index before preloading (D5). */
+export type PointsTilingMode = 'auto' | 'off';
+
+/**
+ * `'auto'` since D5 step 7.
+ *
+ * On a Morton element the tiled path is not merely an alternative, it is the better
+ * one: the preload it replaces keeps the first `cap` rows in FILE order, and file
+ * order on a Morton artifact is a prefix of the Z-curve — a spatially skewed chunk of
+ * the slide, not a sample of it. Tiles read what you are looking at instead.
+ *
+ * On anything else the probe answers `null` from the schema alone and costs nothing
+ * beyond footer metadata the preload path reads regardless; on a malformed Morton
+ * artifact the guards in `getPointsTilingMetadata` decline it, warn, and fall through
+ * to the preload.
+ */
+export const DEFAULT_POINTS_TILING: PointsTilingMode = 'auto';
+
+/**
+ * Resolve the tiling mode, default included. Call this instead of comparing to
+ * `'auto'`: the default has to mean the same thing to the resolver deciding what to
+ * load, the hook deciding what to render, and the panel drawing the checkbox, and
+ * three literal comparisons is how those drift apart.
+ */
+export function pointsTilingEnabled(mode: PointsTilingMode | undefined): boolean {
+  return (mode ?? DEFAULT_POINTS_TILING) === 'auto';
+}
+
 export interface PointsFeatureEntry {
   code: number;
   name: string;

@@ -1,7 +1,7 @@
 # Points preload & feature filter — status and plan
 
 **Status:** work in progress (branch/worktree, not yet on `main`)  
-**Last updated:** 2026-06-20  
+**Last updated:** 2026-08-12  
 **Related:** [ADR 0002](../adr/0002-spatially-aware-vector-loading.md), [ADR 0003](../adr/0003-points-render-resource.md)
 
 This document captures what we built, what broke, what we fixed, and what still
@@ -85,6 +85,43 @@ Morton-tiled elements (`transcripts_morton`, etc.) use viewport tiles +
 Feature-primary or compound-indexed stores are still experimental. They may make
 filter changes part of the structural load key because the point of the index is
 to fetch only selected features.
+
+### Which path an element takes (as of D5 step 7, 2026-08-12)
+
+**The choice is automatic.** `pointsTiling` defaults to `'auto'`
+(`DEFAULT_POINTS_TILING`), so every points element is probed once and takes the tiled
+path if — and only if — it can. Resolve the config with `pointsTilingEnabled(...)`
+rather than comparing to `'auto'`, so `undefined` means the same thing everywhere.
+
+Measured against `xenium_2.q0.001.htj2k.index-permutations.zarr`:
+
+| element | index | path | why |
+|---|---|---|---|
+| `transcripts` | none (dict-only `feature_name`) | preloaded scatter | no `morton_code_2d`; the probe returns `null` from the schema alone |
+| `transcripts_morton` | `(morton)` | **viewport tiles** | sorted, sentinel box verified against the codes |
+| `transcripts_morton_then_feature` | `(morton, feature)` | **viewport tiles** | a *secondary* feature key is harmless — morton is still primary and still sorted |
+| `transcripts_feature_then_morton` | `(feature, morton)` | preloaded scatter | morton column present but unsorted; the bisect would land arbitrarily, so the probe declines it and warns |
+
+Three ways an element with a Morton column still ends up on the preload, all of them
+loud rather than silent — see
+[points-morton-tiled-viewport-loading](./points-morton-tiled-viewport-loading.md):
+
+1. **No usable sentinel row group** (missing, or 5+ rows) — no bounds, so no
+   quantisation domain.
+2. **Sentinel box is not the code domain** — recomputing `morton_code_2d` from x/y
+   disagrees for a majority of sampled rows. A stale artifact that would otherwise
+   have rendered part of the slide with no error.
+3. **`morton_code_2d` is not sorted across row groups** — read from footer statistics,
+   free.
+
+The probe costs 4 range reads / ~2.16 MB / ~520 ms on a 12.1M-point element, once, and
+is cached with the metadata. On an element that cannot be tiled it is the footer
+metadata the preload path reads anyway.
+
+**Why on by default rather than opt-in:** on a Morton artifact the preload is not a
+neutral alternative. It keeps the first `cap` rows in FILE order, and file order here
+is a prefix of the Z-curve — a spatially skewed chunk of the slide, not a sample of
+it. Tiles read what is actually in view.
 
 ---
 

@@ -54,6 +54,9 @@ function dictOnlyElement() {
   } as unknown as PointsElement;
 }
 
+// Tiling pinned off: `pointsTiling` defaults to `'auto'`, which defers the preload
+// behind the probe. These tests are about rowCodes staying aligned with the resident
+// batch, which only exists on the preloaded path.
 const ctx = (
   el: PointsElement,
   config: PointsResolveConfig = {}
@@ -62,7 +65,10 @@ const ctx = (
   elementKey: 'transcripts',
   kind: 'points',
   element: el,
-  config,
+  // Merged, not defaulted: most callers pass a partial config, and a bare default
+  // parameter would hand tiling back to its 'auto' production default for every one
+  // of them.
+  config: { pointsTiling: 'off', ...config },
   transform: new Matrix4(),
 });
 
