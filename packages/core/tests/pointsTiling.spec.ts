@@ -6,6 +6,8 @@ import {
   filterPointsToBounds,
   MORTON_ZCOVER_MAX_DEPTH,
   mergeAdjacentIntervals,
+  mortonBoundsAgreeWithCodes,
+  mortonCode2dForPoint,
   mortonIntervalsForBounds,
   zcoverRectangle,
 } from '../src/pointsTiling.js';
@@ -250,5 +252,54 @@ describe('zcoverRectangle depth cap', () => {
     });
 
     expect(intervals.length).toBeLessThan(4_000);
+  });
+});
+
+describe('morton bounds agreement', () => {
+  const bounds = { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
+  const xs = Array.from({ length: 64 }, (_, i) => (i * 997) % 1000);
+  const ys = Array.from({ length: 64 }, (_, i) => (i * 613) % 1000);
+  const codes = xs.map((x, i) => mortonCode2dForPoint(x, ys[i], bounds));
+
+  it('agrees with the domain the codes came from', () => {
+    expect(mortonBoundsAgreeWithCodes(xs, ys, codes, bounds)).toEqual({
+      checked: 64,
+      matched: 64,
+    });
+  });
+
+  it('disagrees with a sub-box of that domain', () => {
+    // The stale-fixture shape: a box a quarter the size, offset into the middle.
+    const subBox = { minX: 250, minY: 250, maxX: 750, maxY: 750 };
+    const { checked, matched } = mortonBoundsAgreeWithCodes(xs, ys, codes, subBox);
+    expect(checked).toBe(64);
+    expect(matched * 2).toBeLessThanOrEqual(checked);
+  });
+
+  it('stays inside the 32-bit code space at the top of the domain', () => {
+    // x and y both maxed puts the y term in bit 31 — a `<< 1` would go negative here.
+    const top = mortonCode2dForPoint(bounds.maxX, bounds.maxY, bounds);
+    expect(top).toBe(2 ** 32 - 1);
+    expect(top).toBeGreaterThan(0);
+  });
+
+  it('reports nothing to check rather than guessing, on empty or unusable input', () => {
+    expect(mortonBoundsAgreeWithCodes([], [], [], bounds)).toEqual({ checked: 0, matched: 0 });
+    expect(mortonBoundsAgreeWithCodes([Number.NaN], [0], [0], bounds)).toEqual({
+      checked: 0,
+      matched: 0,
+    });
+  });
+
+  it('spreads its samples instead of taking a run of adjacent rows', () => {
+    // Adjacent rows of a Morton-sorted group share a code prefix, so a leading slice
+    // would agree or disagree together. Break only the tail and it must still be seen.
+    const broken = [...codes];
+    for (let i = 32; i < broken.length; i++) {
+      broken[i] = 0;
+    }
+    const { checked, matched } = mortonBoundsAgreeWithCodes(xs, ys, broken, bounds, 8);
+    expect(checked).toBe(8);
+    expect(matched).toBeLessThan(checked);
   });
 });

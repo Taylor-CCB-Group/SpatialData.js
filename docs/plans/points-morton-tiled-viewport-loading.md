@@ -1,6 +1,7 @@
 # Points: Morton-tiled viewport-driven loading (D5)
 
-Status: **steps 1–4 implemented** (2026-08-12); step 5 design.
+Status: **steps 1–5 implemented** (2026-08-12); the default flip (step 7) is **blocked on
+step 6**, the tile grid — see [The tile grid, measured](#the-tile-grid-measured).
 Implements [points-redesign-punchlist](./points-redesign-punchlist.md) **D5** and the
 "Morton is still dark" line in [points-mvp-and-roadmap](./points-mvp-and-roadmap.md).
 Format contract: [ADR 0002](../adr/0002-spatially-aware-vector-loading.md).
@@ -274,7 +275,149 @@ than something this step could deliver.
 (36x for one gene), a selection change refetches rather than reusing cached tiles, and
 a tiled element resolves a name-based selection without the panel ever opening.*
 
-**Step 5 — Defaults + docs.**
+---
+
+## The tile grid, measured
+
+Steps 1–4 made the path *work*; they never examined what deck is actually asked to
+tile. Measured against the live `xenium_2.q0.001.htj2k.index-permutations` store
+(2026-08-12), reading `TileLayer.state.tileset` directly in the browser.
+
+### It is one fixed grid of ~44 tiles that never subdivides
+
+[`mortonTiledStrategy.ts:97`](../../packages/layers/src/mortonTiledStrategy.ts:97) pins
+`minZoom: -1, maxZoom: -1` with `tileSize: 512`. deck's non-geospatial traversal
+([`tileset-2d/utils.js` `getIdentityTileIndices`](../../node_modules/.pnpm/@deck.gl+geo-layers@9.3.7_@deck.gl+core@9.3.7_@deck.gl+extensions@9.3.7_@deck.gl+core@9_95b707e63fcfb29d74e361206c081c66/node_modules/@deck.gl/geo-layers/dist/tileset-2d/utils.js))
+computes `scale = 2^z * 512 / tileSize`, so **every tile is 1024 element-local units,
+at every zoom**. For `transcripts_morton` (bounds 10871 x 3627 µm) that is an
+11 x 4 = **44-tile grid, fixed for the life of the layer**:
+
+```
+extent   [3.42, 2.45, 10874.72, 3629.29]
+selected 44 tiles (x 0..10, y 0..3), cacheSize 44, all loaded, scheduler idle
+```
+
+Consequences, all still open:
+
+- **Zooming in never gets more detail.** The same 1024-unit tile is re-used at every
+  scale; a 50 µm viewport still reads a 1024 µm tile. This is the axis the whole plan
+  exists to fix, and it is only half-fixed: loading follows the viewport's *position*
+  but not its *scale*.
+- **Zooming out reads everything.** 44 tiles, 6 at a time
+  (`maxRequests` default 6), each a row-group range read. Nothing budgets this.
+- **1024 units is arbitrary.** It falls out of `tileSize: 512` and `z = -1`, not out of
+  the Morton structure. The natural tile is a Morton cell — `zcoverRectangle` already
+  speaks that language — so the grid and the index currently disagree about what a
+  region is.
+
+### Where the "regions that never get queued" come from
+
+Not scheduling, and not our loader. The tile grid is clipped to
+`resource.loader.capabilities.bounds` — the **sentinel bounding box**, read from the
+first row group by `extractSentinelBoundingBox`
+([`pointsTiling.ts:231`](../../packages/core/src/pointsTiling.ts:231)) — and on two of
+the four elements in the permutations store that box is wrong:
+
+| element | sentinel bbox (= `TileLayer.extent`) | true x/y extent | tiles that can exist |
+|---|---|---|---|
+| `transcripts_morton` | x 3.42–10874.72, y 2.45–3629.29 | same | 11 x 4 = 44 |
+| `transcripts_morton_then_feature` | x 3.42–**10550.23**, y **2144.59–3138.84** | x 3.42–10874.72, y 2.45–3629.29 | 11 x 2 = **22** |
+| `transcripts_feature_then_morton` | identical to the above | as above | — |
+
+*(Fixed by the regeneration in step 5 — all four now report the true extent, and
+`transcripts_morton_then_feature` selects the full 11 x 4 grid. Kept here because it is
+the worked example of how a bad box presents.)*
+
+The observed symptom is exactly that: on `transcripts_morton_then_feature` the tileset
+only ever holds y = 2 and y = 3, so the top half of the tissue is never *requested* —
+no pending tile, no debug rectangle, nothing to wait for. Switch the same view to
+`transcripts_morton` and all 44 tiles select and load.
+
+**The store is at fault, not the reader.** Reproducing the stored `morton_code_2d`
+from x/y confirms which box the codes were quantised against — 320 sampled rows per
+element, x-first interleave:
+
+| element | matches under sentinel bbox | matches under true extent |
+|---|---|---|
+| `transcripts_morton` | 0 / 320 | **320 / 320** |
+| `transcripts_morton_then_feature` | 0 / 320 | **309 / 320** (rest are float-boundary ties) |
+
+So the codes in the `*_feature` permutations were quantised against the full extent
+while their sentinel rows record a sub-box: the two disagree *inside the same file*.
+Today's writer does not reproduce this — running `morton_sort_points` over all three
+sort orders yields the true bbox every time, because `_extreme_positions` is taken
+before the sort and the sentinels are prepended after
+([`points.py:43`](../../python/spatialdata-js-util/src/spatialdata_js_util/points.py:43)).
+**The fixture on disk is stale and needs regenerating.**
+
+That also means the damage is wider than the tile grid: `metadata.bounds` is the
+Morton quantisation domain for `mortonIntervalsForBounds`
+([`pointsTiling.ts:208`](../../packages/core/src/pointsTiling.ts:208)), so a wrong box
+also maps every viewport to the wrong Morton intervals and therefore the wrong row
+groups. Points are never *misplaced* — `loadMortonPointsInBounds` re-filters the
+decoded rows to the requested bounds — so the failure is silently subtractive, the same
+shape as the bisect bug fixed in `6cfe7bb`.
+
+### The reader gap this exposes — now guarded
+
+We trusted the sentinel box completely, on a claim the artifact makes about itself, and
+a wrong claim degraded into "some of the map is missing" with no error anywhere.
+
+The probe now **recomputes `morton_code_2d` from x/y** for a sample of real rows and
+refuses to tile unless a majority agree
+([`pointsTiling.ts` `mortonBoundsAgreeWithCodes`](../../packages/core/src/pointsTiling.ts),
+called from `VPointsSource.mortonBoundsMatchStoredCodes`). That tests the invariant that
+actually matters — *is this box the quantisation domain?* — rather than a convention, so
+an artifact with a deliberately padded domain still tiles. A rejected element drops its
+`bounds` and reports `supportsRowGroupRangeReads: false`, which is the same pair the
+"oversized sentinel row group" case already produces, so the resolver's existing probe
+gate falls straight through to the capped preload. It also `console.warn`s: a silent
+downgrade is what got us here.
+
+Cost, measured on the 12.1M-point / 245-row-group element:
+
+| probe | wall | range reads | bytes |
+|---|---|---|---|
+| before | 414 ms | 3 | 0.37 MB |
+| with the guard | 523 ms | 4 | 2.16 MB |
+
+One extra row-group read, once per element, cached with the metadata — about one step of
+the bisect that a single viewport query already runs eight of. The sample is taken from
+the **middle** of the file: a truncated box can agree with the true one near the origin
+by coincidence, never in the interior. Only positive evidence of disagreement disables
+tiling; an unreadable sample keeps today's behaviour rather than losing the feature to an
+unrelated failure.
+
+A cheaper check may become possible: `parquetFooterStats.ts` now parses per-row-group
+column statistics out of the footer (that is what the feature-code index uses), so the
+x/y extent could be read directly once a float stat decoder exists — `decodeIntStat` only
+handles integer physical types today. That would compare the box against the data's real
+extent for no extra I/O, but it tests the *convention* (box == exact min/max) rather than
+the invariant, so it belongs alongside this check, not instead of it.
+
+Under-selection has now bitten this path three times (`zcover` depth, the row-group
+bisect, this). Standing rule for the tiled path: prefer to fail loudly over returning
+fewer points.
+
+---
+
+## Remaining work
+
+**Step 5 — Trustworthy grid. ✅ done.**
+The permutations store was regenerated in place (2026-08-12): all four elements now
+report the true extent, and their codes reproduce 320/320 from it. Today's writer never
+had the bug — `_extreme_positions` is taken before the sort and the sentinels prepended
+after — so the file was simply older than the writer. The reader-side guard above landed
+with it, so the next stale artifact degrades to preload with a warning instead of
+silently drawing part of the map.
+
+**Step 6 — A grid that follows zoom.**
+Replace the fixed `minZoom/maxZoom: -1` with a real zoom range, sized so a tile is a
+Morton cell rather than an arbitrary 1024 units, and decide the tile budget
+(`maxRequests`, `maxCacheSize`) rather than inheriting deck's defaults. Open question 3
+(tile-cache accounting) has to be answered here, not after.
+
+**Step 7 — Defaults + docs.**
 Flip `pointsTiling` default (open question 1), update
 [points-preload-feature-filter-status](./points-preload-feature-filter-status.md)'s
 per-element table, close D5 in the punch-list, changeset.
@@ -291,6 +434,10 @@ per-element table, close D5 in the punch-list, changeset.
   — a single-row-group fixture proves nothing.
 - **Beware the fixture-proxy trap**: the vis demo's `/test-fixtures` proxy 502s when a
   launcher sets `PORT`, and worktrees need the fixture symlink.
+- The permutations store was regenerated on 2026-08-12; all four points elements are
+  now sound. If you are on an **older copy**, `transcripts_morton_then_feature` and
+  `transcripts_feature_then_morton` carry the stale sentinel box — the probe will now
+  refuse to tile them and say so in the console, rather than drawing half the slide.
 - **The debug overlay is the instrument.** `showTileDebugOverlay` already colours tiles by
   status; use it plus `read_network_requests` to confirm range reads are bounded by the
   viewport rather than fetching the whole file.
@@ -303,7 +450,10 @@ per-element table, close D5 in the punch-list, changeset.
    every points element before anything renders; `'off'` means nobody gets the feature
    without opting in. Leaning `'auto'`, with the probe made cheap and its failure
    arm falling straight through to preload — but measure the probe on a real Xenium
-   store first.
+   store first. **Not yet.** The default cannot flip while the grid never subdivides
+   (steps 5–6): today `'auto'` would trade a truncated-but-predictable preload for a
+   viewport-following layer that still cannot resolve past 1024 units, and that reads
+   as a regression when you zoom in. The probe cost is not what is holding it up.
 2. **Preload *and* tiles?** A tiled element could still preload a small resident window
    for instant zoomed-out context while tiles fill in. Attractive, but it re-introduces
    two batches with different code spaces and revives the alignment invariants D5 was

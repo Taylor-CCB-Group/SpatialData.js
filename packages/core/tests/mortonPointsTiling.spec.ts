@@ -106,6 +106,81 @@ PY`,
   );
 }
 
+/**
+ * A well-formed Morton artifact in every respect EXCEPT that its sentinel rows record
+ * a sub-box of the domain the codes were quantised against — the exact shape of the
+ * stale `index-permutations` fixture. The codes are internally consistent, the row
+ * groups are sorted, the sentinel prefix is the right size: nothing but recomputing a
+ * code from x/y can tell that the box is a lie.
+ */
+async function writeMismatchedSentinelMortonPointsZarr(root: string) {
+  const elementDir = join(root, 'points', 'transcripts');
+  await mkdir(elementDir, { recursive: true });
+  await writeFile(join(root, 'zarr.json'), JSON.stringify({ zarr_format: 3, node_type: 'group' }));
+  await writeFile(
+    join(elementDir, 'zarr.json'),
+    JSON.stringify({
+      attributes: {
+        'encoding-type': 'ngff:points',
+        axes: ['x', 'y'],
+        spatialdata_attrs: {
+          feature_key: 'feature_name',
+          version: '0.2',
+        },
+      },
+      zarr_format: 3,
+      node_type: 'group',
+    })
+  );
+
+  execSync(
+    `uv run python - <<'PY'
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+from pathlib import Path
+
+from spatialdata_js_util.points import morton_code_2d, _norm_series_to_uint
+
+root = Path(${JSON.stringify(elementDir)})
+rows = 400
+rng = np.random.default_rng(0)
+x = rng.uniform(0.0, 1000.0, rows)
+y = rng.uniform(0.0, 1000.0, rows)
+df = pd.DataFrame({"x": x, "y": y})
+# Codes quantised against the TRUE extent, as a real writer would.
+df["morton_code_2d"] = morton_code_2d(
+    _norm_series_to_uint(df["x"], float(x.min()), float(x.max())),
+    _norm_series_to_uint(df["y"], float(y.min()), float(y.max())),
+)
+df["feature_name_codes"] = np.arange(rows) % 3
+df["feature_name"] = pd.Categorical(["gene_a", "gene_b", "gene_c"] * (rows // 3) + ["gene_a"])
+df = df.sort_values("morton_code_2d", kind="mergesort").reset_index(drop=True)
+
+# Sentinels claiming a sub-box: a quarter of the extent, in the middle.
+sentinel = pd.DataFrame(
+    {
+        "x": [250.0, 750.0, 400.0, 600.0],
+        "y": [400.0, 600.0, 250.0, 750.0],
+        "morton_code_2d": np.zeros(4, dtype=np.uint32),
+        "feature_name_codes": np.zeros(4, dtype=np.int32),
+        "feature_name": pd.Categorical(["gene_a"] * 4, categories=["gene_a", "gene_b", "gene_c"]),
+    }
+)
+combined = pd.concat([sentinel, df], ignore_index=True)
+table = pa.Table.from_pandas(combined, preserve_index=False)
+writer = pq.ParquetWriter(root / "points.parquet", table.schema, compression="zstd")
+try:
+    writer.write_table(table.slice(0, 4), row_group_size=4)
+    writer.write_table(table.slice(4), row_group_size=200)
+finally:
+    writer.close()
+PY`,
+    { cwd: writerRoot, stdio: 'pipe' }
+  );
+}
+
 function createStore(files: Record<string, Uint8Array>) {
   let getRangeCalls = 0;
   let getCalls = 0;
@@ -402,6 +477,39 @@ describe('Morton points tiling (canonical parquet)', () => {
       expect(metadata?.supportsRowGroupRangeReads).toBe(false);
       expect(metadata?.bounds).toBeUndefined();
     } finally {
+      execSync(`rm -rf ${JSON.stringify(badFixtureRoot)}`, { stdio: 'pipe' });
+    }
+  });
+
+  /**
+   * The sentinel box is a claim the artifact makes about itself. Believing a wrong one
+   * does not fail — it silently clips the tile grid and mis-maps every viewport to row
+   * groups, so parts of the map are never even requested. Refuse to tile instead.
+   */
+  it('does not enable morton tiling when the sentinel bbox is not the code domain', async () => {
+    const badFixtureRoot = await mkdtemp(join(tmpdir(), 'mismatched-morton-points-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await writeMismatchedSentinelMortonPointsZarr(badFixtureRoot);
+      const badStore = createStore({
+        'points/transcripts/points.parquet': new Uint8Array(
+          await readFile(join(badFixtureRoot, 'points/transcripts/points.parquet'))
+        ),
+        'points/transcripts/zarr.json': new Uint8Array(
+          await readFile(join(badFixtureRoot, 'points/transcripts/zarr.json'))
+        ),
+      });
+      const badSource = new SpatialDataPointsSource({ store: badStore.store, fileType: '.zarr' });
+
+      const metadata = await badSource.getPointsTilingMetadata('points/transcripts');
+
+      // Same degradation as every other unusable artifact: the resolver's probe gate
+      // reads this pair as "not tileable" and falls through to the capped preload.
+      expect(metadata?.supportsRowGroupRangeReads).toBe(false);
+      expect(metadata?.bounds).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('sentinel bounding box'));
+    } finally {
+      warn.mockRestore();
       execSync(`rm -rf ${JSON.stringify(badFixtureRoot)}`, { stdio: 'pipe' });
     }
   });

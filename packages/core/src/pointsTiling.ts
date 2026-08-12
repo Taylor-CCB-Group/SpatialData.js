@@ -75,6 +75,88 @@ export function origCoordToNormCoord(x: number, y: number, bbox: SpatialBounds):
   ];
 }
 
+/** Spread the low 16 bits of `n` into the even bit positions of a 32-bit lane. */
+function spreadBits(n: number): number {
+  let x = n & 0xffff;
+  x = (x | (x << 8)) & 0x00ff00ff;
+  x = (x | (x << 4)) & 0x0f0f0f0f;
+  x = (x | (x << 2)) & 0x33333333;
+  x = (x | (x << 1)) & 0x55555555;
+  return x;
+}
+
+/**
+ * Interleave a quantised (x, y) pair into the code stored in `morton_code_2d`:
+ * x in the even bits, y in the odd ones.
+ *
+ * `+ ... * 2` rather than `| ... << 1` on purpose — the y term reaches bit 31, and
+ * JS bitwise operators would hand back a negative int32 for the top of the domain.
+ *
+ * Must agree with {@link zcoverRectangle}'s quadrant order (child +1 is x-high, +2 is
+ * y-high) and with the writer's `morton_code_2d`; a disagreement here would make
+ * every interval query wrong, so {@link mortonBoundsAgreeWithCodes} checks it against
+ * real rows rather than trusting all three to stay in step.
+ */
+export function mortonCode2dFromNormCoord(nx: number, ny: number): number {
+  return spreadBits(nx) + spreadBits(ny) * 2;
+}
+
+/** The code a point *should* carry if `bbox` is the quantisation domain. */
+export function mortonCode2dForPoint(x: number, y: number, bbox: SpatialBounds): number {
+  const [nx, ny] = origCoordToNormCoord(x, y, bbox);
+  return mortonCode2dFromNormCoord(nx, ny);
+}
+
+/**
+ * Does `bounds` describe the domain the stored Morton codes were actually quantised
+ * against? Recomputes the code for a sample of real rows and counts agreement.
+ *
+ * The sentinel rows are a **claim the artifact makes about itself**, and nothing else
+ * in the file forces them to be true. When they are wrong every derived answer is
+ * wrong in the same silent, subtractive direction: the tile grid is clipped to the
+ * bogus box so whole regions are never even requested, and `mortonIntervalsForBounds`
+ * normalises viewports against it and selects the wrong row groups. Points are never
+ * misplaced — the reader re-filters to the query bounds — so the only visible symptom
+ * is that some of the map is missing.
+ *
+ * Measured on a real 12.1M-point Xenium artifact, the signal is not marginal: a sound
+ * element matched 320/320 sampled rows, one with a stale sentinel box matched 0/320.
+ * A handful of misses is normal — a coordinate landing exactly on a cell boundary can
+ * floor either way — hence a majority test rather than an exact one.
+ *
+ * Samples are spread evenly across the input: consecutive rows in a Morton-sorted row
+ * group share a long code prefix, so the first N would agree or disagree together.
+ */
+export function mortonBoundsAgreeWithCodes(
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  codes: ArrayLike<number | bigint>,
+  bounds: SpatialBounds,
+  maxSamples = 64
+): { checked: number; matched: number } {
+  const rows = Math.min(xs.length, ys.length, codes.length);
+  if (rows === 0 || maxSamples <= 0) {
+    return { checked: 0, matched: 0 };
+  }
+  const samples = Math.min(rows, maxSamples);
+  const stride = Math.max(1, Math.floor(rows / samples));
+  let checked = 0;
+  let matched = 0;
+  for (let i = 0; i < rows && checked < samples; i += stride) {
+    const x = getNumericValue(xs[i]);
+    const y = getNumericValue(ys[i]);
+    const code = getNumericValue(codes[i]);
+    if (x === null || y === null || code === null) {
+      continue;
+    }
+    checked += 1;
+    if (mortonCode2dForPoint(x, y, bounds) === code) {
+      matched += 1;
+    }
+  }
+  return { checked, matched };
+}
+
 function intersects(
   ax0: number,
   ay0: number,
