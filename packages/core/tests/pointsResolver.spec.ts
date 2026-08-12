@@ -392,11 +392,13 @@ describe('SpatialEntryStore — the reconcile loop', () => {
 
   it('does not block on a resource that is merely refining', async () => {
     // A catalog scan or a feature scan refines an already-drawable layer. Only the
-    // preload gates a first paint — and blockingResources says so as DATA, which is
-    // what today's isBlocking kind-switch collapses into.
+    // geometry gates a first paint — and blockingResources says so as DATA, which is
+    // what today's isBlocking kind-switch collapses into. `tiling` is here because
+    // until the probe answers we do not know which geometry path this entry is on;
+    // an entry whose snapshot omits either resource simply does not block on it.
     const resolver = new PointsResolver();
 
-    expect(resolver.blockingResources).toEqual(['preload']);
+    expect(resolver.blockingResources).toEqual(['tiling', 'preload']);
   });
 
   it('bumps its version when any resolver mutates', async () => {
@@ -980,5 +982,225 @@ describe('D5 step 1 — Morton tiling metadata probe', () => {
 
     expect(resolver.getTilingMetadata('transcripts')).toBeUndefined();
     expect(resolver.isTilingSettled('transcripts')).toBe(false);
+  });
+});
+
+describe('D5 step 2 — a tiled entry is drawable, framed and unblocked', () => {
+  const tiling = (over: Partial<PointsTilingMetadata> = {}): PointsTilingMetadata => ({
+    kind: 'morton-points',
+    parquetPath: 'points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: MORTON_CODE_2D_COLUMN,
+    totalRows: 12_000_000,
+    totalRowGroups: 96,
+    maxRowsPerGroup: 131_072,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 10, minY: 20, maxX: 110, maxY: 220 },
+    ...over,
+  });
+
+  const tiledElement = (metadata: PointsTilingMetadata | null) =>
+    element({ getPointsTilingMetadata: vi.fn(async () => metadata) });
+
+  const store = (resolver: PointsResolver) =>
+    new SpatialEntryStore({
+      points: resolver,
+      shapes: resolver,
+      images: resolver,
+      labels: resolver,
+    });
+
+  const auto = { pointsTiling: 'auto' as const };
+
+  // THE step-2 bug this guards. A tiled entry plans no preload, so a `preload`
+  // resolution left sitting at `idle` reads as blocking forever — and auto-fit rides
+  // the isBlocking true→false transition, so the layer never frames either.
+  it('stops blocking once the probe answers, without ever preloading', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+    const s = store(resolver);
+
+    // Blocked while the probe is open: we cannot draw what we cannot classify.
+    expect(s.isBlocking(ctx(el, auto))).toBe(true);
+
+    await s.reconcile([ctx(el, auto)]);
+
+    expect(s.isBlocking(ctx(el, auto))).toBe(false);
+    expect(el.loadPoints).not.toHaveBeenCalled();
+  });
+
+  it('still blocks a non-tileable entry until its preload lands', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(null);
+    const s = store(resolver);
+
+    await s.reconcile([ctx(el, auto)]); // probe settles null…
+    expect(s.isBlocking(ctx(el, auto))).toBe(true); // …and there is still nothing to draw
+
+    await s.reconcile([ctx(el, auto)]); // …so the preload runs
+
+    expect(s.isBlocking(ctx(el, auto))).toBe(false);
+  });
+
+  it('reports only the resources the entry actually has', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+
+    // Tiling off: the entry never asked the question, so it has no tiling resource.
+    expect(Object.keys(resolver.snapshot(ctx(el)).resources)).not.toContain('tiling');
+
+    await store(resolver).reconcile([ctx(el, auto)]);
+
+    // Tiled: no resident preload exists — absent, not idle. `isBlocking` skips a
+    // resource that is not there, which is what the test above depends on.
+    const resources = resolver.snapshot(ctx(el, auto)).resources;
+    expect(Object.keys(resources)).toContain('tiling');
+    expect(Object.keys(resources)).not.toContain('preload');
+  });
+
+  it('frames from the artifact extent, through the element transform', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+    await store(resolver).reconcile([ctx(el, auto)]);
+
+    const shifted = {
+      ...ctx(el, auto),
+      transform: new Matrix4().translate([5, 7, 0]),
+    };
+    expect(resolver.snapshot(shifted).bounds).toEqual({
+      minX: 15,
+      minY: 27,
+      maxX: 115,
+      maxY: 227,
+    });
+  });
+
+  it('returns identity-stable bounds — a fresh object per call is a deck teardown', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement(tiling());
+    await store(resolver).reconcile([ctx(el, auto)]);
+
+    const base = ctx(el, auto);
+    const first = resolver.snapshot(base).bounds;
+    // A DIFFERENT snapshot object (another entry on the same element, so the snapshot
+    // memo misses) must still hand back the same bounds object: the memo below it
+    // keys on (metadata, transform), and both entries share the element's transform.
+    const again = resolver.snapshot({ ...base, entryId: 'other-layer' }).bounds;
+
+    expect(first).not.toBeNull();
+    expect(again).toBe(first);
+  });
+
+  it('reports geometry status for the tiled path, not silence', async () => {
+    const resolver = new PointsResolver();
+    const statuses: Array<[string, string]> = [];
+    const withStatus = new PointsResolver({
+      onStatus: (layerId, status) => statuses.push([layerId, status]),
+    });
+    const el = tiledElement(tiling());
+    void resolver;
+
+    const pending = withStatus.ensureTilingMetadata({
+      key: 'transcripts',
+      layerId: 'layer-p',
+      element: el,
+    });
+    // Mid-probe the entry IS loading its geometry; reporting 'idle' would leave the
+    // host showing nothing-is-happening for the whole footer read.
+    expect(withStatus.getStatus('transcripts')).toBe('loading');
+    await pending;
+
+    // A tileable answer is terminal: there is no preload to wait for.
+    expect(withStatus.getStatus('transcripts')).toBe('ready');
+    expect(statuses).toEqual([
+      ['layer-p', 'loading'],
+      ['layer-p', 'ready'],
+    ]);
+  });
+
+  it('does not claim ready when the probe hands off to the preload', async () => {
+    const statuses: string[] = [];
+    const resolver = new PointsResolver({
+      onStatus: (_layerId, status) => statuses.push(status),
+    });
+    const el = tiledElement(null);
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
+
+    // 'ready' here would clear the spinner while the real geometry load had not even
+    // been planned yet.
+    expect(statuses).toEqual(['loading']);
+    expect(resolver.getStatus('transcripts')).toBe('idle');
+  });
+});
+
+describe('D5 — tiling is per entry, the probe answer is per element', () => {
+  const tiling = (): PointsTilingMetadata => ({
+    kind: 'morton-points',
+    parquetPath: 'points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: MORTON_CODE_2D_COLUMN,
+    totalRows: 12_000_000,
+    totalRowGroups: 96,
+    maxRowsPerGroup: 131_072,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+  });
+
+  const tiledElement = () => element({ getPointsTilingMetadata: vi.fn(async () => tiling()) });
+
+  /**
+   * Found in the browser, not by a test: switch tiling ON, then OFF, and the layer
+   * kept drawing tiles. The probe's answer is cached per ELEMENT and survives the
+   * config that asked for it, so anything keyed on `isTiled` alone ignores the switch.
+   * `plan()` meanwhile went back to preloading — so the app both preloaded AND drew
+   * tiles.
+   */
+  it('goes back to the preloaded path when tiling is switched off', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement();
+    const on = ctx(el, { pointsTiling: 'auto' });
+    const off = ctx(el, { pointsTiling: 'off' });
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'layer-p', element: el });
+
+    // The element fact does not change — the metadata is still cached and valid…
+    expect(resolver.isTiled('transcripts')).toBe(true);
+    // …but this entry no longer asked for it, so it plans a preload again…
+    expect(resolver.plan(off).map((t) => t.resource)).toEqual(['preload', 'rowCodes']);
+    expect(resolver.plan(on)).toEqual([]);
+    // …and its snapshot reports a preload resource (which gates first paint) and no
+    // tiling-derived bounds.
+    expect(Object.keys(resolver.snapshot(off).resources)).toContain('preload');
+    expect(resolver.snapshot(off).bounds).toBeNull();
+    expect(resolver.snapshot(on).bounds).not.toBeNull();
+  });
+
+  it('lets two entries on one element disagree', async () => {
+    const resolver = new PointsResolver();
+    const el = tiledElement();
+    const tiledEntry = { ...ctx(el, { pointsTiling: 'auto' }), entryId: 'tiled' };
+    const preloadEntry = { ...ctx(el, { pointsTiling: 'off' }), entryId: 'preloaded' };
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'tiled', element: el });
+
+    expect(resolver.snapshot(tiledEntry).resources.preload).toBeUndefined();
+    expect(resolver.snapshot(preloadEntry).resources.preload).toBeDefined();
+  });
+
+  it('reports the preload status even for an element something else tiles', async () => {
+    // getStatus is per element; the preload is the load actually in flight for the
+    // entry that is not tiling, so it must not be masked by the probe's answer.
+    const resolver = new PointsResolver();
+    const el = tiledElement();
+
+    await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'tiled', element: el });
+    expect(resolver.getStatus('transcripts')).toBe('ready');
+
+    await resolver.ensureLoaded({ key: 'transcripts', layerId: 'preloaded', element: el });
+    expect(resolver.getStatus('transcripts')).toBe('ready');
+    expect(el.loadPoints).toHaveBeenCalledTimes(1);
   });
 });

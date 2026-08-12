@@ -343,3 +343,93 @@ describe('base render resource — getBaseResource (P2)', () => {
     expect(engine.getBaseRevision('pts')).toBe(0);
   });
 });
+
+describe('tiled render resource — getTiledResource (D5)', () => {
+  const tilingMetadata = (over: Record<string, unknown> = {}) =>
+    ({
+      kind: 'morton-points',
+      parquetPath: 'points/pts/points.parquet',
+      axisNames: ['x', 'y'],
+      featureCodeColumnName: 'feature_name_codes',
+      mortonCodeColumnName: 'morton_code_2d',
+      totalRows: 1_000_000,
+      totalRowGroups: 16,
+      maxRowsPerGroup: 65_536,
+      supportsRowGroupRangeReads: true,
+      bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+      ...over,
+    }) as never;
+
+  const tiledElement = (metadata: unknown) =>
+    ({
+      key: 'pts',
+      loadPoints: vi.fn(async () => batch(3)),
+      getPointsTilingMetadata: vi.fn(async () => metadata),
+      loadPointsInBounds: vi.fn(async () => ({
+        shape: [2, 2],
+        data: [new Float32Array([1, 2]), new Float32Array([3, 4])],
+        bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
+        loadMode: 'row-groups',
+      })),
+    }) as unknown as PointsElement;
+
+  // The tile-path equivalent of the pan-flash guard, and a harder requirement: a new
+  // resource identity does not merely rebuild a batch, it makes `TileLayer` refetch
+  // EVERY visible tile. A pan would become a full reload.
+  it('is identity-stable across repeated reads', async () => {
+    const engine = new PointsDataEngine();
+    const element = tiledElement(tilingMetadata());
+
+    await engine.ensureTilingMetadata({ key: 'pts', layerId: 'l', element });
+
+    const first = engine.getTiledResource(element, 'pts');
+    expect(first).not.toBeNull();
+    for (let i = 0; i < 10; i++) {
+      expect(engine.getTiledResource(element, 'pts')).toBe(first);
+    }
+  });
+
+  it('resolves to the morton-tiled encoding, reading the viewport rather than a batch', async () => {
+    const engine = new PointsDataEngine();
+    const element = tiledElement(tilingMetadata());
+
+    await engine.ensureTilingMetadata({ key: 'pts', layerId: 'l', element });
+    const resource = engine.getTiledResource(element, 'pts');
+
+    expect(resource?.loader.capabilities.kind).toBe('morton-tiled');
+    expect(resource?.loader.capabilities.supportsViewportTiles).toBe(true);
+    expect(resource?.loader.capabilities.bounds).toEqual({
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 100,
+    });
+  });
+
+  it('is null for an element the probe rejected, and for one never probed', async () => {
+    const engine = new PointsDataEngine();
+    const element = tiledElement(tilingMetadata({ supportsRowGroupRangeReads: false }));
+
+    // Never probed: no answer, so no resource.
+    expect(engine.getTiledResource(element, 'pts')).toBeNull();
+
+    await engine.ensureTilingMetadata({ key: 'pts', layerId: 'l', element });
+
+    expect(engine.isTiled('pts')).toBe(false);
+    expect(engine.getTiledResource(element, 'pts')).toBeNull();
+  });
+
+  it('drops the resource on evict, so a reloaded element does not reuse a dead loader', async () => {
+    const engine = new PointsDataEngine();
+    const element = tiledElement(tilingMetadata());
+
+    await engine.ensureTilingMetadata({ key: 'pts', layerId: 'l', element });
+    const first = engine.getTiledResource(element, 'pts');
+    engine.evict('pts');
+    await engine.ensureTilingMetadata({ key: 'pts', layerId: 'l', element });
+
+    const second = engine.getTiledResource(element, 'pts');
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+  });
+});

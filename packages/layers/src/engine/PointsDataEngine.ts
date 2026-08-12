@@ -160,6 +160,19 @@ export class PointsDataEngine {
     return this.adapter.getBaseRevision(key);
   }
 
+  /**
+   * The Morton-tiled render resource (D5), or null when this element is not tiled.
+   *
+   * The one resource that is NOT built from a batch: it reads the viewport through
+   * `loadInBounds`, so it needs only the probe's metadata. Callers gate on
+   * {@link isTiled}; this returns null rather than throwing if they do not.
+   */
+  getTiledResource(element: PointsElement, key: string): PointsRenderResource | null {
+    const metadata = this.resolver.getTilingMetadata(key);
+    if (!metadata) return null;
+    return this.adapter.getTiledResource(element, key, metadata);
+  }
+
   // --- Lifecycle (resolver-owned) ---------------------------------------------
 
   ensureLoaded(target: PointsLoadTarget, memoryCap?: number): Promise<void> {
@@ -186,10 +199,29 @@ export class PointsDataEngine {
     return this.resolver.ensureRowFeatureCodes(target);
   }
 
+  /** Probe for a Morton artifact (D5). Normally planned, not called — this is the
+   * facade's counterpart for hosts that drive the engine directly. */
+  ensureTilingMetadata(target: PointsLoadTarget): Promise<void> {
+    return this.resolver.ensureTilingMetadata(target);
+  }
+
   // --- Reads (resolver-owned) -------------------------------------------------
 
   hasData(key: string): boolean {
     return this.resolver.hasData(key);
+  }
+
+  /** Whether this element renders through the Morton tile path (D5). Its geometry is
+   * the artifact plus the viewport, so it has no resident batch and {@link hasData}
+   * is false for it — hosts asking "is there anything to draw" must check both. */
+  isTiled(key: string): boolean {
+    return this.resolver.isTiled(key);
+  }
+
+  /** The element's tileable Morton metadata: the metadata, `null` when it cannot be
+   * tiled, `undefined` while the probe is still open. */
+  getTilingMetadata(key: string) {
+    return this.resolver.getTilingMetadata(key);
   }
 
   getData(key: string): PointsLoadResult | undefined {

@@ -127,12 +127,72 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
   );
 }
 
+/**
+ * Morton viewport tiling (D5), and its tile-status overlay.
+ *
+ * Opt-in while the tiled path is being built out: it draws flat-coloured tiles and
+ * does not yet honour the feature filter, so it is not something to switch on behind
+ * a user's back. Switching it on re-plans — the probe runs, and if the element is a
+ * Morton artifact the resident preload is dropped in favour of viewport tiles.
+ */
+function PointsTilingControl({
+  config,
+  engine,
+}: {
+  config: PointsLayerConfig;
+  engine: PointsDataEngine;
+}) {
+  // Opt out of the React Compiler — the `isTiled` read is engine-backed and settles
+  // asynchronously (the probe), so a memoized version of this JSX would never show
+  // the layer switching over to tiles.
+  'use no memo';
+  const actions = useSpatialCanvasActions();
+  const enabled = config.pointsTiling === 'auto';
+  const tiled = engine.isTiled(config.elementKey);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', gap: 6 }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) =>
+            actions.updateLayer(config.id, {
+              pointsTiling: e.target.checked ? 'auto' : 'off',
+            })
+          }
+        />
+        Viewport tiles (Morton)
+      </label>
+      {enabled && (
+        <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={config.showTileDebugOverlay === true}
+            onChange={(e) =>
+              actions.updateLayer(config.id, { showTileDebugOverlay: e.target.checked })
+            }
+          />
+          Tile debug overlay
+        </label>
+      )}
+      <span style={{ color: '#888', fontSize: '11px' }}>
+        {enabled
+          ? tiled
+            ? 'Reading row groups for the viewport — the memory cap does not apply.'
+            : 'This element has no Morton index; using the capped preload.'
+          : 'Load only the viewport, from a Morton-sorted element. Flat colour for now.'}
+      </span>
+    </div>
+  );
+}
+
 export default function PointsLayerPanel({ config, engine, resolveTarget }: PointsLayerPanelProps) {
   return (
     <PointsFeatureStateProvider engine={engine} target={resolveTarget(config.id)}>
       <PointSizeControl config={config} />
       <PointsMemoryCap config={config} />
       <ShowMatchingPoints config={config} />
+      <PointsTilingControl config={config} engine={engine} />
       <PointsFeatureFilterPanel config={config} />
     </PointsFeatureStateProvider>
   );
