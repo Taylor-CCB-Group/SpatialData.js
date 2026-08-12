@@ -64,12 +64,15 @@ export default defineConfig({
       },
       name: 'SpatialDataCore',
       formats: ['es', 'cjs'],
-      fileName: (format, entryName) => {
-        if (entryName === 'index') {
-          return `index.${format === 'es' ? 'js' : 'cjs'}`;
-        }
-        return `${entryName}.js`;
-      },
+      // EVERY entry must name its format, not just `index`. Both passes write to the
+      // same directory, so a name that ignores `format` is claimed twice and the cjs
+      // pass silently overwrites the es one — leaving a CommonJS file under a `.js`
+      // extension in a `"type": "module"` package, which nothing can load. That is how
+      // `points-worker.js` shipped: `new Worker(url, { type: 'module' })` died on
+      // `require is not defined`, so no consumer could ever start the points worker,
+      // and the feature-index scan (its only caller with no main-thread fallback) was
+      // unreachable outside this repo. See `tests/distEntryFormats.spec.ts`.
+      fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
       external: (id) => {
