@@ -1,5 +1,48 @@
 # @spatialdata/core
 
+## 0.8.0
+
+### Minor Changes
+
+- [#152](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/152) [`223e066`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/223e066a97bc01560cce868fd7455d2bd73212fc) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Report a failed feature-index scan instead of going quiet.
+
+  `getMatchingLoadState` returned `undefined` for a failed `matching` slot — exactly
+  what it returns for "no scan has ever run" — and nothing else exposed the error. So
+  a scan that failed looked identical to one that had not started, while the render
+  path carried on filtering the resident batch. The panel showed whichever part of the
+  selection happened to be inside the memory cap and presented it as the complete
+  answer.
+
+  `PointsMatchingLoadState` gains `failed` and `error`, reported for the selection the
+  failed scan would have covered (and only that one — a stale failure for a selection
+  the user has since changed is not attributed to the new one, and a retained good
+  batch no longer masks it). `usePointsFeatureState` gains `retryFailedLoads`, and the
+  built-in feature filter panel now says the load failed, says the canvas is showing
+  only what was already in memory, and offers Retry when the error is retryable.
+
+### Patch Changes
+
+- [#150](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/150) [`dadcbf8`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dadcbf81ea623c6e7b1b83728ff65faf1b2c3451) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Emit the `workers` and `points-worker` entries as ES modules.
+
+  The lib `fileName` named only `index` per format; every other entry got
+  `${entryName}.js` from BOTH the es and cjs passes, so the cjs output silently
+  overwrote the es one. `dist/workers.js` and `dist/points-worker.js` therefore
+  shipped as CommonJS under a `.js` extension inside a `"type": "module"` package —
+  files nothing can load.
+
+  `enablePointsWorker` constructs the worker with `new Worker(url, { type: 'module' })`,
+  so loading the published `points-worker.js` failed with `ReferenceError: require is
+not defined` and the worker never answered. That made the points worker impossible
+  to start outside this repo, and with it the feature-index scan: a points selection
+  whose rows fall beyond the memory cap could not be fetched at all, because
+  `loadPointsMatchingFeatureCodes` throws rather than falling back to the main thread.
+  The demo did not catch it because it imports the worker's TypeScript source by
+  relative path.
+
+  Every entry now names its format, and `./workers` gains explicit `import`/`require`
+  conditions. A packaging test asserts each `exports` target really is in the module
+  system its extension and the package `type` imply.
+
 ## 0.7.0
 
 ## 0.6.0

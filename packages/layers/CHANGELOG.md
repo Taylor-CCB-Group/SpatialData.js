@@ -1,5 +1,12 @@
 # @spatialdata/layers
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [[`dadcbf8`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dadcbf81ea623c6e7b1b83728ff65faf1b2c3451), [`223e066`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/223e066a97bc01560cce868fd7455d2bd73212fc)]:
+  - @spatialdata/core@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes

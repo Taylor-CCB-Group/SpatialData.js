@@ -1,5 +1,48 @@
 # @spatialdata/vis
 
+## 0.8.0
+
+### Minor Changes
+
+- [#146](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/146) [`9cd27cc`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/9cd27cc1e665b08959f5b6214dd17bd518b39ae7) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Export the feature-row classification alongside the points feature state.
+
+  `usePointsFeatureState` returns raw engine signals — `residentCodes`,
+  `loadedMatchingCodes`, `matchingLoadState`, `supportsOnDemandLoad` — and
+  `describeFeatureRowState` is what turns them into a row's rendered state: whether
+  it is dimmed, a short label, and a sentence explaining why. Only the former was
+  reachable from the package entry, so an embedder building its own feature list had
+  the data but not the reading of it, and had to re-derive a precedence order
+  (resident/rendered beat selection and scan state) that is easy to get subtly wrong
+  — the failure mode being a panel that greys a feature the canvas is drawing.
+
+  Adds `describeFeatureRowState` and `featureRowOpacity`, plus the types
+  `FeatureRowState`, `FeatureRowStateInput` and `FeatureRowTone`. No behaviour
+  change; these already backed the built-in `PointsFeatureFilterPanel`.
+
+- [#152](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/152) [`223e066`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/223e066a97bc01560cce868fd7455d2bd73212fc) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Report a failed feature-index scan instead of going quiet.
+
+  `getMatchingLoadState` returned `undefined` for a failed `matching` slot — exactly
+  what it returns for "no scan has ever run" — and nothing else exposed the error. So
+  a scan that failed looked identical to one that had not started, while the render
+  path carried on filtering the resident batch. The panel showed whichever part of the
+  selection happened to be inside the memory cap and presented it as the complete
+  answer.
+
+  `PointsMatchingLoadState` gains `failed` and `error`, reported for the selection the
+  failed scan would have covered (and only that one — a stale failure for a selection
+  the user has since changed is not attributed to the new one, and a retained good
+  batch no longer masks it). `usePointsFeatureState` gains `retryFailedLoads`, and the
+  built-in feature filter panel now says the load failed, says the canvas is showing
+  only what was already in memory, and offers Retry when the error is retryable.
+
+### Patch Changes
+
+- Updated dependencies [[`dadcbf8`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dadcbf81ea623c6e7b1b83728ff65faf1b2c3451), [`223e066`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/223e066a97bc01560cce868fd7455d2bd73212fc)]:
+  - @spatialdata/core@0.8.0
+  - @spatialdata/layers@0.8.0
+  - @spatialdata/react@0.8.0
+  - @spatialdata/avivatorish@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
