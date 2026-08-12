@@ -188,6 +188,41 @@ export function boundsFromFlatPolygonPositions(
 }
 
 /**
+ * World bounds for element-space bounds that are already known — the Morton tiling
+ * metadata's extent, where there is no geometry in memory to measure.
+ *
+ * All four corners are transformed, not just min/max: a rotating or shearing
+ * transform maps the min corner somewhere that is no longer the minimum, and taking
+ * two corners would silently frame the wrong box.
+ */
+export function transformAxisAlignedBounds(
+  bounds: AxisAlignedBounds,
+  modelMatrix: Matrix4
+): AxisAlignedBounds | null {
+  const corners: [number, number, number][] = [
+    [bounds.minX, bounds.minY, 0],
+    [bounds.maxX, bounds.minY, 0],
+    [bounds.maxX, bounds.maxY, 0],
+    [bounds.minX, bounds.maxY, 0],
+  ];
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const corner of corners) {
+    const transformed = modelMatrix.transformAsPoint(corner);
+    if (!Number.isFinite(transformed[0]) || !Number.isFinite(transformed[1])) {
+      return null;
+    }
+    minX = Math.min(minX, transformed[0]);
+    minY = Math.min(minY, transformed[1]);
+    maxX = Math.max(maxX, transformed[0]);
+    maxY = Math.max(maxY, transformed[1]);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/**
  * Axis-aligned bounds for circle shapes (center + radius in store coordinates).
  */
 export function boundsFromCircles(

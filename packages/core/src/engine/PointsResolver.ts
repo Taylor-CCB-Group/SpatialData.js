@@ -1,9 +1,11 @@
+import type { Matrix4 } from '@math.gl/core';
 import type { PointsElement } from '../models/index.js';
 import { featureCodeMapFromCatalog, remapRowFeatureCodes } from '../pointsFeatures.js';
 import { DEFAULT_POINTS_MEMORY_CAP } from '../pointsLimits.js';
 import type { PointsLoadProgress, PointsLoadResult } from '../pointsLoadOptions.js';
 import { planPointsLoads } from '../pointsLoadPlan.js';
 import type { PointsFeatureCatalog, PointsTilingMetadata } from '../pointsTiling.js';
+import { type AxisAlignedBounds, transformAxisAlignedBounds } from '../spatialViewFit.js';
 import type { EntryNotice, SpatialEntryError } from './errors.js';
 import { RequestSlot } from './RequestSlot.js';
 import { Resolution } from './resolution.js';
@@ -175,6 +177,11 @@ interface PointsEntry {
    * while staying `failed`, and therefore retryable, in the snapshot.
    */
   tiling: RequestSlot<TilingProbeKey, PointsTilingMetadata | null>;
+  /** World bounds of a tiled entry, memoised on the metadata AND the transform it
+   * was computed with — bounds are transform-relative. */
+  bounds?: AxisAlignedBounds | null;
+  boundsSource?: PointsTilingMetadata;
+  boundsTransform?: unknown;
 }
 
 /** The tiling slot's only key. The element path is fixed, so one request exists. */
@@ -214,17 +221,21 @@ export interface PointsMatchingLoadState {
 export class PointsResolver implements ResourceResolver<PointsResolveConfig, PointsElement> {
   readonly kind = 'points' as const;
   /**
-   * Only the resident preload gates a first paint. The catalog, row codes and
-   * feature scan all refine an already-drawable layer.
+   * What gates a first paint: the tiling probe (until it answers, we do not know
+   * which path this entry is even on) and the resident preload. The catalog, row
+   * codes and feature scan all refine an already-drawable layer.
    *
-   * **This constant does not survive D5 step 2.** A tiled element never plans a
-   * preload, so its preload slot stays `idle` — which `SpatialEntryStore.isBlocking`
-   * reads as blocking, forever, and auto-fit rides that true→false transition. Step 2
-   * makes the list state-derived (ADR 0004 already calls it "data, not a switch"). It
-   * is safe today only because `pointsTiling` defaults to `'off'`, so nothing reaches
-   * that state.
+   * This stays a constant — *the snapshot varies instead*. `isBlocking` skips a
+   * resource the entry does not have, so a tiled entry (which never plans a preload)
+   * simply omits `preload` from its resources, and an entry with tiling off omits
+   * `tiling`. That keeps the list what ADR 0004 asks for — data describing this
+   * resolver's kind — rather than a switch, and avoids the alternative of settling a
+   * fake `preload` resolution that lies about a load nobody ran.
+   *
+   * Getting this wrong is not cosmetic: a tiled entry whose `preload` stayed `idle`
+   * blocks forever, and auto-fit rides the `isBlocking` true→false transition.
    */
-  readonly blockingResources = ['preload'] as const;
+  readonly blockingResources = ['tiling', 'preload'] as const;
 
   private readonly entries = new Map<string, PointsEntry>();
   private readonly listeners = new Set<() => void>();
@@ -355,7 +366,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // deferral real: planning them while the probe is in flight both does the wasted
     // read AND settles the codes, so the check on the next pass reads "already
     // loaded" and the work is invisible from then on.
-    if (probeMetadata || this.isTiled(key)) {
+    if (probeMetadata || this.isTiledFor(config, key)) {
       return tasks;
     }
 
@@ -452,25 +463,40 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   snapshot(ctx: ResolveContext<PointsResolveConfig, PointsElement>): EntryResources {
     const key = ctx.elementKey;
-    // Key the memo by everything the snapshot embeds: the entry (several layers
-    // may share one element), and the selection (it drives the truncation notice).
-    // Points bounds are not wired in Step 1, so the transform is not part of the key.
-    const configSig = (ctx.config.featureCodes ?? []).join(',');
+    // Key the memo by everything the snapshot embeds: the entry (several layers may
+    // share one element), the selection (it drives the truncation notice), and
+    // whether tiling is on (it decides which resources the entry even has, and a
+    // config flip alone bumps no version).
+    const configSig = `${(ctx.config.featureCodes ?? []).join(',')}|${ctx.config.pointsTiling ?? 'off'}`;
     const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, configSig);
     if (cached) return cached;
+
+    // Which resources this entry HAS — see `blockingResources`. A tiled entry has no
+    // resident preload (not an idle one: none), and an entry with tiling off never
+    // asked the tiling question.
+    const tiled = this.isTiledFor(ctx.config, key);
+    const resources: Record<string, Resolution<unknown>> = {
+      catalog: this.catalogResolution(key),
+      rowCodes: this.rowCodesResolution(key),
+      matching: this.matchingResolution(key),
+    };
+    if (!tiled) {
+      resources.preload = this.preloadResolution(key);
+    }
+    if (ctx.config.pointsTiling === 'auto') {
+      resources.tiling = this.tilingResolution(key);
+    }
 
     const value: EntryResources = {
       entryId: ctx.entryId,
       elementKey: key,
-      resources: {
-        preload: this.preloadResolution(key),
-        catalog: this.catalogResolution(key),
-        rowCodes: this.rowCodesResolution(key),
-        matching: this.matchingResolution(key),
-        tiling: this.tilingResolution(key),
-      },
+      resources,
       notices: this.notices(key, ctx.config.featureCodes),
-      bounds: null, // Points bounds come from the tiling metadata; not wired in Step 1.
+      // A tiled entry can be framed from the artifact's own extent, with no geometry
+      // in memory — which is the only thing that makes auto-fit possible before a
+      // single tile has loaded. The preloaded path's bounds stay with the host (it
+      // caches them against the resident batch); see the D5 plan step 2.
+      bounds: tiled ? this.tiledBounds(key, ctx.transform) : null,
       revision: this.version,
     };
 
@@ -502,6 +528,26 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
 
   private tilingResolution(key: string): Resolution<PointsTilingMetadata | null> {
     return this.entries.get(key)?.tiling.resolution ?? Resolution.idle();
+  }
+
+  /**
+   * World bounds for a tiled entry, from the artifact's extent. Memoised on
+   * (metadata, transform) like the shapes resolver memoises on (data, transform): the
+   * snapshot returns bounds by identity, so recomputing per call would be a fresh
+   * object every reconcile.
+   */
+  private tiledBounds(key: string, transform: Matrix4): AxisAlignedBounds | null {
+    const entry = this.entries.get(key);
+    const metadata = entry?.tiling.value;
+    if (!entry || !metadata?.bounds) return null;
+    if (entry.boundsSource === metadata && entry.boundsTransform === transform) {
+      return entry.bounds ?? null;
+    }
+    const computed = transformAxisAlignedBounds(metadata.bounds, transform);
+    entry.bounds = computed;
+    entry.boundsSource = metadata;
+    entry.boundsTransform = transform;
+    return computed;
   }
 
   private matchingResolution(key: string): Resolution<PointsLoadResult> {
@@ -606,9 +652,24 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return slot !== undefined && (slot.isReady || slot.isFailed);
   }
 
-  /** Whether this element renders through the Morton tile path. */
+  /**
+   * Whether the ELEMENT has usable tiling metadata — a fact about the artifact, and
+   * deliberately not the whole answer to "is this layer drawing tiles".
+   *
+   * The probe's answer is cached per element and survives `pointsTiling` being turned
+   * back off, and two entries on one element may disagree about it. So a *consumer*
+   * asking whether to take the tiled path must combine this with that entry's config —
+   * see {@link isTiledFor}. Reading this alone is how a layer keeps rendering tiles
+   * after the user switches tiling off.
+   */
   isTiled(key: string): boolean {
     return this.getTilingMetadata(key) != null;
+  }
+
+  /** Whether THIS entry draws through the tile path: the element can be tiled, and
+   * this entry asked for it. */
+  private isTiledFor(config: PointsResolveConfig, key: string): boolean {
+    return config.pointsTiling === 'auto' && this.isTiled(key);
   }
 
   /** The resident preload batch. One of the three inputs the Renderer Adapter memoises. */
@@ -688,9 +749,17 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return slot?.isLoading ? slot.pendingKey : undefined;
   }
 
+  /**
+   * Geometry status for the ELEMENT. The preload answers whenever it has anything to
+   * say; the tiling probe answers only in the gap where it does not.
+   *
+   * That order matters because this is per element and tiling is per entry: an
+   * element that some layer tiles may still be preloading for another layer that does
+   * not, and the preload is the one with a real load in flight.
+   */
   getStatus(key: string): PointsLoadStatus {
-    const resolution = this.entries.get(key)?.preload.resolution;
-    switch (resolution?.status) {
+    const entry = this.entries.get(key);
+    switch (entry?.preload.resolution.status) {
       case 'loading':
         return 'loading';
       case 'ready':
@@ -698,8 +767,16 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       case 'failed':
         return 'error';
       default:
-        return 'idle';
+        break;
     }
+    // No preload activity. A tileable element is drawable as soon as the probe hands
+    // over the artifact — individual tiles then load through deck's own `TileLayer`
+    // lifecycle, which is not this status. While the probe runs, the entry IS loading
+    // geometry; reporting 'idle' would tell the host nothing is happening for the
+    // whole footer read.
+    if (this.isTiled(key)) return 'ready';
+    if (entry?.tiling.isLoading) return 'loading';
+    return 'idle';
   }
 
   /** Order-independent cache key for a selected-codes set. */
@@ -1374,15 +1451,29 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    * wiring got right and is worth keeping exactly.
    */
   ensureTilingMetadata(target: PointsLoadTarget): Promise<void> {
-    const { key, element } = target;
+    const { key, layerId, element } = target;
     const slot = this.ensureEntry(key).tiling;
-    return slot.request('probe', async () => {
+    const before = slot.pending;
+    const loading = slot.request('probe', async () => {
       const metadata = await element.getPointsTilingMetadata();
       if (!metadata?.supportsRowGroupRangeReads || !metadata.bounds) {
         return null;
       }
       return metadata;
     });
+
+    // Same contract as the preload's: 'loading' only when a NEW request starts (not
+    // on a dedup). The only terminal state the probe owns is a *tileable* answer —
+    // that entry is now drawable. Every other outcome hands off to the preload, which
+    // reports its own; claiming 'ready' here would clear the spinner while the real
+    // geometry load had not started.
+    if (loading !== before) {
+      this.callbacks.onStatus?.(layerId, 'loading');
+      void loading.then(() => {
+        if (this.isTiled(key)) this.callbacks.onStatus?.(layerId, 'ready');
+      });
+    }
+    return loading;
   }
 
   // --- Retry ------------------------------------------------------------------
