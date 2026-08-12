@@ -135,6 +135,10 @@ Each notes *why* it's coupled to the state-model / decode rework.
 - **D5 — Tiled (Morton) viewport-driven loading.** The tiled path isn't exercised;
   viewport-driven load is a major feature and exactly the kind of demand-driven
   state the new model should own (Morton tiling is still "dark" per the roadmap).
+  *Design now written up:*
+  [points-morton-tiled-viewport-loading.md](./points-morton-tiled-viewport-loading.md)
+  — why it's dark, what to harvest from `backup/points-wip-20260702`, and a
+  five-step sequence.
 - **D6 — Worker contention with multiple layers.** Multiple point layers share
   one worker; the engine keys by element and assumes single-demand-per-element.
   Multi-layer sharing / a work queue belongs with the engine redesign.
