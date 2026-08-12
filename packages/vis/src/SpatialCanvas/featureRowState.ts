@@ -8,7 +8,14 @@
 
 /** Why a feature row is (or isn't) greyed — drives both the dimming and the
  * diagnostic tooltip so they can never disagree. */
-export type FeatureRowTone = 'resident' | 'loaded' | 'cached' | 'loading' | 'noIndex' | 'notLoaded';
+export type FeatureRowTone =
+  | 'resident'
+  | 'partial'
+  | 'loaded'
+  | 'cached'
+  | 'loading'
+  | 'noIndex'
+  | 'notLoaded';
 
 export interface FeatureRowState {
   tone: FeatureRowTone;
@@ -33,6 +40,18 @@ export interface FeatureRowStateInput {
   supportsOnDemandLoad: boolean;
   /** The resident set is known (false → we can't distinguish, treat as shown). */
   residentKnown: boolean;
+  /**
+   * Points of this feature inside the resident window, and in the whole dataset.
+   *
+   * Together these separate "resident" from "all here", which `resident` alone
+   * cannot: it means *at least one* point made the memory cap. On a truncated
+   * element every feature is typically resident — one point each is enough — while
+   * most of the data is absent, and a row that says nothing about that reads as a
+   * complete answer. Both `undefined` until the counts are known, which is the only
+   * time this classification falls back to the older, blunter one.
+   */
+  residentPointCount?: number;
+  datasetPointCount?: number;
 }
 
 /**
@@ -52,6 +71,8 @@ export function describeFeatureRowState({
   scanning,
   supportsOnDemandLoad,
   residentKnown,
+  residentPointCount,
+  datasetPointCount,
 }: FeatureRowStateInput): FeatureRowState {
   if (!residentKnown) {
     return {
@@ -62,6 +83,30 @@ export function describeFeatureRowState({
     };
   }
   if (resident) {
+    // Resident but incomplete: drawn, so not greyed, but the row must not imply the
+    // whole feature is on screen. Ranked above plain `resident` because the shortfall
+    // is the more useful fact when it exists.
+    //
+    // `rendered` vetoes it: a completed scan supplies the feature whole, so its
+    // resident shortfall says nothing about what is drawn. Without this veto a
+    // feature would be loaded in full and still be labelled partial.
+    if (
+      !rendered &&
+      residentPointCount !== undefined &&
+      datasetPointCount !== undefined &&
+      residentPointCount < datasetPointCount
+    ) {
+      const percent = datasetPointCount > 0 ? (residentPointCount / datasetPointCount) * 100 : 0;
+      return {
+        tone: 'partial',
+        greyed: false,
+        label: 'partial',
+        reason:
+          `Only ${residentPointCount.toLocaleString()} of ${datasetPointCount.toLocaleString()} points ` +
+          `(${formatCoveragePercent(percent)}) are inside the memory cap, and that is what is drawn. ` +
+          'Select it to fetch the rest, or raise the cap.',
+      };
+    }
     return {
       tone: 'resident',
       greyed: false,
@@ -109,6 +154,18 @@ export function describeFeatureRowState({
     label: 'not loaded',
     reason: 'Beyond the resident window; select it to fetch its points via the feature-index scan.',
   };
+}
+
+/**
+ * A coverage share, rounded so it never reads as more certain than it is: `<1%`
+ * rather than `0%` for a feature with a handful of points in a huge window, and
+ * `>99%` rather than `100%` for one that is all-but-complete — the two cases where a
+ * naive round would claim the opposite of the truth.
+ */
+function formatCoveragePercent(percent: number): string {
+  if (percent > 0 && percent < 1) return '<1%';
+  if (percent < 100 && percent > 99) return '>99%';
+  return `${Math.round(percent)}%`;
 }
 
 /** Opacity for a row given its state: crisp when its points are on screen,

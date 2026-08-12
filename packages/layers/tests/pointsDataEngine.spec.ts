@@ -530,6 +530,14 @@ describe('PointsDataEngine — codes with the geometry preload', () => {
     expect(Array.from(engine.getRowFeatureCodes('pts:remap')!)).toEqual([1, 0, 1]);
     // The resident-codes memo reflects the remapped values.
     expect([...engine.getResidentFeatureCodes('pts:remap')!].sort()).toEqual([0, 1]);
+    // ...and so do the per-feature COUNTS. The preload result carries its own
+    // `featureCodeCounts`, frozen in the preview space and never remapped, so
+    // answering from it here would report GeneB's two points as GeneA's — a panel
+    // showing "resident 2 of N" against the wrong gene. Counts are derived from the
+    // reconciled row codes for exactly that reason.
+    const counts = engine.getResidentFeatureCounts('pts:remap')!;
+    expect(counts.get(1)).toBe(2); // GeneB, full space
+    expect(counts.get(0)).toBe(1); // GeneA, full space
   });
 
   it('does not remap when codes are authoritative (a real feature-code column)', async () => {

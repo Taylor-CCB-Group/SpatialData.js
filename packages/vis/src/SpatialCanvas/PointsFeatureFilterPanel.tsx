@@ -111,6 +111,16 @@ const errorStatStyle: CSSProperties = {
   fontSize: '11px',
 };
 
+/** The resident figure in a `resident / dataset` pair — the number that is actually
+ * on screen, so it carries the emphasis. */
+const shortfallStyle: CSSProperties = {
+  color: '#d0a24c',
+};
+
+const ofTotalStyle: CSSProperties = {
+  color: '#777',
+};
+
 const countStyle: CSSProperties = {
   color: '#888',
   fontSize: '11px',
@@ -199,6 +209,19 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     entry.count ?? partialCounts?.get(entry.code);
   const countIsPartial = (entry: { code: number; count?: number }): boolean =>
     entry.count === undefined && partialCounts?.get(entry.code) !== undefined;
+  // Dataset totals by code, so a row can be compared against what is resident without
+  // rescanning `entries` per row.
+  const datasetCountByCode = new Map<number, number>(
+    entries.flatMap((entry) => (entry.count !== undefined ? [[entry.code, entry.count]] : []))
+  );
+  /** Resident points for a feature, when that is meaningfully LESS than the dataset —
+   * i.e. there is a shortfall worth showing. `undefined` otherwise. */
+  const residentShortfall = (entry: { code: number; count?: number }): number | undefined => {
+    if (entry.count === undefined) return undefined;
+    const resident = residentFeatureCounts?.get(entry.code);
+    if (resident === undefined || resident >= entry.count) return undefined;
+    return resident;
+  };
   // The selection persists as NAMES (see `PointsLayerConfig.featureNames`), but the
   // rest of this panel — checkboxes, greying, the engine reads — works in codes.
   // Resolve once here against the catalog we are already rendering.
@@ -371,11 +394,23 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
       scanning,
       supportsOnDemandLoad,
       residentKnown,
+      residentPointCount: residentFeatureCounts?.get(code),
+      datasetPointCount: datasetCountByCode.get(code),
     });
     return { resident, rendered, selected, state };
   };
   const notLoadedCount = residentKnown
     ? entries.reduce((total, entry) => total + (rowInfo(entry.code).state.greyed ? 1 : 0), 0)
+    : 0;
+  // Features that ARE drawn but only in part. Counted separately from `notLoadedCount`
+  // because they are the opposite failure of understanding: those rows look completely
+  // healthy — un-greyed, with a full dataset count beside them — while most of their
+  // points are outside the cap.
+  const partialCount = residentKnown
+    ? entries.reduce(
+        (total, entry) => total + (rowInfo(entry.code).state.tone === 'partial' ? 1 : 0),
+        0
+      )
     : 0;
 
   return (
@@ -399,6 +434,13 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           {supportsOnDemandLoad
             ? 'not loaded yet (greyed below) — selecting one loads it on demand.'
             : "not in the loaded sample (greyed below) — this dataset has no feature index, so they can't be shown until the row cap is raised or it's rewritten with one."}
+        </div>
+      ) : null}
+      {partialCount > 0 ? (
+        <div style={helperStyle}>
+          {partialCount} of {entries.length} feature{entries.length === 1 ? '' : 's'} only partly
+          loaded — the resident window is capped, so the canvas is drawing a sample of each. Select
+          one to fetch it in full, or raise the memory cap.
         </div>
       ) : null}
       {matchingLoadState?.failed ? (
@@ -526,19 +568,43 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
                   ⟲
                 </button>
               ) : null}
-              {hasAnyCounts ? (
-                <span
-                  style={countStyle}
-                  title={
-                    countIsPartial(entry)
-                      ? 'Points loaded so far (resident window) — dataset total still counting'
-                      : 'Points in the dataset'
-                  }
-                >
-                  {countIsPartial(entry) ? '≥' : ''}
-                  {formatFeatureCount(effectiveCount(entry))}
-                </span>
-              ) : null}
+              {hasAnyCounts
+                ? (() => {
+                    // Once dataset totals land, keep showing the resident tally too when
+                    // it falls short — the panel used to drop it, which is what let a
+                    // capped element present "1,182,402" for a feature it was drawing a
+                    // fraction of. `rendered` means a scan supplied it whole, so the
+                    // shortfall is no longer what's on screen.
+                    const shortfall =
+                      state.tone === 'partial' ? residentShortfall(entry) : undefined;
+                    return (
+                      <span
+                        style={countStyle}
+                        title={
+                          shortfall !== undefined
+                            ? `${shortfall.toLocaleString()} of ${formatFeatureCount(
+                                entry.count
+                              )} points are inside the memory cap`
+                            : countIsPartial(entry)
+                              ? 'Points loaded so far (resident window) — dataset total still counting'
+                              : 'Points in the dataset'
+                        }
+                      >
+                        {shortfall !== undefined ? (
+                          <>
+                            <span style={shortfallStyle}>{shortfall.toLocaleString()}</span>
+                            <span style={ofTotalStyle}> / {formatFeatureCount(entry.count)}</span>
+                          </>
+                        ) : (
+                          <>
+                            {countIsPartial(entry) ? '≥' : ''}
+                            {formatFeatureCount(effectiveCount(entry))}
+                          </>
+                        )}
+                      </span>
+                    );
+                  })()
+                : null}
             </label>
           );
         })}
