@@ -132,13 +132,22 @@ Each notes *why* it's coupled to the state-model / decode rework.
   completes.** Today stats only appear once the whole-dataset catalog settles;
   there's real use in showing progressive/active counts. Tied to D3 (progressive
   catalog build) and the stats state model (F3's proper fix).
-- **D5 — Tiled (Morton) viewport-driven loading.** The tiled path isn't exercised;
-  viewport-driven load is a major feature and exactly the kind of demand-driven
-  state the new model should own (Morton tiling is still "dark" per the roadmap).
-  *Design now written up:*
-  [points-morton-tiled-viewport-loading.md](./points-morton-tiled-viewport-loading.md)
-  — why it's dark, what to harvest from `backup/points-wip-20260702`, and a
-  five-step sequence.
+- **D5 — Tiled (Morton) viewport-driven loading. ✅ DONE (2026-08-12).** Shipped in
+  seven steps —
+  [points-morton-tiled-viewport-loading.md](./points-morton-tiled-viewport-loading.md).
+  A Morton element is probed, framed from its own extent, and drawn from viewport
+  tiles that colour by feature, honour the feature filter inside the row-group scan,
+  and subdivide with zoom; row groups are selected from footer statistics rather than
+  by bisecting the file (97 range reads / 175 MB → 32 / 58 MB for one tile). **On by
+  default**: the preload it replaces keeps the first `cap` rows in *file* order, which
+  on a Morton artifact is a prefix of the Z-curve — a skewed chunk of the slide.
+  Three guards decline a malformed artifact loudly and fall back to the preload.
+  *Left open, deliberately:* the tile cache is accounted but not managed by bytes
+  (ADR 0005), and there is **no LOD** — a zoomed-out view reads every tile, measured
+  at 12.17M points / ~158 MB for the default framing of the Xenium element, against a
+  4M-row prefix for the preload it replaces. That wants a multi-resolution points
+  pyramid (the writer has `points multiscale`), not a finer index, and it is the next
+  thing worth doing.
 - **D6 — Worker contention with multiple layers.** Multiple point layers share
   one worker; the engine keys by element and assumes single-demand-per-element.
   Multi-layer sharing / a work queue belongs with the engine redesign.

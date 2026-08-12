@@ -1,4 +1,8 @@
-import { featureNamesForCodes, resolveFeatureSelectionCodes } from '@spatialdata/core';
+import {
+  featureNamesForCodes,
+  pointsTilingEnabled,
+  resolveFeatureSelectionCodes,
+} from '@spatialdata/core';
 import { featureCodeToRgb } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -385,7 +389,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   const residentKnown = residentCodes !== undefined;
   // Element fact AND this layer's config — the probe's answer is cached per element
   // and outlives the config that asked for it.
-  const tiledLayer = tiled && config.pointsTiling === 'auto';
+  const tiledLayer = tiled && pointsTilingEnabled(config.pointsTiling);
   const scanning = matchingLoadState?.loading ?? false;
   const rowInfo = (code: number) => {
     const resident = residentKnown && (residentCodes?.has(code) ?? false);

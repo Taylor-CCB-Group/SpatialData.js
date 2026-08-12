@@ -21,6 +21,7 @@ import {
   getTooltipSignature,
   type LabelsElement,
   type PointsElement,
+  pointsTilingEnabled,
   resolveFeatureSelectionCodes,
   resolvePointsMemoryCap,
   resolveTooltipItems,
@@ -380,7 +381,7 @@ function usesTiledPath(
   elementKey: string,
   config: PointsLayerConfig | undefined
 ): boolean {
-  return config?.pointsTiling === 'auto' && engine.isTiled(elementKey);
+  return pointsTilingEnabled(config?.pointsTiling) && engine.isTiled(elementKey);
 }
 
 export function useLayerData(

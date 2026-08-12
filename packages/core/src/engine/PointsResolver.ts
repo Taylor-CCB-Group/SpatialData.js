@@ -4,7 +4,12 @@ import { featureCodeMapFromCatalog, remapRowFeatureCodes } from '../pointsFeatur
 import { DEFAULT_POINTS_MEMORY_CAP } from '../pointsLimits.js';
 import type { PointsLoadProgress, PointsLoadResult } from '../pointsLoadOptions.js';
 import { planPointsLoads } from '../pointsLoadPlan.js';
-import type { PointsFeatureCatalog, PointsTilingMetadata } from '../pointsTiling.js';
+import {
+  type PointsFeatureCatalog,
+  type PointsTilingMetadata,
+  type PointsTilingMode,
+  pointsTilingEnabled,
+} from '../pointsTiling.js';
 import { type AxisAlignedBounds, transformAxisAlignedBounds } from '../spatialViewFit.js';
 import type { EntryNotice, SpatialEntryError } from './errors.js';
 import { RequestSlot } from './RequestSlot.js';
@@ -94,14 +99,13 @@ export interface PointsResolveConfig {
   featureCodes?: number[];
   /**
    * Whether to probe for a Morton-tiled artifact before falling back to the resident
-   * preload (D5). `'auto'` probes; `'off'` (the default) never does, which is exactly
-   * today's behaviour.
+   * preload (D5). `'auto'` — {@link DEFAULT_POINTS_TILING}, and now the default —
+   * probes; `'off'` never does.
    *
-   * Deliberately still opt-in at step 1: the probe DEFERS the preload until it
-   * answers, and nothing yet renders a tiled element — see
-   * `docs/plans/points-morton-tiled-viewport-loading.md` steps 2 and 5.
+   * Read it through {@link pointsTilingEnabled} rather than comparing to `'auto'`, so
+   * the default lives in exactly one place.
    */
-  pointsTiling?: 'auto' | 'off';
+  pointsTiling?: PointsTilingMode;
 }
 
 interface PointsEntry {
@@ -337,10 +341,10 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // preload only once the probe has answered "not tileable". The two decisions are
     // one function (`planPointsLoads`, shared with the pre-decomposition wiring) so
     // they cannot drift apart into the state that preloads a table it is about to
-    // tile. With `pointsTiling` off (the default) `probeMetadata` is false and
-    // `preloadFullTable` collapses to `!hasPreloaded` — today's gate exactly.
+    // tile. With `pointsTiling` off `probeMetadata` is false and `preloadFullTable`
+    // collapses to `!hasPreloaded` — the pre-D5 gate exactly.
     const { probeMetadata, preloadFullTable } = planPointsLoads({
-      wantsOptimized: config.pointsTiling === 'auto',
+      wantsOptimized: pointsTilingEnabled(config.pointsTiling),
       metadataKnown: this.isTilingSettled(key),
       tiledMetadata: this.getTilingMetadata(key),
       hasPreloaded: this.isLoadedWithCap(key, cap),
@@ -484,7 +488,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // share one element), the selection (it drives the truncation notice), and
     // whether tiling is on (it decides which resources the entry even has, and a
     // config flip alone bumps no version).
-    const configSig = `${(ctx.config.featureCodes ?? []).join(',')}|${ctx.config.pointsTiling ?? 'off'}`;
+    const configSig = `${(ctx.config.featureCodes ?? []).join(',')}|${pointsTilingEnabled(ctx.config.pointsTiling)}`;
     const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, configSig);
     if (cached) return cached;
 
@@ -500,7 +504,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (!tiled) {
       resources.preload = this.preloadResolution(key);
     }
-    if (ctx.config.pointsTiling === 'auto') {
+    if (pointsTilingEnabled(ctx.config.pointsTiling)) {
       resources.tiling = this.tilingResolution(key);
     }
 
@@ -686,7 +690,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   /** Whether THIS entry draws through the tile path: the element can be tiled, and
    * this entry asked for it. */
   private isTiledFor(config: PointsResolveConfig, key: string): boolean {
-    return config.pointsTiling === 'auto' && this.isTiled(key);
+    return pointsTilingEnabled(config.pointsTiling) && this.isTiled(key);
   }
 
   /** The resident preload batch. One of the three inputs the Renderer Adapter memoises. */

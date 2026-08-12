@@ -1,4 +1,4 @@
-import { DEFAULT_POINTS_MEMORY_CAP } from '@spatialdata/core';
+import { DEFAULT_POINTS_MEMORY_CAP, pointsTilingEnabled } from '@spatialdata/core';
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
 import { useSpatialCanvasActions } from './context';
 import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
@@ -16,8 +16,17 @@ export interface PointsLayerPanelProps {
 }
 
 function PointsMemoryCap({ config }: { config: PointsLayerConfig }) {
+  // Opt out of the React Compiler — see PointsFeatureFilterPanel. The tiled read is
+  // engine-backed and settles asynchronously (the probe), so the compiler would
+  // memoize this JSX and leave a dead control on screen.
+  'use no memo';
   const actions = useSpatialCanvasActions();
+  const { tiled } = usePointsFeatureState(config);
   const currentCap = config.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
+  // A tiled layer holds no resident window, so the cap governs nothing. Leaving the
+  // control up would put "Max rows kept in memory" directly above "the memory cap
+  // does not apply" — each true, the pair nonsense. Same rule as ShowMatchingPoints.
+  if (tiled && pointsTilingEnabled(config.pointsTiling)) return null;
   // Discrete options (one reload per choice, vs. a free number
   // input that would reload on every keystroke). Include the
   // current value so a saved config off the preset list still
@@ -78,7 +87,7 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   // truncation count is not a statement about what is on screen. It used to sit
   // directly above "the memory cap does not apply", each true and the pair
   // nonsense — and it survives eviction lag, since this renders before the release.
-  if (tiled && config.pointsTiling === 'auto') return null;
+  if (tiled && pointsTilingEnabled(config.pointsTiling)) return null;
   if (!t) return null;
   // Report the batch held in memory (always true), NOT a per-selection matched
   // count: t.loaded is the covered-batch size, which overstates the selection
@@ -135,11 +144,13 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
 /**
  * Morton viewport tiling (D5), and its tile-status overlay.
  *
- * Still opt-in while the path beds in. Tiles colour by feature and honour the feature
- * filter (applied inside the row-group scan, so a filtered tile arrives small), but
- * the tile grid is fixed and coarse and picking is untested here. Switching it on
- * re-plans: the probe runs, and if the element is a Morton artifact the resident
- * preload is released in favour of viewport tiles.
+ * **On by default** since step 7, for elements that have a usable Morton index. Tiles
+ * colour by feature, honour the feature filter (applied inside the row-group scan, so
+ * a filtered tile arrives small), and subdivide with zoom. Turning it off re-plans
+ * back to the capped preload — worth offering, because the preload keeps the first
+ * `cap` rows in FILE order, which on a Morton artifact is a prefix of the Z-curve: a
+ * skewed chunk of the slide rather than a sample of it. That comparison is exactly
+ * what the toggle is for.
  */
 function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
   // Opt out of the React Compiler — see PointsFeatureFilterPanel. The tiling read is
@@ -147,7 +158,7 @@ function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
   // memoize this JSX and never show the layer switching over to tiles.
   'use no memo';
   const actions = useSpatialCanvasActions();
-  const enabled = config.pointsTiling === 'auto';
+  const enabled = pointsTilingEnabled(config.pointsTiling);
   // Through the hook, NOT `engine.isTiled(...)` directly: the hook carries the
   // engine subscription, so this line updates when the probe settles instead of
   // showing whatever was true at the last unrelated render.
@@ -181,9 +192,9 @@ function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
       <span style={{ color: '#888', fontSize: '11px' }}>
         {enabled
           ? tiled
-            ? 'Reading row groups for the viewport — the memory cap does not apply. The feature filter is applied as tiles are read.'
-            : 'This element has no Morton index; using the capped preload.'
-          : 'Load only the viewport, from a Morton-sorted element, instead of a capped sample.'}
+            ? 'Reading row groups for the viewport, at the zoom you are at — no memory cap applies. The feature filter is applied as tiles are read.'
+            : 'This element has no usable Morton index; using the capped preload.'
+          : 'Off: showing the first rows of the file up to the memory cap, whatever the viewport. Turn on to read only what you are looking at.'}
       </span>
     </div>
   );

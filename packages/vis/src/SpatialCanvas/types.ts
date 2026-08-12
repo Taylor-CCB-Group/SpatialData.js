@@ -3,7 +3,7 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialElement } from '@spatialdata/core';
+import type { PointsTilingMode, SpatialElement } from '@spatialdata/core';
 import type {
   FeatureCategoricalPaletteSpec,
   FeatureMissingValueOptions,
@@ -207,12 +207,16 @@ export interface PointsLayerConfig extends BaseLayerConfig {
    * (D5). `'auto'` probes the element's parquet footer once and, if it is a Morton
    * artifact whose store can serve row-group range reads, renders viewport tiles
    * instead of a capped resident preload — so a dataset far larger than the memory
-   * cap can be explored at full detail. `'off'` (the default) always preloads.
+   * cap can be explored at full detail. `'off'` always preloads.
+   *
+   * Defaults to `'auto'` (`DEFAULT_POINTS_TILING`) — resolve it with
+   * `pointsTilingEnabled` rather than comparing to `'auto'`, so `undefined` means the
+   * same thing everywhere.
    *
    * Serializable Stack-Entry state. An element that cannot be tiled falls back to
    * the preload either way, so this is a preference, not a requirement.
    */
-  pointsTiling?: 'auto' | 'off';
+  pointsTiling?: PointsTilingMode;
   /**
    * Draw the tile-status debug overlay on a tiled points layer (viewport tiles
    * coloured by loading / loaded / empty / error). Development affordance; ignored
