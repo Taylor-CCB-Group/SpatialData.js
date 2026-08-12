@@ -1,5 +1,27 @@
 # @spatialdata/react
 
+## 0.6.0
+
+### Patch Changes
+
+- [#142](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/142) [`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Publish sourcemaps, and survive a colour scheme that does not match its own type.
+
+  `core` shipped `index.js.map`; `layers`, `vis`, `avivatorish` and `react` did not.
+  A crash inside one of them reached a consumer as
+  `Le (…/.vite/deps/@spatialdata_layers.js:396)` — an esbuild-minified name with
+  nothing to map it back to. An embedding application has only the built artifact to
+  debug against, so it has to carry a map.
+
+  `resolveCategoricalPalette` and the ramp sampler now always return a colour. A
+  scheme arrives from a saved Render Stack, so its type is a claim about JSON rather
+  than a guarantee: a palette object with no `byValue`, a list with a hole in it, or
+  a ramp with fewer than two stops all used to return `undefined` and fail several
+  frames later in the arithmetic that reads `rgb[0]`. Wrong colours can be seen and
+  reported; that `TypeError` cannot.
+
+- Updated dependencies [[`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e)]:
+  - @spatialdata/core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

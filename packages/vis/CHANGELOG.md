@@ -1,5 +1,132 @@
 # @spatialdata/vis
 
+## 0.6.0
+
+### Minor Changes
+
+- [#142](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/142) [`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Make a column's colours a property of the column, not of the features that loaded.
+
+  Three things decided the encoding from whatever happened to be in view, so two
+  layers over one annotation could disagree about what a colour means — which reads
+  as a data difference rather than as a bug:
+
+  - Category indices were assigned in **first-seen feature order**. A shapes layer
+    walks the loader's geometry order and a labels layer walks the raster's ids, so
+    the same `cell_type` column rendered in two different schemes on the two kinds.
+    (`labelColorEncoding.spec.ts` claimed to cover this, but only pinned the indices
+    on one kind; it now actually builds the column through both.) Categories are now
+    ordered by value, with numeric-looking values ordered numerically so cluster 10
+    follows cluster 9 rather than cluster 1.
+  - Positional palettes cannot survive a category being **absent from a view** at
+    all: `tumour` genuinely is the second category present when `stroma` is not.
+    `categoricalPalette` therefore also accepts `{ byValue: { Tumour: [200, 30, 30] } }`,
+    with an optional `fallback` for values it does not name (`'oklab'` by default, so
+    an unnamed category keeps its own hue instead of merging into one bucket). This
+    is the form to prefer in a saved stack, and the only form an embedding
+    application can use to make a layer agree with its own charts.
+  - The continuous ramp measured its extent from the loaded features. `numericDomain`
+    pins it to the column's own range; values outside clamp rather than extrapolate.
+
+  `numericRamp` also takes more than two stops now, spaced evenly across the domain,
+  because the ramps people actually use are not two-stop — viridis, a diverging
+  red/white/blue, or whatever a host has already chosen for the same column in its
+  own UI. Approximating one by its endpoints loses the midpoint that made it
+  meaningful. `numericScale: 'symlog'` goes with it: a counts or expression column
+  whose mass sits near zero with a long tail collapses into the first stop under a
+  linear position. Symmetric log rather than plain log, because these columns reach
+  zero and below.
+
+  `featureColorSchemeSignature` now takes the scheme as one object
+  (`featureColorSchemeSignature(config.fillColorByColumn)`) rather than three
+  positional arguments, so adding a term to the encoding cannot leave a call site
+  silently keying on the old set — the failure mode there being a layer that keeps
+  serving the previous colours after the scheme changed. Named palettes are
+  serialised in sorted key order, since object key order is insertion order and a
+  host rebuilding its palette each render need not insert in a stable one.
+
+  **Colours will change** for existing categorical configs that relied on the
+  implicit first-seen order. Pass `categoricalPalette: { byValue }` to fix a scheme
+  in place.
+
+### Patch Changes
+
+- [#142](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/142) [`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Make a fill-colour column (or tooltip field) switch actually apply for a host that
+  edits its layer configs in place.
+
+  Two independent breaks sat between "the user picked a different column" and "the
+  canvas shows it", and a host only hit them together. [#119](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/119) fixed the third thing in
+  that chain — the load-window blank — which is why the remaining two read as "the
+  colours just never change".
+
+  **The change never reached the resolver.** `useLayerData`'s reconcile effect is the
+  one place a config change turns into a request, and it was keyed on the identity of
+  `layers` and the configs inside it. That assumes the caller allocates a fresh config
+  per edit; MDV's render-stack adapter deliberately does the opposite, keeping one
+  `LayerConfig` per Stack Entry so a cosmetic edit does not look structural and
+  re-enter geometry loads. Under that caller the effect never re-ran: the new column
+  was never requested, `getShapeFillColorEntry` / `getLabelFillColorEntry` went on
+  correctly serving last-good rows, and last-good was all there would ever be. The
+  effect now also depends on `describeResolveInputs` — a value key over exactly the
+  config fields each resolver's `plan()` reads, recomputed per render because a
+  mutation is invisible to any memo. It holds scalars and short id lists only; a
+  palette swap or an opacity drag does not move it, so nothing replans on a slider.
+
+  **The settle never reached React.** `SpatialEntryStore` subscribed to its resolvers
+  in its constructor and tore that bridge down in `dispose()` — which `useLayerData`
+  calls from an effect cleanup. An effect cleanup is not "the end": StrictMode's dev
+  double-mount runs cleanup and then re-runs the effect against the same memoised
+  store, after which the store was permanently deaf to its own resolvers. Every async
+  settle from then on was dropped, so rows that landed after a switch did not repaint
+  until an unrelated re-render (a pan) came along. The bridge is now attached on the
+  first listener and detached on the last, so it is exactly as long-lived as someone
+  caring about it and survives any number of remounts. `getVersion()` became a derived
+  sum of the resolvers' versions rather than a counter the bridge maintained, so it
+  stays true whether or not anything is subscribed.
+
+  No public API change. Verified against MDV driving only `fillColorByColumn` on a
+  labels layer: switching to a column that has to be fetched now repaints on its own.
+
+- [#120](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/120) [`f0f8df1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/f0f8df1a1acebffc450fd254c72bf46b5596ef4c) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Drop the direct `geotiff` dependency from both packages.
+
+  `@spatialdata/vis` declared it but never imported it. `@spatialdata/avivatorish`
+  imported `fromUrl` / `fromBlob` in exactly one place, feeding a chain of
+  non-exported Avivator scaffolding for plain multi-TIFF inputs that nothing
+  reached — `createLoader` is OME-NGFF-only by design. Both are now gone, along
+  with the matching Vite `external` entries.
+
+  No public API changes, and nothing to lose on the OME-TIFF side: there was no
+  OME-TIFF loading path to break. The only loaders here are `loadOmeZarr` and
+  `loadOmeZarrMultiscalesData`, and the exported `OME_TIFF` type is a type-only
+  derivation from viv's `loadOmeTiff` signature — `import type`, so it costs
+  nothing at runtime and needs no `geotiff` of our own.
+
+  Declaring the dependency only ever added a third copy to consumers' trees, and
+  pinned us to a version we could neither exercise nor usefully advance: were an
+  OME-TIFF path ever added, it would go through viv, which resolves its own
+  `geotiff` (`^2.0.5`) regardless, and geotiff 3's decoder API is a viv-side
+  blocker (hms-dbmi/viv#951), not ours.
+
+- [#142](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/142) [`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Publish sourcemaps, and survive a colour scheme that does not match its own type.
+
+  `core` shipped `index.js.map`; `layers`, `vis`, `avivatorish` and `react` did not.
+  A crash inside one of them reached a consumer as
+  `Le (…/.vite/deps/@spatialdata_layers.js:396)` — an esbuild-minified name with
+  nothing to map it back to. An embedding application has only the built artifact to
+  debug against, so it has to carry a map.
+
+  `resolveCategoricalPalette` and the ramp sampler now always return a colour. A
+  scheme arrives from a saved Render Stack, so its type is a claim about JSON rather
+  than a guarantee: a palette object with no `byValue`, a list with a hole in it, or
+  a ramp with fewer than two stops all used to return `undefined` and fail several
+  frames later in the arithmetic that reads `rgb[0]`. Wrong colours can be seen and
+  reported; that `TypeError` cannot.
+
+- Updated dependencies [[`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e), [`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e), [`f0f8df1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/f0f8df1a1acebffc450fd254c72bf46b5596ef4c), [`a0a3cc4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/a0a3cc456dfaa139d7afbe886acb872bfebad86e)]:
+  - @spatialdata/core@0.6.0
+  - @spatialdata/layers@0.6.0
+  - @spatialdata/avivatorish@0.6.0
+  - @spatialdata/react@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
