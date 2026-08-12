@@ -211,11 +211,13 @@ import {
   filterPointsToBounds,
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
+  mortonBoundsAgreeWithCodes,
   mortonIntervalsForBounds,
   type PointsFeatureCatalog,
   type PointsInBoundsOptions,
   type PointsInBoundsResponse,
   type PointsTilingMetadata,
+  type SpatialBounds,
 } from '../pointsTiling.js';
 import type { Axis } from '../schemas';
 // import { normalizeAxes } from '@vitessce/spatial-utils';
@@ -2252,6 +2254,46 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return featureCatalogFromCodeMap(featureKey, codeToName);
   }
 
+  /**
+   * Cross-check the sentinel bounding box against real rows before trusting it.
+   *
+   * Costs one row-group range read, once per element, cached with the metadata. That
+   * is roughly one step of the bisect a single viewport query already runs eight of —
+   * cheap next to deciding, wrongly, to read the whole artifact through a broken
+   * index. Sampled from the MIDDLE of the file: a truncated box can agree with the
+   * true one near the origin by coincidence, never in the interior.
+   *
+   * Only positive evidence of disagreement disables tiling. A file we cannot sample
+   * (one row group, an unreadable group) keeps today's behaviour rather than losing
+   * the feature to a read that failed for an unrelated reason.
+   */
+  private async mortonBoundsMatchStoredCodes(
+    parquetPath: string,
+    bounds: SpatialBounds
+  ): Promise<boolean> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const totalRowGroups = dataset?.totalNumRowGroups ?? 0;
+    if (totalRowGroups <= 1) {
+      return true;
+    }
+    const table = await this.loadParquetRowGroupByGroupIndex(
+      parquetPath,
+      Math.max(1, Math.floor(totalRowGroups / 2)),
+      { columns: ['x', 'y', MORTON_CODE_2D_COLUMN] }
+    ).catch(() => null);
+    if (!table || table.numRows === 0) {
+      return true;
+    }
+    const xs = table.getChild('x')?.toArray();
+    const ys = table.getChild('y')?.toArray();
+    const codes = table.getChild(MORTON_CODE_2D_COLUMN)?.toArray();
+    if (!xs || !ys || !codes) {
+      return true;
+    }
+    const { checked, matched } = mortonBoundsAgreeWithCodes(xs, ys, codes, bounds);
+    return checked === 0 || matched * 2 > checked;
+  }
+
   async getPointsTilingMetadata(elementPath: string): Promise<PointsTilingMetadata | null> {
     if (this.pointTilingMetadataCache.has(elementPath)) {
       return this.pointTilingMetadataCache.get(elementPath) ?? null;
@@ -2302,9 +2344,22 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             limit: 4,
           })
         : null;
-    const bounds = firstRowGroup
+    const claimedBounds = firstRowGroup
       ? (extractSentinelBoundingBox(firstRowGroup) ?? undefined)
       : undefined;
+    const bounds =
+      claimedBounds && (await this.mortonBoundsMatchStoredCodes(parquetPath, claimedBounds))
+        ? claimedBounds
+        : undefined;
+    if (claimedBounds && !bounds) {
+      console.warn(
+        `Morton tiling disabled for ${elementPath}: its sentinel bounding box ` +
+          `(${claimedBounds.minX}, ${claimedBounds.minY})-(${claimedBounds.maxX}, ${claimedBounds.maxY}) ` +
+          'is not the domain its morton_code_2d values were quantised against, so any ' +
+          'viewport query against it would silently drop rows. Falling back to the ' +
+          'capped preload; the artifact needs rewriting.'
+      );
+    }
     const rowGroupSizes = datasetMetadata?.rowGroupRows ?? [];
 
     const metadata: PointsTilingMetadata = {
