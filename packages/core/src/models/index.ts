@@ -442,6 +442,7 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
   RasterAttrs
 > {
   readonly attrs: RasterAttrs;
+  private prefixedStore?: zarr.AsyncReadable;
 
   constructor(params: ElementParams<T>) {
     super(params);
@@ -487,9 +488,18 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
    *
    * Consumers that need codec-aware array loading should use this instead of
    * reconstructing a URL and letting downstream libraries create their own store.
+   *
+   * Memoized, and that matters beyond saving an object allocation: the chunk
+   * cache downstream is keyed **by store instance**. fizarrita assigns each store
+   * object an id from a `WeakMap` and builds keys as `store_N:{path}:{chunkKey}`,
+   * while `createPrefixedStore` returns a fresh object literal every call — so
+   * handing out a new view per caller would give the same chunk a different key
+   * per view, and the cache would fill with duplicates that never hit. One stable
+   * view per element is what makes the cache a cache.
    */
   getStore(): zarr.AsyncReadable {
-    return createPrefixedStore(this.sdata.rootStore.zarritaStore, this.path);
+    this.prefixedStore ??= createPrefixedStore(this.sdata.rootStore.zarritaStore, this.path);
+    return this.prefixedStore;
   }
 
   /**

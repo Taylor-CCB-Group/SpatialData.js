@@ -1,6 +1,7 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
 import { type Table as ArrowTable, tableFromIPC } from 'apache-arrow';
+import { ByteLruCache } from '../memory/byteLruCache.js';
 import {
   getParquetModule,
   type ParquetModule,
@@ -13,6 +14,42 @@ import type { DataSourceParams } from '../Vutils';
 import AnnDataSource from './VAnnDataSource';
 
 export type { ParquetRowGroupReadOptions };
+
+/**
+ * Default ceiling for the encoded (compressed parquet bytes) tier, per source.
+ *
+ * A guess that bounds a leak, not a measured working set — ADR 0005 defers the
+ * numbers until something measures them. It is deliberately the smaller of the
+ * two: compressed bytes are only needed until they have been decoded, whereas a
+ * decoded table is what callers actually hold on to.
+ */
+export const DEFAULT_PARQUET_ENCODED_MAX_BYTES = 128 * 1024 * 1024;
+
+/** Default ceiling for the decoded (Arrow table) tier, per source. */
+export const DEFAULT_PARQUET_DECODED_MAX_BYTES = 256 * 1024 * 1024;
+
+/**
+ * A decoded-table cache entry.
+ *
+ * The promise is cached before it settles — that is the in-flight dedup — so the
+ * byte count starts at zero and is filled in once the table exists. Holding it
+ * on the entry rather than re-deriving it keeps {@link ByteLruCache.byteLength}
+ * a running total: `Data.byteLength` in Arrow walks the whole child tree on every
+ * read, so it is asked exactly once per table.
+ */
+export interface CachedParquetTable {
+  readonly promise: Promise<ArrowTable>;
+  byteLength: number;
+}
+
+/** Resident bytes of a decoded Arrow table, children included. */
+function arrowTableByteLength(table: ArrowTable): number {
+  let bytes = 0;
+  for (const data of table.data) {
+    bytes += data.byteLength;
+  }
+  return bytes;
+}
 
 function parquetColumnValueToNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -176,15 +213,28 @@ export default class SpatialDataTableSource extends AnnDataSource {
   rootAttrs: { softwareVersion: string; formatVersion: string } | null;
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
-  parquetTableBytes: Record<string, Uint8Array>;
+  /**
+   * Cache of compressed parquet file bytes — the encoded tier.
+   *
+   * Byte-bounded (ADR 0005 rung 2): it was a plain `Record` that grew for the
+   * lifetime of the source, holding every parquet file any caller ever touched,
+   * *simultaneously with* the decoded tier below. Read `.byteLength` for what it
+   * is currently holding.
+   */
+  parquetTableBytes: ByteLruCache<Uint8Array>;
   /**
    * Cache of fully-parsed Arrow tables for paths requested without a column
    * filter.  Avoids repeating the WASM `readParquet` + `tableFromIPC` decode
    * when the same parquet file is needed by multiple callers in sequence (e.g.
    * `inferShapesGeometryKindFromParquet`, `loadShapesIndex`, and
    * `loadPolygonShapes` all target the same file).
+   *
+   * Byte-bounded like the encoded tier, with one wrinkle: an entry is inserted
+   * while its decode is still in flight — that is what makes the dedup work — so
+   * it is sized at zero until the table exists and {@link ByteLruCache.recount}
+   * can be told the real number.
    */
-  parquetTableCache: Record<string, Promise<ArrowTable>>;
+  parquetTableCache: ByteLruCache<CachedParquetTable>;
   /**
    * Remembers parquet part layout per path — single file vs. `part.N.parquet`
    * directory, and the per-part metadata — so the probe sequence (see
@@ -217,8 +267,14 @@ export default class SpatialDataTableSource extends AnnDataSource {
     this.elementAttrs = {};
 
     // TODO: change to column-specific storage.
-    this.parquetTableBytes = {};
-    this.parquetTableCache = {};
+    this.parquetTableBytes = new ByteLruCache({
+      maxBytes: params.parquetCacheLimits?.encodedMaxBytes ?? DEFAULT_PARQUET_ENCODED_MAX_BYTES,
+      sizeOf: (bytes) => bytes.byteLength,
+    });
+    this.parquetTableCache = new ByteLruCache({
+      maxBytes: params.parquetCacheLimits?.decodedMaxBytes ?? DEFAULT_PARQUET_DECODED_MAX_BYTES,
+      sizeOf: (entry) => entry.byteLength,
+    });
     this.parquetDatasetMetadataCache = new Map();
     this.parquetPartPathsCache = new Map();
     this.rowGroupColumnExtentCache = new Map();
@@ -325,9 +381,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   async loadParquetBytes(parquetPath: string) {
-    if (this.parquetTableBytes[parquetPath]) {
+    const cachedBytes = this.parquetTableBytes.get(parquetPath);
+    if (cachedBytes) {
       // Return the cached bytes.
-      return this.parquetTableBytes[parquetPath];
+      return cachedBytes;
     }
 
     for (const candidatePath of await this.orderedParquetCandidatePaths(parquetPath)) {
@@ -340,7 +397,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
           continue;
         }
         // Cache the parquet bytes.
-        this.parquetTableBytes[parquetPath] = normalizedBytes;
+        this.parquetTableBytes.set(parquetPath, normalizedBytes);
         return normalizedBytes;
       } catch {
         // Keep probing candidate parquet paths.
@@ -1045,17 +1102,51 @@ export default class SpatialDataTableSource extends AnnDataSource {
   async loadParquetTable(parquetPath: string, columns?: string[]): Promise<ArrowTable> {
     // When no column filter is requested, return a shared promise so that
     // concurrent or sequential callers for the same file share one WASM decode.
-    if (!columns?.length && parquetPath in this.parquetTableCache) {
-      return this.parquetTableCache[parquetPath];
-    }
-
-    const tablePromise = this._loadParquetTableUncached(parquetPath, columns);
-
     if (!columns?.length) {
-      this.parquetTableCache[parquetPath] = tablePromise;
+      const cached = this.parquetTableCache.get(parquetPath);
+      if (cached) {
+        return cached.promise;
+      }
     }
 
-    return tablePromise;
+    const uncached = this._loadParquetTableUncached(parquetPath, columns);
+    if (columns?.length) {
+      return uncached;
+    }
+
+    // Cached BEFORE it settles, so concurrent callers share one WASM decode.
+    const entry: CachedParquetTable = { promise: uncached, byteLength: 0 };
+    this.parquetTableCache.set(parquetPath, entry);
+
+    // Bookkeeping, deliberately kept OFF the caller's chain: this branch settles
+    // the entry's byte count, or drops a poisoned entry, and can do neither to
+    // what the caller sees. It swallows the rejection rather than rethrowing for
+    // the same reason — rethrowing here would surface as an unhandled rejection
+    // on a promise nobody awaits, while the caller's own `uncached` still throws.
+    //
+    // Dropping on rejection is the point: uncleaned, a single transient fetch
+    // failure pins a rejected promise at this path for the lifetime of the
+    // source, and every later read replays a network error that cleared long
+    // ago. It is a cache-liveness fix, not a change to the skip-vs-fail policy in
+    // `docs/plans/parquet-io-error-handling.md`.
+    void uncached.then(
+      (table) => {
+        entry.byteLength = arrowTableByteLength(table);
+        // Only if still current — a retry, or an eviction, may already have
+        // replaced us, and that entry must not be resized or dropped by ours
+        // (the same reasoning as {@link evictIfCurrent}).
+        if (this.parquetTableCache.peek(parquetPath) === entry) {
+          this.parquetTableCache.recount(parquetPath);
+        }
+      },
+      () => {
+        if (this.parquetTableCache.peek(parquetPath) === entry) {
+          this.parquetTableCache.delete(parquetPath);
+        }
+      }
+    );
+
+    return uncached;
   }
 
   /**
