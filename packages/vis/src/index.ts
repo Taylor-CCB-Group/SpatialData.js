@@ -33,6 +33,9 @@ export type {
   ElementsByType,
   FeatureColorResolver,
   FeatureColorResolverContext,
+  FeatureRowState,
+  FeatureRowStateInput,
+  FeatureRowTone,
   HoverTooltipMode,
   ImageLayerContextValue,
   ImageLoaderData,
@@ -75,6 +78,8 @@ export type {
 export {
   composeSpatialDeckLayers,
   createSpatialCanvasStore,
+  describeFeatureRowState,
+  featureRowOpacity,
   ImageLayerContextProvider,
   layerConfig,
   mergeLayerChannelState,
