@@ -135,9 +135,9 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
 /**
  * Morton viewport tiling (D5), and its tile-status overlay.
  *
- * Still opt-in: tiles now colour by feature like the preloaded path, but the feature
- * FILTER does not narrow them yet, so a layer with a selection draws every feature in
- * the viewport — not something to switch on behind a user's back. Switching it on
+ * Still opt-in while the path beds in. Tiles colour by feature and honour the feature
+ * filter (applied inside the row-group scan, so a filtered tile arrives small), but
+ * the tile grid is fixed and coarse and picking is untested here. Switching it on
  * re-plans: the probe runs, and if the element is a Morton artifact the resident
  * preload is released in favour of viewport tiles.
  */
@@ -181,7 +181,7 @@ function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
       <span style={{ color: '#888', fontSize: '11px' }}>
         {enabled
           ? tiled
-            ? 'Reading row groups for the viewport — the memory cap does not apply. The feature filter does not narrow tiles yet.'
+            ? 'Reading row groups for the viewport — the memory cap does not apply. The feature filter is applied as tiles are read.'
             : 'This element has no Morton index; using the capped preload.'
           : 'Load only the viewport, from a Morton-sorted element, instead of a capped sample.'}
       </span>

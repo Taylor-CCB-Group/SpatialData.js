@@ -1,6 +1,6 @@
 # Points: Morton-tiled viewport-driven loading (D5)
 
-Status: **steps 1–3 implemented** (2026-08-12); steps 4–5 design.
+Status: **steps 1–4 implemented** (2026-08-12); step 5 design.
 Implements [points-redesign-punchlist](./points-redesign-punchlist.md) **D5** and the
 "Morton is still dark" line in [points-mvp-and-roadmap](./points-mvp-and-roadmap.md).
 Format contract: [ADR 0002](../adr/0002-spatially-aware-vector-loading.md).
@@ -235,13 +235,44 @@ the tail reading code 0 — a *valid* feature — and mis-colour it with convict
 matching the preloaded path; tests pin one code per point, every code a real catalog
 entry, and codes still returned (and all equal to the selection) under a filter.*
 
-**Step 4 — Feature filter + catalog on the tiled path.**
-Plan the catalog explicitly for tiled elements (dictionary-page scan); exclude tiled
-elements from the `rowCodes` gate; confirm selection changes re-key `getTileData` and
-that a selection is applied *inside* the row-group scan (it already is — verify it is not
-double-applied in the composite). Decide `renderCap` semantics.
-*Acceptance: filtering a tiled element narrows what is fetched, not just what is drawn —
-observable as fewer row-group range reads.*
+**Step 4 — Feature filter + catalog on the tiled path. ✅ done.**
+The selection reaches `getTileData` (and its `updateTriggers`, so a change refetches
+rather than serving the previous selection's tiles) and is applied inside the
+row-group scan. The composite's filter machinery is untouched: it is gated on
+`preloaded-columnar`, so a tiled layer passes straight through. `renderCap` stays
+unset — it is a resident-window notion, and a tile is already bounded by its viewport.
+
+The catalog is now **planned** for a tiled entry. On the preloaded path it arrives
+free as a preview off the geometry decode; a tiled entry never decodes a resident
+batch, so nothing built one — and the selection is stored as feature NAMES, which
+cannot become codes without it. A saved config with a selection would otherwise draw
+every feature until someone opened the panel. A failed catalog is not re-planned
+(`retry()` is the way back), or the task re-emits forever.
+
+The feature-row panel also needed a tiled case. Every other signal it reads describes
+a resident batch a tiled layer does not have, so its rows fell through to "beyond the
+resident window; select it to fetch its points" — greyed, and wrong twice: the points
+are available, and no feature-index scan is involved.
+
+**The original acceptance criterion here was wrong, and the measurement is worth
+keeping.** "Fewer row-group range reads" does not happen on a Morton artifact:
+
+| viewport query on a 12.1M-point element | points returned | row groups | bytes |
+|---|---|---|---|
+| all 541 features | 3,128,988 | 92 | 158.1 MB |
+| one gene (EPCAM) | 87,594 | 92 | 158.1 MB |
+
+Row groups are chosen **spatially**, and a gene's points are spread across all of
+them, so no feature filter can skip one. What the filter buys is 36x fewer points
+leaving the worker — the GPU, memory and overdraw win — not less I/O. Narrowing the
+*fetch* by feature needs a feature-primary index; that is exactly what the
+`transcripts_feature_then_morton` / `transcripts_morton_then_feature` permutations
+exist to explore, and it is the open index-selection question in ADR 0002/0003 rather
+than something this step could deliver.
+
+*Acceptance met, restated: filtering a tiled element narrows what each tile returns
+(36x for one gene), a selection change refetches rather than reusing cached tiles, and
+a tiled element resolves a name-based selection without the panel ever opening.*
 
 **Step 5 — Defaults + docs.**
 Flip `pointsTiling` default (open question 1), update

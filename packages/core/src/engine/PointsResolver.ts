@@ -366,7 +366,24 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // deferral real: planning them while the probe is in flight both does the wasted
     // read AND settles the codes, so the check on the next pass reads "already
     // loaded" and the work is invisible from then on.
-    if (probeMetadata || this.isTiledFor(config, key)) {
+    if (probeMetadata) {
+      return tasks;
+    }
+
+    if (this.isTiledFor(config, key)) {
+      // The catalog is the one resource a tiled entry must ask for OUT LOUD. On the
+      // preloaded path it arrives free, as a preview off the geometry decode; a tiled
+      // entry never decodes a resident batch, so nothing would build one — and the
+      // selection is stored as feature NAMES, which cannot become the codes the tile
+      // scan filters on without it. Left unplanned, a saved config with a selection
+      // draws every feature until someone happens to open the filter panel.
+      //
+      // Cheap where it is needed: an element only reaches the tiled path with a
+      // `{feature_key}_codes` column (the probe requires one), which is the fast
+      // row-group dictionary scan rather than a whole-file read.
+      if (this.shouldPlanCatalog(key)) {
+        tasks.push({ id: `${key}#catalog`, resource: 'catalog' });
+      }
       return tasks;
     }
 
@@ -1240,6 +1257,22 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
 
   /** True while a settled catalog does not yet exist AND one is on its way (either
    * the full-list scan or the geometry preload that carries the preview). */
+  /**
+   * Whether {@link plan} should ask for a catalog: not settled, not in flight, and
+   * not already failed.
+   *
+   * The failure clause is what stops a retry loop. `getFeatureCatalog` reports
+   * `undefined` for a failed scan exactly as it does for one that never ran, so a
+   * gate on the value alone would re-emit the task on every reconcile forever.
+   * {@link retry} is the deliberate way back from a failure.
+   */
+  private shouldPlanCatalog(key: string): boolean {
+    const slot = this.entries.get(key)?.catalog;
+    if (!slot) return true;
+    if (slot.isFailed || slot.isLoading) return false;
+    return slot.settledKey !== 'full';
+  }
+
   isFeatureCatalogLoading(key: string): boolean {
     const entry = this.entries.get(key);
     if (!entry) return false;

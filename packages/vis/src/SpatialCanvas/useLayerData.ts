@@ -1209,9 +1209,25 @@ export function useLayerData(
           //
           // Colour comes off the tile batch itself: the scan returns a feature code
           // per point (step 3), so the same colour props the preloaded path uses
-          // apply here. The feature FILTER is still step 4 — a tiled layer draws
-          // every feature in the viewport regardless of the selection.
+          // apply here.
+          //
+          // The FILTER is pushed down into the row-group scan rather than applied to
+          // a batch already in memory, so a tile arrives holding only the selected
+          // features — 36x fewer points for one gene on a real transcripts element,
+          // never uploaded and never drawn.
+          //
+          // It does NOT narrow the fetch. Measured on that element: selecting one
+          // gene read the same 92 row groups and the same 158MB as the unfiltered
+          // view. Row groups are chosen SPATIALLY on a Morton artifact and a gene's
+          // points are spread across all of them, so only a feature-primary index
+          // could skip any (the open index-permutation question in ADR 0002/0003).
           const element = elem.element as PointsElement;
+          // `undefined` means "no filter"; an empty array means "filter to nothing".
+          // Both reach `loadInBounds` unchanged and the scan honours the distinction.
+          const tiledFeatureCodes = resolveFeatureSelectionCodes(
+            config,
+            pointsEngine.getFeatureCatalog(elem.key)
+          );
           const tiledResource = pointsEngine.getTiledResource(element, elem.key);
           if (tiledResource) {
             const showTileDebugOverlay = config.showTileDebugOverlay === true;
@@ -1242,6 +1258,7 @@ export function useLayerData(
                 ...(showTileDebugOverlay
                   ? { tileDebugSignature: tileDebugSignature(tileDebugStore) }
                   : {}),
+                ...(tiledFeatureCodes ? { featureCodes: tiledFeatureCodes } : {}),
                 ...(config.colorByFeature ? { colorByFeature: true } : {}),
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
