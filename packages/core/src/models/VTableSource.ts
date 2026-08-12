@@ -197,8 +197,22 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * fallback used when a store has no range support, so the layout is still
    * resolved once rather than per call. */
   parquetPartPathsCache: Map<string, Promise<string[]>>;
-  /** Morton min/max per row group — avoids re-decoding row groups during bisect. */
-  rowGroupColumnExtentCache: Map<string, { min: number | null; max: number | null }>;
+  /**
+   * Morton min/max per row group — avoids re-decoding row groups during bisect.
+   *
+   * Holds the in-flight PROMISE, not the settled value. Caching only the result
+   * dedups nothing while the read is running, and this index is built under exactly
+   * that load: every viewport tile bisects concurrently over the same row groups, so
+   * each one used to start its own full row-group fetch for an entry the others were
+   * already fetching.
+   */
+  rowGroupColumnExtentCache: Map<
+    string,
+    Promise<{ min: number | null; max: number | null } | null>
+  >;
+  /** First value of a column per row group — the boundary the extent is derived
+   * from, shared between neighbouring row groups so each is read once. */
+  rowGroupColumnFirstValueCache: Map<string, Promise<number | null>>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -222,6 +236,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     this.parquetDatasetMetadataCache = new Map();
     this.parquetPartPathsCache = new Map();
     this.rowGroupColumnExtentCache = new Map();
+    this.rowGroupColumnFirstValueCache = new Map();
 
     // Table-specific properties
     this.obsIndices = {};
@@ -976,6 +991,24 @@ export default class SpatialDataTableSource extends AnnDataSource {
     );
   }
 
+  /**
+   * First and last value of a column within one row group — the sorted-order index
+   * the Morton row-group bisect searches.
+   *
+   * **This should be reading the row group's column statistics**, which parquet
+   * writers already put in the footer we have parsed: `min`/`max` are sitting there,
+   * exact, for nothing. Instead each call range-reads the row group's bytes (every
+   * column, ~2MB on a real transcripts artifact) and decodes it twice — once for the
+   * first row, once for the last. Building the index for a 245-row-group file that
+   * way can fetch the whole file to recover ~4KB of boundary values.
+   *
+   * It is written this way because the **vendored parquet-wasm build exposes no
+   * statistics accessor**: `RowGroupMetaData` offers only `numRows`/`fileOffset`/
+   * `compressedSize`/`column`, and `ColumnChunkMetaData` offers no `statistics()`.
+   * Fixing it properly needs either a wasm rebuild that exposes statistics or a
+   * minimal Thrift read of the footer we already hold — see
+   * `docs/plans/points-morton-tiled-viewport-loading.md`.
+   */
   async loadParquetRowGroupColumnExtent(
     parquetPath: string,
     columnName: string,
@@ -986,38 +1019,105 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (cached) {
       return cached;
     }
-    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
-    const rowCount = dataset?.rowGroupRows?.[rowGroupIndex];
-    if (!rowCount) {
-      return null;
-    }
-    const columnOptions: ParquetRowGroupReadOptions = { columns: [columnName] };
-    const minTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-      ...columnOptions,
-      limit: 1,
-    });
-    const minColumn = minTable?.getChild(columnName);
-    if (!minColumn || minColumn.length === 0) {
-      return null;
-    }
-    let maxValue: number | null = parquetColumnValueToNumber(minColumn.get(0));
-    if (rowCount > 1) {
-      const maxTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-        ...columnOptions,
-        offset: rowCount - 1,
-        limit: 1,
+    const pending = this.readParquetRowGroupColumnExtent(parquetPath, columnName, rowGroupIndex);
+    this.rowGroupColumnExtentCache.set(cacheKey, pending);
+    // A failed probe must not be cached as a permanent "no extent" — that would
+    // strand the bisect on a transient network error for the life of the source.
+    pending
+      .then((extent) => {
+        if (extent === null && this.rowGroupColumnExtentCache.get(cacheKey) === pending) {
+          this.rowGroupColumnExtentCache.delete(cacheKey);
+        }
+      })
+      .catch(() => {
+        if (this.rowGroupColumnExtentCache.get(cacheKey) === pending) {
+          this.rowGroupColumnExtentCache.delete(cacheKey);
+        }
       });
-      const maxColumn = maxTable?.getChild(columnName);
-      if (maxColumn && maxColumn.length > 0) {
-        maxValue = parquetColumnValueToNumber(maxColumn.get(0));
-      }
+    return pending;
+  }
+
+  private async readParquetRowGroupColumnExtent(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<{ min: number | null; max: number | null } | null> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const totalRowGroups = dataset?.totalNumRowGroups ?? 0;
+    if (!dataset?.rowGroupRows?.[rowGroupIndex]) {
+      return null;
     }
-    const extent = {
-      min: parquetColumnValueToNumber(minColumn.get(0)),
-      max: maxValue,
-    };
-    this.rowGroupColumnExtentCache.set(cacheKey, extent);
-    return extent;
+    const min = await this.readParquetRowGroupColumnFirstValue(
+      parquetPath,
+      columnName,
+      rowGroupIndex
+    );
+    if (min === null) {
+      return null;
+    }
+    // The last row group has nothing after it, so its upper bound is open. `null`
+    // already means "unbounded" to the bisect, which treats it as "this group may
+    // contain the target".
+    const max =
+      rowGroupIndex + 1 < totalRowGroups
+        ? await this.readParquetRowGroupColumnFirstValue(parquetPath, columnName, rowGroupIndex + 1)
+        : null;
+    return { min, max };
+  }
+
+  /**
+   * First value of `columnName` in one row group — the only boundary value that can
+   * actually be read here, and the whole basis of {@link readParquetRowGroupColumnExtent}.
+   *
+   * **The last value cannot be read.** The obvious way to get it is
+   * `readParquetRowGroup(..., { offset: rowCount - 1, limit: 1 })`, and that is what
+   * this used to do — but the vendored parquet-wasm ignores `offset` on a row-group
+   * read and hands back the FIRST row again. Nothing failed; every row group simply
+   * reported `max === min`, i.e. that it spanned a single value.
+   *
+   * On a sorted column that is not a small error, it is a systematic one: the bisect
+   * asks "first row group whose max >= target", so an understated max moves the
+   * answer one group too far forward and the group actually CONTAINING the target is
+   * never read. On a Morton points artifact that is missing row groups per viewport
+   * query — holes in the render, in Z-order-shaped bands.
+   *
+   * The sort order gives the bound for free: the file is sorted on this column, so
+   * row group i's values all lie at or below row group i+1's first value. Using that
+   * as the upper bound is *conservative* — equal values spanning a boundary keep both
+   * groups in the range — and it costs one read per row group instead of two.
+   */
+  private async readParquetRowGroupColumnFirstValue(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<number | null> {
+    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}::first`;
+    const cached = this.rowGroupColumnFirstValueCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const pending = (async () => {
+      const options: ParquetRowGroupReadOptions = { columns: [columnName], limit: 1 };
+      const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, options);
+      const column = table?.getChild(columnName);
+      if (!column || column.length === 0) {
+        return null;
+      }
+      return parquetColumnValueToNumber(column.get(0));
+    })();
+    this.rowGroupColumnFirstValueCache.set(cacheKey, pending);
+    pending
+      .then((value) => {
+        if (value === null && this.rowGroupColumnFirstValueCache.get(cacheKey) === pending) {
+          this.rowGroupColumnFirstValueCache.delete(cacheKey);
+        }
+      })
+      .catch(() => {
+        if (this.rowGroupColumnFirstValueCache.get(cacheKey) === pending) {
+          this.rowGroupColumnFirstValueCache.delete(cacheKey);
+        }
+      });
+    return pending;
   }
 
   /**

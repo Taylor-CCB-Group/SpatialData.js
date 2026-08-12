@@ -114,3 +114,56 @@ describe('describeFeatureRowState — partial residency', () => {
     );
   });
 });
+
+describe('a tiled layer has no resident window to describe', () => {
+  const base = {
+    resident: false,
+    rendered: false,
+    selected: true,
+    scanning: false,
+    supportsOnDemandLoad: true,
+    residentKnown: false,
+  };
+
+  /**
+   * Every other signal here describes a resident batch a tiled layer does not have,
+   * so without saying so explicitly its rows fall through to "beyond the resident
+   * window; select it to fetch its points" — greyed, and wrong twice over: the points
+   * ARE available, and no feature-index scan is involved.
+   */
+  it('reads as available rather than beyond the window', () => {
+    const tiled = describeFeatureRowState({ ...base, tiled: true });
+
+    expect(tiled.tone).toBe('tiled');
+    expect(tiled.greyed).toBe(false);
+    expect(tiled.reason).toMatch(/viewport tiles/i);
+  });
+
+  it('is not greyed even when it is deselected and nothing is resident', () => {
+    const tiled = describeFeatureRowState({ ...base, selected: false, tiled: true });
+
+    expect(tiled.greyed).toBe(false);
+  });
+
+  it('outranks the resident-unknown fallback, which is right by accident', () => {
+    // Same inputs, no `tiled`: not greyed either, but for the wrong reason — it
+    // claims coverage is unknown, when for a tiled layer it is known and complete.
+    const untiled = describeFeatureRowState(base);
+
+    expect(untiled.greyed).toBe(false);
+    expect(untiled.reason).toMatch(/unknown/i);
+    expect(untiled.tone).not.toBe('tiled');
+  });
+
+  it('does not leak into a preloaded layer', () => {
+    const preloaded = describeFeatureRowState({
+      ...base,
+      residentKnown: true,
+      resident: false,
+      selected: false,
+    });
+
+    expect(preloaded.tone).toBe('notLoaded');
+    expect(preloaded.greyed).toBe(true);
+  });
+});

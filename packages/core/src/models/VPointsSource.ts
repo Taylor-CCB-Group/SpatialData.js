@@ -1,5 +1,9 @@
 import type { Vector } from 'apache-arrow';
-import { decodeIntStat, parseParquetFileMetaData } from '../parquetFooterStats.js';
+import {
+  decodeIntStat,
+  decodeUnsignedIntStat,
+  parseParquetFileMetaData,
+} from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
   featureCodeMapFromCatalog,
@@ -75,6 +79,45 @@ function rowGroupFeatureCodeExtents(
       const min = decodeIntStat(column.minValue, column.physicalType);
       const max = decodeIntStat(column.maxValue, column.physicalType);
       extents.push(min !== null && max !== null ? { min, max } : null);
+    }
+  }
+  return extents.length === expectedRowGroupCount ? extents : [];
+}
+
+/**
+ * Per-row-group `[min, max]` for `morton_code_2d`, from the same footer statistics the
+ * feature-code index reads — so this costs **nothing**: the parts, and their footer
+ * bytes, are already in hand by the time the tiling probe runs.
+ *
+ * Read as UNSIGNED: the column is `uint32`, which parquet stores as INT32 with a
+ * UINT_32 annotation, and Morton codes use the top bit for real.
+ *
+ * Returns `[]` for "unavailable — do not conclude anything", matching
+ * {@link rowGroupFeatureCodeExtents}: a footer that will not parse, a column with no
+ * statistics, or a flattened count that disagrees with the dataset's row-group count.
+ */
+function rowGroupMortonExtents(
+  parts: readonly { schemaBytes: Uint8Array }[],
+  expectedRowGroupCount: number
+): MortonRowGroupExtent[] {
+  const extents: MortonRowGroupExtent[] = [];
+  for (const part of parts) {
+    if (part.schemaBytes.length <= 8) {
+      return [];
+    }
+    // Strip the trailing 4-byte length + "PAR1" to get the FileMetaData thrift.
+    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
+    let footer: ReturnType<typeof parseParquetFileMetaData>;
+    try {
+      footer = parseParquetFileMetaData(metaBytes);
+    } catch {
+      return [];
+    }
+    for (const rowGroup of footer.rowGroups) {
+      const column = rowGroup.columns.find((col) => col.path === MORTON_CODE_2D_COLUMN);
+      const min = decodeUnsignedIntStat(column?.minValue, column?.physicalType ?? null);
+      const max = decodeUnsignedIntStat(column?.maxValue, column?.physicalType ?? null);
+      extents.push(min !== null && max !== null ? [min, max] : null);
     }
   }
   return extents.length === expectedRowGroupCount ? extents : [];
@@ -208,15 +251,19 @@ function pointsScanChunkProgress(
 
 import {
   extractSentinelBoundingBox,
-  featureCodeAllowSet,
   filterPointsToBounds,
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
+  type MortonRowGroupExtent,
+  mortonBoundsAgreeWithCodes,
   mortonIntervalsForBounds,
+  mortonRowGroupExtentsAreSorted,
   type PointsFeatureCatalog,
   type PointsInBoundsOptions,
   type PointsInBoundsResponse,
   type PointsTilingMetadata,
+  type SpatialBounds,
+  selectMortonRowGroups,
 } from '../pointsTiling.js';
 import type { Axis } from '../schemas';
 // import { normalizeAxes } from '@vitessce/spatial-utils';
@@ -2253,6 +2300,46 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return featureCatalogFromCodeMap(featureKey, codeToName);
   }
 
+  /**
+   * Cross-check the sentinel bounding box against real rows before trusting it.
+   *
+   * Costs one row-group range read, once per element, cached with the metadata. That
+   * is roughly one step of the bisect a single viewport query already runs eight of —
+   * cheap next to deciding, wrongly, to read the whole artifact through a broken
+   * index. Sampled from the MIDDLE of the file: a truncated box can agree with the
+   * true one near the origin by coincidence, never in the interior.
+   *
+   * Only positive evidence of disagreement disables tiling. A file we cannot sample
+   * (one row group, an unreadable group) keeps today's behaviour rather than losing
+   * the feature to a read that failed for an unrelated reason.
+   */
+  private async mortonBoundsMatchStoredCodes(
+    parquetPath: string,
+    bounds: SpatialBounds
+  ): Promise<boolean> {
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const totalRowGroups = dataset?.totalNumRowGroups ?? 0;
+    if (totalRowGroups <= 1) {
+      return true;
+    }
+    const table = await this.loadParquetRowGroupByGroupIndex(
+      parquetPath,
+      Math.max(1, Math.floor(totalRowGroups / 2)),
+      { columns: ['x', 'y', MORTON_CODE_2D_COLUMN] }
+    ).catch(() => null);
+    if (!table || table.numRows === 0) {
+      return true;
+    }
+    const xs = table.getChild('x')?.toArray();
+    const ys = table.getChild('y')?.toArray();
+    const codes = table.getChild(MORTON_CODE_2D_COLUMN)?.toArray();
+    if (!xs || !ys || !codes) {
+      return true;
+    }
+    const { checked, matched } = mortonBoundsAgreeWithCodes(xs, ys, codes, bounds);
+    return checked === 0 || matched * 2 > checked;
+  }
+
   async getPointsTilingMetadata(elementPath: string): Promise<PointsTilingMetadata | null> {
     if (this.pointTilingMetadataCache.has(elementPath)) {
       return this.pointTilingMetadataCache.get(elementPath) ?? null;
@@ -2294,6 +2381,23 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
 
     const canLoadRowGroups = await this.canLoadParquetRowGroups();
+    // Having a morton_code_2d column does not make a file Morton-SORTED. A
+    // feature-primary artifact carries the same column with the same values, and the
+    // row-group bisect run over it lands arbitrarily — the visible result is a tile
+    // holding one or two features and missing the rest. Free to check: the footer
+    // statistics are already in `datasetMetadata.parts`.
+    const mortonExtents = datasetMetadata
+      ? rowGroupMortonExtents(datasetMetadata.parts, datasetMetadata.totalNumRowGroups)
+      : [];
+    const rowGroupsAreSorted = mortonRowGroupExtentsAreSorted(mortonExtents);
+    if (!rowGroupsAreSorted) {
+      console.warn(
+        `Morton tiling disabled for ${elementPath}: its morton_code_2d column is not ` +
+          'sorted across row groups, so it is indexed by something else (a ' +
+          'feature-primary artifact carries the same column unsorted). The row-group ' +
+          'bisect needs a sorted index; falling back to the capped preload.'
+      );
+    }
     const firstRowGroupRowCount = datasetMetadata?.rowGroupRows?.[0] ?? 0;
     const hasValidSentinelRowGroup = firstRowGroupRowCount >= 2 && firstRowGroupRowCount <= 4;
     const firstRowGroup =
@@ -2303,9 +2407,29 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             limit: 4,
           })
         : null;
-    const bounds = firstRowGroup
+    const claimedBounds = firstRowGroup
       ? (extractSentinelBoundingBox(firstRowGroup) ?? undefined)
       : undefined;
+    // Skip the sampling read when the sort has already ruled the file out — the answer
+    // cannot change the outcome, and this is the probe's only real I/O. The box then
+    // goes unreported rather than reported-unverified, which is the habit that let a
+    // stale sentinel box draw half a slide; nothing reads `bounds` without
+    // `supportsRowGroupRangeReads` in any case.
+    const bounds =
+      claimedBounds &&
+      rowGroupsAreSorted &&
+      (await this.mortonBoundsMatchStoredCodes(parquetPath, claimedBounds))
+        ? claimedBounds
+        : undefined;
+    if (claimedBounds && !bounds && rowGroupsAreSorted) {
+      console.warn(
+        `Morton tiling disabled for ${elementPath}: its sentinel bounding box ` +
+          `(${claimedBounds.minX}, ${claimedBounds.minY})-(${claimedBounds.maxX}, ${claimedBounds.maxY}) ` +
+          'is not the domain its morton_code_2d values were quantised against, so any ' +
+          'viewport query against it would silently drop rows. Falling back to the ' +
+          'capped preload; the artifact needs rewriting.'
+      );
+    }
     const rowGroupSizes = datasetMetadata?.rowGroupRows ?? [];
 
     const metadata: PointsTilingMetadata = {
@@ -2319,8 +2443,15 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       totalRowGroups: datasetMetadata?.totalNumRowGroups ?? 0,
       maxRowsPerGroup: rowGroupSizes.length ? Math.max(...rowGroupSizes) : 0,
       rowGroupRowCounts: datasetMetadata?.rowGroupRows,
-      supportsRowGroupRangeReads: Boolean(datasetMetadata && canLoadRowGroups && bounds),
+      supportsRowGroupRangeReads: Boolean(
+        datasetMetadata && canLoadRowGroups && bounds && rowGroupsAreSorted
+      ),
       bounds,
+      // Carried on the metadata so viewport queries select row groups from memory
+      // instead of bisecting the file. Empty means "no usable statistics" — the
+      // bisect stays as the fallback, so this stays an optimisation, not a
+      // requirement.
+      ...(mortonExtents.length > 0 ? { rowGroupMortonExtents: mortonExtents } : {}),
     };
 
     return metadata;
@@ -2461,6 +2592,46 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     };
   }
 
+  /**
+   * Row groups a set of Morton intervals can touch.
+   *
+   * Prefers the in-memory index the probe read out of the footer: exact, and free.
+   * The bisect below is the fallback for an artifact whose statistics we could not
+   * read — it recovers the same two numbers per row group by range-reading and
+   * decoding the group's bytes, ~2MB a step on a real transcripts artifact, and a
+   * single viewport query walks `log2(rowGroups)` steps for each of a few hundred
+   * intervals. That is the whole reason viewport queries used to be able to pull the
+   * entire file down to answer a question the footer had already answered.
+   */
+  private async selectRowGroupsForIntervals(
+    metadata: PointsTilingMetadata,
+    intervals: ReadonlyArray<readonly [number, number]>
+  ): Promise<number[]> {
+    const extents = metadata.rowGroupMortonExtents;
+    if (extents && extents.length === metadata.totalRowGroups) {
+      return selectMortonRowGroups(extents, intervals);
+    }
+    const rowGroupSet = new Set<number>();
+    for (const [start, end] of intervals) {
+      const first = await this.bisectRowGroupsRight(
+        metadata.parquetPath,
+        metadata.totalRowGroups,
+        start
+      );
+      const last = await this.bisectRowGroupsRight(
+        metadata.parquetPath,
+        metadata.totalRowGroups,
+        end
+      );
+      for (let rowGroup = first; rowGroup <= last; rowGroup++) {
+        if (rowGroup >= 0 && rowGroup < metadata.totalRowGroups) {
+          rowGroupSet.add(rowGroup);
+        }
+      }
+    }
+    return [...rowGroupSet].sort((a, b) => a - b);
+  }
+
   private async bisectRowGroupsRight(
     parquetPath: string,
     totalRowGroups: number,
@@ -2494,27 +2665,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
     checkAbort(options.signal);
-    const allowedFeatureCodes = featureCodeAllowSet(options.featureCodes);
     const intervals = mortonIntervalsForBounds(metadata.bounds, options.bounds);
-    const rowGroupSet = new Set<number>();
-    for (const [start, end] of intervals) {
-      const first = await this.bisectRowGroupsRight(
-        metadata.parquetPath,
-        metadata.totalRowGroups,
-        start
-      );
-      const last = await this.bisectRowGroupsRight(
-        metadata.parquetPath,
-        metadata.totalRowGroups,
-        end
-      );
-      for (let rowGroup = first; rowGroup <= last; rowGroup++) {
-        if (rowGroup >= 0 && rowGroup < metadata.totalRowGroups) {
-          rowGroupSet.add(rowGroup);
-        }
-      }
-    }
-    const rowGroups = [...rowGroupSet].sort((a, b) => a - b);
+    const rowGroups = await this.selectRowGroupsForIntervals(metadata, intervals);
     const totalRowsUpperBound = rowGroups.reduce(
       (sum, rowGroup) => sum + rowGroupCountForIndex(metadata, rowGroup),
       0
@@ -2525,18 +2677,18 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     // Dynamic, like the call site below: keeps the worker scan module out of the
     // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
-    const { Float32PointBuffer, scanMortonTableInBounds } = await import(
+    const { Float32PointBuffer, Int32PointBuffer, scanMortonTableInBounds } = await import(
       '../workers/pointsWorkerScan.js'
     );
     const xs = new Float32PointBuffer();
     const ys = new Float32PointBuffer();
     const zs = new Float32PointBuffer();
     const hasZ = metadata.axisNames.includes('z');
-    const filterByFeature = allowedFeatureCodes !== null;
-    const featureCodeColumnName =
-      filterByFeature && metadata.featureCodeColumnName
-        ? metadata.featureCodeColumnName
-        : undefined;
+    // Project the code column whenever the artifact HAS one — not only when a filter
+    // is active. The codes ride back on the batch so a tiled layer can colour by
+    // feature, and the "all features" view (no filter) is exactly the case that used
+    // to arrive without them and render flat.
+    const featureCodeColumnName = metadata.featureCodeColumnName || undefined;
 
     ensurePointsWorker();
     if (isPointsWorkerEnabled()) {
@@ -2568,6 +2720,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
               bounds: options.bounds,
               loadMode: 'row-groups',
               tiling: metadata,
+              ...(workerResult.featureCodes ? { featureCodes: workerResult.featureCodes } : {}),
             };
           }
         } catch (error) {
@@ -2586,6 +2739,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       metadata.mortonCodeColumnName,
       ...(featureCodeColumnName ? [featureCodeColumnName] : []),
     ];
+    const codes = featureCodeColumnName ? new Int32PointBuffer() : undefined;
     for (const rowGroup of rowGroups) {
       checkAbort(options.signal);
       const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup, {
@@ -2605,6 +2759,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         xs,
         ys,
         zs,
+        ...(codes ? { codes } : {}),
       });
     }
 
@@ -2612,12 +2767,17 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return null;
     }
 
+    const pointCount = xs.length;
+    const outCodes = codes?.toArray();
     return {
       data: hasZ ? [xs.toArray(), ys.toArray(), zs.toArray()] : [xs.toArray(), ys.toArray()],
-      shape: [hasZ ? 3 : 2, xs.length],
+      shape: [hasZ ? 3 : 2, pointCount],
       bounds: options.bounds,
       loadMode: 'row-groups',
       tiling: metadata,
+      // One code per point or none at all — a short array would leave the tail
+      // reading code 0, a valid feature, and mis-colour it with conviction.
+      ...(outCodes && outCodes.length === pointCount ? { featureCodes: outCodes } : {}),
     };
   }
 }

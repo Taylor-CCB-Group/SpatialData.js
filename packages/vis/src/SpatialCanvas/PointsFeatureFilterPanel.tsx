@@ -1,4 +1,8 @@
-import { featureNamesForCodes, resolveFeatureSelectionCodes } from '@spatialdata/core';
+import {
+  featureNamesForCodes,
+  pointsTilingEnabled,
+  resolveFeatureSelectionCodes,
+} from '@spatialdata/core';
 import { featureCodeToRgb } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -178,6 +182,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     catalogLoading,
     catalogRefining,
     residentCodes,
+    tiled,
     loadedMatchingCodes,
     supportsOnDemandLoad,
     matchingLoadState,
@@ -382,6 +387,9 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   // rendered — not the current scan's settled state — keeps already-loaded
   // features un-greyed while a newly added feature's scan is still in flight.
   const residentKnown = residentCodes !== undefined;
+  // Element fact AND this layer's config — the probe's answer is cached per element
+  // and outlives the config that asked for it.
+  const tiledLayer = tiled && pointsTilingEnabled(config.pointsTiling);
   const scanning = matchingLoadState?.loading ?? false;
   const rowInfo = (code: number) => {
     const resident = residentKnown && (residentCodes?.has(code) ?? false);
@@ -396,6 +404,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
       residentKnown,
       residentPointCount: residentFeatureCounts?.get(code),
       datasetPointCount: datasetCountByCode.get(code),
+      tiled: tiledLayer,
     });
     return { resident, rendered, selected, state };
   };

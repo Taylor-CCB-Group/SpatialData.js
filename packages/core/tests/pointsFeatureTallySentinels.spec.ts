@@ -38,7 +38,7 @@ function columns(dictionaryEncoded: boolean) {
     [MORTON_CODE_2D_COLUMN]: Int32Array.from(MORTON) as never,
   });
   return {
-    name: table.getChild(FEATURE_KEY)as never,
+    name: table.getChild(FEATURE_KEY) as never,
     morton: table.getChild(MORTON_CODE_2D_COLUMN) as never,
     rows: table.numRows,
   };

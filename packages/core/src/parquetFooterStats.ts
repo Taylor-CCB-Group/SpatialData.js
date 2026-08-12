@@ -329,6 +329,29 @@ export function parseParquetFileMetaData(fileMetaDataBytes: Uint8Array): Parquet
   return new ThriftCompactReader(fileMetaDataBytes).readFileMetaData();
 }
 
+/**
+ * Decode a `Statistics` min/max for a column whose logical type is UNSIGNED.
+ *
+ * Parquet has no unsigned physical types: a `uint32` column is stored as INT32 with a
+ * UINT_32 logical annotation, so {@link decodeIntStat} would read the top half of the
+ * range as negative. `morton_code_2d` spans the full 32 bits by construction — the
+ * far corner of the slide is 0xFFFFFFFF — so the difference is not academic.
+ */
+export function decodeUnsignedIntStat(
+  bytes: Uint8Array | undefined,
+  physicalType: number | null
+): number | null {
+  if (!bytes || bytes.length === 0) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (physicalType === ParquetPhysicalType.INT32) {
+    return bytes.length >= 4 ? view.getUint32(0, true) : null;
+  }
+  if (physicalType === ParquetPhysicalType.INT64) {
+    return bytes.length >= 8 ? Number(view.getBigUint64(0, true)) : null;
+  }
+  return null;
+}
+
 /** Decode a `Statistics` min/max value for an integer physical type (little-endian). */
 export function decodeIntStat(
   bytes: Uint8Array | undefined,

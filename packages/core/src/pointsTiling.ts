@@ -8,6 +8,34 @@ export const MORTON_CODE_VALUE_MAX = 2 ** MORTON_CODE_BITS_PER_AXIS - 1;
 
 export type SpatialBounds = AxisAlignedBounds;
 
+/** Whether a points layer probes for a Morton index before preloading (D5). */
+export type PointsTilingMode = 'auto' | 'off';
+
+/**
+ * `'auto'` since D5 step 7.
+ *
+ * On a Morton element the tiled path is not merely an alternative, it is the better
+ * one: the preload it replaces keeps the first `cap` rows in FILE order, and file
+ * order on a Morton artifact is a prefix of the Z-curve — a spatially skewed chunk of
+ * the slide, not a sample of it. Tiles read what you are looking at instead.
+ *
+ * On anything else the probe answers `null` from the schema alone and costs nothing
+ * beyond footer metadata the preload path reads regardless; on a malformed Morton
+ * artifact the guards in `getPointsTilingMetadata` decline it, warn, and fall through
+ * to the preload.
+ */
+export const DEFAULT_POINTS_TILING: PointsTilingMode = 'auto';
+
+/**
+ * Resolve the tiling mode, default included. Call this instead of comparing to
+ * `'auto'`: the default has to mean the same thing to the resolver deciding what to
+ * load, the hook deciding what to render, and the panel drawing the checkbox, and
+ * three literal comparisons is how those drift apart.
+ */
+export function pointsTilingEnabled(mode: PointsTilingMode | undefined): boolean {
+  return (mode ?? DEFAULT_POINTS_TILING) === 'auto';
+}
+
 export interface PointsFeatureEntry {
   code: number;
   name: string;
@@ -42,6 +70,13 @@ export interface PointsTilingMetadata {
   rowGroupRowCounts?: number[];
   supportsRowGroupRangeReads: boolean;
   bounds?: SpatialBounds;
+  /**
+   * Per-row-group `[min, max]` of the Morton column, read from footer statistics
+   * during the probe. Present means viewport queries can select row groups from
+   * memory ({@link selectMortonRowGroups}); absent means falling back to the bisect,
+   * which pays ~2MB per step to recover the same two numbers.
+   */
+  rowGroupMortonExtents?: MortonRowGroupExtent[];
 }
 
 export type PointsInBoundsResponse = PointsColumnarData & {
@@ -73,6 +108,161 @@ export function origCoordToNormCoord(x: number, y: number, bbox: SpatialBounds):
       )
     ),
   ];
+}
+
+/** Spread the low 16 bits of `n` into the even bit positions of a 32-bit lane. */
+function spreadBits(n: number): number {
+  let x = n & 0xffff;
+  x = (x | (x << 8)) & 0x00ff00ff;
+  x = (x | (x << 4)) & 0x0f0f0f0f;
+  x = (x | (x << 2)) & 0x33333333;
+  x = (x | (x << 1)) & 0x55555555;
+  return x;
+}
+
+/**
+ * Interleave a quantised (x, y) pair into the code stored in `morton_code_2d`:
+ * x in the even bits, y in the odd ones.
+ *
+ * `+ ... * 2` rather than `| ... << 1` on purpose — the y term reaches bit 31, and
+ * JS bitwise operators would hand back a negative int32 for the top of the domain.
+ *
+ * Must agree with {@link zcoverRectangle}'s quadrant order (child +1 is x-high, +2 is
+ * y-high) and with the writer's `morton_code_2d`; a disagreement here would make
+ * every interval query wrong, so {@link mortonBoundsAgreeWithCodes} checks it against
+ * real rows rather than trusting all three to stay in step.
+ */
+export function mortonCode2dFromNormCoord(nx: number, ny: number): number {
+  return spreadBits(nx) + spreadBits(ny) * 2;
+}
+
+/** The code a point *should* carry if `bbox` is the quantisation domain. */
+export function mortonCode2dForPoint(x: number, y: number, bbox: SpatialBounds): number {
+  const [nx, ny] = origCoordToNormCoord(x, y, bbox);
+  return mortonCode2dFromNormCoord(nx, ny);
+}
+
+/**
+ * Does `bounds` describe the domain the stored Morton codes were actually quantised
+ * against? Recomputes the code for a sample of real rows and counts agreement.
+ *
+ * The sentinel rows are a **claim the artifact makes about itself**, and nothing else
+ * in the file forces them to be true. When they are wrong every derived answer is
+ * wrong in the same silent, subtractive direction: the tile grid is clipped to the
+ * bogus box so whole regions are never even requested, and `mortonIntervalsForBounds`
+ * normalises viewports against it and selects the wrong row groups. Points are never
+ * misplaced — the reader re-filters to the query bounds — so the only visible symptom
+ * is that some of the map is missing.
+ *
+ * Measured on a real 12.1M-point Xenium artifact, the signal is not marginal: a sound
+ * element matched 320/320 sampled rows, one with a stale sentinel box matched 0/320.
+ * A handful of misses is normal — a coordinate landing exactly on a cell boundary can
+ * floor either way — hence a majority test rather than an exact one.
+ *
+ * Samples are spread evenly across the input: consecutive rows in a Morton-sorted row
+ * group share a long code prefix, so the first N would agree or disagree together.
+ */
+export function mortonBoundsAgreeWithCodes(
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  codes: ArrayLike<number | bigint>,
+  bounds: SpatialBounds,
+  maxSamples = 64
+): { checked: number; matched: number } {
+  const rows = Math.min(xs.length, ys.length, codes.length);
+  if (rows === 0 || maxSamples <= 0) {
+    return { checked: 0, matched: 0 };
+  }
+  const samples = Math.min(rows, maxSamples);
+  const stride = Math.max(1, Math.floor(rows / samples));
+  let checked = 0;
+  let matched = 0;
+  for (let i = 0; i < rows && checked < samples; i += stride) {
+    const x = getNumericValue(xs[i]);
+    const y = getNumericValue(ys[i]);
+    const code = getNumericValue(codes[i]);
+    if (x === null || y === null || code === null) {
+      continue;
+    }
+    checked += 1;
+    if (mortonCode2dForPoint(x, y, bounds) === code) {
+      matched += 1;
+    }
+  }
+  return { checked, matched };
+}
+
+/** Inclusive `[min, max]` a row group's Morton column spans; `null` when unknown. */
+export type MortonRowGroupExtent = readonly [number, number] | null;
+
+/**
+ * Is the file actually Morton-**sorted**, row group by row group?
+ *
+ * The row-group bisect binary-searches this sequence, which is only meaningful if it
+ * is non-decreasing. A feature-primary artifact — sorted `(feature, morton)` — has a
+ * `morton_code_2d` column that restarts at every feature boundary, so each row group
+ * spans nearly the whole code range and the bisect lands somewhere arbitrary. What
+ * comes back is whichever feature blocks happened to live in the row groups it picked:
+ * a tile shows one or two genes and misses the rest. Measured on the permutations
+ * store, `transcripts_feature_then_morton` descends at 185 of its 244 row-group
+ * boundaries, while both morton-primary elements descend at none.
+ *
+ * Adjacent groups may share a boundary value, so the test is `min >= previous max`.
+ * A `null` extent is unknown rather than out of order: skip it and carry the last
+ * known maximum, so a column without statistics cannot fake a descent.
+ */
+export function mortonRowGroupExtentsAreSorted(extents: readonly MortonRowGroupExtent[]): boolean {
+  let previousMax: number | null = null;
+  for (const extent of extents) {
+    if (!extent) {
+      continue;
+    }
+    const [min, max] = extent;
+    if (previousMax !== null && min < previousMax) {
+      return false;
+    }
+    previousMax = previousMax === null ? max : Math.max(previousMax, max);
+  }
+  return true;
+}
+
+/**
+ * Which row groups can hold a code inside any of `intervals`, from the in-memory
+ * index rather than a bisect over the file.
+ *
+ * The bisect this replaces reads the row group's BYTES to recover two boundary values
+ * — every column, ~2MB on a real transcripts artifact — and one viewport query runs
+ * `log2(rowGroups)` of them per interval. Building the index that way could fetch the
+ * whole 439MB file to recover ~4KB. The same numbers are in the parquet footer, so
+ * with {@link mortonRowGroupExtentsAreSorted}'s index in hand this costs nothing.
+ *
+ * It is also *stricter* than the bisect, which tested only `max` and assumed the
+ * groups tile the code space without gaps: this intersects both ends, so a row group
+ * whose range falls entirely between two intervals is skipped rather than swept in.
+ *
+ * A `null` extent means "no statistics for this group": include it, because the
+ * alternative is dropping rows for a reason that has nothing to do with the query.
+ */
+export function selectMortonRowGroups(
+  extents: readonly MortonRowGroupExtent[],
+  intervals: ReadonlyArray<readonly [number, number]>
+): number[] {
+  const selected = new Set<number>();
+  for (let i = 0; i < extents.length; i++) {
+    const extent = extents[i];
+    if (!extent) {
+      selected.add(i);
+      continue;
+    }
+    const [min, max] = extent;
+    for (const [start, end] of intervals) {
+      if (max >= start && min <= end) {
+        selected.add(i);
+        break;
+      }
+    }
+  }
+  return [...selected].sort((a, b) => a - b);
 }
 
 function intersects(
@@ -126,14 +316,49 @@ export function mergeAdjacentIntervals(
   return merged;
 }
 
+/**
+ * How far {@link zcoverRectangle} subdivides before emitting a whole cell.
+ *
+ * The cover exists to pick **row groups**, and a row group holds tens of thousands
+ * of points — so resolving the rectangle to individual quantised cells buys nothing
+ * and costs a great deal. Recursing to the full 16 bits produced **38,014 intervals**
+ * for one viewport-sized rectangle on a real 12.1M-point Xenium artifact (245 row
+ * groups), each interval driving two row-group bisects.
+ *
+ * Measured on that artifact, over a viewport tile, the whole slide, and a zoomed-in
+ * box — at this depth the selected row groups are **identical** to the full-depth
+ * cover (not merely a superset), while the interval count collapses:
+ *
+ * | depth | intervals (viewport tile) | row groups |
+ * |-------|---------------------------|------------|
+ * | 16    | 38,014                    | 92         |
+ * | 10    | 521                       | 92         |
+ * | 8     | 138                       | 92         |
+ *
+ * 10 leaves headroom: the cover stays finer than the row-group granularity for files
+ * with up to ~1M row groups (4^10 cells), where 8 would start over-fetching.
+ */
+export const MORTON_ZCOVER_MAX_DEPTH = 10;
+
+/**
+ * Morton-code intervals covering a rectangle in quantised (x, y) space.
+ *
+ * Stopping early at {@link maxDepth} makes a cell **coarser than the rectangle** —
+ * the interval then covers some codes outside it. That is safe in both directions:
+ * the cover is still complete (no code inside the rectangle is dropped), and the
+ * extra codes only ever widen the row-group set, whose rows are filtered against the
+ * exact bounds after the read.
+ */
 export function zcoverRectangle(
   rx0: number,
   ry0: number,
   rx1: number,
   ry1: number,
-  bits = MORTON_CODE_BITS_PER_AXIS
+  bits = MORTON_CODE_BITS_PER_AXIS,
+  maxDepth = MORTON_ZCOVER_MAX_DEPTH
 ): Array<[number, number]> {
   const maxCoord = 2 ** bits - 1;
+  const depthLimit = Math.max(0, Math.min(bits, maxDepth));
   const x0 = Math.max(0, Math.min(maxCoord, Math.min(rx0, rx1)));
   const x1 = Math.max(0, Math.min(maxCoord, Math.max(rx0, rx1)));
   const y0 = Math.max(0, Math.min(maxCoord, Math.min(ry0, ry1)));
@@ -153,7 +378,7 @@ export function zcoverRectangle(
     if (!intersects(xmin, ymin, xmax, ymax, x0, y0, x1, y1)) {
       continue;
     }
-    if (contained(xmin, ymin, xmax, ymax, x0, y0, x1, y1) || level === bits) {
+    if (contained(xmin, ymin, xmax, ymax, x0, y0, x1, y1) || level >= depthLimit) {
       intervals.push(cellRange(prefix, level, bits));
       continue;
     }

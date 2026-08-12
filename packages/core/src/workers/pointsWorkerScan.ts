@@ -422,6 +422,18 @@ export function scanMortonTableInBounds(input: {
   xs: Float32PointBuffer;
   ys: Float32PointBuffer;
   zs: Float32PointBuffer;
+  /**
+   * Per-point feature codes for the matched rows, appended in lockstep with the
+   * geometry (D5 step 3).
+   *
+   * Optional, but supplying it is what lets a tiled layer colour by feature at all:
+   * the scan already READS this column to filter on it, and used to throw the value
+   * away, so a tile arrived as bare coordinates and the render fell back to a flat
+   * colour. Lockstep is the whole contract — index i of this buffer names the feature
+   * of point i in {@link xs}/{@link ys} — so every `continue` above a push must skip
+   * all four buffers together.
+   */
+  codes?: Int32PointBuffer;
 }): void {
   const allowedFeatureCodes = featureCodeAllowSet(input.featureCodes);
   const filterByFeature = allowedFeatureCodes !== null;
@@ -453,6 +465,11 @@ export function scanMortonTableInBounds(input: {
   if (filterByFeature && !featureCodeValues) {
     return;
   }
+  // Codes are collected whenever the caller asked for them AND the column is there.
+  // Not collecting silently is fine — the render falls back to a flat colour — but
+  // collecting a SHORT array would be worse than none: it would misalign against the
+  // geometry and confidently mis-colour every point after the first gap.
+  const collectCodes = input.codes !== undefined && featureCodeValues !== null;
   // Hoisted: `Table.numRows` is not a field but
   // `data.reduce((n, d) => n + d.length, 0)` — a closure allocation and a walk of
   // every chunk. As a loop CONDITION that ran per row. See `scanTableByFeatureCodes`.
@@ -463,6 +480,9 @@ export function scanMortonTableInBounds(input: {
   input.ys.reserve(numRows);
   if (zValues) {
     input.zs.reserve(numRows);
+  }
+  if (input.codes) {
+    input.codes.reserve(numRows);
   }
   for (let rowIndex = 0; rowIndex < numRows; rowIndex += 1) {
     // Sentinels only ever occupy the first rows of the first row group, so this
@@ -501,6 +521,14 @@ export function scanMortonTableInBounds(input: {
     if (zValues) {
       const z = zValues[rowIndex];
       input.zs.push(Number.isFinite(z) ? z : 0);
+    }
+    if (collectCodes) {
+      const code = (featureCodeValues as ArrayLike<number>)[rowIndex];
+      // A non-finite code is a real row with an unknown feature: keep the point and
+      // record -1, the same "no feature" sentinel the shader's `featureCode >= 0`
+      // guard already understands. Dropping the point instead would put a hole in
+      // the geometry to express a gap in the colour.
+      (input.codes as Int32PointBuffer).push(Number.isFinite(code) ? code : -1);
     }
   }
 }

@@ -1,4 +1,5 @@
 import { COORDINATE_SYSTEM } from '@deck.gl/core';
+import { DEFAULT_POINTS_MEMORY_CAP, mortonTileGrid } from '@spatialdata/core';
 import type { Layer, LayersList } from 'deck.gl';
 import { PolygonLayer, TileLayer } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
@@ -12,7 +13,11 @@ import {
 import { featureCodesSignature } from './pointsFeatureCodes.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
-import { DEFAULT_POINT_SIZE, renderColumnarScatterLayer } from './pointsScatterLayer.js';
+import {
+  DEFAULT_POINT_SIZE,
+  modelMatrixUniformScale,
+  renderColumnarScatterLayer,
+} from './pointsScatterLayer.js';
 import {
   POINTS_TILE_DEBUG_PICK_KIND,
   pointsTileDebugPolygonData,
@@ -55,6 +60,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       pointRadiusMinPixels,
       pointRadiusMaxPixels,
       color = [255, 100, 100, 200],
+      colorByFeature,
+      featureCodeSpaceSize,
+      featureColorOverrides,
+      highlightFeatureCode,
       use3d,
     } = layer.props;
 
@@ -63,7 +72,26 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       return null;
     }
 
+    // The grid comes from the artifact — point density and row-group size — rather
+    // than from deck's defaults; see mortonTileGrid for why both ends are bounded.
+    const capabilities = resource.loader.capabilities;
+    const grid = mortonTileGrid({
+      bounds: localBounds,
+      totalRows: capabilities.totalRows ?? 0,
+      maxRowsPerGroup: capabilities.maxRowsPerGroup ?? 0,
+      modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
+      // The tile cache is a second pool the resident memory cap cannot see (ADR 0005
+      // — account first, manage after). Budgeting it against the same number is not
+      // the same as the cap applying: it bounds the cache in rows so the worst case
+      // is a stated quantity rather than deck's `5 x whatever is on screen`, which on
+      // a coarse viewport of this element was ~220 tiles.
+      cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
+    });
+
     const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
+    // Colour rides the per-tile batch: the scan returns a feature code per point
+    // (D5 step 3), so a tile carries everything the colour extension needs and the
+    // tiled path stops being the odd one out that only ever drew flat.
     const scatterStyleProps = {
       color,
       pointSize,
@@ -71,6 +99,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       pointRadiusMaxPixels,
       opacity,
       modelMatrix: layer.props.modelMatrix,
+      colorByFeature,
+      ...(featureCodeSpaceSize !== undefined ? { featureCodeSpaceSize } : {}),
+      ...(featureColorOverrides ? { featureColorOverrides } : {}),
+      ...(highlightFeatureCode !== undefined ? { highlightFeatureCode } : {}),
       use3d,
     };
 
@@ -83,9 +115,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
           extent: [localBounds.minX, localBounds.minY, localBounds.maxX, localBounds.maxY],
           opacity,
           visible,
-          tileSize: 512,
-          minZoom: -1,
-          maxZoom: -1,
+          tileSize: grid.tileSize,
+          minZoom: grid.minZoom,
+          maxZoom: grid.maxZoom,
+          zoomOffset: grid.zoomOffset,
+          maxRequests: grid.maxRequests,
+          maxCacheSize: grid.maxCacheSize,
           refinementStrategy: 'best-available',
           updateTriggers: {
             getTileData: [resource.element.key, featureCodesSignature(featureCodes)],
@@ -96,6 +131,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               color,
               opacity,
               layer.props.modelMatrix,
+              colorByFeature,
+              featureCodeSpaceSize,
+              featureColorOverrides,
+              highlightFeatureCode,
               use3d,
             ],
           },
@@ -196,7 +235,6 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             return renderColumnarScatterLayer(`${props.id}-scatter`, props.data, {
               ...scatterStyleProps,
               tileBounds: tileBbox ? scatterBoundsFromTileBbox(tileBbox) : undefined,
-              tileSubLayer: true,
             });
           },
         })

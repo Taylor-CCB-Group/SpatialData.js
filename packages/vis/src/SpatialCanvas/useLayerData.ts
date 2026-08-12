@@ -21,6 +21,7 @@ import {
   getTooltipSignature,
   type LabelsElement,
   type PointsElement,
+  pointsTilingEnabled,
   resolveFeatureSelectionCodes,
   resolvePointsMemoryCap,
   resolveTooltipItems,
@@ -30,11 +31,13 @@ import {
   type SpatialData,
   SpatialEntryStore,
   type SpatialFeatureTooltipData,
+  transformAxisAlignedBounds,
   unionBoundsList,
 } from '@spatialdata/core';
 import {
   buildShapeFillColorByFeatureId,
   buildShapesPrebuiltData,
+  createTileDebugStore,
   featureFilterAwaitingRowCodes,
   PointsDataEngine,
   PointsLayer,
@@ -45,6 +48,7 @@ import {
   resolveShapeTooltipRowIndex,
   type ShapeFeatureRenderDatum,
   type ShapeFeatureStateRuntime,
+  type TileDebugStore,
 } from '@spatialdata/layers';
 import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -58,6 +62,13 @@ import {
   type LabelFillColorEntry,
   lastGoodLabelFillColorEntry,
 } from './labelsProjection';
+import {
+  aggregatePointsTileLoadProgress,
+  isPointsTileLoading,
+  type PointsTileLoadProgress,
+  pointsTileLoadProgressFromStore,
+  tileDebugSignature,
+} from './pointsTileProgress';
 import { renderLabelsLayer } from './renderers/labelsRenderer';
 import { renderShapesLayer } from './renderers/shapesRenderer';
 import { describeResolveInputs } from './resolveInputs';
@@ -78,6 +89,7 @@ import type {
   ElementsByType,
   LabelsLayerConfig,
   LayerConfig,
+  PointsLayerConfig,
   ShapesLayerConfig,
 } from './types';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
@@ -356,6 +368,22 @@ export function getCachedWorldBounds(
  * 3. Caches loaded data
  * 4. Produces deck.gl Layer instances with the loaded data
  */
+/**
+ * Does this layer draw through the Morton tile path (D5)?
+ *
+ * BOTH halves are required. `isTiled` is a fact about the ELEMENT — the probe's
+ * answer, cached per element key — and it outlives the config that asked for it, so a
+ * layer that reads it alone keeps rendering tiles after the user turns tiling off (and
+ * two layers on one element cannot disagree). The config is the per-layer half.
+ */
+function usesTiledPath(
+  engine: PointsDataEngine,
+  elementKey: string,
+  config: PointsLayerConfig | undefined
+): boolean {
+  return pointsTilingEnabled(config?.pointsTiling) && engine.isTiled(elementKey);
+}
+
 export function useLayerData(
   layers: Record<string, LayerConfig>,
   layerOrder: string[],
@@ -512,6 +540,25 @@ export function useLayerData(
       new PointsDataEngine({
         onStatus: (layerId, status) => setLayerResourceStatus(layerId, 'geometry', status),
       })
+  );
+
+  // Per-layer tile-status stores for the Morton path (D5). One per points layer,
+  // created on first render of a tiled layer and kept for its lifetime — the store is
+  // a `PointsLayer` prop, so a fresh one per render would churn the debug overlay.
+  // Its `update` no-ops when the state signature is unchanged, so the notify below
+  // fires on real tile transitions only, not on every deck frame.
+  const tileDebugStoresRef = useRef(new Map<string, TileDebugStore>());
+  const getTileDebugStore = useCallback(
+    (layerId: string): TileDebugStore => {
+      const stores = tileDebugStoresRef.current;
+      let store = stores.get(layerId);
+      if (!store) {
+        store = createTileDebugStore(notifyLoadedDataChanged);
+        stores.set(layerId, store);
+      }
+      return store;
+    },
+    [notifyLoadedDataChanged]
   );
 
   // Shapes / images / labels Resource Resolvers (ADR 0004). Shapes lives in `core`,
@@ -701,6 +748,11 @@ export function useLayerData(
               return codes ? { featureCodes: codes } : {};
             })(),
             ...(config.colorByFeature ? { colorByFeature: true } : {}),
+            // D5: opting in makes `plan()` probe for a Morton artifact before it
+            // commits to a full-table preload, and render viewport tiles when there
+            // is one. Off by default; an element that cannot be tiled preloads either
+            // way.
+            ...(config.pointsTiling ? { pointsTiling: config.pointsTiling } : {}),
           },
           transform: elem.transform,
         });
@@ -929,7 +981,19 @@ export function useLayerData(
         return shapesResolver.getRenderData(elem.key) !== undefined;
       }
       if (elem.type === 'points') {
-        return pointsEngine.hasData(elem.key);
+        // A tiled element is renderable with no resident batch at all: its extent is
+        // known from the artifact and its geometry arrives per viewport tile. Reading
+        // only `hasData` would report "nothing to draw" forever and leave the
+        // blocking overlay up over a layer that is drawing fine.
+        const pointsConfig = layersRef.current[layerId];
+        return (
+          pointsEngine.hasData(elem.key) ||
+          usesTiledPath(
+            pointsEngine,
+            elem.key,
+            pointsConfig?.type === 'points' ? pointsConfig : undefined
+          )
+        );
       }
       if (elem.type === 'image') {
         return imagesResolver.getLoadedData(elem.key) !== undefined;
@@ -988,6 +1052,24 @@ export function useLayerData(
           );
         }
         if (elem.type === 'points') {
+          // A tiled element is framed from the artifact's own extent — there is no
+          // resident geometry to measure, and waiting for one would mean never
+          // auto-fitting. Cached against the metadata's identity, like the preloaded
+          // path is against its batch.
+          const tilingMetadata =
+            config.type === 'points' && usesTiledPath(pointsEngine, elem.key, config)
+              ? pointsEngine.getTilingMetadata(elem.key)
+              : undefined;
+          if (tilingMetadata?.bounds) {
+            const elementBounds = tilingMetadata.bounds;
+            return getCachedWorldBounds(
+              loaded.worldBounds,
+              getWorldBoundsCacheKey(elem),
+              tilingMetadata,
+              elem.transform,
+              () => transformAxisAlignedBounds(elementBounds, elem.transform)
+            );
+          }
           const pointData = pointsEngine.getData(elem.key);
           if (!pointData) return null;
           return getCachedWorldBounds(
@@ -1117,6 +1199,73 @@ export function useLayerData(
             // reach deck as siblings (the outline draws over the fill).
             if (Array.isArray(layer)) deckLayers.push(...layer);
             else if (layer) deckLayers.push(layer);
+          }
+        } else if (config.type === 'points' && usesTiledPath(pointsEngine, elem.key, config)) {
+          // --- Morton viewport tiles (D5 step 2) --------------------------------
+          //
+          // A separate branch, not a variation of the preloaded one below: the tiled
+          // path has no resident batch, so none of the resident/matched/partial
+          // machinery below applies to it. Its geometry comes from `loadInBounds` per
+          // viewport tile, inside deck's own `TileLayer` lifecycle.
+          //
+          // Colour comes off the tile batch itself: the scan returns a feature code
+          // per point (step 3), so the same colour props the preloaded path uses
+          // apply here.
+          //
+          // The FILTER is pushed down into the row-group scan rather than applied to
+          // a batch already in memory, so a tile arrives holding only the selected
+          // features — 36x fewer points for one gene on a real transcripts element,
+          // never uploaded and never drawn.
+          //
+          // It does NOT narrow the fetch. Measured on that element: selecting one
+          // gene read the same 92 row groups and the same 158MB as the unfiltered
+          // view. Row groups are chosen SPATIALLY on a Morton artifact and a gene's
+          // points are spread across all of them, so only a feature-primary index
+          // could skip any (the open index-permutation question in ADR 0002/0003).
+          const element = elem.element as PointsElement;
+          // `undefined` means "no filter"; an empty array means "filter to nothing".
+          // Both reach `loadInBounds` unchanged and the scan honours the distinction.
+          const tiledFeatureCodes = resolveFeatureSelectionCodes(
+            config,
+            pointsEngine.getFeatureCatalog(elem.key)
+          );
+          const tiledResource = pointsEngine.getTiledResource(element, elem.key);
+          if (tiledResource) {
+            const showTileDebugOverlay = config.showTileDebugOverlay === true;
+            const tileDebugStore = getTileDebugStore(layerId);
+            // The same three colour inputs the preloaded branch builds. They are
+            // element-scoped (catalog code space, name→rgb overrides, the runtime
+            // hover highlight), so a tiled layer reads them identically — only the
+            // per-point codes arrive by a different route.
+            const featureCodeSpaceSize = pointsEngine.getFeatureCodeSpaceSize(elem.key);
+            const featureColorOverrides = pointsEngine.getFeatureColorOverrideMap(
+              elem.key,
+              config.featureColorOverrides
+            );
+            const highlightFeatureCode = pointsEngine.getHighlightedFeature(elem.key);
+            deckLayers.push(
+              new PointsLayer({
+                id: layerId,
+                resource: tiledResource,
+                modelMatrix: elem.transform,
+                opacity: config.opacity,
+                visible: config.visible,
+                pointSize: config.pointSize ?? 1,
+                ...(config.color ? { color: config.color } : {}),
+                // Always pass the store — it is what the footer's tile progress
+                // reads, whether or not the overlay is drawn.
+                tileDebugStore,
+                showTileDebugOverlay,
+                ...(showTileDebugOverlay
+                  ? { tileDebugSignature: tileDebugSignature(tileDebugStore) }
+                  : {}),
+                ...(tiledFeatureCodes ? { featureCodes: tiledFeatureCodes } : {}),
+                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                featureCodeSpaceSize,
+                ...(featureColorOverrides ? { featureColorOverrides } : {}),
+                highlightFeatureCode,
+              })
+            );
           }
         } else if (config.type === 'points') {
           const element = elem.element as PointsElement;
@@ -1387,6 +1536,7 @@ export function useLayerData(
       layerOrder,
       getStableSelections,
       pointsEngine,
+      getTileDebugStore,
       getMergedShapeRenderData,
       getShapeFillColorEntry,
       getShapePrebuilt,
@@ -1697,12 +1847,32 @@ export function useLayerData(
     return vivProps;
   }, [layers, layerOrder, getStableSelections, vivPassthrough, imagesResolver]);
 
+  /**
+   * Viewport-tile progress across every tiled points layer (D5).
+   *
+   * Tiles load inside deck's `TileLayer`, not through a resolver, so they never touch
+   * `layerLoadStates` — without this a tiled layer reports "nothing loading" while it
+   * is fetching row groups. Recomputed on `loadedDataRevision`, which the tile debug
+   * stores bump when a tile actually starts or finishes.
+   */
+  const pointsTileProgress = useMemo((): PointsTileLoadProgress => {
+    // Bare reference: the stores are read through a ref (they must not re-create per
+    // render), so the revision is the only thing that CHANGES when a tile transitions.
+    void loadedDataRevision;
+    const byLayer = new Map<string, PointsTileLoadProgress>();
+    // eslint-disable-next-line react-hooks/refs -- intentional external-store read; see the isBlocking note below
+    for (const [layerId, store] of tileDebugStoresRef.current) {
+      byLayer.set(layerId, pointsTileLoadProgressFromStore(store));
+    }
+    return aggregatePointsTileLoadProgress(byLayer);
+  }, [loadedDataRevision]);
+
   const isLoading = useMemo(
     () =>
       Object.values(layerLoadStates).some((state) =>
         Object.values(state).some((status) => status === 'loading')
-      ),
-    [layerLoadStates]
+      ) || isPointsTileLoading(pointsTileProgress),
+    [layerLoadStates, pointsTileProgress]
   );
 
   const isBlocking = useMemo(

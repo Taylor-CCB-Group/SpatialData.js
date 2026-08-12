@@ -1,4 +1,4 @@
-import type { PointsElement, PointsLoadResult } from '@spatialdata/core';
+import type { PointsElement, PointsLoadResult, PointsTilingMetadata } from '@spatialdata/core';
 import {
   columnarBatchFromPointData,
   type PointsLoader,
@@ -77,7 +77,25 @@ interface GrowingPartial {
   revision: number;
 }
 
+/**
+ * A tiled entry's render resource, held for the life of (element, metadata).
+ *
+ * Identity here is not a nicety: the resource's loader IS what `TileLayer` keys its
+ * `getTileData` on, so a fresh resource per `project()` tears the tile layer down and
+ * re-fetches every visible tile — turning a pan into a full reload.
+ */
+interface TiledMemo {
+  element: PointsElement;
+  metadata: PointsTilingMetadata;
+  resource: PointsRenderResource;
+}
+
+/** Options for the preloaded path: tiling is decided by the resolver's probe, not
+ * re-derived here, so these resolves are always the non-tiled branch. */
 const RESOLVE_OPTIONS = { experimentalOptimizations: 'off' as const };
+
+/** …and its counterpart for an entry the probe HAS declared tileable. */
+const TILED_RESOLVE_OPTIONS = { experimentalOptimizations: 'auto' as const };
 
 /** A batch with no points must not produce a resource — see the empty-lock guard below. */
 const isEmpty = (batch: PointsLoadResult): boolean => (batch.shape[1] ?? 0) === 0;
@@ -85,6 +103,8 @@ const isEmpty = (batch: PointsLoadResult): boolean => (batch.shape[1] ?? 0) === 
 export class PointsRendererAdapter {
   private readonly memos = new Map<string, EntryMemos>();
   private readonly growingPartials = new Map<string, GrowingPartial>();
+  /** The Morton-tiled resource per element — see {@link getTiledResource}. */
+  private readonly tiled = new Map<string, TiledMemo>();
   /** The base layer's stable resource per element — see {@link getBaseResource}. */
   private readonly growingBases = new Map<
     string,
@@ -186,6 +206,34 @@ export class PointsRendererAdapter {
       growing.revision += 1;
     }
     return growing.resource;
+  }
+
+  /**
+   * The Morton-tiled entry's render resource (D5).
+   *
+   * Unlike every other memo here there is no batch to key on — a tiled entry holds no
+   * resident data at all. The key is the *metadata*, which the resolver replaces only
+   * when it re-probes, so this resource survives every pan, zoom and re-render in
+   * between. That is the whole requirement: `TileLayer` refetches its viewport when
+   * the loader identity changes.
+   */
+  getTiledResource(
+    element: PointsElement,
+    key: string,
+    metadata: PointsTilingMetadata
+  ): PointsRenderResource | null {
+    const memo = this.tiled.get(key);
+    if (memo && memo.element === element && memo.metadata === metadata) {
+      return memo.resource;
+    }
+    const resource = resolvePointsRenderResource(
+      element,
+      { tilingMetadata: metadata, metadataKnown: true },
+      TILED_RESOLVE_OPTIONS
+    );
+    if (!resource) return null;
+    this.tiled.set(key, { element, metadata, resource });
+    return resource;
   }
 
   /** The revision of the in-flight partial's growing buffer — a `PointsLayer`
@@ -294,11 +342,13 @@ export class PointsRendererAdapter {
     this.memos.delete(key);
     this.growingPartials.delete(key);
     this.growingBases.delete(key);
+    this.tiled.delete(key);
   }
 
   dispose(): void {
     this.memos.clear();
     this.growingPartials.clear();
     this.growingBases.clear();
+    this.tiled.clear();
   }
 }
