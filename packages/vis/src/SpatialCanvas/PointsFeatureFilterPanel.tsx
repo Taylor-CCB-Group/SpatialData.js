@@ -102,6 +102,15 @@ const loadingStatStyle: CSSProperties = {
   fontSize: '11px',
 };
 
+const errorStatStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: 4,
+  color: '#e2a0a0',
+  fontSize: '11px',
+};
+
 const countStyle: CSSProperties = {
   color: '#888',
   fontSize: '11px',
@@ -165,6 +174,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     residentFeatureCounts,
     requestCatalog,
     setHighlightedFeature,
+    retryFailedLoads,
   } = usePointsFeatureState(config);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -391,7 +401,25 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
             : "not in the loaded sample (greyed below) — this dataset has no feature index, so they can't be shown until the row cap is raised or it's rewritten with one."}
         </div>
       ) : null}
-      {matchingLoadState ? (
+      {matchingLoadState?.failed ? (
+        // A failed scan still DRAWS: the render path falls back to filtering the
+        // resident batch, so the canvas shows whichever part of the selection was
+        // inside the memory cap. Saying so matters more than the error text — without
+        // it the partial view reads as the complete answer.
+        <div style={errorStatStyle}>
+          Could not load the selected features
+          {matchingLoadState.error ? `: ${matchingLoadState.error.message}` : '.'}
+          <div style={helperStyle}>
+            Showing only the selected points already in memory.
+            {matchingLoadState.error?.retryable === false ? '' : ' Retrying will re-run the scan.'}
+          </div>
+          {matchingLoadState.error?.retryable === false ? null : (
+            <button type="button" style={buttonStyle} onClick={() => retryFailedLoads()}>
+              Retry
+            </button>
+          )}
+        </div>
+      ) : matchingLoadState ? (
         <div style={matchingLoadState.loading ? loadingStatStyle : helperStyle}>
           {matchingLoadState.loading
             ? `Loading selected features… ${matchingLoadState.matchedRows.toLocaleString()} points so far`

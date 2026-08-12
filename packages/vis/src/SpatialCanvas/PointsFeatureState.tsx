@@ -131,11 +131,14 @@ export interface PointsFeatureState {
   /** Stable callback — set (or clear, with null) the hover-highlighted feature code
    * for this layer, so its points are emphasised on the canvas. */
   setHighlightedFeature: (featureCode: number | null) => void;
+  /** Stable callback — re-run this element's failed loads (the retry affordance
+   * behind `matchingLoadState.failed`). No-op when nothing has failed. */
+  retryFailedLoads: () => void;
 }
 
 const EMPTY_POINTS_FEATURE_STATE: Omit<
   PointsFeatureState,
-  'requestCatalog' | 'setHighlightedFeature'
+  'requestCatalog' | 'setHighlightedFeature' | 'retryFailedLoads'
 > = {
   catalog: undefined,
   catalogLoading: false,
@@ -172,9 +175,17 @@ export function usePointsFeatureState(
     },
     [engine, target]
   );
+  const retryFailedLoads = useCallback(() => {
+    if (target) void engine.retry(target.key);
+  }, [engine, target]);
 
   if (!target) {
-    return { ...EMPTY_POINTS_FEATURE_STATE, requestCatalog, setHighlightedFeature };
+    return {
+      ...EMPTY_POINTS_FEATURE_STATE,
+      requestCatalog,
+      setHighlightedFeature,
+      retryFailedLoads,
+    };
   }
   const key = target.key;
   const scannable = engine.supportsFeatureScan(key);
@@ -203,5 +214,6 @@ export function usePointsFeatureState(
     residentFeatureCounts: engine.getResidentFeatureCounts(key),
     requestCatalog,
     setHighlightedFeature,
+    retryFailedLoads,
   };
 }
