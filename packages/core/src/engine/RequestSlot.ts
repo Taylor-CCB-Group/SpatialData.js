@@ -162,6 +162,18 @@ export class RequestSlot<K, V> {
     return this._resolution.status === 'ready' ? this.readyKey : undefined;
   }
 
+  /**
+   * The key of the request that failed, if `failed`.
+   *
+   * A slot is per-element but its requests are per-selection, so "did this fail?" is
+   * not answerable without knowing *what* failed: a stale failure for a selection the
+   * user has since changed must not be reported against the current one. `pendingKey`
+   * and `settledKey` answer the same question for the other two states.
+   */
+  get failedKey(): K | undefined {
+    return this._resolution.status === 'failed' ? this.lastRequest?.key : undefined;
+  }
+
   /** The in-flight promise, if any — for awaiting or returning from a dedup. */
   get pending(): Promise<void> | undefined {
     return this.current?.promise;

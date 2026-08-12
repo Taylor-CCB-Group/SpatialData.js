@@ -686,3 +686,102 @@ describe('progressive preload (D3)', () => {
     );
   });
 });
+
+describe('getMatchingLoadState() — a failed scan is reportable', () => {
+  // The gap this closes: a failed scan used to be indistinguishable from "no scan
+  // has run" (both `undefined`), while the render path kept drawing the resident
+  // subset. The panel therefore presented a partial view as the complete answer,
+  // with no error anywhere. See #149.
+  const failing = (message = 'scan exploded') =>
+    element({
+      loadPointsMatchingFeatureCodes: vi.fn(async () => {
+        throw new Error(message);
+      }),
+    });
+
+  it('reports the failure, its message, and no rows', async () => {
+    const resolver = new PointsResolver();
+    const el = failing();
+
+    await resolver.ensureMatchingFeaturesLoaded(
+      { key: 'transcripts', layerId: 'l', element: el },
+      [1]
+    );
+
+    const state = resolver.getMatchingLoadState('transcripts', [1]);
+    expect(state?.failed).toBe(true);
+    expect(state?.settled).toBe(true);
+    expect(state?.loading).toBe(false);
+    // Not the stale batch's row count — nothing landed for THIS selection.
+    expect(state?.matchedRows).toBe(0);
+    expect(state?.error?.message).toContain('scan exploded');
+  });
+
+  it('reports the failure for a subset of the selection that failed', async () => {
+    const resolver = new PointsResolver();
+
+    await resolver.ensureMatchingFeaturesLoaded(
+      { key: 'transcripts', layerId: 'l', element: failing() },
+      [1, 2]
+    );
+
+    // A scan for {1,2} was going to supply {1}, so shrinking the selection does not
+    // make the failure irrelevant — those points are still not loaded.
+    expect(resolver.getMatchingLoadState('transcripts', [1])?.failed).toBe(true);
+  });
+
+  it('does not report a failure against an unrelated selection', async () => {
+    const resolver = new PointsResolver();
+
+    await resolver.ensureMatchingFeaturesLoaded(
+      { key: 'transcripts', layerId: 'l', element: failing() },
+      [1]
+    );
+
+    // {7} was never part of the failed scan; claiming it failed would be as wrong as
+    // staying silent about {1}.
+    expect(resolver.getMatchingLoadState('transcripts', [7])).toBeUndefined();
+  });
+
+  it('does not let a stale good batch mask the failure', async () => {
+    const resolver = new PointsResolver();
+    const target = { key: 'transcripts', layerId: 'l', element: element() };
+
+    // A good scan for {1} first, so the slot retains it as `stale`...
+    await resolver.ensureMatchingFeaturesLoaded(target, [1]);
+    expect(resolver.getMatchingLoadState('transcripts', [1])?.failed).toBeUndefined();
+
+    // ...then a failing scan for {2}. Reading `lastGood` first would answer with the
+    // {1} batch and call {2} settled.
+    await resolver.ensureMatchingFeaturesLoaded(
+      { key: 'transcripts', layerId: 'l', element: failing() },
+      [2]
+    );
+    expect(resolver.getMatchingLoadState('transcripts', [2])?.failed).toBe(true);
+  });
+
+  it('clears the failure when a retry succeeds', async () => {
+    const resolver = new PointsResolver();
+    let shouldFail = true;
+    const el = element({
+      loadPointsMatchingFeatureCodes: vi.fn(async () => {
+        if (shouldFail) throw new Error('transient');
+        return batch(2);
+      }),
+    });
+
+    await resolver.ensureMatchingFeaturesLoaded(
+      { key: 'transcripts', layerId: 'l', element: el },
+      [1]
+    );
+    expect(resolver.getMatchingLoadState('transcripts', [1])?.failed).toBe(true);
+    expect(resolver.getMatchingLoadState('transcripts', [1])?.error?.retryable).toBe(true);
+
+    shouldFail = false;
+    await resolver.retry('transcripts');
+
+    const state = resolver.getMatchingLoadState('transcripts', [1]);
+    expect(state?.failed).toBeUndefined();
+    expect(state?.matchedRows).toBe(2);
+  });
+});

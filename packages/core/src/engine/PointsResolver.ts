@@ -3,7 +3,7 @@ import { featureCodeMapFromCatalog, remapRowFeatureCodes } from '../pointsFeatur
 import { DEFAULT_POINTS_MEMORY_CAP } from '../pointsLimits.js';
 import type { PointsLoadProgress, PointsLoadResult } from '../pointsLoadOptions.js';
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
-import type { EntryNotice } from './errors.js';
+import type { EntryNotice, SpatialEntryError } from './errors.js';
 import { RequestSlot } from './RequestSlot.js';
 import { Resolution } from './resolution.js';
 import type { EntryResources, ResolveContext, ResolveTask, ResourceResolver } from './resolver.js';
@@ -169,6 +169,17 @@ export interface PointsMatchingLoadState {
   settled: boolean;
   /** The selection is served by filtering a larger in-memory batch (no scan ran). */
   covered?: boolean;
+  /**
+   * The scan that would have loaded this selection failed.
+   *
+   * Reported because the alternative is worse than an error: the render path falls
+   * back to filtering the resident batch, so a failed scan still draws *something* —
+   * whichever subset of the selection happened to be inside the memory cap — and a
+   * panel with no failure signal presents that partial view as the whole answer.
+   * `error.retryable` gates a retry affordance; `PointsResolver.retry(key)` re-runs it.
+   */
+  failed?: true;
+  error?: SpatialEntryError;
 }
 
 export class PointsResolver implements ResourceResolver<PointsResolveConfig, PointsElement> {
@@ -910,6 +921,37 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
           matchedRows: progress?.done ?? 0,
           scannedRows: progress?.scanned ?? 0,
           settled: false,
+        };
+      }
+    }
+
+    // The scan that would have covered this selection failed. Checked BEFORE the
+    // last-good branch: a failure retains the previous batch as `stale`, so reading
+    // `lastGood` first would answer with a settled state for whatever was loaded
+    // before — the panel would then report a healthy older selection while the one
+    // the user is actually looking at silently never loaded.
+    //
+    // Coverage, not equality, for the same reason the reuse path uses it: a scan for
+    // {A,B} that failed was going to supply {A} too, so shrinking the selection does
+    // not make the failure irrelevant. A superseding scan for the smaller selection
+    // moves the slot to `loading`, and the branch above wins.
+    const failedKey = slot.failedKey;
+    if (failedKey !== undefined && slot.resolution.status === 'failed') {
+      const failed = PointsResolver.parseMatchingKey(failedKey);
+      const wouldHaveCovered = PointsResolver.coveredCodes(failed.signature);
+      if (
+        failed.signature === signature ||
+        (wouldHaveCovered.size > 0 && featureCodes.every((code) => wouldHaveCovered.has(code)))
+      ) {
+        return {
+          loading: false,
+          // Nothing landed for this selection; reporting the stale batch's row count
+          // here is exactly the misreading this branch exists to prevent.
+          matchedRows: 0,
+          scannedRows: 0,
+          settled: true,
+          failed: true,
+          error: slot.resolution.error,
         };
       }
     }
