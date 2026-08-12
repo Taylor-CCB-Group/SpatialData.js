@@ -1470,10 +1470,49 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (loading !== before) {
       this.callbacks.onStatus?.(layerId, 'loading');
       void loading.then(() => {
-        if (this.isTiled(key)) this.callbacks.onStatus?.(layerId, 'ready');
+        if (this.isTiled(key)) {
+          this.releaseResidentBatch(key);
+          this.callbacks.onStatus?.(layerId, 'ready');
+        }
       });
     }
     return loading;
+  }
+
+  /**
+   * Drop the resident window once an element is known to be tiled.
+   *
+   * A layer switched to tiling mid-session has usually already preloaded — up to the
+   * full memory cap, tens of millions of rows the tile path will never read. Nothing
+   * else releases it: `plan()` stops ASKING for a preload, which is not the same as
+   * giving one back, so the memory stayed held and the panel went on reporting "4M of
+   * 12.1M in memory — capped" over a render that has no cap.
+   *
+   * The row codes and the feature-index scan go with it: both are defined against
+   * that window (codes are row-aligned to it, the scan exists only because it
+   * truncates the dataset), so keeping them would leave state describing a batch that
+   * no longer exists. The catalog stays — it describes the ELEMENT's features, and the
+   * filter panel still wants it.
+   *
+   * Runs once, on the probe's settle. A layer that is NOT tiling can re-request the
+   * preload on its next plan pass — an element read two ways pays for it once, rather
+   * than ping-ponging, because nothing evicts again.
+   */
+  private releaseResidentBatch(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry || entry.preload.resolution.status === 'idle') {
+      return;
+    }
+    entry.preload.reset();
+    entry.rowCodes.reset();
+    entry.matching.reset();
+    // Every memo derived from the row codes goes with them — they all key on
+    // `residentCodesSource`, so leaving one behind keeps a map alive for a batch that
+    // no longer exists, which is the opposite of the point of releasing it.
+    entry.residentCodes = undefined;
+    entry.residentCounts = undefined;
+    entry.residentCodesSource = undefined;
+    this.notify();
   }
 
   // --- Retry ------------------------------------------------------------------

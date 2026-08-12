@@ -73,7 +73,12 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   // read is engine-backed and updates on notify; the compiler would otherwise
   // memoize this line's JSX and never repaint it as the scan progresses.
   'use no memo';
-  const { truncation: t } = usePointsFeatureState(config);
+  const { truncation: t, tiled } = usePointsFeatureState(config);
+  // A tiled layer draws from the viewport, not from a resident window, so a
+  // truncation count is not a statement about what is on screen. It used to sit
+  // directly above "the memory cap does not apply", each true and the pair
+  // nonsense — and it survives eviction lag, since this renders before the release.
+  if (tiled && config.pointsTiling === 'auto') return null;
   if (!t) return null;
   // Report the batch held in memory (always true), NOT a per-selection matched
   // count: t.loaded is the covered-batch size, which overstates the selection
@@ -135,20 +140,17 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
  * a user's back. Switching it on re-plans — the probe runs, and if the element is a
  * Morton artifact the resident preload is dropped in favour of viewport tiles.
  */
-function PointsTilingControl({
-  config,
-  engine,
-}: {
-  config: PointsLayerConfig;
-  engine: PointsDataEngine;
-}) {
-  // Opt out of the React Compiler — the `isTiled` read is engine-backed and settles
-  // asynchronously (the probe), so a memoized version of this JSX would never show
-  // the layer switching over to tiles.
+function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
+  // Opt out of the React Compiler — see PointsFeatureFilterPanel. The tiling read is
+  // engine-backed and settles asynchronously (the probe), so the compiler would
+  // memoize this JSX and never show the layer switching over to tiles.
   'use no memo';
   const actions = useSpatialCanvasActions();
   const enabled = config.pointsTiling === 'auto';
-  const tiled = engine.isTiled(config.elementKey);
+  // Through the hook, NOT `engine.isTiled(...)` directly: the hook carries the
+  // engine subscription, so this line updates when the probe settles instead of
+  // showing whatever was true at the last unrelated render.
+  const { tiled } = usePointsFeatureState(config);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', gap: 6 }}>
@@ -192,7 +194,7 @@ export default function PointsLayerPanel({ config, engine, resolveTarget }: Poin
       <PointSizeControl config={config} />
       <PointsMemoryCap config={config} />
       <ShowMatchingPoints config={config} />
-      <PointsTilingControl config={config} engine={engine} />
+      <PointsTilingControl config={config} />
       <PointsFeatureFilterPanel config={config} />
     </PointsFeatureStateProvider>
   );

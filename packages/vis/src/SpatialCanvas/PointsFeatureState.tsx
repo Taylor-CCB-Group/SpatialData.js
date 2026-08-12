@@ -123,6 +123,18 @@ export interface PointsFeatureState {
   /** Truncation of what's on screen for the selection passed to the hook (so the
    * UI can show when raising the memory cap would load more). */
   truncation: ReturnType<PointsDataEngine['getActiveTruncation']>;
+  /**
+   * Whether the ELEMENT has usable Morton tiling metadata. Combine with the layer's
+   * own `pointsTiling` before concluding this layer draws tiles — the probe's answer
+   * is cached per element and outlives the config that asked for it.
+   *
+   * It belongs on this hook rather than a direct `engine.isTiled(...)` read because
+   * the probe settles ASYNCHRONOUSLY: a component reading the engine outside this
+   * subscription shows whatever was true when it last happened to render, which is
+   * how the tiling control kept saying "this element has no Morton index" about an
+   * element it was already tiling.
+   */
+  tiled: boolean;
   /** Running per-feature counts over the resident window (`code → rows`), available
    * while the whole-dataset counts scan is still running. Partial by construction. */
   residentFeatureCounts: ReturnType<PointsDataEngine['getResidentFeatureCounts']>;
@@ -148,6 +160,7 @@ const EMPTY_POINTS_FEATURE_STATE: Omit<
   supportsOnDemandLoad: false,
   matchingLoadState: undefined,
   truncation: undefined,
+  tiled: false,
   residentFeatureCounts: undefined,
 };
 
@@ -211,6 +224,7 @@ export function usePointsFeatureState(
     matchingLoadState:
       hasSelection && scannable ? engine.getMatchingLoadState(key, featureCodes) : undefined,
     truncation: engine.getActiveTruncation(key, featureCodes),
+    tiled: engine.isTiled(key),
     residentFeatureCounts: engine.getResidentFeatureCounts(key),
     requestCatalog,
     setHighlightedFeature,

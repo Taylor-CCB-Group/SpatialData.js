@@ -1204,3 +1204,93 @@ describe('D5 — tiling is per entry, the probe answer is per element', () => {
     expect(el.loadPoints).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('D5 — a tiled element releases the resident window', () => {
+  const tiling = (): PointsTilingMetadata => ({
+    kind: 'morton-points',
+    parquetPath: 'points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: MORTON_CODE_2D_COLUMN,
+    totalRows: 12_000_000,
+    totalRowGroups: 96,
+    maxRowsPerGroup: 131_072,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+  });
+
+  /**
+   * A layer switched to tiling mid-session has usually already preloaded. `plan()`
+   * stops ASKING for a preload, which is not the same as giving one back: the rows
+   * stayed resident, and the panel went on reporting "4M of 12.1M in memory —
+   * capped" over a render that has no cap.
+   */
+  it('drops the preload, its row codes and its scan once the probe says tileable', async () => {
+    const resolver = new PointsResolver();
+    const el = element({ getPointsTilingMetadata: vi.fn(async () => tiling()) });
+    const target = { key: 'transcripts', layerId: 'L', element: el };
+
+    // The layer starts un-tiled and preloads.
+    await resolver.ensureLoaded(target);
+    await resolver.ensureRowFeatureCodes(target);
+    expect(resolver.hasData('transcripts')).toBe(true);
+    expect(resolver.hasRowFeatureCodes('transcripts')).toBe(true);
+
+    await resolver.ensureTilingMetadata(target);
+
+    expect(resolver.isTiled('transcripts')).toBe(true);
+    expect(resolver.hasData('transcripts')).toBe(false);
+    expect(resolver.getData('transcripts')).toBeUndefined();
+    expect(resolver.hasRowFeatureCodes('transcripts')).toBe(false);
+    // …including everything memoised off those codes, or a map outlives the batch it
+    // describes — the opposite of releasing it.
+    expect(resolver.getResidentFeatureCodes('transcripts')).toBeUndefined();
+    expect(resolver.getResidentFeatureCounts('transcripts')).toBeUndefined();
+    // …so nothing is left to report a truncation over.
+    expect(resolver.getActiveTruncation('transcripts', undefined)).toBeUndefined();
+  });
+
+  it('notifies, so a panel reading the resident batch repaints', async () => {
+    const resolver = new PointsResolver();
+    const el = element({ getPointsTilingMetadata: vi.fn(async () => tiling()) });
+    const target = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(target);
+
+    const before = resolver.getVersion();
+    await resolver.ensureTilingMetadata(target);
+
+    expect(resolver.getVersion()).toBeGreaterThan(before);
+  });
+
+  it('leaves the catalog alone — it describes the element, not the window', async () => {
+    const resolver = new PointsResolver();
+    const el = element({
+      getPointsTilingMetadata: vi.fn(async () => tiling()),
+      listFeaturesWithCounts: vi.fn(async () => ({
+        featureKey: 'feature_name',
+        entries: [{ code: 0, name: 'GeneA' }],
+      })),
+    });
+    const target = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(target);
+    await resolver.ensureFeatureCatalog(target);
+
+    await resolver.ensureTilingMetadata(target);
+
+    expect(resolver.getFeatureCatalog('transcripts')).toEqual({
+      featureKey: 'feature_name',
+      entries: [{ code: 0, name: 'GeneA' }],
+    });
+  });
+
+  it('does not evict when the element cannot be tiled', async () => {
+    const resolver = new PointsResolver();
+    const el = element({ getPointsTilingMetadata: vi.fn(async () => null) });
+    const target = { key: 'transcripts', layerId: 'L', element: el };
+    await resolver.ensureLoaded(target);
+
+    await resolver.ensureTilingMetadata(target);
+
+    expect(resolver.hasData('transcripts')).toBe(true);
+  });
+});
