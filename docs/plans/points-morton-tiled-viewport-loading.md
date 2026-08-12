@@ -395,9 +395,48 @@ handles integer physical types today. That would compare the box against the dat
 extent for no extra I/O, but it tests the *convention* (box == exact min/max) rather than
 the invariant, so it belongs alongside this check, not instead of it.
 
-Under-selection has now bitten this path three times (`zcover` depth, the row-group
-bisect, this). Standing rule for the tiled path: prefer to fail loudly over returning
-fewer points.
+### The second claim we were taking on trust: the sort
+
+A `morton_code_2d` column does not make a file Morton-**sorted**. A feature-primary
+artifact — `transcripts_feature_then_morton`, sorted `(feature, morton)` — carries the
+identical column with identical, correct values, a correct sentinel box, and every field
+the probe looks for. Only the order is wrong, and nothing in the file says so. The
+row-group bisect binary-searches that index assuming it ascends, so on this element it
+lands somewhere arbitrary and a tile comes back holding whichever feature blocks happened
+to live in the row groups it picked. That is what "some tiles just pick up one or other
+feature, most miss" was.
+
+Read from footer statistics, the two indexes could not look more different — each row
+group of the feature-primary file spans nearly the whole code range, because one gene is
+scattered across the whole slide:
+
+| element | descents (`min[i] < max[i-1]`) | first six row groups `[min, max]` |
+|---|---|---|
+| `transcripts_morton` | **0** / 244 | `[0,0] [437752573,724881652] [724881909,732597813] …` |
+| `transcripts_morton_then_feature` | **0** / 244 | identical — morton is still the primary key |
+| `transcripts_feature_then_morton` | **185** / 244 | `[0,0] [450484663,4193473654] [443527237,4288997289] …` |
+
+Note the second row: a *secondary* feature key is harmless, which is why this has to be
+measured rather than inferred from the element's name. The index-manifest does record
+`tiling_kind: "experimental"` for the feature-primary condition, but a store's manifest is
+not something a reader can rely on; the file itself now answers the question.
+
+The probe checks it, and the check is **free** — `datasetMetadata.parts` already carries
+the footer bytes by the time it runs, and `morton_code_2d` is INT32 with complete
+statistics on all 245 row groups. Failing it skips the sentinel sampling read as well,
+since the outcome can no longer change, so a rejected element costs *less* than before.
+One subtlety: the column is `uint32` and Morton codes use the top bit for real, so the
+statistics must be decoded unsigned — `decodeIntStat` would read the far corner of the
+slide as negative.
+
+**This also retires the bisect's standing TODO.** `loadParquetRowGroupColumnExtent` says
+it "should be reading the row group's column statistics" and instead range-reads and
+decodes each row group twice to recover a few boundary values. Those statistics are right
+here, complete, and free. Folding them in belongs with step 6.
+
+Under-selection has now bitten this path four times (`zcover` depth, the row-group bisect,
+the sentinel box, the sort). Standing rule for the tiled path: prefer to fail loudly over
+returning fewer points.
 
 ---
 
@@ -415,7 +454,12 @@ silently drawing part of the map.
 Replace the fixed `minZoom/maxZoom: -1` with a real zoom range, sized so a tile is a
 Morton cell rather than an arbitrary 1024 units, and decide the tile budget
 (`maxRequests`, `maxCacheSize`) rather than inheriting deck's defaults. Open question 3
-(tile-cache accounting) has to be answered here, not after.
+(tile-cache accounting) has to be answered here, not after. Fold the row-group bisect
+onto footer statistics while in here: they turn out to be complete and free for
+`morton_code_2d` (see above), which is what
+[`loadParquetRowGroupColumnExtent`](../../packages/core/src/models/VTableSource.ts) has
+wanted since it was written, and a subdividing grid issues many more bisects than the
+current one does.
 
 **Step 7 — Defaults + docs.**
 Flip `pointsTiling` default (open question 1), update
@@ -438,6 +482,11 @@ per-element table, close D5 in the punch-list, changeset.
   now sound. If you are on an **older copy**, `transcripts_morton_then_feature` and
   `transcripts_feature_then_morton` carry the stale sentinel box — the probe will now
   refuse to tile them and say so in the console, rather than drawing half the slide.
+- **`transcripts_feature_then_morton` is not a tiling fixture** and never was: it is
+  feature-primary, so the probe declines it by design. Use it to exercise the
+  feature-code row-group index on the *preload* path, which is a different mechanism
+  and unaffected. `transcripts_morton` and `transcripts_morton_then_feature` are the
+  tiling fixtures.
 - **The debug overlay is the instrument.** `showTileDebugOverlay` already colours tiles by
   status; use it plus `read_network_requests` to confirm range reads are bounded by the
   viewport rather than fetching the whole file.

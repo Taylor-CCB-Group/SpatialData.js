@@ -9,6 +9,7 @@ import {
   mortonBoundsAgreeWithCodes,
   mortonCode2dForPoint,
   mortonIntervalsForBounds,
+  mortonRowGroupExtentsAreSorted,
   zcoverRectangle,
 } from '../src/pointsTiling.js';
 
@@ -301,5 +302,44 @@ describe('morton bounds agreement', () => {
     const { checked, matched } = mortonBoundsAgreeWithCodes(xs, ys, broken, bounds, 8);
     expect(checked).toBe(8);
     expect(matched).toBeLessThan(checked);
+  });
+});
+
+/**
+ * A morton_code_2d column does not make a file Morton-sorted. A feature-primary
+ * artifact carries the identical column with the identical values, unsorted, and the
+ * row-group bisect run over it lands arbitrarily.
+ */
+describe('morton row-group sort detection', () => {
+  it('accepts a monotonic sequence, including a shared boundary value', () => {
+    expect(
+      mortonRowGroupExtentsAreSorted([
+        [0, 0],
+        [10, 40],
+        [40, 90],
+        [91, 120],
+      ])
+    ).toBe(true);
+  });
+
+  it('rejects a sequence that restarts, as a feature-primary file does', () => {
+    // Real shape: each feature block spans nearly the whole code range.
+    expect(
+      mortonRowGroupExtentsAreSorted([
+        [0, 0],
+        [450484663, 4193473654],
+        [443527237, 4288997289],
+      ])
+    ).toBe(false);
+  });
+
+  it('treats a missing extent as unknown, not as a descent', () => {
+    expect(mortonRowGroupExtentsAreSorted([[10, 40], null, [50, 60]])).toBe(true);
+    // ...and does not lose the running maximum across the gap.
+    expect(mortonRowGroupExtentsAreSorted([[10, 40], null, [20, 60]])).toBe(false);
+  });
+
+  it('concludes nothing from an empty index', () => {
+    expect(mortonRowGroupExtentsAreSorted([])).toBe(true);
   });
 });
