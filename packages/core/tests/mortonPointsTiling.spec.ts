@@ -179,6 +179,48 @@ describe('Morton points tiling (canonical parquet)', () => {
     expect(mockStore.getRangeCalls()).toBeGreaterThan(0);
   });
 
+  /**
+   * The bisect index must describe each row group's FULL span.
+   *
+   * `readParquetRowGroupColumnExtent` used to read the last value with
+   * `readParquetRowGroup(..., { offset: rowCount - 1, limit: 1 })`, which the vendored
+   * parquet-wasm ignores — it returned the first row again, so every row group
+   * reported `max === min`. Nothing failed; the bisect just answered "first row group
+   * whose max >= target" one group too late and never read the group that actually
+   * CONTAINED the target. On a real 12.1M-point artifact that dropped 11 of 92 row
+   * groups from a viewport query — 188k points, rendered as Z-order-shaped holes.
+   *
+   * So this asserts an exact count, not "more than zero": under-selection is silent
+   * by construction, and only a total can see it.
+   */
+  it('returns every point inside the bounds, not just those in some row groups', async () => {
+    const full = await source.loadPoints('points/transcripts');
+    const xs = full.data[0];
+    const ys = full.data[1];
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    // A rectangle deliberately spanning several row groups' Morton ranges.
+    const bounds = { minX: minX + 10, maxX: minX + 80, minY: minY + 10, maxY: minY + 80 };
+
+    let expected = 0;
+    for (let i = 0; i < xs.length; i += 1) {
+      if (
+        xs[i] >= bounds.minX &&
+        xs[i] <= bounds.maxX &&
+        ys[i] >= bounds.minY &&
+        ys[i] <= bounds.maxY
+      ) {
+        expected += 1;
+      }
+    }
+    expect(expected).toBeGreaterThan(0);
+
+    const result = await source.loadPointsInBounds('points/transcripts', { bounds });
+
+    expect(result.loadMode).toBe('row-groups');
+    expect(result.shape[1]).toBe(expected);
+  });
+
   // The bisect index is built lazily, under exactly the load that duplicates it:
   // every viewport tile bisects concurrently over the same row groups. Caching only
   // the settled value dedups nothing while a read is in flight, so each tile used to

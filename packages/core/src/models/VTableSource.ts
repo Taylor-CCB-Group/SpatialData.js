@@ -210,6 +210,9 @@ export default class SpatialDataTableSource extends AnnDataSource {
     string,
     Promise<{ min: number | null; max: number | null } | null>
   >;
+  /** First value of a column per row group — the boundary the extent is derived
+   * from, shared between neighbouring row groups so each is read once. */
+  rowGroupColumnFirstValueCache: Map<string, Promise<number | null>>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -233,6 +236,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     this.parquetDatasetMetadataCache = new Map();
     this.parquetPartPathsCache = new Map();
     this.rowGroupColumnExtentCache = new Map();
+    this.rowGroupColumnFirstValueCache = new Map();
 
     // Table-specific properties
     this.obsIndices = {};
@@ -1039,35 +1043,81 @@ export default class SpatialDataTableSource extends AnnDataSource {
     rowGroupIndex: number
   ): Promise<{ min: number | null; max: number | null } | null> {
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
-    const rowCount = dataset?.rowGroupRows?.[rowGroupIndex];
-    if (!rowCount) {
+    const totalRowGroups = dataset?.totalNumRowGroups ?? 0;
+    if (!dataset?.rowGroupRows?.[rowGroupIndex]) {
       return null;
     }
-    const columnOptions: ParquetRowGroupReadOptions = { columns: [columnName] };
-    const minTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-      ...columnOptions,
-      limit: 1,
-    });
-    const minColumn = minTable?.getChild(columnName);
-    if (!minColumn || minColumn.length === 0) {
+    const min = await this.readParquetRowGroupColumnFirstValue(
+      parquetPath,
+      columnName,
+      rowGroupIndex
+    );
+    if (min === null) {
       return null;
     }
-    let maxValue: number | null = parquetColumnValueToNumber(minColumn.get(0));
-    if (rowCount > 1) {
-      const maxTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-        ...columnOptions,
-        offset: rowCount - 1,
-        limit: 1,
-      });
-      const maxColumn = maxTable?.getChild(columnName);
-      if (maxColumn && maxColumn.length > 0) {
-        maxValue = parquetColumnValueToNumber(maxColumn.get(0));
+    // The last row group has nothing after it, so its upper bound is open. `null`
+    // already means "unbounded" to the bisect, which treats it as "this group may
+    // contain the target".
+    const max =
+      rowGroupIndex + 1 < totalRowGroups
+        ? await this.readParquetRowGroupColumnFirstValue(parquetPath, columnName, rowGroupIndex + 1)
+        : null;
+    return { min, max };
+  }
+
+  /**
+   * First value of `columnName` in one row group — the only boundary value that can
+   * actually be read here, and the whole basis of {@link readParquetRowGroupColumnExtent}.
+   *
+   * **The last value cannot be read.** The obvious way to get it is
+   * `readParquetRowGroup(..., { offset: rowCount - 1, limit: 1 })`, and that is what
+   * this used to do — but the vendored parquet-wasm ignores `offset` on a row-group
+   * read and hands back the FIRST row again. Nothing failed; every row group simply
+   * reported `max === min`, i.e. that it spanned a single value.
+   *
+   * On a sorted column that is not a small error, it is a systematic one: the bisect
+   * asks "first row group whose max >= target", so an understated max moves the
+   * answer one group too far forward and the group actually CONTAINING the target is
+   * never read. On a Morton points artifact that is missing row groups per viewport
+   * query — holes in the render, in Z-order-shaped bands.
+   *
+   * The sort order gives the bound for free: the file is sorted on this column, so
+   * row group i's values all lie at or below row group i+1's first value. Using that
+   * as the upper bound is *conservative* — equal values spanning a boundary keep both
+   * groups in the range — and it costs one read per row group instead of two.
+   */
+  private async readParquetRowGroupColumnFirstValue(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<number | null> {
+    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}::first`;
+    const cached = this.rowGroupColumnFirstValueCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const pending = (async () => {
+      const options: ParquetRowGroupReadOptions = { columns: [columnName], limit: 1 };
+      const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, options);
+      const column = table?.getChild(columnName);
+      if (!column || column.length === 0) {
+        return null;
       }
-    }
-    return {
-      min: parquetColumnValueToNumber(minColumn.get(0)),
-      max: maxValue,
-    };
+      return parquetColumnValueToNumber(column.get(0));
+    })();
+    this.rowGroupColumnFirstValueCache.set(cacheKey, pending);
+    pending
+      .then((value) => {
+        if (value === null && this.rowGroupColumnFirstValueCache.get(cacheKey) === pending) {
+          this.rowGroupColumnFirstValueCache.delete(cacheKey);
+        }
+      })
+      .catch(() => {
+        if (this.rowGroupColumnFirstValueCache.get(cacheKey) === pending) {
+          this.rowGroupColumnFirstValueCache.delete(cacheKey);
+        }
+      });
+    return pending;
   }
 
   /**
