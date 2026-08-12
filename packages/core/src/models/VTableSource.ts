@@ -247,8 +247,19 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * fallback used when a store has no range support, so the layout is still
    * resolved once rather than per call. */
   parquetPartPathsCache: Map<string, Promise<string[]>>;
-  /** Morton min/max per row group — avoids re-decoding row groups during bisect. */
-  rowGroupColumnExtentCache: Map<string, { min: number | null; max: number | null }>;
+  /**
+   * Morton min/max per row group — avoids re-decoding row groups during bisect.
+   *
+   * Holds the in-flight PROMISE, not the settled value. Caching only the result
+   * dedups nothing while the read is running, and this index is built under exactly
+   * that load: every viewport tile bisects concurrently over the same row groups, so
+   * each one used to start its own full row-group fetch for an entry the others were
+   * already fetching.
+   */
+  rowGroupColumnExtentCache: Map<
+    string,
+    Promise<{ min: number | null; max: number | null } | null>
+  >;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -1037,6 +1048,24 @@ export default class SpatialDataTableSource extends AnnDataSource {
     );
   }
 
+  /**
+   * First and last value of a column within one row group — the sorted-order index
+   * the Morton row-group bisect searches.
+   *
+   * **This should be reading the row group's column statistics**, which parquet
+   * writers already put in the footer we have parsed: `min`/`max` are sitting there,
+   * exact, for nothing. Instead each call range-reads the row group's bytes (every
+   * column, ~2MB on a real transcripts artifact) and decodes it twice — once for the
+   * first row, once for the last. Building the index for a 245-row-group file that
+   * way can fetch the whole file to recover ~4KB of boundary values.
+   *
+   * It is written this way because the **vendored parquet-wasm build exposes no
+   * statistics accessor**: `RowGroupMetaData` offers only `numRows`/`fileOffset`/
+   * `compressedSize`/`column`, and `ColumnChunkMetaData` offers no `statistics()`.
+   * Fixing it properly needs either a wasm rebuild that exposes statistics or a
+   * minimal Thrift read of the footer we already hold — see
+   * `docs/plans/points-morton-tiled-viewport-loading.md`.
+   */
   async loadParquetRowGroupColumnExtent(
     parquetPath: string,
     columnName: string,
@@ -1047,6 +1076,29 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (cached) {
       return cached;
     }
+    const pending = this.readParquetRowGroupColumnExtent(parquetPath, columnName, rowGroupIndex);
+    this.rowGroupColumnExtentCache.set(cacheKey, pending);
+    // A failed probe must not be cached as a permanent "no extent" — that would
+    // strand the bisect on a transient network error for the life of the source.
+    pending
+      .then((extent) => {
+        if (extent === null && this.rowGroupColumnExtentCache.get(cacheKey) === pending) {
+          this.rowGroupColumnExtentCache.delete(cacheKey);
+        }
+      })
+      .catch(() => {
+        if (this.rowGroupColumnExtentCache.get(cacheKey) === pending) {
+          this.rowGroupColumnExtentCache.delete(cacheKey);
+        }
+      });
+    return pending;
+  }
+
+  private async readParquetRowGroupColumnExtent(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<{ min: number | null; max: number | null } | null> {
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
     const rowCount = dataset?.rowGroupRows?.[rowGroupIndex];
     if (!rowCount) {
@@ -1073,12 +1125,10 @@ export default class SpatialDataTableSource extends AnnDataSource {
         maxValue = parquetColumnValueToNumber(maxColumn.get(0));
       }
     }
-    const extent = {
+    return {
       min: parquetColumnValueToNumber(minColumn.get(0)),
       max: maxValue,
     };
-    this.rowGroupColumnExtentCache.set(cacheKey, extent);
-    return extent;
   }
 
   /**

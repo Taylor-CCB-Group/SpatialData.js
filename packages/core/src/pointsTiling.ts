@@ -126,14 +126,49 @@ export function mergeAdjacentIntervals(
   return merged;
 }
 
+/**
+ * How far {@link zcoverRectangle} subdivides before emitting a whole cell.
+ *
+ * The cover exists to pick **row groups**, and a row group holds tens of thousands
+ * of points — so resolving the rectangle to individual quantised cells buys nothing
+ * and costs a great deal. Recursing to the full 16 bits produced **38,014 intervals**
+ * for one viewport-sized rectangle on a real 12.1M-point Xenium artifact (245 row
+ * groups), each interval driving two row-group bisects.
+ *
+ * Measured on that artifact, over a viewport tile, the whole slide, and a zoomed-in
+ * box — at this depth the selected row groups are **identical** to the full-depth
+ * cover (not merely a superset), while the interval count collapses:
+ *
+ * | depth | intervals (viewport tile) | row groups |
+ * |-------|---------------------------|------------|
+ * | 16    | 38,014                    | 92         |
+ * | 10    | 521                       | 92         |
+ * | 8     | 138                       | 92         |
+ *
+ * 10 leaves headroom: the cover stays finer than the row-group granularity for files
+ * with up to ~1M row groups (4^10 cells), where 8 would start over-fetching.
+ */
+export const MORTON_ZCOVER_MAX_DEPTH = 10;
+
+/**
+ * Morton-code intervals covering a rectangle in quantised (x, y) space.
+ *
+ * Stopping early at {@link maxDepth} makes a cell **coarser than the rectangle** —
+ * the interval then covers some codes outside it. That is safe in both directions:
+ * the cover is still complete (no code inside the rectangle is dropped), and the
+ * extra codes only ever widen the row-group set, whose rows are filtered against the
+ * exact bounds after the read.
+ */
 export function zcoverRectangle(
   rx0: number,
   ry0: number,
   rx1: number,
   ry1: number,
-  bits = MORTON_CODE_BITS_PER_AXIS
+  bits = MORTON_CODE_BITS_PER_AXIS,
+  maxDepth = MORTON_ZCOVER_MAX_DEPTH
 ): Array<[number, number]> {
   const maxCoord = 2 ** bits - 1;
+  const depthLimit = Math.max(0, Math.min(bits, maxDepth));
   const x0 = Math.max(0, Math.min(maxCoord, Math.min(rx0, rx1)));
   const x1 = Math.max(0, Math.min(maxCoord, Math.max(rx0, rx1)));
   const y0 = Math.max(0, Math.min(maxCoord, Math.min(ry0, ry1)));
@@ -153,7 +188,7 @@ export function zcoverRectangle(
     if (!intersects(xmin, ymin, xmax, ymax, x0, y0, x1, y1)) {
       continue;
     }
-    if (contained(xmin, ymin, xmax, ymax, x0, y0, x1, y1) || level === bits) {
+    if (contained(xmin, ymin, xmax, ymax, x0, y0, x1, y1) || level >= depthLimit) {
       intervals.push(cellRange(prefix, level, bits));
       continue;
     }

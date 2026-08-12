@@ -4,6 +4,7 @@ import {
   extractSentinelBoundingBox,
   filterColumnarByFeatureCodes,
   filterPointsToBounds,
+  MORTON_ZCOVER_MAX_DEPTH,
   mergeAdjacentIntervals,
   mortonIntervalsForBounds,
   zcoverRectangle,
@@ -165,5 +166,89 @@ describe('points tiling helpers', () => {
     );
     expect(filtered.data[0]).toBe(xs);
     expect(filtered.featureCodes).toBe(sourceFeatureCodes);
+  });
+});
+
+/**
+ * The cover picks ROW GROUPS, so resolving a rectangle down to individual quantised
+ * cells is pure cost. Full-depth recursion produced 38,014 intervals for one
+ * viewport-sized rectangle on a real 12.1M-point artifact — 76k row-group bisects to
+ * select the same 92 row groups a few hundred intervals select.
+ */
+describe('zcoverRectangle depth cap', () => {
+  /** Interleave two 16-bit coords into a Morton code, as the writer does. */
+  const morton = (x: number, y: number): number => {
+    let code = 0;
+    for (let bit = 0; bit < 16; bit += 1) {
+      code += ((x >> bit) & 1) * 2 ** (2 * bit) + ((y >> bit) & 1) * 2 ** (2 * bit + 1);
+    }
+    return code;
+  };
+
+  const covers = (intervals: Array<[number, number]>, code: number) =>
+    intervals.some(([lo, hi]) => lo <= code && code <= hi);
+
+  it('collapses the interval count by orders of magnitude', () => {
+    const rect: [number, number, number, number] = [12345, 6789, 41000, 20000];
+
+    const full = zcoverRectangle(...rect, 16, 16);
+    const capped = zcoverRectangle(...rect);
+
+    expect(full.length).toBeGreaterThan(10_000);
+    expect(capped.length).toBeLessThan(full.length / 20);
+  });
+
+  it('still covers every code inside the rectangle', () => {
+    // Completeness is the property that matters: a dropped code is a hole in the
+    // render. Coarser cells may cover MORE than the rectangle, which the exact
+    // bounds filter removes after the read.
+    const [x0, y0, x1, y1] = [1000, 2000, 3400, 2600];
+    const intervals = zcoverRectangle(x0, y0, x1, y1);
+
+    for (let x = x0; x <= x1; x += 37) {
+      for (let y = y0; y <= y1; y += 41) {
+        expect(covers(intervals, morton(x, y))).toBe(true);
+      }
+    }
+  });
+
+  it('never covers less than the exact cover', () => {
+    const rect: [number, number, number, number] = [700, 900, 5000, 3300];
+    const full = zcoverRectangle(...rect, 16, 16);
+    const capped = zcoverRectangle(...rect);
+
+    // Every code the full-depth cover claims must still be claimed.
+    for (const [lo, hi] of full) {
+      expect(covers(capped, lo)).toBe(true);
+      expect(covers(capped, hi)).toBe(true);
+    }
+  });
+
+  it('is unchanged for a rectangle that resolves above the cap', () => {
+    // A whole-space query is one cell at level 0 — the cap cannot affect it.
+    expect(zcoverRectangle(0, 0, 65535, 65535)).toEqual([[0, 4294967295]]);
+  });
+
+  it('honours an explicit depth, and clamps it to the coordinate bits', () => {
+    const rect: [number, number, number, number] = [10, 20, 5000, 6000];
+
+    expect(zcoverRectangle(...rect, 16, 4).length).toBeLessThan(
+      zcoverRectangle(...rect, 16, 8).length
+    );
+    // Beyond `bits` there is nothing left to subdivide.
+    expect(zcoverRectangle(...rect, 16, 99)).toEqual(zcoverRectangle(...rect, 16, 16));
+    expect(MORTON_ZCOVER_MAX_DEPTH).toBeLessThan(16);
+  });
+
+  it('applies the cap through mortonIntervalsForBounds', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
+    const intervals = mortonIntervalsForBounds(bounds, {
+      minX: 137,
+      minY: 241,
+      maxX: 622,
+      maxY: 733,
+    });
+
+    expect(intervals.length).toBeLessThan(4_000);
   });
 });

@@ -179,6 +179,36 @@ describe('Morton points tiling (canonical parquet)', () => {
     expect(mockStore.getRangeCalls()).toBeGreaterThan(0);
   });
 
+  // The bisect index is built lazily, under exactly the load that duplicates it:
+  // every viewport tile bisects concurrently over the same row groups. Caching only
+  // the settled value dedups nothing while a read is in flight, so each tile used to
+  // start its own full row-group fetch for an entry the others were already fetching.
+  it('dedups concurrent extent probes for the same row group', async () => {
+    const parquetPath = 'points/transcripts/points.parquet';
+    const freshSource = () =>
+      new SpatialDataPointsSource({ store: mockStore.store, fileType: '.zarr' });
+
+    const single = freshSource();
+    mockStore.resetCalls();
+    const expected = await single.loadParquetRowGroupColumnExtent(parquetPath, 'morton_code_2d', 1);
+    const singleCallCount = mockStore.getRangeCalls();
+    expect(singleCallCount).toBeGreaterThan(0);
+
+    const concurrent = freshSource();
+    mockStore.resetCalls();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        concurrent.loadParquetRowGroupColumnExtent(parquetPath, 'morton_code_2d', 1)
+      )
+    );
+
+    // Eight callers, one read.
+    expect(mockStore.getRangeCalls()).toBe(singleCallCount);
+    for (const result of results) {
+      expect(result).toEqual(expected);
+    }
+  });
+
   it('loads a bounded viewport without returning the full table', async () => {
     const full = await source.loadPoints('points/transcripts');
     const xs = full.data[0];
