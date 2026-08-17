@@ -17,9 +17,9 @@ classifiers = [
 dependencies = [
     "imagecodecs>=2025.8.2",
     "numcodecs>=0.16",
-    "numpy>=2.0",
+    "numpy>=2.5.2",
     "pandas>=2.2",
-    "pyarrow>=18",
+    "pyarrow>=25.0.1",
     "zarr>=3.3.0",
 ]
 
@@ -53,7 +53,7 @@ spatialdata-js-util = "spatialdata_js_util.cli:main"
 "imagecodecs_jpeg2k" = "spatialdata_js_util.codecs.zarr_codec:Jpeg2kCodec"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
