@@ -46,11 +46,23 @@ export function setChunkDecodeBackend(backend: ChunkDecodeBackend): void {
   chunkDecodeBackend = backend;
 }
 
-type GetWorkerFn = (
-  arr: zarr.Array<zarr.DataType>,
+/**
+ * The shape of the injected `getWorker`.
+ *
+ * Generic over `D` so a chunk comes back typed to the array it was read from,
+ * rather than as `Chunk<DataType>` needing an assertion at the call site.
+ *
+ * It is narrower than fizarrita's own signature, deliberately. That one returns
+ * a *conditional* type — `Scalar<D>` when every dimension is integer-indexed,
+ * `Chunk<D>` otherwise — and this seam only ever passes a selection whose type
+ * admits `null`, which lands on the `Chunk<D>` branch. Restating that here keeps
+ * the scalar case out of a signature that could not produce it.
+ */
+type GetWorkerFn = <D extends zarr.DataType>(
+  arr: zarr.Array<D>,
   selection: Array<number | zarr.Slice | null> | null,
   options: FizarritaGetWorkerOptions
-) => Promise<zarr.Chunk<zarr.DataType>>;
+) => Promise<zarr.Chunk<D>>;
 
 let getWorkerImpl: GetWorkerFn | undefined;
 
@@ -83,10 +95,13 @@ export async function getZarrChunk<D extends zarr.DataType>(
       cache: backend.options?.cache,
       signal: opts?.signal,
     });
+    // Kept even though the type now promises a chunk: this is an injection seam,
+    // and the type says what a correct impl returns, not what one did. Deleting
+    // it as redundant would trade a named error for a downstream shape crash.
     if (typeof result !== 'object' || result === null || !('data' in result)) {
       throw new Error('Expected chunk object from fizarrita getWorker().');
     }
-    return result as zarr.Chunk<D>;
+    return result;
   }
 
   // zarrita takes `signal` as a first-class option: it forwards it to every
