@@ -1,6 +1,6 @@
 # Memory Accounting Before Memory Management
 
-**Status:** proposed
+**Status:** accepted
 **Related:** [ADR 0004](0004-resource-resolver-owned-by-core.md), [ADR 0002](0002-spatially-aware-vector-loading.md)
 
 Adopt byte-level **memory accounting** now; adopt a **Resource Ceiling** only when
@@ -51,7 +51,16 @@ The seam is real, exported, documented, and free: `enableWorkerChunkDecode({ cac
 will accept any `{get, set}` object today with no changes to fizarrita or
 `zarrextra`.
 
-### Prior art: `tgpu-htj2k`
+### Prior art: `intraspatial`
+
+> **Naming.** The relevant code has migrated to
+> <https://github.com/xinaesthete/intraspatial> and is called `intraspatial`
+> from here on. Earlier drafts of this ADR, ADR 0004, and the plans under
+> `docs/plans/` referred to it by its former name; all of those were renamed in
+> the same pass, so nothing is left half-renamed. The former name survives in
+> exactly one place — ADR 0004's first mention — where it is doing the job of
+> telling a reader of the older ADR that the two names are the same project.
+
 
 ```ts
 /** Anything holding resident host memory can report it in bytes (mirrors TypedArray). */
@@ -133,7 +142,7 @@ provoked.
 
 ## Rationale for deferring 4–5
 
-`tgpu-htj2k` **built and unit-tested** `selectWithinBudget` — a degrade-to-fit
+`intraspatial` **built and unit-tested** `selectWithinBudget` — a degrade-to-fit
 ceiling — and then **never called it in production**. Its ADR-0010 defers it
 *"until an actual OOM (e.g. a grazing oblique strip) can be provoked"*, because
 the geometry (Nyquist + frustum + LOD gradient) already bounds the working set to
@@ -170,11 +179,13 @@ authorities themselves.
   **store object instance**. `createPrefixedStore` returns a **fresh object literal
   on every call**, so two prefixed views over the same root get different `store_N`
   and would double-cache. Hold a stable prefixed-store instance per element.
-- **Neither seam gives in-flight dedup.** fizarrita checks the cache while building
-  its task list and writes it only after the worker returns, so two concurrent
-  requests for the same chunk both fetch and both decode. Key pending promises
-  yourself — `parquetTableCache` is the in-repo precedent, and also the cautionary
-  tale (see the rejection-poisoning bug above).
+- **In-flight dedup is fizarrita's job now, not ours.** It used to check the cache
+  while building its task list and write back only after the worker returned, so
+  two concurrent requests for one chunk both fetched and both decoded; the note
+  here said to key pending promises ourselves. Since 2.1.0 it keys them itself,
+  the same way it keys the chunk cache, so the zarr side needs nothing. The
+  parquet side still keys its own — `parquetTableCache` is the in-repo precedent,
+  and also the cautionary tale (see the rejection-poisoning bug above).
 - **`Resolution.stale` needs a drop policy, and it bounds the `Resolution`
   contract.** A `failed` resolution holding `stale: PointsLoadResult` pins roughly
   48 MB indefinitely. Today's code leaks the same memory implicitly; the type makes
@@ -195,25 +206,38 @@ authorities themselves.
 
 ## Owed upstream to fizarrita
 
-Worth filing alongside the `zarrextra` asks already listed in
-`tgpu-htj2k/docs/zarrextra-worker-decode.md`:
+**All four are resolved as of fizarrita 2.1.0.** Kept as a record of what was
+wrong and where it was fixed, because two of them shaped decisions elsewhere in
+this ADR and the reasoning is easier to follow with the original complaint
+attached.
 
-1. **`probeDecompressedSize` does not recognise `imagecodecs_jpeg2k` or HTJ2K.** Its
-   compression sniff knows only `gzip|zlib|blosc|zstd|lz4|bz2|lzma|snappy`, so for
-   JP2K-backed images it takes the "not compressed" branch and returns the
-   *compressed* byte length as the decompressed size, then feeds that to
-   `inferChunkShape`. Usually it fails to divide cleanly and falls back to the
-   metadata shape harmlessly — but it can emit spurious `chunk_shape does not match`
-   warnings and, worst case, adopt a bogus inferred shape. **This affects our
-   imagery.**
-2. **Two extra store round-trips per tile.** Every `getWorker` call re-reads
-   `zarr.json`/`.zarray` *and* runs `probeActualChunkShape` (another `store.get`,
-   plus up to five one-past-the-end probes). The probe runs **before** the cache is
-   consulted, so even a populated chunk cache would not eliminate it.
-3. **No in-flight dedup on the chunk path.**
-4. **No `AbortSignal`.** `GetWorkerOptions` has no `signal`, and `zarrextra`'s
-   `rejectOnAbort` only settles the promise early — the fetch and the worker decode
-   run to completion regardless.
+1. ~~**`probeDecompressedSize` does not recognise `imagecodecs_jpeg2k` or HTJ2K.**~~
+   Its compression sniff knew only `gzip|zlib|blosc|zstd|lz4|bz2|lzma|snappy`, so
+   for JP2K-backed images it took the "not compressed" branch and returned the
+   *compressed* byte length as the decompressed size, then fed that to
+   `inferChunkShape`. **This affected our imagery.** Fixed in
+   [worker-pool#9](https://github.com/fideus-labs/worker-pool/pull/9) by inverting
+   the test: allowlist the codecs known to *preserve* byte count and treat an
+   unrecognised codec as size-changing, since misjudging that way costs one decode
+   through the existing fallback while the other way returns a silently wrong
+   number.
+2. ~~**Two extra store round-trips per tile.**~~ Every `getWorker` call re-read
+   `zarr.json`/`.zarray` *and* ran `probeActualChunkShape`, before the cache was
+   consulted, so even a populated chunk cache could not eliminate them. Fixed in
+   [worker-pool#14](https://github.com/fideus-labs/worker-pool/pull/14), which
+   memoises both per `(store, path)`.
+3. ~~**No in-flight dedup on the chunk path.**~~ Fixed in
+   [worker-pool#10](https://github.com/fideus-labs/worker-pool/pull/10): in-flight
+   operations are keyed the same way the chunk cache is, so concurrent readers of
+   one chunk share a single fetch and a single decode.
+4. ~~**No `AbortSignal`.**~~ `GetWorkerOptions` now takes a `signal`, forwarded to
+   every `store.get` — metadata, probe, and chunk fetches — with still-queued pool
+   tasks dropped when it fires
+   ([worker-pool#15](https://github.com/fideus-labs/worker-pool/pull/15)).
+   Taken up here: `zarrextra` forwards the caller's signal to both backends and
+   its `rejectOnAbort` wrapper is gone. That wrapper only stopped us *awaiting* a
+   read — the fetch and the decode ran to completion regardless — so a pan that
+   outran its tiles paid full price for every tile it had abandoned.
 
 ## Consequences
 

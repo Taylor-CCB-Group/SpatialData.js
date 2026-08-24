@@ -68,7 +68,7 @@ core     Resource Resolver    reconcile · cache · supersede · stream · evict
    │      │                              PointsLayer · shapesLayer · LabelsLayer
    │      └──► vis   React binding (useSyncExternalStore) · panels · Viv passthrough
    │
-   ├──► tgpu-htj2k   three.js/TSL Renderer Adapter   (separate repo, already live)
+   ├──► intraspatial   three.js/TSL Renderer Adapter   (separate repo, already live)
    │
    └──► headless     no renderer
 ```
@@ -135,7 +135,7 @@ race fixes, no memory work.
 > port to invent** — and because `avivatorish` is a de-vendoring holding pen for
 > code that also lives upstream in Viv and MDV, with an image-state model its own
 > README calls *"still evolving"*. `zarrextra`'s `VivCompatiblePixelSource`
-> already serves both Viv and `tgpu-htj2k`, so the images seam already exists
+> already serves both Viv and `intraspatial`, so the images seam already exists
 > *below* the resolver: images is the one kind where the duplication argument does
 > not apply. **Add no image port to `core`.** See ADR 0004 §"Amendment — the image
 > port".
@@ -191,7 +191,7 @@ Assign these to different people. They do not conflict.
 **Spike, behind the `RequestSlot` interface:** implement the slot twice — plain, and
 Effect `Stream` + `Fiber` — for the **matching scan only**. Effect stays *inside* the
 implementation; nothing leaks into a public signature (ADR 0004 §7 — `core` is also
-`tgpu-htj2k`'s dependency root). **Kill criterion, agreed up front:** drop Effect
+`intraspatial`'s dependency root). **Kill criterion, agreed up front:** drop Effect
 unless it wins on *all three* of — supersession correctness under two concurrent
 scans; interruption that actually reaches the worker; fewer lines to set up a race in
 a test. A tie means the plain slot wins.
@@ -215,7 +215,7 @@ a test. A tie means the plain slot wins.
 >
 > Effect ties two and loses one, so by the agreed rule the plain `RequestSlot` wins.
 > The `RequestSlot` seam is deliberately shaped so a future reconsideration (e.g. if
-> `tgpu-htj2k`'s dependency-free stance is renegotiated) is a swap, not a rewrite.
+> `intraspatial`'s dependency-free stance is renegotiated) is a swap, not a rewrite.
 
 ---
 
@@ -292,7 +292,7 @@ loading requires no resolver change — it lives behind `loadInBounds()` inside 
    exported, documented, and **never passed** — so there is no zarr chunk cache at all
    today, and every tile re-fetches *and* re-decodes.
 
-`tgpu-htj2k`'s `TileCache<V>` (~100 lines, framework-free, byte-bounded LRU with a
+`intraspatial`'s `TileCache<V>` (~100 lines, framework-free, byte-bounded LRU with a
 `dispose` hook, generic over payload) is directly reusable for 2 and 3.
 
 **Stop at rung 3.** Rungs 4–5 (encoded tier, tiered `ResidencyReport`, Resource
@@ -335,7 +335,7 @@ Ceiling) wait for measurement. See ADR 0005 for why.
 
 - **Group Entry / blend compositing.** `CONTEXT.md` reserves it and says *"avoid:
   framebuffer layer until the rendering behavior exists."* That holds. `splatDensity.ts`
-  in `tgpu-htj2k` is a GPU splat-by-blending primitive, **not** a prototype of Render
+  in `intraspatial` is a GPU splat-by-blending primitive, **not** a prototype of Render
   Stack compositing — using it would mean adopting the whole WebGPU stack. A group
   layer-hierarchy is expected before long and may well be built on WebGPU; the Renderer
   Adapter seam is what makes it approachable. **Add no framebuffer hook in anticipation.**

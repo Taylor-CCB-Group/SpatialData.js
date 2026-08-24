@@ -7,7 +7,7 @@
 > This plan proposes a `LayerDataEngine` in `@spatialdata/layers`. That is one
 > package too high: the orchestration layer is the **Resource Resolver**, it is
 > renderer-agnostic, and it belongs in `@spatialdata/core`. A second Resource
-> Resolver already exists in `tgpu-htj2k` precisely because `core` did not offer
+> Resolver already exists in `intraspatial` precisely because `core` did not offer
 > one and `layers` is behind deck.gl.
 >
 > It also leaves open question 2 ("one engine, or per-type sub-engines?"), which is
