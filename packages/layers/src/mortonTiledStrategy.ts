@@ -169,14 +169,15 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             if (!tile || !isPointTileBbox(tileProps.bbox)) {
               return null;
             }
-            debugHooks.onTileLoadStart(tile);
+            const attempt = debugHooks.onTileLoadStart(tile);
             const rawBounds = boundsFromTileBbox(tile.bbox);
             const bounds = intersectBounds(rawBounds, localBounds);
             if (!bounds) {
               debugHooks.onTileLoadEnd(
                 tile,
                 { success: true, clippedBounds: null, pointCount: 0, loadMode: 'clipped' },
-                rawBounds
+                rawBounds,
+                attempt
               );
               return null;
             }
@@ -190,7 +191,8 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                 debugHooks.onTileLoadEnd(
                   tile,
                   { success: true, clippedBounds: bounds, pointCount: 0 },
-                  rawBounds
+                  rawBounds,
+                  attempt
                 );
                 return null;
               }
@@ -202,7 +204,8 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                   pointCount: renderedPointCount(batch),
                   loadMode: batch.loadMode,
                 },
-                rawBounds
+                rawBounds,
+                attempt
               );
               return batch;
             } catch (error) {
@@ -215,7 +218,8 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                   clippedBounds: bounds,
                   errorMessage: aborted ? 'aborted' : String(error),
                 },
-                rawBounds
+                rawBounds,
+                attempt
               );
               if (aborted) {
                 return null;
