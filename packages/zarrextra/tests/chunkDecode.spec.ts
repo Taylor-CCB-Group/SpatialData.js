@@ -74,3 +74,85 @@ describe('getZarrChunk', () => {
     expect(getChunkDecodeBackend()).toEqual({ kind: 'main' });
   });
 });
+
+describe('getZarrChunk cancellation', () => {
+  it('hands the caller signal to fizarrita rather than watching it here', async () => {
+    const controller = new AbortController();
+    const getWorker = vi.fn(async () => ({
+      data: new Uint8Array([1, 2, 3, 4]),
+      shape: [2, 2],
+      stride: [2, 1],
+    }));
+    setFizarritaGetWorker(getWorker as never);
+    setChunkDecodeBackend({ kind: 'fizarrita', pool: {} as never });
+
+    const store = createArrayStore();
+    const arr = await zarr.open(store as never, { kind: 'array' });
+    await getZarrChunk(arr, [null, null], { signal: controller.signal });
+
+    expect(getWorker).toHaveBeenCalledOnce();
+    expect(getWorker.mock.calls[0]?.[2]).toMatchObject({ signal: controller.signal });
+
+    setChunkDecodeBackend({ kind: 'main' });
+  });
+
+  it('omits the signal when the caller gives none', async () => {
+    const getWorker = vi.fn(async () => ({
+      data: new Uint8Array([1, 2, 3, 4]),
+      shape: [2, 2],
+      stride: [2, 1],
+    }));
+    setFizarritaGetWorker(getWorker as never);
+    setChunkDecodeBackend({ kind: 'fizarrita', pool: {} as never });
+
+    const store = createArrayStore();
+    const arr = await zarr.open(store as never, { kind: 'array' });
+    await getZarrChunk(arr, [null, null]);
+
+    expect(getWorker.mock.calls[0]?.[2]?.signal).toBeUndefined();
+
+    setChunkDecodeBackend({ kind: 'main' });
+  });
+
+  it('passes the signal down to the store on the main-thread path', async () => {
+    // The distinction this change is about: a cancelled read has to reach the
+    // work, not just stop us looking at it. What is ours to guarantee is that
+    // the signal arrives at `store.get` — whether the request then unwinds is
+    // the store's business (a `FetchStore` aborts; this fake ignores it, which
+    // is why the read below still resolves).
+    const backing = createArrayStore();
+    const controller = new AbortController();
+    let chunkReadSignal: AbortSignal | undefined;
+
+    const store = {
+      get: async (key: string, opts?: { signal?: AbortSignal }) => {
+        if (key === '/c/0/0') {
+          chunkReadSignal = opts?.signal;
+        }
+        return backing.get(key);
+      },
+    };
+
+    const arr = await zarr.open(store as never, { kind: 'array' });
+    await getZarrChunk(arr, [null, null], { signal: controller.signal });
+
+    expect(chunkReadSignal).toBe(controller.signal);
+  });
+
+  it('rejects an already-aborted read without touching the store', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled before it started'));
+
+    const get = vi.fn(async (key: string) => createArrayStore().get(key));
+    const metadataOnly = { get: async (key: string) => createArrayStore().get(key) };
+    const arr = await zarr.open(metadataOnly as never, { kind: 'array' });
+    // Swap in the counting store only after `open` has read the metadata, so
+    // the count reflects chunk reads alone.
+    (arr as unknown as { store: unknown }).store = { get };
+
+    await expect(getZarrChunk(arr, [null, null], { signal: controller.signal })).rejects.toThrow(
+      'cancelled before it started'
+    );
+    expect(get).not.toHaveBeenCalled();
+  });
+});

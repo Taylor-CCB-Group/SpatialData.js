@@ -3,12 +3,22 @@ import type { WorkerPool } from '@fideus-labs/worker-pool';
 import * as zarr from 'zarrita';
 
 export type ZarrGetOptions = {
+  /**
+   * Cancels the read.
+   *
+   * Both backends take this as a first-class option and act on it: fetches are
+   * aborted at the store, chunk work still queued on the worker pool is dropped
+   * rather than started, and the returned promise rejects with the signal's
+   * reason. A decode already running on a worker is not interrupted — its result
+   * is discarded — so this bounds what a cancelled read *starts*, not what it has
+   * already handed to a worker.
+   */
   signal?: AbortSignal;
 };
 
 export type FizarritaGetWorkerOptions = Pick<
   GetWorkerOptions,
-  'workerUrl' | 'useSharedArrayBuffer' | 'cache'
+  'workerUrl' | 'useSharedArrayBuffer' | 'cache' | 'signal'
 > & {
   pool: WorkerPool;
 };
@@ -18,7 +28,12 @@ export type ChunkDecodeBackend =
   | {
       kind: 'fizarrita';
       pool: WorkerPool;
-      options?: Omit<FizarritaGetWorkerOptions, 'pool'>;
+      /**
+       * Set once when the backend is enabled, so deliberately not `signal`:
+       * cancellation belongs to a single read, and a signal parked here would
+       * silently govern every read the backend ever serves.
+       */
+      options?: Omit<FizarritaGetWorkerOptions, 'pool' | 'signal'>;
     };
 
 let chunkDecodeBackend: ChunkDecodeBackend = { kind: 'main' };
@@ -43,31 +58,6 @@ export function setFizarritaGetWorker(impl: GetWorkerFn): void {
   getWorkerImpl = impl;
 }
 
-function rejectOnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) {
-    return promise;
-  }
-  if (signal.aborted) {
-    return Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
-  }
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      }
-    );
-  });
-}
-
 export async function getZarrChunk<D extends zarr.DataType>(
   arr: zarr.Array<D>,
   selection: Array<number | zarr.Slice | null>,
@@ -81,21 +71,27 @@ export async function getZarrChunk<D extends zarr.DataType>(
           'Import from zarrextra/workers instead of setting the backend directly.'
       );
     }
-    const result = await rejectOnAbort(
-      getWorkerImpl(arr, selection, {
-        pool: backend.pool,
-        workerUrl: backend.options?.workerUrl,
-        useSharedArrayBuffer: backend.options?.useSharedArrayBuffer,
-        cache: backend.options?.cache,
-      }),
-      opts?.signal
-    );
+    // The signal goes to fizarrita rather than being watched here. Watching it
+    // here only ever stopped us *awaiting* a read: the fetch and the decode ran
+    // to completion regardless, so a pan that outran its tiles still paid full
+    // price for every one it had already abandoned. Handed over, it aborts the
+    // store requests and drops chunk tasks still queued on the pool.
+    const result = await getWorkerImpl(arr, selection, {
+      pool: backend.pool,
+      workerUrl: backend.options?.workerUrl,
+      useSharedArrayBuffer: backend.options?.useSharedArrayBuffer,
+      cache: backend.options?.cache,
+      signal: opts?.signal,
+    });
     if (typeof result !== 'object' || result === null || !('data' in result)) {
       throw new Error('Expected chunk object from fizarrita getWorker().');
     }
     return result as zarr.Chunk<D>;
   }
 
+  // zarrita takes `signal` as a first-class option: it forwards it to every
+  // `store.get` and re-checks it between chunks, so a multi-chunk read stops
+  // early rather than running the rest out. `opts` passes straight through.
   const result = await zarr.get(arr, selection, opts);
   if (typeof result !== 'object' || result === null || !('data' in result)) {
     throw new Error('Expected chunk object from zarr.get().');

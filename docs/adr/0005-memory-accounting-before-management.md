@@ -225,10 +225,10 @@ attached.
    every `store.get` — metadata, probe, and chunk fetches — with still-queued pool
    tasks dropped when it fires
    ([worker-pool#15](https://github.com/fideus-labs/worker-pool/pull/15)).
-   **Not yet taken up here:** `zarrextra`'s `rejectOnAbort` still only settles the
-   promise early, so a cancelled read stops being awaited but its fetch and decode
-   still run to completion. Forwarding the signal is now a change we can make and
-   have not.
+   Taken up here: `zarrextra` forwards the caller's signal to both backends and
+   its `rejectOnAbort` wrapper is gone. That wrapper only stopped us *awaiting* a
+   read — the fetch and the decode ran to completion regardless — so a pan that
+   outran its tiles paid full price for every tile it had abandoned.
 
 ## Consequences
 
