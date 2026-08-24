@@ -203,18 +203,16 @@ export interface PointsLayerConfig extends BaseLayerConfig {
    */
   featureColorOverrides?: Record<string, [number, number, number]>;
   /**
-   * Whether to use the Morton-tiled viewport path when the element supports it
-   * (D5). `'auto'` probes the element's parquet footer once and, if it is a Morton
-   * artifact whose store can serve row-group range reads, renders viewport tiles
-   * instead of a capped resident preload — so a dataset far larger than the memory
-   * cap can be explored at full detail. `'off'` always preloads.
+   * Whether to use the Morton-tiled viewport path when the element supports it. `'auto'`
+   * probes the element's parquet footer once and, if it is a Morton artifact whose store
+   * can serve row-group range reads, renders viewport tiles instead of a capped resident
+   * preload; `'off'` always preloads. An element that cannot be tiled falls back either
+   * way, so this is a preference, not a requirement.
    *
-   * Defaults to `'auto'` (`DEFAULT_POINTS_TILING`) — resolve it with
-   * `pointsTilingEnabled` rather than comparing to `'auto'`, so `undefined` means the
-   * same thing everywhere.
+   * Defaults to `'auto'` — resolve it with `pointsTilingEnabled` rather than comparing to
+   * `'auto'`, so `undefined` means the same thing everywhere.
    *
-   * Serializable Stack-Entry state. An element that cannot be tiled falls back to
-   * the preload either way, so this is a preference, not a requirement.
+   * Serializable Stack-Entry state.
    */
   pointsTiling?: PointsTilingMode;
   /**

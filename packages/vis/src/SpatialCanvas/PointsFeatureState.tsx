@@ -128,11 +128,9 @@ export interface PointsFeatureState {
    * own `pointsTiling` before concluding this layer draws tiles — the probe's answer
    * is cached per element and outlives the config that asked for it.
    *
-   * It belongs on this hook rather than a direct `engine.isTiled(...)` read because
-   * the probe settles ASYNCHRONOUSLY: a component reading the engine outside this
-   * subscription shows whatever was true when it last happened to render, which is
-   * how the tiling control kept saying "this element has no Morton index" about an
-   * element it was already tiling.
+   * On this hook rather than a direct `engine.isTiled(...)` read because the probe settles
+   * ASYNCHRONOUSLY: a component reading the engine outside this subscription shows
+   * whatever was true when it last happened to render.
    */
   tiled: boolean;
   /** Running per-feature counts over the resident window (`code → rows`), available

@@ -54,15 +54,11 @@ export interface FeatureRowStateInput {
   residentPointCount?: number;
   datasetPointCount?: number;
   /**
-   * The layer reads viewport tiles rather than a resident window (D5).
-   *
-   * It has to be said explicitly, because every OTHER signal here describes a
-   * resident batch that a tiled layer does not have: `resident` is false for every
-   * feature, `residentKnown` is false, and the fallback that produces —"the resident
-   * set is unknown, so treat everything as shown" — is accidentally the right
-   * *outcome* for the wrong *reason*. On a tiled layer coverage is not unknown: every
-   * feature in view is read on demand, and deselecting one drops its points inside
-   * the scan rather than filtering a batch afterwards.
+   * The layer reads viewport tiles rather than a resident window. Said explicitly because
+   * every OTHER signal here describes a resident batch a tiled layer does not have, and
+   * their fallback — "the resident set is unknown, so treat everything as shown" — is
+   * accidentally the right outcome for the wrong reason. Coverage is not unknown here:
+   * every feature in view is read on demand.
    */
   tiled?: boolean;
 }

@@ -85,18 +85,15 @@ export function renderColumnarScatterLayer(
   batch: ColumnarNdarrayPointsBatch,
   props: PointsScatterStyleProps
 ) {
-  // Points are sized in WORLD (common) units so the GPU scales them with zoom —
-  // they shrink when you zoom out, which is exactly where scatter overdraw is worst
-  // — while `radiusMinPixels`/`radiusMaxPixels` clamp the projected radius so points
-  // never vanish or bloat.
+  // Points are sized in WORLD (common) units so the GPU scales them with zoom — they
+  // shrink when you zoom out, which is where scatter overdraw is worst — while
+  // `radiusMinPixels`/`radiusMaxPixels` clamp the projected radius.
   //
-  // This is deliberately the SAME on the Morton tile path. Tiles used to size in
-  // fixed pixels, on the reasoning that they are already viewport-bounded; the
-  // effect was that `pointSize` meant two different things depending on a checkbox,
-  // and that a zoomed-out tiled layer drew every one of its millions of points as a
-  // fixed screen dot. Density saturated into a flat mass and every tile seam and
-  // density edge hardened into an artefact, so a real acquisition boundary was
-  // indistinguishable from a rendering fault.
+  // Deliberately the SAME on the Morton tile path, which used to size in fixed pixels on
+  // the reasoning that tiles are already viewport-bounded. The effect was that a
+  // zoomed-out tiled layer drew millions of points as fixed screen dots: density
+  // saturated into a flat mass and every tile seam hardened into what looked like a
+  // rendering fault.
   const radiusMinPixels = props.pointRadiusMinPixels ?? DEFAULT_POINT_RADIUS_MIN_PIXELS;
   const radiusMaxPixels = props.pointRadiusMaxPixels ?? DEFAULT_POINT_RADIUS_MAX_PIXELS;
   // `pointSize` means "this many units of the ELEMENT's own coordinate space".

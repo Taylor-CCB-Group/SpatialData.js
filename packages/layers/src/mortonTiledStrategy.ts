@@ -73,26 +73,23 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       return null;
     }
 
-    // The grid comes from the artifact — point density and row-group size — rather
-    // than from deck's defaults; see mortonTileGrid for why both ends are bounded.
+    // The grid comes from the artifact — density and row-group size — not deck's
+    // defaults; see mortonTileGrid for why both ends are bounded.
     const capabilities = resource.loader.capabilities;
     const grid = mortonTileGrid({
       bounds: localBounds,
       totalRows: capabilities.totalRows ?? 0,
       maxRowsPerGroup: capabilities.maxRowsPerGroup ?? 0,
       modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
-      // The tile cache is a second pool the resident memory cap cannot see (ADR 0005
-      // — account first, manage after). Budgeting it against the same number is not
-      // the same as the cap applying: it bounds the cache in rows so the worst case
-      // is a stated quantity rather than deck's `5 x whatever is on screen`, which on
-      // a coarse viewport of this element was ~220 tiles.
+      // A second pool the resident cap cannot see (ADR 0005 — account first, manage
+      // after). Budgeting against the same number is not the cap applying: it makes the
+      // worst case a stated quantity rather than deck's `5 x whatever is on screen`.
       cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
     });
 
     const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
-    // Colour rides the per-tile batch: the scan returns a feature code per point
-    // (D5 step 3), so a tile carries everything the colour extension needs and the
-    // tiled path stops being the odd one out that only ever drew flat.
+    // Colour rides the per-tile batch: the scan returns a feature code per point, so a
+    // tile carries everything the colour extension needs.
     const scatterStyleProps = {
       color,
       pointSize,
@@ -223,9 +220,8 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                   success: false,
                   aborted,
                   clippedBounds: bounds,
-                  // No message for an abort: `status` already says it, and a row
-                  // labelled "error" reading "aborted" is the same red-herring the
-                  // palette had, in words.
+                  // No message for an abort: `status` says it, and a row labelled "error"
+                  // reading "aborted" is the palette's red herring in words.
                   ...(aborted ? {} : { errorMessage: String(error) }),
                 },
                 rawBounds,

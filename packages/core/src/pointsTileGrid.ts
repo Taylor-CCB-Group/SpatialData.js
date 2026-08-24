@@ -9,12 +9,9 @@ import type { SpatialBounds } from './pointsTiling.js';
 export const POINTS_TILE_SIZE = 512;
 
 /**
- * Rows a single tile may be expected to hold at the coarsest level.
- *
- * A tile is one request, decoded and uploaded whole, and deck shows nothing for it
- * until it lands — so an over-large tile trades progressive filling for one long
- * stall. 400k is roughly a tenth of the default resident cap, which keeps a coarse
- * tile comparable to a chunk of preload rather than to the whole element.
+ * Rows a single tile may be expected to hold at the coarsest level. A tile is one
+ * request, decoded and uploaded whole, and deck shows nothing for it until it lands,
+ * so an over-large tile trades progressive filling for one long stall.
  */
 export const POINTS_TILE_TARGET_ROWS = 400_000;
 
@@ -51,34 +48,22 @@ function zoomForSpan(span: number): number {
 }
 
 /**
- * Choose the tile grid for a Morton artifact.
+ * Choose the tile grid for a Morton artifact. Both ends come from one number, the point
+ * density `rows / area`, and both are real constraints:
  *
- * The grid used to be one fixed level (`minZoom: -1, maxZoom: -1`), so every tile was
- * 1024 local units at every zoom: zooming in read a 1024-unit tile to look at 50
- * units of it, and the number 1024 came from deck's defaults rather than from the
- * data. Both ends are now derived, and both ends are real constraints:
+ * - **Coarsest** — at most {@link POINTS_TILE_TARGET_ROWS} rows, so one request stays a
+ *   fraction of the layer rather than most of it: `sqrt(target / density)`.
+ * - **Finest** — at least one row group's footprint, `sqrt(maxRowsPerGroup / density)`.
+ *   Reads round up to whole row groups, so below that size each tile still fetches a
+ *   whole group while four tiles cover what one used to: same bytes, more requests, more
+ *   duplicate decoding. Same argument as `MORTON_ZCOVER_MAX_DEPTH`.
  *
- * - **Coarsest** — a tile should hold at most {@link POINTS_TILE_TARGET_ROWS} rows, so
- *   one request stays a fraction of the layer rather than most of it.
- * - **Finest** — a tile should stay at least as large as one row group's footprint.
- *   Reads are rounded up to whole row groups, so below that size each tile still
- *   fetches a whole group while four tiles cover what one used to: the same bytes,
- *   more requests, more duplicate decoding. This is the same argument as
- *   `MORTON_ZCOVER_MAX_DEPTH` — resolution finer than the storage granularity is
- *   pure cost.
+ * `zoomOffset` couples `z` to the viewport: deck picks `z = ceil(viewport.zoom +
+ * zoomOffset)` from a zoom expressed in WORLD units, while tile spans are in LOCAL units.
+ * The model matrix is the difference, so `log2(scale)` is the term that makes a tile land
+ * at 256-512 screen pixels rather than at whatever the transform happened to imply.
  *
- * Both come from one number, the point density `rows / area`: a row group's footprint
- * is `sqrt(maxRowsPerGroup / density)` and the coarse limit `sqrt(target / density)`.
- * On a 12.1M-point Xenium element (10871 x 3627 um, 50k-row groups) that is a floor of
- * ~402 um and a ceiling of ~1139 um — a narrow range, and worth knowing: the fixed
- * 1024 was accidentally near-optimal *for this artifact*, and would not be for one an
- * order of magnitude smaller or denser.
- *
- * `zoomOffset` couples `z` to the viewport. deck picks `z = ceil(viewport.zoom +
- * zoomOffset)` from a zoom expressed in WORLD units, while tile spans are in LOCAL
- * units; the model matrix is the difference, so `log2(scale)` is exactly the term that
- * makes a tile land at 256-512 screen pixels instead of at whatever the transform
- * happened to imply.
+ * Measurements behind the constants: docs/plans/points-morton-tiled-viewport-loading.md.
  */
 export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
   const { bounds, totalRows, maxRowsPerGroup, modelMatrixScale } = input;
@@ -87,8 +72,7 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
   const area = width * height;
   const density = area > 0 && totalRows > 0 ? totalRows / area : 0;
 
-  // No density to reason from (an empty or degenerate artifact): keep the single
-  // level the grid had before, so this can only ever be an improvement.
+  // No density to reason from (an empty or degenerate artifact): one fixed level.
   if (density <= 0) {
     return {
       tileSize: POINTS_TILE_SIZE,
@@ -129,8 +113,7 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
     // A non-finite or non-positive scale would poison every tile index.
     zoomOffset:
       Number.isFinite(modelMatrixScale) && modelMatrixScale > 0 ? Math.log2(modelMatrixScale) : 0,
-    // Each request is a row-group range read plus a decode; deck's default of 6 is a
-    // reasonable place to sit, but it is now a decision rather than an inheritance.
+    // deck's default, kept deliberately: each request is a range read plus a decode.
     maxRequests: 6,
     maxCacheSize,
     estimatedRowsPerTile,

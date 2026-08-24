@@ -142,15 +142,11 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
 }
 
 /**
- * Morton viewport tiling (D5), and its tile-status overlay.
- *
- * **On by default** since step 7, for elements that have a usable Morton index. Tiles
- * colour by feature, honour the feature filter (applied inside the row-group scan, so
- * a filtered tile arrives small), and subdivide with zoom. Turning it off re-plans
- * back to the capped preload — worth offering, because the preload keeps the first
- * `cap` rows in FILE order, which on a Morton artifact is a prefix of the Z-curve: a
- * skewed chunk of the slide rather than a sample of it. That comparison is exactly
- * what the toggle is for.
+ * Morton viewport tiling, and its tile-status overlay. On by default for elements with a
+ * usable Morton index; turning it off re-plans back to the capped preload, which keeps
+ * the first `cap` rows in FILE order — on a Morton artifact a prefix of the Z-curve, so a
+ * skewed chunk of the slide rather than a sample. That comparison is what the toggle is
+ * for.
  */
 function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
   // Opt out of the React Compiler — see PointsFeatureFilterPanel. The tiling read is
@@ -159,9 +155,8 @@ function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
   'use no memo';
   const actions = useSpatialCanvasActions();
   const enabled = pointsTilingEnabled(config.pointsTiling);
-  // Through the hook, NOT `engine.isTiled(...)` directly: the hook carries the
-  // engine subscription, so this line updates when the probe settles instead of
-  // showing whatever was true at the last unrelated render.
+  // Through the hook, NOT `engine.isTiled(...)`: the hook carries the engine
+  // subscription, so this updates when the probe settles.
   const { tiled } = usePointsFeatureState(config);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

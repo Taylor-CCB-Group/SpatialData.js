@@ -1203,27 +1203,17 @@ export function useLayerData(
             else if (layer) deckLayers.push(layer);
           }
         } else if (config.type === 'points' && usesTiledPath(pointsEngine, elem.key, config)) {
-          // --- Morton viewport tiles (D5 step 2) --------------------------------
+          // --- Morton viewport tiles ---------------------------------------------
           //
-          // A separate branch, not a variation of the preloaded one below: the tiled
-          // path has no resident batch, so none of the resident/matched/partial
-          // machinery below applies to it. Its geometry comes from `loadInBounds` per
-          // viewport tile, inside deck's own `TileLayer` lifecycle.
+          // A separate branch, not a variation of the preloaded one below: the tiled path
+          // has no resident batch, so none of the resident/matched/partial machinery
+          // applies. Geometry and per-point feature codes both come from `loadInBounds`,
+          // per viewport tile, inside deck's `TileLayer` lifecycle.
           //
-          // Colour comes off the tile batch itself: the scan returns a feature code
-          // per point (step 3), so the same colour props the preloaded path uses
-          // apply here.
-          //
-          // The FILTER is pushed down into the row-group scan rather than applied to
-          // a batch already in memory, so a tile arrives holding only the selected
-          // features — 36x fewer points for one gene on a real transcripts element,
-          // never uploaded and never drawn.
-          //
-          // It does NOT narrow the fetch. Measured on that element: selecting one
-          // gene read the same 92 row groups and the same 158MB as the unfiltered
-          // view. Row groups are chosen SPATIALLY on a Morton artifact and a gene's
-          // points are spread across all of them, so only a feature-primary index
-          // could skip any (the open index-permutation question in ADR 0002/0003).
+          // The filter is pushed down into the row-group scan, so a tile arrives holding
+          // only the selected features. That cuts what is uploaded and drawn, NOT what is
+          // read: row groups are chosen spatially and a gene's points are spread across
+          // all of them (ADR 0002/0003).
           const element = elem.element as PointsElement;
           // `undefined` means "no filter"; an empty array means "filter to nothing".
           // Both reach `loadInBounds` unchanged and the scan honours the distinction.
@@ -1235,10 +1225,8 @@ export function useLayerData(
           if (tiledResource) {
             const showTileDebugOverlay = config.showTileDebugOverlay === true;
             const tileDebugStore = getTileDebugStore(layerId);
-            // The same three colour inputs the preloaded branch builds. They are
-            // element-scoped (catalog code space, name→rgb overrides, the runtime
-            // hover highlight), so a tiled layer reads them identically — only the
-            // per-point codes arrive by a different route.
+            // The same element-scoped colour inputs the preloaded branch builds; only
+            // the per-point codes arrive by a different route.
             const featureCodeSpaceSize = pointsEngine.getFeatureCodeSpaceSize(elem.key);
             const featureColorOverrides = pointsEngine.getFeatureColorOverrideMap(
               elem.key,
@@ -1254,8 +1242,8 @@ export function useLayerData(
                 visible: config.visible,
                 pointSize: config.pointSize ?? 1,
                 ...(config.color ? { color: config.color } : {}),
-                // Always pass the store — it is what the footer's tile progress
-                // reads, whether or not the overlay is drawn.
+                // Always passed: the footer's tile progress reads it whether or not the
+                // overlay is drawn.
                 tileDebugStore,
                 showTileDebugOverlay,
                 ...(showTileDebugOverlay

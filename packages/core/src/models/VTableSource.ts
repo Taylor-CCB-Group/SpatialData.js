@@ -250,11 +250,9 @@ export default class SpatialDataTableSource extends AnnDataSource {
   /**
    * Morton min/max per row group — avoids re-decoding row groups during bisect.
    *
-   * Holds the in-flight PROMISE, not the settled value. Caching only the result
-   * dedups nothing while the read is running, and this index is built under exactly
-   * that load: every viewport tile bisects concurrently over the same row groups, so
-   * each one used to start its own full row-group fetch for an entry the others were
-   * already fetching.
+   * Holds the in-flight PROMISE, not the settled value: caching only the result dedups
+   * nothing while the read is running, and this index is built under exactly that load —
+   * every viewport tile bisects concurrently over the same row groups.
    */
   rowGroupColumnExtentCache: Map<
     string,
@@ -720,17 +718,14 @@ export default class SpatialDataTableSource extends AnnDataSource {
   /**
    * Memoize an in-flight probe, but only KEEP it if it produced an answer.
    *
-   * Both row-group index probes want the same three things: dedup concurrent callers
-   * onto one request, remember a real answer for the life of the source, and forget a
-   * `null` or a rejection so a transient failure does not become a permanent "no such
-   * value". Written out per call site that is fourteen near-identical lines twice, and
-   * the failure mode of getting it subtly wrong is invisible — a stranded probe just
-   * makes the index quietly worse forever.
+   * Both row-group index probes want the same three things: dedup concurrent callers onto
+   * one request, remember a real answer for the life of the source, and forget a `null` or
+   * a rejection so a transient failure does not become a permanent "no such value" — a
+   * stranded probe makes the index quietly worse forever, with no symptom.
    *
-   * The eviction goes through {@link evictIfCurrent}, so a retry that already
-   * superseded this entry is never clobbered by this promise's late settlement. Same
-   * discipline as `parquetTableCache`'s rejection cleanup (ADR 0005 rung 2b); this is
-   * the plain-`Map` form of it, for values far too small to be worth a byte budget.
+   * Eviction goes through {@link evictIfCurrent}, so a retry that already superseded this
+   * entry is never clobbered by this promise's late settlement (ADR 0005 rung 2b, in
+   * plain-`Map` form).
    */
   private memoizeProbe<V>(
     cache: Map<string, Promise<V | null>>,
@@ -1094,19 +1089,11 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * First and last value of a column within one row group — the sorted-order index
    * the Morton row-group bisect searches.
    *
-   * **This is the fallback now, not the primary path.** It range-reads the row
-   * group's bytes (every column, ~2MB on a real transcripts artifact) to recover two
-   * boundary values, `log2(rowGroups)` times per interval — on a 245-row-group file
-   * that can fetch most of the file to learn ~4KB. Row-group selection reads the
-   * footer's own statistics instead (`rowGroupColumnStats` in `parquetFooterStats`),
-   * which is exact and free; this remains for the case where those will not parse or
-   * the column carries none.
-   *
-   * The statistics were unreachable when this was written — the vendored parquet-wasm
-   * build exposes no accessor, `ColumnChunkMetaData` has no `statistics()` — so the
-   * way out was always a minimal Thrift read of the footer we already hold, and that
-   * is what `parquetFooterStats.ts` now is. See
-   * `docs/plans/points-morton-tiled-viewport-loading.md`.
+   * **The fallback, not the primary path.** It range-reads the row group's bytes (every
+   * column, ~2MB on a real transcripts artifact) to recover two boundary values,
+   * `log2(rowGroups)` times per interval. Row-group selection reads the footer's own
+   * statistics instead (`rowGroupColumnStats` in `parquetFooterStats`), which is exact and
+   * free; this remains for when those will not parse, or the column carries none.
    */
   async loadParquetRowGroupColumnExtent(
     parquetPath: string,
@@ -1138,9 +1125,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (min === null) {
       return null;
     }
-    // The last row group has nothing after it, so its upper bound is open. `null`
-    // already means "unbounded" to the bisect, which treats it as "this group may
-    // contain the target".
+    // The last row group's upper bound is open; `null` already means "unbounded" to the
+    // bisect, i.e. "this group may contain the target".
     const max =
       rowGroupIndex + 1 < totalRowGroups
         ? await this.readParquetRowGroupColumnFirstValue(parquetPath, columnName, rowGroupIndex + 1)
@@ -1149,25 +1135,19 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   /**
-   * First value of `columnName` in one row group — the only boundary value that can
-   * actually be read here, and the whole basis of {@link readParquetRowGroupColumnExtent}.
+   * First value of `columnName` in one row group — the only boundary value that can be
+   * read here, and the whole basis of {@link readParquetRowGroupColumnExtent}.
    *
-   * **The last value cannot be read.** The obvious way to get it is
-   * `readParquetRowGroup(..., { offset: rowCount - 1, limit: 1 })`, and that is what
-   * this used to do — but the vendored parquet-wasm ignores `offset` on a row-group
-   * read and hands back the FIRST row again. Nothing failed; every row group simply
-   * reported `max === min`, i.e. that it spanned a single value.
+   * **The last value cannot be read.** `readParquetRowGroup(..., { offset: rowCount - 1,
+   * limit: 1 })` is the obvious way, and the vendored parquet-wasm ignores `offset` on a
+   * row-group read: it hands back the FIRST row again, so every row group silently
+   * reported `max === min`. The bisect asks "first row group whose max >= target", so an
+   * understated max moves that answer one group too far forward and the group actually
+   * CONTAINING the target is never read — Z-order-shaped holes in the render.
    *
-   * On a sorted column that is not a small error, it is a systematic one: the bisect
-   * asks "first row group whose max >= target", so an understated max moves the
-   * answer one group too far forward and the group actually CONTAINING the target is
-   * never read. On a Morton points artifact that is missing row groups per viewport
-   * query — holes in the render, in Z-order-shaped bands.
-   *
-   * The sort order gives the bound for free: the file is sorted on this column, so
-   * row group i's values all lie at or below row group i+1's first value. Using that
-   * as the upper bound is *conservative* — equal values spanning a boundary keep both
-   * groups in the range — and it costs one read per row group instead of two.
+   * The sort order gives the bound for free instead: row group i's values all lie at or
+   * below row group i+1's first value. Conservative, and one read per group rather than
+   * two.
    */
   private async readParquetRowGroupColumnFirstValue(
     parquetPath: string,

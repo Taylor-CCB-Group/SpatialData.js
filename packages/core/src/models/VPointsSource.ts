@@ -2259,15 +2259,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
   /**
    * Cross-check the sentinel bounding box against real rows before trusting it.
    *
-   * Costs one row-group range read, once per element, cached with the metadata. That
-   * is roughly one step of the bisect a single viewport query already runs eight of —
-   * cheap next to deciding, wrongly, to read the whole artifact through a broken
-   * index. Sampled from the MIDDLE of the file: a truncated box can agree with the
-   * true one near the origin by coincidence, never in the interior.
+   * One row-group range read per element, cached with the metadata. Sampled from the
+   * MIDDLE of the file: a truncated box can agree with the true one near the origin by
+   * coincidence, never in the interior.
    *
-   * Only positive evidence of disagreement disables tiling. A file we cannot sample
-   * (one row group, an unreadable group) keeps today's behaviour rather than losing
-   * the feature to a read that failed for an unrelated reason.
+   * Only positive evidence of disagreement disables tiling — a file we cannot sample
+   * keeps today's behaviour rather than losing the feature to an unrelated read failure.
    */
   private async mortonBoundsMatchStoredCodes(
     parquetPath: string,
@@ -2551,13 +2548,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
   /**
    * Row groups a set of Morton intervals can touch.
    *
-   * Prefers the in-memory index the probe read out of the footer: exact, and free.
-   * The bisect below is the fallback for an artifact whose statistics we could not
-   * read — it recovers the same two numbers per row group by range-reading and
-   * decoding the group's bytes, ~2MB a step on a real transcripts artifact, and a
-   * single viewport query walks `log2(rowGroups)` steps for each of a few hundred
-   * intervals. That is the whole reason viewport queries used to be able to pull the
-   * entire file down to answer a question the footer had already answered.
+   * Prefers the in-memory index the probe read out of the footer: exact, and free. The
+   * bisect below is the fallback for an artifact whose statistics would not parse — it
+   * recovers the same two numbers by range-reading and decoding the group's bytes, ~2MB a
+   * step, `log2(rowGroups)` steps per interval.
    */
   private async selectRowGroupsForIntervals(
     metadata: PointsTilingMetadata,

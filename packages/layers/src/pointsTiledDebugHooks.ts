@@ -95,21 +95,17 @@ export function createTileDebugStore(onChange?: () => void): TileDebugStore {
  * Tile-status hooks for the debug overlay.
  *
  * **Loads for one tile can overlap, and the loser must not report over the winner.**
- * deck restarts a tile whenever `needsReload` is set — after an abort, or after a
- * `getTileData` update trigger changes (the feature filter does this) — and
- * `Tile2DHeader.loadData` does NOT await the attempt it is replacing. The old
- * `getTileData` promise is still running, so two are in flight against one tile id.
+ * deck restarts a tile whenever `needsReload` is set — after an abort, or when a
+ * `getTileData` update trigger changes (the feature filter does this on every toggle) —
+ * and `Tile2DHeader.loadData` does NOT await the attempt it replaces. deck guards its own
+ * state with a `_loaderId` compared after the await, but these hooks are called from
+ * *inside* `getTileData`, upstream of that check, so the loser's outcome lands in the
+ * store: when it rejects last, the overlay paints a tile red that deck is holding good
+ * content for.
  *
- * deck guards its own state against that with a `_loaderId` compared after the await;
- * these hooks are called from *inside* `getTileData`, upstream of that check, so
- * without a guard of their own the loser's outcome lands in the store. When the loser
- * rejects last, the overlay paints a tile red that deck is holding good content for —
- * which is the whole of the "error on a tile whose data resolved" report.
- *
- * So {@link onTileLoadStart} returns an attempt id and {@link onTileLoadEnd} requires
- * it back; a report whose id is no longer current is dropped. The id is a required
- * parameter rather than an optional one on purpose: forgetting to pass it should not
- * silently reinstate the race.
+ * So {@link onTileLoadStart} returns an attempt id and {@link onTileLoadEnd} requires it
+ * back; a stale report is dropped. Required rather than optional on purpose — forgetting
+ * to pass it should not silently reinstate the race.
  */
 export function createTiledPointsDebugHooks(store: TileDebugStore | undefined) {
   if (!store) {
@@ -222,19 +218,13 @@ export function createTiledPointsDebugHooks(store: TileDebugStore | undefined) {
     /**
      * Forget a tile deck has dropped from its cache.
      *
-     * Without this the overlay only ever grows. `completedTilesById` is one of the
+     * Without this the overlay only ever grows: `completedTilesById` is one of the
      * sources {@link reduceTileDebugEntries} rebuilds the active set from, and nothing
-     * pruned it, so every tile ever loaded stayed painted — including tiles from a
-     * zoom level you left, drawn over ground the current tiles have since rendered
-     * perfectly. An `aborted` leftover in that pile is a dusty red rectangle sitting
-     * on top of good data, which is indistinguishable from a real error at a glance.
+     * pruned it, so tiles from a zoom level you left stayed painted over ground the
+     * current tiles have since rendered. Panning and zooming alone produces it.
      *
-     * Panning and zooming alone is enough to produce it, and the multi-level grid made
-     * it visible: with a single fixed zoom level there was never a tile at another `z`
-     * to leave behind.
-     *
-     * deck's own `onTileUnload` is the right boundary. While a tile is still in its
-     * cache it can be reused, so it belongs on the overlay; once evicted it does not.
+     * deck's own `onTileUnload` is the right boundary: while a tile is in its cache it
+     * can be reused and belongs on the overlay; once evicted it does not.
      */
     onTileUnloaded(tileId: string) {
       store.update((state) => {

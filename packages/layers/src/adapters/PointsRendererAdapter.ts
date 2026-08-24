@@ -78,11 +78,10 @@ interface GrowingPartial {
 }
 
 /**
- * A tiled entry's render resource, held for the life of (element, metadata).
- *
- * Identity here is not a nicety: the resource's loader IS what `TileLayer` keys its
- * `getTileData` on, so a fresh resource per `project()` tears the tile layer down and
- * re-fetches every visible tile — turning a pan into a full reload.
+ * A tiled entry's render resource, held for the life of (element, metadata). Identity is
+ * not a nicety: the resource's loader IS what `TileLayer` keys `getTileData` on, so a
+ * fresh resource per `project()` re-fetches every visible tile — a pan becomes a full
+ * reload.
  */
 interface TiledMemo {
   element: PointsElement;
@@ -209,13 +208,9 @@ export class PointsRendererAdapter {
   }
 
   /**
-   * The Morton-tiled entry's render resource (D5).
-   *
-   * Unlike every other memo here there is no batch to key on — a tiled entry holds no
-   * resident data at all. The key is the *metadata*, which the resolver replaces only
-   * when it re-probes, so this resource survives every pan, zoom and re-render in
-   * between. That is the whole requirement: `TileLayer` refetches its viewport when
-   * the loader identity changes.
+   * The Morton-tiled entry's render resource. Unlike every other memo here there is no
+   * batch to key on: the key is the *metadata*, which the resolver replaces only when it
+   * re-probes, so the resource survives every pan and zoom in between.
    */
   getTiledResource(
     element: PointsElement,

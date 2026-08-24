@@ -12,25 +12,16 @@ export type SpatialBounds = AxisAlignedBounds;
 export type PointsTilingMode = 'auto' | 'off';
 
 /**
- * `'auto'` since D5 step 7.
- *
- * On a Morton element the tiled path is not merely an alternative, it is the better
- * one: the preload it replaces keeps the first `cap` rows in FILE order, and file
- * order on a Morton artifact is a prefix of the Z-curve — a spatially skewed chunk of
- * the slide, not a sample of it. Tiles read what you are looking at instead.
- *
- * On anything else the probe answers `null` from the schema alone and costs nothing
- * beyond footer metadata the preload path reads regardless; on a malformed Morton
- * artifact the guards in `getPointsTilingMetadata` decline it, warn, and fall through
- * to the preload.
+ * On a Morton element the tiled path is the better one, not merely an alternative: the
+ * preload it replaces keeps the first `cap` rows in FILE order, which on a Morton
+ * artifact is a prefix of the Z-curve — a spatially skewed chunk of the slide, not a
+ * sample of it. Anything else answers `null` from the schema alone and costs nothing.
  */
 export const DEFAULT_POINTS_TILING: PointsTilingMode = 'auto';
 
 /**
- * Resolve the tiling mode, default included. Call this instead of comparing to
- * `'auto'`: the default has to mean the same thing to the resolver deciding what to
- * load, the hook deciding what to render, and the panel drawing the checkbox, and
- * three literal comparisons is how those drift apart.
+ * Resolve the tiling mode, default included. Call this instead of comparing to `'auto'`:
+ * the resolver, the render hook and the panel must all read the default the same way.
  */
 export function pointsTilingEnabled(mode: PointsTilingMode | undefined): boolean {
   return (mode ?? DEFAULT_POINTS_TILING) === 'auto';
@@ -128,9 +119,8 @@ function spreadBits(n: number): number {
  * JS bitwise operators would hand back a negative int32 for the top of the domain.
  *
  * Must agree with {@link zcoverRectangle}'s quadrant order (child +1 is x-high, +2 is
- * y-high) and with the writer's `morton_code_2d`; a disagreement here would make
- * every interval query wrong, so {@link mortonBoundsAgreeWithCodes} checks it against
- * real rows rather than trusting all three to stay in step.
+ * y-high) and with the writer; {@link mortonBoundsAgreeWithCodes} checks that against real
+ * rows.
  */
 export function mortonCode2dFromNormCoord(nx: number, ny: number): number {
   return spreadBits(nx) + spreadBits(ny) * 2;
@@ -146,21 +136,15 @@ export function mortonCode2dForPoint(x: number, y: number, bbox: SpatialBounds):
  * Does `bounds` describe the domain the stored Morton codes were actually quantised
  * against? Recomputes the code for a sample of real rows and counts agreement.
  *
- * The sentinel rows are a **claim the artifact makes about itself**, and nothing else
- * in the file forces them to be true. When they are wrong every derived answer is
- * wrong in the same silent, subtractive direction: the tile grid is clipped to the
- * bogus box so whole regions are never even requested, and `mortonIntervalsForBounds`
- * normalises viewports against it and selects the wrong row groups. Points are never
- * misplaced — the reader re-filters to the query bounds — so the only visible symptom
- * is that some of the map is missing.
+ * The sentinel rows are a **claim the artifact makes about itself**, and nothing in the
+ * file forces them to be true. A wrong one fails silently and subtractively: the tile
+ * grid is clipped to the bogus box so whole regions are never requested. Points are
+ * never misplaced (the reader re-filters to the query bounds), so the only symptom is
+ * that some of the map is missing.
  *
- * Measured on a real 12.1M-point Xenium artifact, the signal is not marginal: a sound
- * element matched 320/320 sampled rows, one with a stale sentinel box matched 0/320.
- * A handful of misses is normal — a coordinate landing exactly on a cell boundary can
- * floor either way — hence a majority test rather than an exact one.
- *
- * Samples are spread evenly across the input: consecutive rows in a Morton-sorted row
- * group share a long code prefix, so the first N would agree or disagree together.
+ * A majority rather than an exact match, because a coordinate on a cell boundary can
+ * floor either way. Samples are spread evenly: consecutive rows in a Morton-sorted group
+ * share a long code prefix, so the first N agree or disagree together.
  */
 export function mortonBoundsAgreeWithCodes(
   xs: ArrayLike<number>,
@@ -198,14 +182,11 @@ export type MortonRowGroupExtent = readonly [number, number] | null;
 /**
  * Is the file actually Morton-**sorted**, row group by row group?
  *
- * The row-group bisect binary-searches this sequence, which is only meaningful if it
- * is non-decreasing. A feature-primary artifact — sorted `(feature, morton)` — has a
- * `morton_code_2d` column that restarts at every feature boundary, so each row group
- * spans nearly the whole code range and the bisect lands somewhere arbitrary. What
- * comes back is whichever feature blocks happened to live in the row groups it picked:
- * a tile shows one or two genes and misses the rest. Measured on the permutations
- * store, `transcripts_feature_then_morton` descends at 185 of its 244 row-group
- * boundaries, while both morton-primary elements descend at none.
+ * The row-group bisect binary-searches this sequence, which is only meaningful if it is
+ * non-decreasing. A feature-primary artifact — sorted `(feature, morton)` — carries the
+ * same column restarting at every feature boundary, so each row group spans nearly the
+ * whole code range and the bisect lands arbitrarily: a tile comes back holding whichever
+ * feature blocks lived in the groups it picked.
  *
  * Adjacent groups may share a boundary value, so the test is `min >= previous max`.
  * A `null` extent is unknown rather than out of order: skip it and carry the last
@@ -230,18 +211,14 @@ export function mortonRowGroupExtentsAreSorted(extents: readonly MortonRowGroupE
  * Which row groups can hold a code inside any of `intervals`, from the in-memory
  * index rather than a bisect over the file.
  *
- * The bisect this replaces reads the row group's BYTES to recover two boundary values
- * — every column, ~2MB on a real transcripts artifact — and one viewport query runs
- * `log2(rowGroups)` of them per interval. Building the index that way could fetch the
- * whole 439MB file to recover ~4KB. The same numbers are in the parquet footer, so
- * with {@link mortonRowGroupExtentsAreSorted}'s index in hand this costs nothing.
+ * The bisect this replaces reads the row group's BYTES to recover two boundary values —
+ * every column, ~2MB on a real transcripts artifact — `log2(rowGroups)` times per
+ * interval. The same numbers are in the parquet footer, so this costs nothing.
  *
- * It is also *stricter* than the bisect, which tested only `max` and assumed the
- * groups tile the code space without gaps: this intersects both ends, so a row group
- * whose range falls entirely between two intervals is skipped rather than swept in.
- *
- * A `null` extent means "no statistics for this group": include it, because the
- * alternative is dropping rows for a reason that has nothing to do with the query.
+ * Also *stricter* than the bisect, which tested only `max` and assumed the groups tile
+ * the code space without gaps: this intersects both ends. A `null` extent means "no
+ * statistics for this group" and is included, because the alternative is dropping rows
+ * for a reason unrelated to the query.
  */
 export function selectMortonRowGroups(
   extents: readonly MortonRowGroupExtent[],
@@ -319,15 +296,11 @@ export function mergeAdjacentIntervals(
 /**
  * How far {@link zcoverRectangle} subdivides before emitting a whole cell.
  *
- * The cover exists to pick **row groups**, and a row group holds tens of thousands
- * of points — so resolving the rectangle to individual quantised cells buys nothing
- * and costs a great deal. Recursing to the full 16 bits produced **38,014 intervals**
- * for one viewport-sized rectangle on a real 12.1M-point Xenium artifact (245 row
- * groups), each interval driving two row-group bisects.
- *
- * Measured on that artifact, over a viewport tile, the whole slide, and a zoomed-in
- * box — at this depth the selected row groups are **identical** to the full-depth
- * cover (not merely a superset), while the interval count collapses:
+ * The cover exists to pick **row groups**, so resolving the rectangle to individual
+ * quantised cells buys nothing and costs a great deal. Measured on a 12.1M-point Xenium
+ * artifact (245 row groups) over a viewport tile, the whole slide and a zoomed-in box,
+ * the selected row groups at this depth are **identical** to the full-depth cover, not
+ * merely a superset:
  *
  * | depth | intervals (viewport tile) | row groups |
  * |-------|---------------------------|------------|
@@ -335,8 +308,8 @@ export function mergeAdjacentIntervals(
  * | 10    | 521                       | 92         |
  * | 8     | 138                       | 92         |
  *
- * 10 leaves headroom: the cover stays finer than the row-group granularity for files
- * with up to ~1M row groups (4^10 cells), where 8 would start over-fetching.
+ * 10 leaves headroom: 4^10 cells stays finer than the row-group granularity up to ~1M
+ * row groups, where 8 would start over-fetching.
  */
 export const MORTON_ZCOVER_MAX_DEPTH = 10;
 
