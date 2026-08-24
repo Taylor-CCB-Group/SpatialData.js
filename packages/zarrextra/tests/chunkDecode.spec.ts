@@ -45,6 +45,22 @@ describe('getZarrChunk', () => {
     expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([1, 2, 3, 4]);
   });
 
+  it('rejects a point selection rather than returning a bare scalar', async () => {
+    // The one case where the static type lies. `selection` is declared as
+    // `Array<number | Slice | null>`, so zarrita's conditional return type
+    // resolves on its `null` branch and promises `Chunk<D>` — but the branch
+    // taken at runtime depends on the values, and an all-number selection
+    // indexes a single point, which zarrita unwraps to a scalar. Without the
+    // guard that scalar would be handed back typed as a chunk and crash on the
+    // first `.data` downstream.
+    setChunkDecodeBackend({ kind: 'main' });
+    const arr = await zarr.open(createArrayStore() as zarr.Readable, { kind: 'array' });
+
+    await expect(getZarrChunk(arr, [0, 0])).rejects.toThrow(
+      'Expected chunk object from zarr.get().'
+    );
+  });
+
   it('delegates to fizarrita getWorker when that backend is enabled', async () => {
     const getWorker = vi.fn(async () => ({
       data: new Uint8Array([9, 8, 7, 6]),

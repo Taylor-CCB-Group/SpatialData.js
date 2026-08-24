@@ -54,9 +54,13 @@ export function setChunkDecodeBackend(backend: ChunkDecodeBackend): void {
  *
  * It is narrower than fizarrita's own signature, deliberately. That one returns
  * a *conditional* type — `Scalar<D>` when every dimension is integer-indexed,
- * `Chunk<D>` otherwise — and this seam only ever passes a selection whose type
- * admits `null`, which lands on the `Chunk<D>` branch. Restating that here keeps
- * the scalar case out of a signature that could not produce it.
+ * `Chunk<D>` otherwise — and this seam only ever passes a selection whose *type*
+ * admits `null`, so the conditional resolves on the `Chunk<D>` branch anyway.
+ * Restating it here spares the call site an assertion.
+ *
+ * That resolution is static, though. A selection that happens to hold only
+ * numbers still indexes a point and still comes back as a scalar, which is what
+ * {@link assertChunk} is there to catch.
  */
 type GetWorkerFn = <D extends zarr.DataType>(
   arr: zarr.Array<D>,
@@ -68,6 +72,27 @@ let getWorkerImpl: GetWorkerFn | undefined;
 
 export function setFizarritaGetWorker(impl: GetWorkerFn): void {
   getWorkerImpl = impl;
+}
+
+/**
+ * Guard that a read really produced a chunk rather than a scalar.
+ *
+ * Both backends are typed here as returning `Chunk<D>`, and both can be wrong at
+ * runtime for the same reason. `selection` is declared as
+ * `Array<number | zarr.Slice | null>`, so zarrita's conditional return type
+ * resolves on its `null` branch and settles on `Chunk<D>` — but the branch taken
+ * at runtime depends on the *values*, and an all-number selection like
+ * `[0, 0, 0]` indexes a single point, which comes back as a bare `Scalar<D>`.
+ * That is the one place the static type lies, and it lies identically on both
+ * paths. The fizarrita path has a second reason on top: it is an injection seam,
+ * so its type says what a correct impl returns, not what one did.
+ *
+ * Cheap either way, and it trades a downstream shape crash for a named error.
+ */
+function assertChunk(result: unknown, source: string): void {
+  if (typeof result !== 'object' || result === null || !('data' in result)) {
+    throw new Error(`Expected chunk object from ${source}.`);
+  }
 }
 
 export async function getZarrChunk<D extends zarr.DataType>(
@@ -95,12 +120,7 @@ export async function getZarrChunk<D extends zarr.DataType>(
       cache: backend.options?.cache,
       signal: opts?.signal,
     });
-    // Kept even though the type now promises a chunk: this is an injection seam,
-    // and the type says what a correct impl returns, not what one did. Deleting
-    // it as redundant would trade a named error for a downstream shape crash.
-    if (typeof result !== 'object' || result === null || !('data' in result)) {
-      throw new Error('Expected chunk object from fizarrita getWorker().');
-    }
+    assertChunk(result, 'fizarrita getWorker()');
     return result;
   }
 
@@ -108,8 +128,6 @@ export async function getZarrChunk<D extends zarr.DataType>(
   // `store.get` and re-checks it between chunks, so a multi-chunk read stops
   // early rather than running the rest out. `opts` passes straight through.
   const result = await zarr.get(arr, selection, opts);
-  if (typeof result !== 'object' || result === null || !('data' in result)) {
-    throw new Error('Expected chunk object from zarr.get().');
-  }
-  return result as zarr.Chunk<D>;
+  assertChunk(result, 'zarr.get()');
+  return result;
 }
