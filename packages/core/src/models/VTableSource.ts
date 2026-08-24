@@ -247,8 +247,20 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * fallback used when a store has no range support, so the layout is still
    * resolved once rather than per call. */
   parquetPartPathsCache: Map<string, Promise<string[]>>;
-  /** Morton min/max per row group — avoids re-decoding row groups during bisect. */
-  rowGroupColumnExtentCache: Map<string, { min: number | null; max: number | null }>;
+  /**
+   * Morton min/max per row group — avoids re-decoding row groups during bisect.
+   *
+   * Holds the in-flight PROMISE, not the settled value: caching only the result dedups
+   * nothing while the read is running, and this index is built under exactly that load —
+   * every viewport tile bisects concurrently over the same row groups.
+   */
+  rowGroupColumnExtentCache: Map<
+    string,
+    Promise<{ min: number | null; max: number | null } | null>
+  >;
+  /** First value of a column per row group — the boundary the extent is derived
+   * from, shared between neighbouring row groups so each is read once. */
+  rowGroupColumnFirstValueCache: Map<string, Promise<number | null>>;
   obsIndices: Record<string, Promise<string[]>>;
   varIndices: Record<string, Promise<string[]>>;
   varAliases: Record<string, string[]>;
@@ -278,6 +290,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     this.parquetDatasetMetadataCache = new Map();
     this.parquetPartPathsCache = new Map();
     this.rowGroupColumnExtentCache = new Map();
+    this.rowGroupColumnFirstValueCache = new Map();
 
     // Table-specific properties
     this.obsIndices = {};
@@ -702,6 +715,41 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }
   }
 
+  /**
+   * Memoize an in-flight probe, but only KEEP it if it produced an answer.
+   *
+   * Both row-group index probes want the same three things: dedup concurrent callers onto
+   * one request, remember a real answer for the life of the source, and forget a `null` or
+   * a rejection so a transient failure does not become a permanent "no such value" — a
+   * stranded probe makes the index quietly worse forever, with no symptom.
+   *
+   * Eviction goes through {@link evictIfCurrent}, so a retry that already superseded this
+   * entry is never clobbered by this promise's late settlement (ADR 0005 rung 2b, in
+   * plain-`Map` form).
+   */
+  private memoizeProbe<V>(
+    cache: Map<string, Promise<V | null>>,
+    key: string,
+    run: () => Promise<V | null>
+  ): Promise<V | null> {
+    const cached = cache.get(key);
+    if (cached) {
+      return cached;
+    }
+    const pending = run();
+    cache.set(key, pending);
+    pending
+      .then((value) => {
+        if (value === null) {
+          this.evictIfCurrent(cache, key, pending);
+        }
+      })
+      .catch(() => {
+        this.evictIfCurrent(cache, key, pending);
+      });
+    return pending;
+  }
+
   private async loadParquetDatasetMetadataUncached(
     parquetPath: string
   ): Promise<ParquetDatasetMetadata | null> {
@@ -1037,48 +1085,92 @@ export default class SpatialDataTableSource extends AnnDataSource {
     );
   }
 
+  /**
+   * First and last value of a column within one row group — the sorted-order index
+   * the Morton row-group bisect searches.
+   *
+   * **The fallback, not the primary path.** It range-reads the row group's bytes (every
+   * column, ~2MB on a real transcripts artifact) to recover two boundary values,
+   * `log2(rowGroups)` times per interval. Row-group selection reads the footer's own
+   * statistics instead (`rowGroupColumnStats` in `parquetFooterStats`), which is exact and
+   * free; this remains for when those will not parse, or the column carries none.
+   */
   async loadParquetRowGroupColumnExtent(
     parquetPath: string,
     columnName: string,
     rowGroupIndex: number
   ): Promise<{ min: number | null; max: number | null } | null> {
-    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}`;
-    const cached = this.rowGroupColumnExtentCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
+    return this.memoizeProbe(
+      this.rowGroupColumnExtentCache,
+      `${parquetPath}::${rowGroupIndex}::${columnName}`,
+      () => this.readParquetRowGroupColumnExtent(parquetPath, columnName, rowGroupIndex)
+    );
+  }
+
+  private async readParquetRowGroupColumnExtent(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<{ min: number | null; max: number | null } | null> {
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
-    const rowCount = dataset?.rowGroupRows?.[rowGroupIndex];
-    if (!rowCount) {
+    const totalRowGroups = dataset?.totalNumRowGroups ?? 0;
+    if (!dataset?.rowGroupRows?.[rowGroupIndex]) {
       return null;
     }
-    const columnOptions: ParquetRowGroupReadOptions = { columns: [columnName] };
-    const minTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-      ...columnOptions,
-      limit: 1,
-    });
-    const minColumn = minTable?.getChild(columnName);
-    if (!minColumn || minColumn.length === 0) {
+    const min = await this.readParquetRowGroupColumnFirstValue(
+      parquetPath,
+      columnName,
+      rowGroupIndex
+    );
+    if (min === null) {
       return null;
     }
-    let maxValue: number | null = parquetColumnValueToNumber(minColumn.get(0));
-    if (rowCount > 1) {
-      const maxTable = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, {
-        ...columnOptions,
-        offset: rowCount - 1,
-        limit: 1,
-      });
-      const maxColumn = maxTable?.getChild(columnName);
-      if (maxColumn && maxColumn.length > 0) {
-        maxValue = parquetColumnValueToNumber(maxColumn.get(0));
+    // The last row group's upper bound is open; `null` already means "unbounded" to the
+    // bisect, i.e. "this group may contain the target".
+    const max =
+      rowGroupIndex + 1 < totalRowGroups
+        ? await this.readParquetRowGroupColumnFirstValue(parquetPath, columnName, rowGroupIndex + 1)
+        : null;
+    return { min, max };
+  }
+
+  /**
+   * First value of `columnName` in one row group — the only boundary value that can be
+   * read here, and the whole basis of {@link readParquetRowGroupColumnExtent}.
+   *
+   * **The last value cannot be read.** `readParquetRowGroup(..., { offset: rowCount - 1,
+   * limit: 1 })` is the obvious way, and the vendored parquet-wasm ignores `offset` on a
+   * row-group read: it hands back the FIRST row again, so every row group silently
+   * reported `max === min`. The bisect asks "first row group whose max >= target", so an
+   * understated max moves that answer one group too far forward and the group actually
+   * CONTAINING the target is never read — Z-order-shaped holes in the render.
+   *
+   * The sort order gives the bound for free instead: row group i's values all lie at or
+   * below row group i+1's first value. Conservative, and one read per group rather than
+   * two.
+   */
+  private async readParquetRowGroupColumnFirstValue(
+    parquetPath: string,
+    columnName: string,
+    rowGroupIndex: number
+  ): Promise<number | null> {
+    return this.memoizeProbe(
+      this.rowGroupColumnFirstValueCache,
+      `${parquetPath}::${rowGroupIndex}::${columnName}::first`,
+      async () => {
+        const options: ParquetRowGroupReadOptions = { columns: [columnName], limit: 1 };
+        const table = await this.loadParquetRowGroupByGroupIndex(
+          parquetPath,
+          rowGroupIndex,
+          options
+        );
+        const column = table?.getChild(columnName);
+        if (!column || column.length === 0) {
+          return null;
+        }
+        return parquetColumnValueToNumber(column.get(0));
       }
-    }
-    const extent = {
-      min: parquetColumnValueToNumber(minColumn.get(0)),
-      max: maxValue,
-    };
-    this.rowGroupColumnExtentCache.set(cacheKey, extent);
-    return extent;
+    );
   }
 
   /**

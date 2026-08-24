@@ -488,6 +488,11 @@ async function handleScanMortonRowGroupsInBounds(
   const xs = new Float32PointBuffer();
   const ys = new Float32PointBuffer();
   const zs = new Float32PointBuffer();
+  // Collect per-point codes whenever the element has a code column — including when
+  // no filter is active, which is precisely the "all features" view that colouring
+  // needs. Gating this on `request.featureCodes` (the filter) would leave the
+  // default view flat.
+  const codes = request.featureCodeColumnName ? new Int32PointBuffer() : undefined;
   for (const chunk of request.rowGroups) {
     const table = tableFromIPC(
       parquetModule
@@ -507,11 +512,13 @@ async function handleScanMortonRowGroupsInBounds(
       xs,
       ys,
       zs,
+      ...(codes ? { codes } : {}),
     });
   }
   const outX = xs.toArray();
   const outY = ys.toArray();
   const outZ = hasZ ? zs.toArray() : undefined;
+  const outCodes = codes?.toArray();
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,
@@ -521,6 +528,10 @@ async function handleScanMortonRowGroupsInBounds(
       xs: outX,
       ys: outY,
       ...(outZ ? { zs: outZ } : {}),
+      // Short codes are unusable, not partially usable: the remaining points would
+      // read code 0 — a VALID feature — and be confidently mis-coloured. Ship them
+      // only when there is exactly one per point.
+      ...(outCodes && outCodes.length === outX.length ? { featureCodes: outCodes } : {}),
     },
   };
 }

@@ -329,6 +329,27 @@ export function parseParquetFileMetaData(fileMetaDataBytes: Uint8Array): Parquet
   return new ThriftCompactReader(fileMetaDataBytes).readFileMetaData();
 }
 
+/**
+ * Decode a `Statistics` min/max for a column whose logical type is UNSIGNED. Parquet has
+ * no unsigned physical types: a `uint32` column is stored as INT32 with a UINT_32
+ * annotation, so {@link decodeIntStat} reads the top half of the range as negative — and
+ * `morton_code_2d` spans the full 32 bits by construction.
+ */
+export function decodeUnsignedIntStat(
+  bytes: Uint8Array | undefined,
+  physicalType: number | null
+): number | null {
+  if (!bytes || bytes.length === 0) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (physicalType === ParquetPhysicalType.INT32) {
+    return bytes.length >= 4 ? view.getUint32(0, true) : null;
+  }
+  if (physicalType === ParquetPhysicalType.INT64) {
+    return bytes.length >= 8 ? Number(view.getBigUint64(0, true)) : null;
+  }
+  return null;
+}
+
 /** Decode a `Statistics` min/max value for an integer physical type (little-endian). */
 export function decodeIntStat(
   bytes: Uint8Array | undefined,
@@ -344,4 +365,45 @@ export function decodeIntStat(
     return bytes.length >= 8 ? Number(view.getBigInt64(0, true)) : null;
   }
   return null;
+}
+
+/**
+ * Per-row-group statistics for ONE column, across every part of a dataset, flattened
+ * into global row-group order.
+ *
+ * The decode is deliberately NOT folded in: it is the part that depends on the column's
+ * logical type, and getting it wrong is silent (a `uint32` Morton code read signed comes
+ * back negative past 2^31). Callers pick their decoder; the footer knowledge lives here.
+ *
+ * Returns `[]` for **"unavailable — conclude nothing"**, which every caller must treat as
+ * "do not skip / do not reject", never as "no statistics, so the answer is no". That
+ * covers a footer too short to hold a `FileMetaData`, one that will not parse, and a
+ * flattened count disagreeing with the dataset's — the last because a partial index
+ * silently mis-addresses every row group after the gap. A `null` ENTRY is narrower: that
+ * one row group has no usable statistics.
+ */
+export function rowGroupColumnStats(
+  parts: readonly { schemaBytes: Uint8Array }[],
+  columnName: string,
+  expectedRowGroupCount: number
+): Array<ParquetColumnStats | null> {
+  const stats: Array<ParquetColumnStats | null> = [];
+  for (const part of parts) {
+    // `schemaBytes` is the parquet footer: FileMetaData thrift + trailing 4-byte
+    // length + "PAR1". Strip the trailing 8 to get the FileMetaData for the parser.
+    if (part.schemaBytes.length <= 8) {
+      return [];
+    }
+    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
+    let footer: ParquetFooterStats;
+    try {
+      footer = parseParquetFileMetaData(metaBytes);
+    } catch {
+      return [];
+    }
+    for (const rowGroup of footer.rowGroups) {
+      stats.push(rowGroup.columns.find((col) => col.path === columnName) ?? null);
+    }
+  }
+  return stats.length === expectedRowGroupCount ? stats : [];
 }

@@ -65,7 +65,6 @@ export interface PointsScatterStyleProps {
   modelMatrix: Matrix4;
   use3d?: boolean;
   tileBounds?: [number, number, number, number];
-  tileSubLayer?: boolean;
   /** Colour points by their per-point feature code (requires batch codes). */
   colorByFeature?: boolean;
   /** Number of feature codes the colour LUT must cover (catalog `maxCode + 1`). */
@@ -86,13 +85,15 @@ export function renderColumnarScatterLayer(
   batch: ColumnarNdarrayPointsBatch,
   props: PointsScatterStyleProps
 ) {
-  // Preloaded scatter sizes points in WORLD (common) units so the GPU scales
-  // them with zoom — points shrink when you zoom out, which is exactly where
-  // scatter overdraw is worst — while `radiusMinPixels`/`radiusMaxPixels` clamp
-  // the projected radius so points never vanish or bloat. The Morton tile path
-  // keeps fixed pixel sizing (tiles are already viewport-bounded).
-  const isTile = props.tileSubLayer === true;
-  const radiusUnits: 'common' | 'pixels' = isTile ? 'pixels' : 'common';
+  // Points are sized in WORLD (common) units so the GPU scales them with zoom — they
+  // shrink when you zoom out, which is where scatter overdraw is worst — while
+  // `radiusMinPixels`/`radiusMaxPixels` clamp the projected radius.
+  //
+  // Deliberately the SAME on the Morton tile path, which used to size in fixed pixels on
+  // the reasoning that tiles are already viewport-bounded. The effect was that a
+  // zoomed-out tiled layer drew millions of points as fixed screen dots: density
+  // saturated into a flat mass and every tile seam hardened into what looked like a
+  // rendering fault.
   const radiusMinPixels = props.pointRadiusMinPixels ?? DEFAULT_POINT_RADIUS_MIN_PIXELS;
   const radiusMaxPixels = props.pointRadiusMaxPixels ?? DEFAULT_POINT_RADIUS_MAX_PIXELS;
   // `pointSize` means "this many units of the ELEMENT's own coordinate space".
@@ -100,8 +101,7 @@ export function renderColumnarScatterLayer(
   // alone, so without folding the matrix scale in here the same pointSize renders
   // wildly differently per element: an element with a 0.00012 mm affine drew points
   // ~8000x too large for its data, swamping the view and shredding fill rate.
-  // Pixel-unit tiles are already viewport-relative and must not be rescaled.
-  const transformScale = isTile ? 1 : modelMatrixUniformScale(props.modelMatrix);
+  const transformScale = modelMatrixUniformScale(props.modelMatrix);
 
   // Feed deck GPU-ready binary attributes (interleaved positions) instead of a
   // per-object `getPosition` closure. The buffer is memoized on the batch, so a
@@ -143,7 +143,8 @@ export function renderColumnarScatterLayer(
     getFeatureCode: -1,
     // getRadius: props.pointSize,
     radiusScale: props.pointSize * transformScale,
-    radiusUnits,
+    // World units — see the note above; the tile path uses the same.
+    radiusUnits: 'common',
     radiusMinPixels,
     radiusMaxPixels,
     getFillColor: props.color,

@@ -1,4 +1,4 @@
-import { DEFAULT_POINTS_MEMORY_CAP } from '@spatialdata/core';
+import { DEFAULT_POINTS_MEMORY_CAP, pointsTilingEnabled } from '@spatialdata/core';
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
 import { useSpatialCanvasActions } from './context';
 import { PointsFeatureFilterPanel } from './PointsFeatureFilterPanel';
@@ -16,8 +16,17 @@ export interface PointsLayerPanelProps {
 }
 
 function PointsMemoryCap({ config }: { config: PointsLayerConfig }) {
+  // Opt out of the React Compiler — see PointsFeatureFilterPanel. The tiled read is
+  // engine-backed and settles asynchronously (the probe), so the compiler would
+  // memoize this JSX and leave a dead control on screen.
+  'use no memo';
   const actions = useSpatialCanvasActions();
+  const { tiled } = usePointsFeatureState(config);
   const currentCap = config.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
+  // A tiled layer holds no resident window, so the cap governs nothing. Leaving the
+  // control up would put "Max rows kept in memory" directly above "the memory cap
+  // does not apply" — each true, the pair nonsense. Same rule as ShowMatchingPoints.
+  if (tiled && pointsTilingEnabled(config.pointsTiling)) return null;
   // Discrete options (one reload per choice, vs. a free number
   // input that would reload on every keystroke). Include the
   // current value so a saved config off the preset list still
@@ -73,7 +82,12 @@ function ShowMatchingPoints({ config }: { config: PointsLayerConfig }) {
   // read is engine-backed and updates on notify; the compiler would otherwise
   // memoize this line's JSX and never repaint it as the scan progresses.
   'use no memo';
-  const { truncation: t } = usePointsFeatureState(config);
+  const { truncation: t, tiled } = usePointsFeatureState(config);
+  // A tiled layer draws from the viewport, not from a resident window, so a
+  // truncation count is not a statement about what is on screen. It used to sit
+  // directly above "the memory cap does not apply", each true and the pair
+  // nonsense — and it survives eviction lag, since this renders before the release.
+  if (tiled && pointsTilingEnabled(config.pointsTiling)) return null;
   if (!t) return null;
   // Report the batch held in memory (always true), NOT a per-selection matched
   // count: t.loaded is the covered-batch size, which overstates the selection
@@ -127,12 +141,67 @@ function PointSizeControl({ config }: { config: PointsLayerConfig }) {
   );
 }
 
+/**
+ * Morton viewport tiling, and its tile-status overlay. On by default for elements with a
+ * usable Morton index; turning it off re-plans back to the capped preload, which keeps
+ * the first `cap` rows in FILE order — on a Morton artifact a prefix of the Z-curve, so a
+ * skewed chunk of the slide rather than a sample. That comparison is what the toggle is
+ * for.
+ */
+function PointsTilingControl({ config }: { config: PointsLayerConfig }) {
+  // Opt out of the React Compiler — see PointsFeatureFilterPanel. The tiling read is
+  // engine-backed and settles asynchronously (the probe), so the compiler would
+  // memoize this JSX and never show the layer switching over to tiles.
+  'use no memo';
+  const actions = useSpatialCanvasActions();
+  const enabled = pointsTilingEnabled(config.pointsTiling);
+  // Through the hook, NOT `engine.isTiled(...)`: the hook carries the engine
+  // subscription, so this updates when the probe settles.
+  const { tiled } = usePointsFeatureState(config);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', gap: 6 }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) =>
+            actions.updateLayer(config.id, {
+              pointsTiling: e.target.checked ? 'auto' : 'off',
+            })
+          }
+        />
+        Viewport tiles (Morton)
+      </label>
+      {enabled && (
+        <label style={{ color: '#ccc', fontSize: '12px', display: 'flex', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={config.showTileDebugOverlay === true}
+            onChange={(e) =>
+              actions.updateLayer(config.id, { showTileDebugOverlay: e.target.checked })
+            }
+          />
+          Tile debug overlay
+        </label>
+      )}
+      <span style={{ color: '#888', fontSize: '11px' }}>
+        {enabled
+          ? tiled
+            ? 'Reading row groups for the viewport, at the zoom you are at — no memory cap applies. The feature filter is applied as tiles are read.'
+            : 'This element has no usable Morton index; using the capped preload.'
+          : 'Off: showing the first rows of the file up to the memory cap, whatever the viewport. Turn on to read only what you are looking at.'}
+      </span>
+    </div>
+  );
+}
+
 export default function PointsLayerPanel({ config, engine, resolveTarget }: PointsLayerPanelProps) {
   return (
     <PointsFeatureStateProvider engine={engine} target={resolveTarget(config.id)}>
       <PointSizeControl config={config} />
       <PointsMemoryCap config={config} />
       <ShowMatchingPoints config={config} />
+      <PointsTilingControl config={config} />
       <PointsFeatureFilterPanel config={config} />
     </PointsFeatureStateProvider>
   );

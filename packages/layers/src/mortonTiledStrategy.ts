@@ -1,4 +1,5 @@
 import { COORDINATE_SYSTEM } from '@deck.gl/core';
+import { DEFAULT_POINTS_MEMORY_CAP, mortonTileGrid } from '@spatialdata/core';
 import type { Layer, LayersList } from 'deck.gl';
 import { PolygonLayer, TileLayer } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
@@ -12,12 +13,17 @@ import {
 import { featureCodesSignature } from './pointsFeatureCodes.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
-import { DEFAULT_POINT_SIZE, renderColumnarScatterLayer } from './pointsScatterLayer.js';
+import {
+  DEFAULT_POINT_SIZE,
+  modelMatrixUniformScale,
+  renderColumnarScatterLayer,
+} from './pointsScatterLayer.js';
 import {
   POINTS_TILE_DEBUG_PICK_KIND,
   pointsTileDebugPolygonData,
   tileDebugStatusFillColor,
   tileDebugStatusLineColor,
+  tileDebugStatusLineWidth,
 } from './pointsTileDebug.js';
 import { createTiledPointsDebugHooks } from './pointsTiledDebugHooks.js';
 
@@ -55,6 +61,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       pointRadiusMinPixels,
       pointRadiusMaxPixels,
       color = [255, 100, 100, 200],
+      colorByFeature,
+      featureCodeSpaceSize,
+      featureColorOverrides,
+      highlightFeatureCode,
       use3d,
     } = layer.props;
 
@@ -63,7 +73,23 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       return null;
     }
 
+    // The grid comes from the artifact — density and row-group size — not deck's
+    // defaults; see mortonTileGrid for why both ends are bounded.
+    const capabilities = resource.loader.capabilities;
+    const grid = mortonTileGrid({
+      bounds: localBounds,
+      totalRows: capabilities.totalRows ?? 0,
+      maxRowsPerGroup: capabilities.maxRowsPerGroup ?? 0,
+      modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
+      // A second pool the resident cap cannot see (ADR 0005 — account first, manage
+      // after). Budgeting against the same number is not the cap applying: it makes the
+      // worst case a stated quantity rather than deck's `5 x whatever is on screen`.
+      cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
+    });
+
     const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
+    // Colour rides the per-tile batch: the scan returns a feature code per point, so a
+    // tile carries everything the colour extension needs.
     const scatterStyleProps = {
       color,
       pointSize,
@@ -71,6 +97,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
       pointRadiusMaxPixels,
       opacity,
       modelMatrix: layer.props.modelMatrix,
+      colorByFeature,
+      ...(featureCodeSpaceSize !== undefined ? { featureCodeSpaceSize } : {}),
+      ...(featureColorOverrides ? { featureColorOverrides } : {}),
+      ...(highlightFeatureCode !== undefined ? { highlightFeatureCode } : {}),
       use3d,
     };
 
@@ -83,9 +113,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
           extent: [localBounds.minX, localBounds.minY, localBounds.maxX, localBounds.maxY],
           opacity,
           visible,
-          tileSize: 512,
-          minZoom: -1,
-          maxZoom: -1,
+          tileSize: grid.tileSize,
+          minZoom: grid.minZoom,
+          maxZoom: grid.maxZoom,
+          zoomOffset: grid.zoomOffset,
+          maxRequests: grid.maxRequests,
+          maxCacheSize: grid.maxCacheSize,
           refinementStrategy: 'best-available',
           updateTriggers: {
             getTileData: [resource.element.key, featureCodesSignature(featureCodes)],
@@ -96,8 +129,18 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               color,
               opacity,
               layer.props.modelMatrix,
+              colorByFeature,
+              featureCodeSpaceSize,
+              featureColorOverrides,
+              highlightFeatureCode,
               use3d,
             ],
+          },
+          onTileUnload(unloaded: { index?: { x: number; y: number; z: number }; id?: string }) {
+            const handle = tileHandleFromDeckTile(unloaded);
+            if (handle) {
+              debugHooks.onTileUnloaded(handle.tileId);
+            }
           },
           onViewportLoad(
             tiles: Array<{
@@ -130,14 +173,15 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             if (!tile || !isPointTileBbox(tileProps.bbox)) {
               return null;
             }
-            debugHooks.onTileLoadStart(tile);
+            const attempt = debugHooks.onTileLoadStart(tile);
             const rawBounds = boundsFromTileBbox(tile.bbox);
             const bounds = intersectBounds(rawBounds, localBounds);
             if (!bounds) {
               debugHooks.onTileLoadEnd(
                 tile,
                 { success: true, clippedBounds: null, pointCount: 0, loadMode: 'clipped' },
-                rawBounds
+                rawBounds,
+                attempt
               );
               return null;
             }
@@ -151,7 +195,8 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                 debugHooks.onTileLoadEnd(
                   tile,
                   { success: true, clippedBounds: bounds, pointCount: 0 },
-                  rawBounds
+                  rawBounds,
+                  attempt
                 );
                 return null;
               }
@@ -163,7 +208,8 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                   pointCount: renderedPointCount(batch),
                   loadMode: batch.loadMode,
                 },
-                rawBounds
+                rawBounds,
+                attempt
               );
               return batch;
             } catch (error) {
@@ -174,9 +220,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                   success: false,
                   aborted,
                   clippedBounds: bounds,
-                  errorMessage: aborted ? 'aborted' : String(error),
+                  // No message for an abort: `status` says it, and a row labelled "error"
+                  // reading "aborted" is the palette's red herring in words.
+                  ...(aborted ? {} : { errorMessage: String(error) }),
                 },
-                rawBounds
+                rawBounds,
+                attempt
               );
               if (aborted) {
                 return null;
@@ -196,7 +245,6 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             return renderColumnarScatterLayer(`${props.id}-scatter`, props.data, {
               ...scatterStyleProps,
               tileBounds: tileBbox ? scatterBoundsFromTileBbox(tileBbox) : undefined,
-              tileSubLayer: true,
             });
           },
         })
@@ -228,7 +276,9 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             getLineColor: (d: {
               entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
             }) => tileDebugStatusLineColor(d.entry.status),
-            getLineWidth: 2,
+            getLineWidth: (d: {
+              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+            }) => tileDebugStatusLineWidth(d.entry.status),
             lineWidthUnits: 'pixels',
             filled: true,
             stroked: true,
@@ -238,6 +288,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               data: [debugSignature],
               getFillColor: [debugSignature],
               getLineColor: [debugSignature],
+              getLineWidth: [debugSignature],
               getPolygon: [debugSignature],
             },
           })

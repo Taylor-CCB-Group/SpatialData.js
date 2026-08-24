@@ -11,6 +11,7 @@
 export type FeatureRowTone =
   | 'resident'
   | 'partial'
+  | 'tiled'
   | 'loaded'
   | 'cached'
   | 'loading'
@@ -52,6 +53,14 @@ export interface FeatureRowStateInput {
    */
   residentPointCount?: number;
   datasetPointCount?: number;
+  /**
+   * The layer reads viewport tiles rather than a resident window. Said explicitly because
+   * every OTHER signal here describes a resident batch a tiled layer does not have, and
+   * their fallback — "the resident set is unknown, so treat everything as shown" — is
+   * accidentally the right outcome for the wrong reason. Coverage is not unknown here:
+   * every feature in view is read on demand.
+   */
+  tiled?: boolean;
 }
 
 /**
@@ -73,7 +82,19 @@ export function describeFeatureRowState({
   residentKnown,
   residentPointCount,
   datasetPointCount,
+  tiled,
 }: FeatureRowStateInput): FeatureRowState {
+  // Ranked first: a tiled layer's coverage does not depend on any of the resident
+  // signals below, and answering from them would describe a batch it does not have.
+  if (tiled) {
+    return {
+      tone: 'tiled',
+      greyed: false,
+      label: 'in view',
+      reason:
+        'Read from viewport tiles on demand — not limited by the memory cap. Deselecting it drops its points from the tiles before they are drawn.',
+    };
+  }
   if (!residentKnown) {
     return {
       tone: 'loaded',

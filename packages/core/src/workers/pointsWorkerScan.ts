@@ -422,6 +422,13 @@ export function scanMortonTableInBounds(input: {
   xs: Float32PointBuffer;
   ys: Float32PointBuffer;
   zs: Float32PointBuffer;
+  /**
+   * Per-point feature codes for the matched rows. Optional, but supplying it is what
+   * lets a tiled layer colour by feature at all. Lockstep is the whole contract — index
+   * i names the feature of point i in {@link xs}/{@link ys} — so every `continue` above
+   * a push must skip all four buffers together.
+   */
+  codes?: Int32PointBuffer;
 }): void {
   const allowedFeatureCodes = featureCodeAllowSet(input.featureCodes);
   const filterByFeature = allowedFeatureCodes !== null;
@@ -453,6 +460,10 @@ export function scanMortonTableInBounds(input: {
   if (filterByFeature && !featureCodeValues) {
     return;
   }
+  // Not collecting is fine — the render falls back to a flat colour — but a SHORT array
+  // would be worse than none: misaligned against the geometry, confidently mis-colouring
+  // every point after the first gap.
+  const collectCodes = input.codes !== undefined && featureCodeValues !== null;
   // Hoisted: `Table.numRows` is not a field but
   // `data.reduce((n, d) => n + d.length, 0)` — a closure allocation and a walk of
   // every chunk. As a loop CONDITION that ran per row. See `scanTableByFeatureCodes`.
@@ -463,6 +474,9 @@ export function scanMortonTableInBounds(input: {
   input.ys.reserve(numRows);
   if (zValues) {
     input.zs.reserve(numRows);
+  }
+  if (input.codes) {
+    input.codes.reserve(numRows);
   }
   for (let rowIndex = 0; rowIndex < numRows; rowIndex += 1) {
     // Sentinels only ever occupy the first rows of the first row group, so this
@@ -501,6 +515,13 @@ export function scanMortonTableInBounds(input: {
     if (zValues) {
       const z = zValues[rowIndex];
       input.zs.push(Number.isFinite(z) ? z : 0);
+    }
+    if (collectCodes) {
+      const code = (featureCodeValues as ArrayLike<number>)[rowIndex];
+      // A non-finite code is a real row with an unknown feature: keep the point and
+      // record -1, the shader's existing "no feature" sentinel. Dropping it would put a
+      // hole in the geometry to express a gap in the colour.
+      (input.codes as Int32PointBuffer).push(Number.isFinite(code) ? code : -1);
     }
   }
 }

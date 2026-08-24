@@ -63,6 +63,12 @@ export type PointsTileDebugEvent =
       context: PointsTileDebugViewportContext;
     }
   | { type: 'start'; tile: PointsTileHandle; at: number }
+  /**
+   * deck dropped this tile from its cache. The overlay is a picture of what deck is
+   * holding, so a tile it no longer holds must stop being drawn — see
+   * {@link reduceTileDebugEntries}.
+   */
+  | { type: 'unload'; tileId: string }
   | {
       type: 'end';
       tile: PointsTileHandle;
@@ -177,6 +183,11 @@ export function reduceTileDebugEntries(
       next.set(tile.tileId, entry);
     }
     return [...next.values()];
+  }
+
+  if (event.type === 'unload') {
+    byId.delete(event.tileId);
+    return [...byId.values()];
   }
 
   if (event.type === 'start') {
@@ -318,6 +329,16 @@ export function formatPointsTileDebugTooltip(
   };
 }
 
+/**
+ * Overlay colours, by what each status MEANS. **Only `error` is red**; everything else
+ * is a stage of ordinary progress and recedes. `aborted` is violet — an unoccupied hue,
+ * at a low alpha, because a request the viewport moved on from is not a failure and is
+ * the least interesting thing here.
+ *
+ * Known limit: `loaded` green against `error` red is the classic red-green pair, so hue
+ * alone does not carry that difference for everyone, and opacity cannot either (`loading`
+ * is deliberately opaque too). Hence the width channel — {@link tileDebugStatusLineWidth}.
+ */
 export function tileDebugStatusFillColor(
   status: PointsTileStatus
 ): [number, number, number, number] {
@@ -333,7 +354,7 @@ export function tileDebugStatusFillColor(
     case 'error':
       return [220, 60, 60, 70];
     case 'aborted':
-      return [180, 80, 80, 45];
+      return [150, 130, 200, 32];
   }
 }
 
@@ -352,8 +373,16 @@ export function tileDebugStatusLineColor(
     case 'error':
       return [255, 80, 80, 255];
     case 'aborted':
-      return [220, 120, 120, 220];
+      return [175, 155, 220, 190];
   }
+}
+
+/**
+ * Outline width, so `error` is distinguishable without relying on hue — insurance against
+ * the red-green limit above, and against a busy fluorescence image behind the overlay.
+ */
+export function tileDebugStatusLineWidth(status: PointsTileStatus): number {
+  return status === 'error' ? 4 : 2;
 }
 
 export function tileDebugEntriesSignature(entries: readonly PointsTileDebugEntry[]): string {

@@ -83,6 +83,13 @@ function createFilesystemStore(root: string) {
   };
 }
 
+/**
+ * Several tests below build their own parquet fixture through `uv run python`, which
+ * is seconds of work before a single assertion runs. vitest's 5s default is not a
+ * budget for that — under full-suite parallelism they timed out intermittently while
+ * passing in isolation, which reads as a flaky product rather than a slow fixture.
+ * They carry the same 120s the `beforeAll` above already uses for the same reason.
+ */
 describe('SpatialDataPointsSource feature catalog', () => {
   let fixtureRoot: string;
   let source: SpatialDataPointsSource;
@@ -187,7 +194,7 @@ PY`,
       { code: 1, name: 'gene_b' },
       { code: 2, name: 'gene_c' },
     ]);
-  });
+  }, 120_000);
 
   it('loads feature code column with full points preload via loadPointsRowFeatureCodes', async () => {
     const points = await source.loadPoints('points/transcripts');
@@ -262,7 +269,7 @@ PY`,
 
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_with_codes');
     expect([...featureCodes!]).toEqual([1, 0, 1]);
-  });
+  }, 120_000);
 
   it('counts dictionary-only feature columns from the catalog build, not loadFeatureCounts', async () => {
     const elementDir = join(fixtureRoot, 'points', 'dict_counts_untrusted');
@@ -317,7 +324,7 @@ PY`,
       { code: 1, name: 'TP53', count: 2 },
       { code: 2, name: 'EGFR', count: 1 },
     ]);
-  });
+  }, 120_000);
 
   it('derives row feature codes from dictionary-encoded feature names', async () => {
     const elementDir = join(fixtureRoot, 'points', 'dict_only');
@@ -355,7 +362,7 @@ PY`,
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_only');
     expect(featureCodes?.length).toBe(3);
     expect([...featureCodes!]).toEqual([0, 1, 0]);
-  });
+  }, 120_000);
 
   it('derives dictionary-only row codes from decoded names, not local dictionary indices', async () => {
     const elementDir = join(fixtureRoot, 'points', 'dict_local_indices');
@@ -419,7 +426,7 @@ PY`,
 
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_local_indices');
     expect([...featureCodes!]).toEqual([0, 0, 1, 1, 1, 2]);
-  });
+  }, 120_000);
 
   it('delegates row feature code decode to the points worker when enabled', async () => {
     const workerCodes = Int32Array.from([0, 1, 0, 1, 2]);

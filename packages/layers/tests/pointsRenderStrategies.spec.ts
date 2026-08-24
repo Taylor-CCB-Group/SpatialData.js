@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { mortonTiledStrategy } from '../src/mortonTiledStrategy.js';
 import type { PointsLayer } from '../src/PointsLayer.js';
 import { filterBatchSignature } from '../src/pointsFeatureCodes.js';
 import { resolvePointsRenderStrategy } from '../src/pointsRenderStrategies.js';
@@ -115,5 +116,91 @@ describe('preloadedScatterStrategy — never shows the previous selection while 
     const layer = layerWith({ featureCodes: undefined, preloadedFeatureCodes: codes });
     const result = preloadedScatterStrategy.renderLayers(layer);
     expect(drawnCount(Array.isArray(result) ? result[0] : result)).toBe(3);
+  });
+});
+
+/**
+ * On the preloaded path a selection filters a batch already in memory. On the tiled
+ * path it is pushed down into the row-group scan, so a deselected feature's points
+ * are never READ — the selection narrows I/O, not just what is drawn. That is the
+ * whole reason the tiled path can serve an element far larger than the memory cap.
+ */
+describe('mortonTiledStrategy — the selection reaches the scan', () => {
+  const tiledLayer = (props: Record<string, unknown>) => {
+    const calls: Array<{ bounds: unknown; featureCodes: unknown }> = [];
+    const resource = {
+      element: { key: 'transcripts' },
+      loader: {
+        capabilities: {
+          kind: 'morton-tiled' as const,
+          batchFormat: 'columnar-ndarray' as const,
+          supportsViewportTiles: true,
+          bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+        },
+        loadInBounds: async (options: { bounds: unknown; featureCodes?: unknown }) => {
+          calls.push({ bounds: options.bounds, featureCodes: options.featureCodes });
+          return null;
+        },
+      },
+    };
+    const layer = {
+      props: { id: 'points:transcripts', visible: true, resource, ...props },
+      subLayerProps: (sub: Record<string, unknown>) => ({
+        ...sub,
+        id: `points:transcripts-${sub.id}`,
+      }),
+    } as unknown as PointsLayer;
+    return { layer, calls, resource };
+  };
+
+  /** Pull the TileLayer out of the strategy's output. */
+  const tileLayerOf = (layer: PointsLayer) => {
+    const result = mortonTiledStrategy.renderLayers(layer);
+    const layers = Array.isArray(result) ? result : [result];
+    return layers[0] as unknown as {
+      props: {
+        getTileData: (t: unknown) => Promise<unknown>;
+        updateTriggers: Record<string, unknown[]>;
+      };
+    };
+  };
+
+  const tileProps = {
+    index: { x: 0, y: 0, z: -1 },
+    id: '0-0--1',
+    bbox: { left: 0, top: 50, right: 50, bottom: 0 },
+  };
+
+  it('passes the selected codes to loadInBounds', async () => {
+    const { layer, calls } = tiledLayer({ featureCodes: [3, 7] });
+
+    await tileLayerOf(layer).props.getTileData(tileProps);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.featureCodes).toEqual([3, 7]);
+  });
+
+  it('passes no codes at all for the unfiltered view', async () => {
+    // `undefined` means "no filter" to the scan; `[]` would mean "match nothing".
+    const { layer, calls } = tiledLayer({});
+
+    await tileLayerOf(layer).props.getTileData(tileProps);
+
+    // `calls[0]?.featureCodes` is undefined both for "no filter" and for "no scan ran
+    // at all", so without this the test survives `getTileData` never reaching the
+    // loader.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.featureCodes).toBeUndefined();
+  });
+
+  it('refetches tiles when the selection changes', () => {
+    // Without the selection in the trigger, deck keeps serving the cached tiles it
+    // fetched for the PREVIOUS selection — the filter would appear to do nothing.
+    const before = tileLayerOf(tiledLayer({ featureCodes: [3] }).layer);
+    const after = tileLayerOf(tiledLayer({ featureCodes: [3, 7] }).layer);
+
+    expect(before.props.updateTriggers.getTileData).not.toEqual(
+      after.props.updateTriggers.getTileData
+    );
   });
 });

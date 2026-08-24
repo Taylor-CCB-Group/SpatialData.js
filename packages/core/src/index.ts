@@ -64,6 +64,12 @@ export type {
   PointsLoadProgress,
   PointsLoadResult,
 } from './pointsLoadOptions.js';
+export {
+  type PointsLoadPlan,
+  type PointsLoadPlanInput,
+  planPointsLoads,
+} from './pointsLoadPlan.js';
+export * from './pointsTileGrid.js';
 export * from './pointsTiling.js';
 // Render Stack schemas. Canonical here (ADR 0004 §5, amending ADR 0001): the
 // Resource Resolver takes a Render Stack as input, so dependency direction forces

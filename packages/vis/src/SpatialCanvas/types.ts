@@ -3,7 +3,7 @@
  */
 
 import type { Matrix4 } from '@math.gl/core';
-import type { SpatialElement } from '@spatialdata/core';
+import type { PointsTilingMode, SpatialElement } from '@spatialdata/core';
 import type {
   FeatureCategoricalPaletteSpec,
   FeatureMissingValueOptions,
@@ -202,6 +202,25 @@ export interface PointsLayerConfig extends BaseLayerConfig {
    * Serializable Stack-Entry state.
    */
   featureColorOverrides?: Record<string, [number, number, number]>;
+  /**
+   * Whether to use the Morton-tiled viewport path when the element supports it. `'auto'`
+   * probes the element's parquet footer once and, if it is a Morton artifact whose store
+   * can serve row-group range reads, renders viewport tiles instead of a capped resident
+   * preload; `'off'` always preloads. An element that cannot be tiled falls back either
+   * way, so this is a preference, not a requirement.
+   *
+   * Defaults to `'auto'` — resolve it with `pointsTilingEnabled` rather than comparing to
+   * `'auto'`, so `undefined` means the same thing everywhere.
+   *
+   * Serializable Stack-Entry state.
+   */
+  pointsTiling?: PointsTilingMode;
+  /**
+   * Draw the tile-status debug overlay on a tiled points layer (viewport tiles
+   * coloured by loading / loaded / empty / error). Development affordance; ignored
+   * on the preloaded path.
+   */
+  showTileDebugOverlay?: boolean;
 }
 
 export interface LabelsLayerConfig extends BaseLayerConfig {

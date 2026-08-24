@@ -1,4 +1,13 @@
-import { type PointsTilingMetadata, resolvePointsMemoryCap } from '@spatialdata/core';
+import { resolvePointsMemoryCap } from '@spatialdata/core';
+
+// The load-plan decision itself moved to `core` (D5 step 1) so `PointsResolver.plan()`
+// can call it — `core` cannot import from `layers`. Re-exported here so no consumer
+// import moves; the cache-key helpers below stay, they are a `layers` concern.
+export {
+  type PointsLoadPlan,
+  type PointsLoadPlanInput,
+  planPointsLoads,
+} from '@spatialdata/core';
 
 export interface PointsPreloadCacheKeyInput {
   pointsMemoryCap?: number;
@@ -42,29 +51,6 @@ export function resolvePointsPreloadData<T>(
   preloadCacheKey: string
 ): T | undefined {
   return cache.get(preloadCacheKey) ?? cache.get(elementKey);
-}
-
-export interface PointsLoadPlanInput {
-  wantsOptimized: boolean;
-  metadataKnown: boolean;
-  tiledMetadata: PointsTilingMetadata | null | undefined;
-  hasPreloaded: boolean;
-  /** Known row count from parquet metadata, when available. */
-  totalRows?: number;
-}
-
-export interface PointsLoadPlan {
-  probeMetadata: boolean;
-  preloadFullTable: boolean;
-}
-
-/** Decide which points loads to schedule at the start of a load pass. */
-export function planPointsLoads(input: PointsLoadPlanInput): PointsLoadPlan {
-  const { wantsOptimized, metadataKnown, tiledMetadata, hasPreloaded } = input;
-  const probeMetadata = wantsOptimized && !metadataKnown;
-  const preloadFullTable =
-    !hasPreloaded && (!wantsOptimized || (metadataKnown && tiledMetadata === null));
-  return { probeMetadata, preloadFullTable };
 }
 
 export interface ShouldPreloadAfterMetadataProbeInput {
