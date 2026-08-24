@@ -80,10 +80,12 @@ export function getChunkCache(): ByteLruCache<Chunk<DataType>> | undefined {
  *   zero-filled typed array for a missing chunk and caches that like any other,
  *   so a sparse array can spend real bytes on nothing. The byte bound is what
  *   makes that survivable rather than a leak.
- * - **This does not dedupe in-flight requests.** fizarrita consults the cache
- *   while building its task list and writes back only after the worker returns,
- *   so two concurrent requests for one chunk still both fetch and both decode.
- *   That is an upstream gap, not something this seam can close.
+ * - **Concurrent readers of one chunk share a single fetch and decode.**
+ *   fizarrita keys in-flight operations the same way it keys this cache, so the
+ *   window between "someone started fetching this" and "the result is
+ *   cacheable" no longer costs a duplicate round-trip and a duplicate decode.
+ *   It follows that this cache sees one `set` per chunk however many readers
+ *   wanted it, so the byte total counts each chunk once.
  *
  * Cache keys are `store_N:{array path}:{chunk key}`, where `N` identifies the
  * **store instance**. `RasterElement.getStore()` memoizes its prefixed view for

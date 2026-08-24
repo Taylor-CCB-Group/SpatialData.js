@@ -26,13 +26,14 @@ returns a fresh object literal on every call. Handing out a new view per caller
 would give one chunk a different key per view, so the cache would fill with
 duplicates and never hit. One stable view per element is what makes it a cache.
 
-Two limits worth stating plainly:
+Two things worth stating plainly about what ends up in there:
 
 - **Absent chunks are cached as data.** fizarrita materialises a full zero-filled
   typed array for a missing chunk and caches it like any other, so a sparse array
   can spend real bytes on nothing. The byte bound makes that survivable; it does
   not make it free.
-- **In-flight requests are still not deduped.** fizarrita reads the cache while
-  building its task list and writes back only after the worker returns, so two
-  concurrent requests for the same chunk both fetch and both decode. That is an
-  upstream gap this seam cannot close.
+- **Concurrent readers of one chunk share a single fetch and decode.** fizarrita
+  keys in-flight operations the same way it keys this cache, closing the window
+  between "someone started fetching this" and "the result is cacheable". So the
+  cache sees one write per chunk however many readers wanted it, and the byte
+  total counts each chunk once.
