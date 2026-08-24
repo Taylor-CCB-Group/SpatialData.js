@@ -492,7 +492,9 @@ export function useLayerData(
     const map = new Map<string, AvailableElement>();
     for (const type of ['images', 'shapes', 'points', 'labels'] as const) {
       for (const elem of availableElements[type]) {
-        map.set(`${elem.type}:${elem.key}`, elem);
+        // By NAME: this map answers `config.elementKey`, which is a name. The
+        // identity-qualified `elem.key` is what the resolvers behind it are keyed on.
+        map.set(`${elem.type}:${elem.name}`, elem);
       }
     }
     return map;
@@ -957,15 +959,20 @@ export function useLayerData(
   );
 
   const reloadElement = useCallback(
-    (type: string, key: string) => {
+    (type: string, name: string) => {
       const loaded = loadedDataRef.current;
+      // Public, so `name` is a name — the same string the caller's configs carry. The
+      // caches below are keyed by element identity, so translate before evicting: an
+      // element that is no longer available has no reachable entry to drop.
+      const key = elementMap.current.get(`${type}:${name}`)?.key;
+      if (!key) return;
       if (type === 'shapes') {
         shapesResolver.evict(key);
         mergedShapeRenderDataRef.current.delete(key);
         loaded.worldBounds.delete(`shapes:${key}`);
-        // Clear per-layer projection caches for every layer that maps to this key.
+        // Clear per-layer projection caches for every layer that maps to this element.
         for (const [layerId, config] of Object.entries(layersRef.current)) {
-          if (config.type === 'shapes' && config.elementKey === key) {
+          if (config.type === 'shapes' && config.elementKey === name) {
             loaded.shapePrebuiltData.delete(layerId);
             loaded.shapeFillColorData.delete(layerId);
           }
@@ -976,7 +983,7 @@ export function useLayerData(
         // `evict` resets the tiling slot, so every tile the overlay is holding for this
         // element describes a loader that no longer exists.
         for (const [layerId, config] of Object.entries(layersRef.current)) {
-          if (config.type === 'points' && config.elementKey === key) {
+          if (config.type === 'points' && config.elementKey === name) {
             forgetTileDebugStore(layerId);
           }
         }
@@ -987,7 +994,7 @@ export function useLayerData(
         labelsResolver.evict(key);
         loaded.worldBounds.delete(`labels:${key}`);
         for (const [layerId, config] of Object.entries(layersRef.current)) {
-          if (config.type === 'labels' && config.elementKey === key) {
+          if (config.type === 'labels' && config.elementKey === name) {
             loaded.labelFillColorData.delete(layerId);
             loaded.labelColorLutData.delete(layerId);
           }
@@ -1199,7 +1206,7 @@ export function useLayerData(
               layerId,
               featureColorResolver?.({
                 layerId,
-                elementKey: elem.key,
+                elementKey: elem.name,
                 kind: 'shapes',
                 featureIds: renderData.featureIds,
               })
@@ -1496,7 +1503,7 @@ export function useLayerData(
             // about draws exactly as it would with the LUT switched off.
             const hostFeatureColors = stabilizeFeatureColors(
               layerId,
-              featureColorResolver?.({ layerId, elementKey: elem.key, kind: 'labels' })
+              featureColorResolver?.({ layerId, elementKey: elem.name, kind: 'labels' })
             );
             const featureColorLut =
               hostFeatureColors ??
@@ -1582,7 +1589,9 @@ export function useLayerData(
 
   const getImageLoadedDataByElementKey = useCallback(
     (elementKey: string): ImageLoaderData | undefined => {
-      return imagesResolver.getLoadedData(elementKey);
+      // A name from the caller's config; the resolver is keyed by element identity.
+      const key = elementMap.current.get(`image:${elementKey}`)?.key;
+      return key ? imagesResolver.getLoadedData(key) : undefined;
     },
     [imagesResolver]
   );
@@ -1623,7 +1632,7 @@ export function useLayerData(
         );
         return elem
           ? attachTooltipElementContext(tooltip, {
-              elementKey: elem.key,
+              elementKey: elem.name,
               elementType: elem.type,
               layerId,
             })
@@ -1635,7 +1644,7 @@ export function useLayerData(
       }
 
       const elementContext = {
-        elementKey: elem.key,
+        elementKey: elem.name,
         elementType: elem.type,
         layerId,
       };
@@ -1752,7 +1761,7 @@ export function useLayerData(
         }) ?? feature.rowIndex;
       return {
         layerId,
-        elementKey: elem.key,
+        elementKey: elem.name,
         featureId: feature.featureId,
         featureIndex: feature.featureIndex,
         rowIndex,
@@ -1859,7 +1868,7 @@ export function useLayerData(
 
       const resolverCtx = {
         layerId: config.id,
-        elementKey: elem.key,
+        elementKey: elem.name,
         channelCount: colors.length,
         loader: imageData.loader,
         channels: mergedChannels,

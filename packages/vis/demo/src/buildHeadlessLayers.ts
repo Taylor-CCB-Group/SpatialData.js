@@ -21,14 +21,14 @@ export function buildHeadlessRenderStackForCoordinateSystem(
   for (const type of STACK_ORDER) {
     const collection = COLLECTION_BY_TYPE[type];
     for (const element of available[collection]) {
-      const layerId = generateLayerId(element.type, element.key);
+      const layerId = generateLayerId(element.type, element.name);
       entries.push({
         kind: 'spatial',
         id: layerId,
         visible: true,
         source: {
           elementType: type,
-          elementKey: element.key,
+          elementKey: element.name,
           coordinateSystem,
         },
         props:

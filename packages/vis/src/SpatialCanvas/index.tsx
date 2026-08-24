@@ -179,7 +179,7 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
             <span style={labelStyle}>{typeLabels[type]}:</span>
             <div style={layerListStyle}>
               {typeElements.map((elem) => {
-                const layerId = generateLayerId(elem.type, elem.key);
+                const layerId = generateLayerId(elem.type, elem.name);
                 const isActive = enabledLayerIds.has(layerId);
                 return (
                   <button
@@ -188,7 +188,7 @@ function LayerSelector({ elements, enabledLayerIds, onToggleLayer }: LayerSelect
                     style={layerChipStyle(isActive)}
                     onClick={() => onToggleLayer(elem)}
                   >
-                    {elem.key}
+                    {elem.name}
                   </button>
                 );
               })}
@@ -513,7 +513,7 @@ function SpatialCanvasInner({
 
   const handleToggleLayer = useCallback(
     (element: AvailableElement) => {
-      const layerId = generateLayerId(element.type, element.key);
+      const layerId = generateLayerId(element.type, element.name);
       const existing = layers[layerId];
 
       if (existing) {
@@ -521,7 +521,7 @@ function SpatialCanvasInner({
       } else {
         const config = layerConfig(element.type, {
           id: layerId,
-          elementKey: element.key,
+          elementKey: element.name,
           visible: true,
           opacity: 1,
         });

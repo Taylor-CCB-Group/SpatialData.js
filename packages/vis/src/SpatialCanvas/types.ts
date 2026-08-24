@@ -264,7 +264,25 @@ export type LayerConfig<T extends LayerType = LayerType> = LayerConfigByType[T];
 // ============================================
 
 export interface AvailableElement {
+  /**
+   * The cache key: {@link name}, qualified by the identity of this element OBJECT.
+   *
+   * Every resolver and engine cache is keyed by this rather than by the name, because
+   * element names repeat across datasets by convention — two Xenium runs both have
+   * `transcripts` — while the points engine deliberately outlives a `spatialData` swap.
+   * Keyed by name, the swapped-in element is served the previous dataset's artifact:
+   * its parquet path, its bounds, its row-group index (#162).
+   *
+   * Build one with `availableElement`; never compose it by hand, and never key a cache
+   * on {@link name}.
+   */
   key: string;
+  /**
+   * The element's name inside its SpatialData (`transcripts`). What layer configs
+   * address, what layer ids are derived from, and what the UI shows. NOT unique across
+   * datasets — see {@link key}.
+   */
+  name: string;
   type: LayerType;
   element: SpatialElement;
   /** The transformation matrix to the current coordinate system */

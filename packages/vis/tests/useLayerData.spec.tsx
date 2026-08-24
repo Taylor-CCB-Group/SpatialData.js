@@ -8,6 +8,7 @@ import {
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AvailableElement, ElementsByType, LayerConfig } from '../src/SpatialCanvas/types.js';
+import { availableElement } from '../src/SpatialCanvas/utils.js';
 import { useLayerData } from '../src/SpatialCanvas/useLayerData.js';
 
 /**
@@ -63,7 +64,7 @@ function pointsElement(key: string): AvailableElement {
     })),
     listFeaturesWithCounts: vi.fn(async () => null),
   } as unknown as PointsElement;
-  return { key, type: 'points', element, transform: new Matrix4() };
+  return availableElement(key, 'points', element, new Matrix4());
 }
 
 function shapesElement(key: string): AvailableElement {
@@ -86,7 +87,7 @@ function shapesElement(key: string): AvailableElement {
       rowIndexByFeatureIndex: new Int32Array([0, 1]),
     })),
   } as unknown as ShapesElement;
-  return { key, type: 'shapes', element, transform: new Matrix4() };
+  return availableElement(key, 'shapes', element, new Matrix4());
 }
 
 const pointsConfig = (id: string, elementKey: string): LayerConfig => ({
@@ -107,6 +108,36 @@ const shapesConfig = (id: string, elementKey: string): LayerConfig => ({
 
 const render = (layers: Record<string, LayerConfig>, elements: ElementsByType) =>
   renderHook(() => useLayerData(layers, Object.keys(layers), elements, null));
+
+/**
+ * Is this layer drawing through the Morton tile path?
+ *
+ * Through `resolvePointsTarget`, not `engine.isTiled('transcripts')`: the engine is
+ * keyed by element IDENTITY, not by the element's name, so the name alone cannot
+ * address an entry (#162). The hook is where the two are related.
+ */
+function isTiled(
+  result: { current: ReturnType<typeof useLayerData> },
+  layerId = 'layer-p'
+): boolean {
+  const target = result.current.resolvePointsTarget(layerId);
+  return !!target && result.current.pointsEngine.isTiled(target.key);
+}
+
+const inFlightTile: PointsTileHandle = {
+  tileId: '0-0--1',
+  index: { x: 0, y: 0, z: -1 },
+  bbox: { left: 0, top: 512, right: 512, bottom: 0 },
+};
+
+/** The store the hook handed to the layer — the only handle a caller ever gets. */
+function tileDebugStoreOf(layers: unknown[]): TileDebugStore | undefined {
+  for (const layer of layers) {
+    const store = (layer as { props?: { tileDebugStore?: TileDebugStore } }).props?.tileDebugStore;
+    if (store) return store;
+  }
+  return undefined;
+}
 
 describe('useLayerData — the 18-member public surface', () => {
   // ADR 0004 promises MDV that this surface survives the refactor behind a compat
@@ -178,10 +209,11 @@ describe('useLayerData — the load lifecycle', () => {
   });
 
   it('does not resolve a points target for a shapes layer', async () => {
+    const pts = pointsElement('transcripts');
     const elements: ElementsByType = {
       ...EMPTY_ELEMENTS,
       shapes: [shapesElement('cells')],
-      points: [pointsElement('transcripts')],
+      points: [pts],
     };
 
     const { result } = render(
@@ -193,8 +225,10 @@ describe('useLayerData — the load lifecycle', () => {
     );
 
     expect(result.current.resolvePointsTarget('layer-s')).toBeUndefined();
+    // The target carries the element's CACHE key, not its name: that is the string
+    // the engine's entries are addressed by.
     expect(result.current.resolvePointsTarget('layer-p')).toMatchObject({
-      key: 'transcripts',
+      key: pts.key,
       layerId: 'layer-p',
     });
   });
@@ -290,6 +324,132 @@ describe('useLayerData — resolver lifecycle across a dataset swap', () => {
   });
 });
 
+describe('useLayerData — a dataset swap onto a same-named element (#162)', () => {
+  // Element names repeat across datasets by convention — two Xenium runs both have
+  // `transcripts` — and the points engine deliberately survives a `spatialData` swap
+  // (see the test above). So a cache keyed by NAME hands the new dataset's element
+  // the previous dataset's artifact: a correct loader for B's element parameterised
+  // by A's `parquetPath`, A's `bounds`, A's row-group index. Nothing errors. Points
+  // are not misplaced — the reader re-filters to the query bounds — so the symptom is
+  // that part of the map is simply missing, and the auto-fit frames the wrong extent.
+  const metadataA = {
+    kind: 'morton-points' as const,
+    parquetPath: 'dataset-a/points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: 'morton_code_2d',
+    totalRows: 12_000,
+    totalRowGroups: 8,
+    maxRowsPerGroup: 2_000,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 1024, maxY: 1024 },
+  };
+  const metadataB = {
+    ...metadataA,
+    parquetPath: 'dataset-b/points/transcripts/points.parquet',
+    bounds: { minX: 4000, minY: 4000, maxX: 5000, maxY: 5000 },
+  };
+
+  function tiledPointsElement(key: string, metadata: typeof metadataA): AvailableElement {
+    const element = {
+      key,
+      getPointsTilingMetadata: vi.fn(async () => metadata),
+      loadPointsInBounds: vi.fn(async () => null),
+      loadPoints: vi.fn(async () => ({
+        shape: [2, 1],
+        data: [new Float32Array([0]), new Float32Array([0])],
+      })),
+      listFeaturesWithCounts: vi.fn(async () => null),
+    } as unknown as PointsElement;
+    return availableElement(key, 'points', element, new Matrix4());
+  }
+
+  const tiledLayers = {
+    'layer-p': { ...pointsConfig('layer-p', 'transcripts'), pointsTiling: 'auto' as const },
+  };
+
+  /** Both halves of a real swap: the host passes a new dataset AND the elements it
+   *  resolved from it. The element objects differ; only their names collide. */
+  function renderSwap() {
+    const elementsA: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      points: [tiledPointsElement('transcripts', metadataA)],
+    };
+    const elementsB: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      points: [tiledPointsElement('transcripts', metadataB)],
+    };
+    const rendered = renderHook(
+      ({ sd, elements }: { sd: SpatialData; elements: ElementsByType }) =>
+        useLayerData(tiledLayers, Object.keys(tiledLayers), elements, null, sd),
+      { initialProps: { sd: {} as SpatialData, elements: elementsA } }
+    );
+    return {
+      ...rendered,
+      swap: () => rendered.rerender({ sd: {} as SpatialData, elements: elementsB }),
+    };
+  }
+
+  it('probes the new element rather than serving the previous dataset’s artifact', async () => {
+    const { result, swap } = renderSwap();
+    const parquetPath = () => {
+      const target = result.current.resolvePointsTarget('layer-p');
+      return target && result.current.pointsEngine.getTilingMetadata(target.key)?.parquetPath;
+    };
+
+    await waitFor(() => {
+      expect(parquetPath()).toBe(metadataA.parquetPath);
+    });
+
+    swap();
+
+    await waitFor(() => {
+      expect(parquetPath()).toBe(metadataB.parquetPath);
+    });
+  });
+
+  // The third symptom in #162, and the one written most recently: `tileDebugStoresRef`
+  // is keyed by layer id, which MDV holds constant across the swap on purpose. Its
+  // prune fires when a layer LEAVES the tiled path — and a swapped-under layer stays
+  // "tiled" while `isTiled` answers from the previous dataset's entry, so the overlay
+  // kept painting that dataset's tiles. No separate fix: it is the same stale entry.
+  it('drops the tile overlay the previous dataset filled', async () => {
+    const { result, swap } = renderSwap();
+
+    await waitFor(() => {
+      expect(isTiled(result)).toBe(true);
+    });
+    const storeA = tileDebugStoreOf(result.current.getLayers());
+    expect(storeA).toBeDefined();
+    act(() => {
+      const hooks = createTiledPointsDebugHooks(storeA);
+      hooks.onViewportTilesRequested([inFlightTile]);
+      hooks.onTileLoadStart(inFlightTile);
+    });
+
+    swap();
+
+    await waitFor(() => {
+      expect(isTiled(result)).toBe(true);
+      expect(tileDebugStoreOf(result.current.getLayers())).not.toBe(storeA);
+    });
+  });
+
+  it('frames the new dataset’s extent, not the previous one’s', async () => {
+    const { result, swap } = renderSwap();
+
+    await waitFor(() => {
+      expect(result.current.getWorldBoundsForLayer('layer-p')).toMatchObject(metadataA.bounds);
+    });
+
+    swap();
+
+    await waitFor(() => {
+      expect(result.current.getWorldBoundsForLayer('layer-p')).toMatchObject(metadataB.bounds);
+    });
+  });
+});
+
 describe('useLayerData — coverage-gated base (never shows the wrong gene)', () => {
   // The reported bug: select gene A, deselect, select disjoint gene B → the base
   // drew ALL of A's points (the matched batch survives a selection change as
@@ -324,7 +484,7 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
         opts.featureCodes[0] === 0 ? Promise.resolve(matchedForZero) : new Promise<never>(() => {})
       ),
     } as unknown as PointsElement;
-    return { key, type: 'points', element, transform: new Matrix4() };
+    return availableElement(key, 'points', element, new Matrix4());
   }
 
   it('draws the resident batch (not the stale matched batch), via one stable base resource', async () => {
@@ -348,7 +508,7 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
 
     // The {0} scan settles → the matched batch covers {0}; the base draws it (2 rows).
     await waitFor(() => {
-      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.has(0)).toBe(
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes(pts.key)?.has(0)).toBe(
         true
       );
     });
@@ -360,7 +520,7 @@ describe('useLayerData — coverage-gated base (never shows the wrong gene)', ()
       l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [1] } },
     });
     await waitFor(() => {
-      expect(result.current.pointsEngine.isMatchingLoading('transcripts', [1])).toBe(true);
+      expect(result.current.pointsEngine.isMatchingLoading(pts.key, [1])).toBe(true);
     });
 
     // P2: the base resource identity is STABLE across the resident↔matched swap — no
@@ -407,7 +567,7 @@ describe('useLayerData — selection show/hide + colour', () => {
           : new Promise<never>(() => {})
       ),
     } as unknown as PointsElement;
-    return { key, type: 'points', element, transform: new Matrix4() };
+    return availableElement(key, 'points', element, new Matrix4());
   }
 
   it('keeps the matched batch as the base when growing a covered selection (a wanted gene never blinks out)', async () => {
@@ -430,7 +590,7 @@ describe('useLayerData — selection show/hide + colour', () => {
     const baseRowCount = async () => (await baseResource()?.loader.loadAll?.())?.shape[1];
 
     await waitFor(() => {
-      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.has(0)).toBe(
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes(pts.key)?.has(0)).toBe(
         true
       );
     });
@@ -443,7 +603,7 @@ describe('useLayerData — selection show/hide + colour', () => {
       l: { 'layer-p': { ...pointsConfig('layer-p', 'transcripts'), featureCodes: [0, 1] } },
     });
     await waitFor(() => {
-      expect(result.current.pointsEngine.isMatchingLoading('transcripts', [0, 1])).toBe(true);
+      expect(result.current.pointsEngine.isMatchingLoading(pts.key, [0, 1])).toBe(true);
     });
     expect(await baseRowCount()).toBe(2); // still matched-{0}, never resident-3
   });
@@ -469,24 +629,20 @@ describe('useLayerData — selection show/hide + colour', () => {
       // Deliberately absent — `pointsScanChunkProgress` only sets `featureCodes`
       // when the scan produced them, so this is a shape the resolver can hand back.
     };
-    const pts: AvailableElement = {
+    const ptsElement = {
       key: 'transcripts',
-      type: 'points',
-      element: {
-        key: 'transcripts',
-        loadPoints: vi.fn(async () => resident),
-        loadRowFeatureCodes: vi.fn(async () => new Int32Array([0, 1, 0])),
-        listFeaturesWithCounts: vi.fn(async () => null),
-        // Only the {0,1} scan settles, so `lastGood` coverage stays {0,1} after the
-        // selection narrows to {0}.
-        loadPointsMatchingFeatureCodes: vi.fn((opts: { featureCodes: readonly number[] }) =>
-          opts.featureCodes.length === 2
-            ? Promise.resolve(matchedForBoth)
-            : new Promise<never>(() => {})
-        ),
-      } as unknown as PointsElement,
-      transform: new Matrix4(),
-    };
+      loadPoints: vi.fn(async () => resident),
+      loadRowFeatureCodes: vi.fn(async () => new Int32Array([0, 1, 0])),
+      listFeaturesWithCounts: vi.fn(async () => null),
+      // Only the {0,1} scan settles, so `lastGood` coverage stays {0,1} after the
+      // selection narrows to {0}.
+      loadPointsMatchingFeatureCodes: vi.fn((opts: { featureCodes: readonly number[] }) =>
+        opts.featureCodes.length === 2
+          ? Promise.resolve(matchedForBoth)
+          : new Promise<never>(() => {})
+      ),
+    } as unknown as PointsElement;
+    const pts = availableElement('transcripts', 'points', ptsElement, new Matrix4());
     const elements: ElementsByType = { ...EMPTY_ELEMENTS, points: [pts] };
 
     const { result, rerender } = renderHook(
@@ -506,7 +662,7 @@ describe('useLayerData — selection show/hide + colour', () => {
     const baseRowCount = async () => (await baseProps()?.resource?.loader.loadAll?.())?.shape[1];
 
     await waitFor(() => {
-      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes('transcripts')?.size).toBe(
+      expect(result.current.pointsEngine.getLoadedMatchingFeatureCodes(pts.key)?.size).toBe(
         2
       );
     });
@@ -534,7 +690,7 @@ describe('useLayerData — selection show/hide + colour', () => {
     const { result } = render({ 'layer-p': pointsConfig('layer-p', 'transcripts') }, elements);
 
     await waitFor(() => {
-      expect(result.current.pointsEngine.getRowFeatureCodes('transcripts')).toBeDefined();
+      expect(result.current.pointsEngine.getRowFeatureCodes(pts.key)).toBeDefined();
     });
     const basePreloadedCodes = () =>
       (
@@ -693,14 +849,14 @@ describe('useLayerData — a caller that mutates its layer configs in place', ()
 
   it('loads the new fill-colour column when a labels config is switched in place', async () => {
     const { spatialData, loadObsColumns } = tableSpatialData();
-    const labels: AvailableElement = {
-      key: 'segmentation',
-      type: 'labels',
-      // The loader load will fail (no real zarr behind it) and that is fine: the
-      // fill-colour column is a resource of its own and must load regardless.
-      element: { key: 'segmentation' } as unknown as AvailableElement['element'],
-      transform: new Matrix4(),
-    };
+    // The loader load will fail (no real zarr behind it) and that is fine: the
+    // fill-colour column is a resource of its own and must load regardless.
+    const labels = availableElement(
+      'segmentation',
+      'labels',
+      { key: 'segmentation' } as unknown as AvailableElement['element'],
+      new Matrix4()
+    );
     const elements: ElementsByType = { ...EMPTY_ELEMENTS, labels: [labels] };
     const config: LayerConfig = {
       id: 'layer-l',
@@ -762,23 +918,7 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
       })),
       listFeaturesWithCounts: vi.fn(async () => null),
     } as unknown as PointsElement;
-    return { key, type: 'points', element, transform: new Matrix4() };
-  }
-
-  const inFlightTile: PointsTileHandle = {
-    tileId: '0-0--1',
-    index: { x: 0, y: 0, z: -1 },
-    bbox: { left: 0, top: 512, right: 512, bottom: 0 },
-  };
-
-  /** The store the hook handed to the layer — the only handle a caller ever gets. */
-  function tileDebugStoreOf(layers: unknown[]): TileDebugStore | undefined {
-    for (const layer of layers) {
-      const store = (layer as { props?: { tileDebugStore?: TileDebugStore } }).props
-        ?.tileDebugStore;
-      if (store) return store;
-    }
-    return undefined;
+    return availableElement(key, 'points', element, new Matrix4());
   }
 
   it('drops a layer switched off tiling while a tile was still in flight', async () => {
@@ -794,7 +934,7 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
     );
 
     await waitFor(() => {
-      expect(result.current.pointsEngine.isTiled('transcripts')).toBe(true);
+      expect(isTiled(result)).toBe(true);
     });
 
     const store = tileDebugStoreOf(result.current.getLayers());
@@ -831,7 +971,7 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
     );
 
     await waitFor(() => {
-      expect(result.current.pointsEngine.isTiled('transcripts')).toBe(true);
+      expect(isTiled(result)).toBe(true);
     });
     const store = tileDebugStoreOf(result.current.getLayers());
     act(() => {

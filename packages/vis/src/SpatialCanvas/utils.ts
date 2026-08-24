@@ -9,7 +9,43 @@ import {
   type SpatialElement,
   viewStateFromBounds,
 } from '@spatialdata/core';
-import type { ElementsByType, LayerType } from './types';
+import type { AvailableElement, ElementsByType, LayerType } from './types';
+
+/**
+ * Identity tokens for element objects, so a cache key can name the element rather
+ * than its (dataset-local) name — see {@link AvailableElement.key}.
+ *
+ * A `SpatialData` builds its element objects once, in its constructor, so the object
+ * is a stable identity for as long as the dataset is alive: the same element re-derived
+ * on a coordinate-system switch keeps its token (and so its resident cache), while a
+ * same-named element from another dataset gets a new one.
+ */
+const elementIdentities = new WeakMap<object, number>();
+let lastElementIdentity = 0;
+
+/** The identity-qualified cache key for `element`, whose name in its dataset is `name`. */
+function elementCacheKey(name: string, element: object): string {
+  let identity = elementIdentities.get(element);
+  if (identity === undefined) {
+    lastElementIdentity += 1;
+    identity = lastElementIdentity;
+    elementIdentities.set(element, identity);
+  }
+  return `${name}@${identity}`;
+}
+
+/**
+ * The one place an {@link AvailableElement} is built — including in tests, so that
+ * nothing constructs a literal whose `key` is just the element name.
+ */
+export function availableElement(
+  name: string,
+  type: LayerType,
+  element: SpatialElement,
+  transform: Matrix4
+): AvailableElement {
+  return { key: elementCacheKey(name, element), name, type, element, transform };
+}
 
 /**
  * Map from SpatialData element property names to layer types
@@ -51,12 +87,7 @@ export function getAvailableElements(
 
       if (transformResult.ok) {
         const transform = transformResult.value.toMatrix();
-        result[elementType].push({
-          key,
-          type: layerType,
-          element: spatialElement,
-          transform,
-        });
+        result[elementType].push(availableElement(key, layerType, spatialElement, transform));
       }
       // If not ok, element doesn't have a transform to this CS - skip it
     }
