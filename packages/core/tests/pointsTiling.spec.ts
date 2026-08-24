@@ -10,6 +10,7 @@ import {
   mortonCode2dForPoint,
   mortonIntervalsForBounds,
   mortonRowGroupExtentsAreSorted,
+  mortonRowGroupOrderVerdict,
   zcoverRectangle,
 } from '../src/pointsTiling.js';
 
@@ -331,6 +332,48 @@ describe('morton row-group sort detection', () => {
         [443527237, 4288997289],
       ])
     ).toBe(false);
+  });
+
+  it('rejects an extent that is not a range at all', () => {
+    // `min > max` cannot come from healthy statistics, so it means the decode is wrong —
+    // and a wrong decode is what this gate exists to keep tiling away from. Skipping it
+    // would be worse than rejecting: `selectMortonRowGroups` treats an inverted range as
+    // intersecting nothing, so that row group would be dropped from every query.
+    expect(mortonRowGroupExtentsAreSorted([[90, 10]])).toBe(false);
+    // Also as the first of several, where there is no previous max to trip over.
+    expect(
+      mortonRowGroupExtentsAreSorted([
+        [90, 10],
+        [100, 200],
+      ])
+    ).toBe(false);
+    expect(mortonRowGroupExtentsAreSorted([[Number.NaN, 40]])).toBe(false);
+    expect(mortonRowGroupExtentsAreSorted([[0, Number.POSITIVE_INFINITY]])).toBe(false);
+  });
+
+  it('separates "cannot verify" from "sorted"', () => {
+    // The gate is a correctness check, so "no evidence" must not read as a pass.
+    // Reachable two ways: no statistics parsed at all, and a column that carries none.
+    expect(mortonRowGroupOrderVerdict([])).toBe('unverified');
+    expect(mortonRowGroupOrderVerdict([null, null, null])).toBe('unverified');
+    // ...both of which the boolean form answers `true` to, which is the whole reason
+    // this exists.
+    expect(mortonRowGroupExtentsAreSorted([])).toBe(true);
+    expect(mortonRowGroupExtentsAreSorted([null, null, null])).toBe(true);
+
+    expect(
+      mortonRowGroupOrderVerdict([
+        [0, 40],
+        null,
+        [50, 60],
+      ])
+    ).toBe('sorted');
+    expect(
+      mortonRowGroupOrderVerdict([
+        [50, 60],
+        [0, 40],
+      ])
+    ).toBe('unsorted');
   });
 
   it('treats a missing extent as unknown, not as a descent', () => {

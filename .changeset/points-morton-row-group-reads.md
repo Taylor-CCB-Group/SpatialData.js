@@ -60,6 +60,15 @@ parse, so this is an optimisation rather than a new requirement.
   so a *secondary* feature key stays supported and the test is on the file rather than on
   the element's name.
 
+Both gates fail CLOSED, which takes a third state: an extents list that is empty (no
+footer, a parse failure, a row-group count that disagreed) or entirely null (the column
+carries no statistics) is `'unverified'`, not `'sorted'` — see `mortonRowGroupOrderVerdict`.
+Reading either as sorted would pass a feature-primary artifact through the one gate that
+exists to stop it, and an all-null index is worse still, because every unknown extent is
+included and so every tile scans the whole file. An extent that is not a range at all
+(non-finite, or `min > max`) is rejected for the same reason: it cannot come from healthy
+statistics, so it means the decode is wrong.
+
 Both decline loudly and fall through to the capped preload. The sort check is free (the
 footer bytes are already in hand) and runs first, so a rejected element now costs less
 than before. `decodeUnsignedIntStat` is new: `morton_code_2d` is `uint32`, which parquet

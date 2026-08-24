@@ -1,5 +1,10 @@
 import { Matrix4 } from '@math.gl/core';
 import type { PointsElement, ShapesElement, SpatialData } from '@spatialdata/core';
+import {
+  createTiledPointsDebugHooks,
+  type PointsTileHandle,
+  type TileDebugStore,
+} from '@spatialdata/layers';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AvailableElement, ElementsByType, LayerConfig } from '../src/SpatialCanvas/types.js';
@@ -721,6 +726,127 @@ describe('useLayerData — a caller that mutates its layer configs in place', ()
 
     await waitFor(() => {
       expect(requestedColumns(loadObsColumns)).toContain('colB');
+    });
+  });
+});
+
+describe('useLayerData — tile progress follows the LIVE layers', () => {
+  /**
+   * deck's `Tileset2D.finalize()` clears its tile cache WITHOUT firing `onTileUnload`,
+   * which is the hook that prunes a layer's tile-status store. So a layer that stops
+   * drawing tiles mid-request — hidden, removed, or switched to `pointsTiling: 'off'` —
+   * leaves its last in-flight count behind in an append-only map. Aggregating that map
+   * held the global spinner on for a layer that no longer exists.
+   */
+  const tilingMetadata = {
+    kind: 'morton-points' as const,
+    parquetPath: 'points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: 'morton_code_2d',
+    totalRows: 12_000,
+    totalRowGroups: 8,
+    maxRowsPerGroup: 2_000,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 1024, maxY: 1024 },
+  };
+
+  function tileablePointsElement(key: string): AvailableElement {
+    const element = {
+      key,
+      getPointsTilingMetadata: vi.fn(async () => tilingMetadata),
+      loadPointsInBounds: vi.fn(async () => null),
+      loadPoints: vi.fn(async () => ({
+        shape: [2, 1],
+        data: [new Float32Array([0]), new Float32Array([0])],
+      })),
+      listFeaturesWithCounts: vi.fn(async () => null),
+    } as unknown as PointsElement;
+    return { key, type: 'points', element, transform: new Matrix4() };
+  }
+
+  const inFlightTile: PointsTileHandle = {
+    tileId: '0-0--1',
+    index: { x: 0, y: 0, z: -1 },
+    bbox: { left: 0, top: 512, right: 512, bottom: 0 },
+  };
+
+  /** The store the hook handed to the layer — the only handle a caller ever gets. */
+  function tileDebugStoreOf(layers: unknown[]): TileDebugStore | undefined {
+    for (const layer of layers) {
+      const store = (layer as { props?: { tileDebugStore?: TileDebugStore } }).props
+        ?.tileDebugStore;
+      if (store) return store;
+    }
+    return undefined;
+  }
+
+  it('drops a layer switched off tiling while a tile was still in flight', async () => {
+    const elements: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      points: [tileablePointsElement('transcripts')],
+    };
+    const tiled = { ...pointsConfig('layer-p', 'transcripts'), pointsTiling: 'auto' as const };
+    const { result, rerender } = renderHook(
+      ({ layers }: { layers: Record<string, LayerConfig> }) =>
+        useLayerData(layers, Object.keys(layers), elements, null),
+      { initialProps: { layers: { 'layer-p': tiled } } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.pointsEngine.isTiled('transcripts')).toBe(true);
+    });
+
+    const store = tileDebugStoreOf(result.current.getLayers());
+    expect(store).toBeDefined();
+
+    // A tile enters the viewport and starts loading, and never settles — which is what
+    // deck's finalize does to it, silently.
+    act(() => {
+      const hooks = createTiledPointsDebugHooks(store);
+      hooks.onViewportTilesRequested([inFlightTile]);
+      hooks.onTileLoadStart(inFlightTile);
+    });
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(true);
+    });
+
+    rerender({ layers: { 'layer-p': { ...tiled, pointsTiling: 'off' as const } } });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+  });
+
+  it('drops a layer removed while a tile was still in flight', async () => {
+    const elements: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      points: [tileablePointsElement('transcripts')],
+    };
+    const tiled = { ...pointsConfig('layer-p', 'transcripts'), pointsTiling: 'auto' as const };
+    const { result, rerender } = renderHook(
+      ({ layers }: { layers: Record<string, LayerConfig> }) =>
+        useLayerData(layers, Object.keys(layers), elements, null),
+      { initialProps: { layers: { 'layer-p': tiled } } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.pointsEngine.isTiled('transcripts')).toBe(true);
+    });
+    const store = tileDebugStoreOf(result.current.getLayers());
+    act(() => {
+      const hooks = createTiledPointsDebugHooks(store);
+      hooks.onViewportTilesRequested([inFlightTile]);
+      hooks.onTileLoadStart(inFlightTile);
+    });
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(true);
+    });
+
+    rerender({ layers: {} });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
     });
   });
 });

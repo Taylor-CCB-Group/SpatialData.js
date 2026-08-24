@@ -1336,6 +1336,55 @@ describe('D5 — a tiled element releases the resident window', () => {
     });
   });
 
+  it('is inert on a settled probe, so a repeat call cannot re-release', async () => {
+    // A ready `RequestSlot` answers `request` with a FRESH resolved promise while
+    // `pending` stays undefined, so the "did a new request start?" test reads true on
+    // every repeat call — status would churn loading→ready and the release would run
+    // again, per call. `plan()` gates on `isTilingSettled` and never gets here twice,
+    // but this is public on `PointsDataEngine`.
+    const statuses: string[] = [];
+    const resolver = new PointsResolver({
+      onStatus: (_layerId, status) => statuses.push(status),
+    });
+    const el = element({ getPointsTilingMetadata: vi.fn(async () => tiling()) });
+    const target = { key: 'transcripts', layerId: 'L', element: el };
+
+    await resolver.ensureTilingMetadata(target);
+    // A preload arriving after the probe settled is the resident state a repeat call
+    // must not silently throw away.
+    await resolver.ensureLoaded(target);
+    expect(resolver.hasData('transcripts')).toBe(true);
+
+    const settled = [...statuses];
+    const version = resolver.getVersion();
+
+    await resolver.ensureTilingMetadata(target);
+    await resolver.ensureTilingMetadata(target);
+
+    expect(statuses).toEqual(settled);
+    expect(el.getPointsTilingMetadata).toHaveBeenCalledTimes(1);
+    expect(resolver.hasData('transcripts')).toBe(true);
+    expect(resolver.getVersion()).toBe(version);
+  });
+
+  it('still retries a FAILED probe — only a ready one is inert', async () => {
+    const getPointsTilingMetadata = vi
+      .fn<() => Promise<PointsTilingMetadata | null>>()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValueOnce(tiling());
+    const resolver = new PointsResolver();
+    const el = element({ getPointsTilingMetadata });
+    const target = { key: 'transcripts', layerId: 'L', element: el };
+
+    await resolver.ensureTilingMetadata(target);
+    expect(resolver.isTiled('transcripts')).toBe(false);
+
+    await resolver.ensureTilingMetadata(target);
+
+    expect(getPointsTilingMetadata).toHaveBeenCalledTimes(2);
+    expect(resolver.isTiled('transcripts')).toBe(true);
+  });
+
   it('does not evict when the element cannot be tiled', async () => {
     const resolver = new PointsResolver();
     const el = element({ getPointsTilingMetadata: vi.fn(async () => null) });

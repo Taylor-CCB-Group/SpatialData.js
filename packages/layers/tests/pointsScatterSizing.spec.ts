@@ -57,6 +57,14 @@ describe('modelMatrixUniformScale', () => {
  * looked like a rendering fault.
  */
 describe('columnar scatter sizing is one behaviour, not two', () => {
+  // `PointsScatterStyleProps` requires colour and opacity; these tests are about
+  // sizing, so they carry the required half without varying it. Test files are outside
+  // the build tsconfig's `include`, so omitting them was only an editor error.
+  const STYLE = {
+    color: [255, 100, 100, 200] as [number, number, number, number],
+    opacity: 1,
+  };
+
   const batch = {
     format: 'columnar-ndarray' as const,
     shape: [2, 3],
@@ -66,6 +74,7 @@ describe('columnar scatter sizing is one behaviour, not two', () => {
 
   it('sizes in world units and folds in the model-matrix scale', () => {
     const layer = renderColumnarScatterLayer('scatter', batch, {
+      ...STYLE,
       pointSize: 2,
       modelMatrix: new Matrix4().scale([4, 4, 1]),
     });
@@ -75,7 +84,7 @@ describe('columnar scatter sizing is one behaviour, not two', () => {
   });
 
   it('does not change because the batch came from a tile', () => {
-    const common = { pointSize: 2, modelMatrix: new Matrix4().scale([4, 4, 1]) };
+    const common = { ...STYLE, pointSize: 2, modelMatrix: new Matrix4().scale([4, 4, 1]) };
     const plain = renderColumnarScatterLayer('plain', batch, common);
     const tiled = renderColumnarScatterLayer('tiled', batch, {
       ...common,

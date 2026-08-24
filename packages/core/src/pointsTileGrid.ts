@@ -1,3 +1,4 @@
+import { DEFAULT_POINTS_MEMORY_CAP } from './pointsLimits.js';
 import type { SpatialBounds } from './pointsTiling.js';
 
 /**
@@ -100,7 +101,7 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
 
   const coarsestSpan = POINTS_TILE_SIZE / 2 ** minZoom;
   const estimatedRowsPerTile = Math.round(density * coarsestSpan * coarsestSpan);
-  const budget = input.cacheRowBudget ?? 0;
+  const budget = input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP;
   const maxCacheSize =
     budget > 0 && estimatedRowsPerTile > 0
       ? Math.min(512, Math.max(16, Math.round(budget / estimatedRowsPerTile)))

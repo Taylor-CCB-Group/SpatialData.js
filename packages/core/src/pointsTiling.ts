@@ -191,6 +191,13 @@ export type MortonRowGroupExtent = readonly [number, number] | null;
  * Adjacent groups may share a boundary value, so the test is `min >= previous max`.
  * A `null` extent is unknown rather than out of order: skip it and carry the last
  * known maximum, so a column without statistics cannot fake a descent.
+ *
+ * An extent that is not a range at all — non-finite, or `min > max` — is rejected rather
+ * than skipped. It cannot come from healthy statistics, so it means the decode is wrong,
+ * and a mis-decoded index is exactly what this gate exists to keep tiling away from. It
+ * would otherwise pass silently as the first or only extent, and `selectMortonRowGroups`
+ * treats an inverted range as intersecting nothing: the row group would be dropped from
+ * every query.
  */
 export function mortonRowGroupExtentsAreSorted(extents: readonly MortonRowGroupExtent[]): boolean {
   let previousMax: number | null = null;
@@ -199,12 +206,40 @@ export function mortonRowGroupExtentsAreSorted(extents: readonly MortonRowGroupE
       continue;
     }
     const [min, max] = extent;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) {
+      return false;
+    }
     if (previousMax !== null && min < previousMax) {
       return false;
     }
     previousMax = previousMax === null ? max : Math.max(previousMax, max);
   }
   return true;
+}
+
+/**
+ * The row-group order as a THREE-state verdict, which is what the tiling gate needs.
+ *
+ * {@link mortonRowGroupExtentsAreSorted} skips `null` extents, so it answers `true` for
+ * an empty list and for a list of all nulls — a "sorted" verdict on no evidence at all.
+ * Both are reachable: an empty list means the footer would not parse or its row-group
+ * count disagreed, and an all-null list means the column carries no statistics. Reading
+ * either as "sorted" lets a feature-primary artifact through the one gate that exists to
+ * stop it, and an all-null index is worse still, because `selectMortonRowGroups` includes
+ * every unknown extent — so every tile scans the whole file.
+ *
+ * `'unverified'` must be treated like `'unsorted'` at the gate. It is separate only so the
+ * warning can say which happened.
+ */
+export type MortonRowGroupOrder = 'sorted' | 'unsorted' | 'unverified';
+
+export function mortonRowGroupOrderVerdict(
+  extents: readonly MortonRowGroupExtent[]
+): MortonRowGroupOrder {
+  if (!extents.some((extent) => extent !== null)) {
+    return 'unverified';
+  }
+  return mortonRowGroupExtentsAreSorted(extents) ? 'sorted' : 'unsorted';
 }
 
 /**

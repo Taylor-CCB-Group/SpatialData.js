@@ -1470,6 +1470,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   ensureTilingMetadata(target: PointsLoadTarget): Promise<void> {
     const { key, layerId, element } = target;
     const slot = this.ensureEntry(key).tiling;
+    // A settled-ready slot answers `request` with a FRESH resolved promise while
+    // `pending` stays `undefined`, so the `loading !== before` test below reads true on
+    // every repeat call: status would churn loading→ready and `releaseResidentBatch`
+    // would run again, per call. `plan()` never gets here twice (it gates on
+    // `isTilingSettled`), but this is public on `PointsDataEngine`. A FAILED slot is
+    // deliberately not guarded — a failed probe must stay retryable.
+    if (slot.isReady) {
+      return Promise.resolve();
+    }
     const before = slot.pending;
     const loading = slot.request('probe', async () => {
       const metadata = await element.getPointsTilingMetadata();

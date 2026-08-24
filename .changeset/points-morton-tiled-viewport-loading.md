@@ -46,7 +46,8 @@ coarsest holds at most 400k rows, and `zoomOffset = log2(modelMatrixScale)` coup
 than deck's `5 x the selected tile count`, which on a coarse viewport of this element
 could retain ~220 tiles / ~71M rows against a 4M resident cap. Accounting only — nothing
 evicts by bytes yet (ADR 0005). `PointsLoaderCapabilities` gains `totalRows` and
-`maxRowsPerGroup`, which the grid is derived from.
+`maxRowsPerGroup`, which the grid is derived from, and `mortonTileGrid` applies its
+documented default (the resident points memory cap) when no `cacheRowBudget` is given.
 
 Tiling is per LAYER but the probe's answer is cached per ELEMENT, so every consumer
 combines the two (`usesTiledPath`, `isTiledFor`). Reading the probe alone left a layer
@@ -67,6 +68,11 @@ Per package:
   precisely the case that arrived without codes. `planPointsLoads` moves here from
   `@spatialdata/layers` (re-exported there; no consumer import moves), and
   `transformAxisAlignedBounds` is new.
+`PointsDataEngine.ensureTilingMetadata` is idempotent once the probe has settled: a ready
+`RequestSlot` answers with a fresh resolved promise, so a repeat call would otherwise churn
+the layer's status loading→ready and re-run the resident release. A *failed* probe stays
+retryable.
+
 - **`@spatialdata/layers`** — `mortonTiledStrategy`, and
   `PointsRendererAdapter.getTiledResource` memoised on (element, metadata): a new resource
   identity would make `TileLayer` refetch every visible tile, so a pan would become a full

@@ -563,6 +563,17 @@ export function useLayerData(
     [notifyLoadedDataChanged]
   );
 
+  // Forget a layer's tile-status store once its tiles stop being real.
+  //
+  // The store map only grows on its own: deck's `Tileset2D.finalize()` clears its cache
+  // WITHOUT firing the `onTileUnload` that prunes a store, so a removed or de-tiled layer
+  // leaves its last state behind — counted in the global tile progress, and handed
+  // straight back if the layer is ever toggled on again, painting a previous session's
+  // tiles over ground nothing has fetched.
+  const forgetTileDebugStore = useCallback((layerId: string) => {
+    tileDebugStoresRef.current.delete(layerId);
+  }, []);
+
   // Shapes / images / labels Resource Resolvers (ADR 0004). Shapes lives in `core`,
   // images/labels in `vis` (next to Viv/avivatorish) — the store below holds only
   // `ResourceResolver`s and cannot tell which package each came from. Each rebuilds
@@ -660,6 +671,22 @@ export function useLayerData(
       store.dispose();
     };
   }, [store, notifyLoadedDataChanged]);
+
+  // Prune tile-status stores for layers that no longer draw tiles — see
+  // `forgetTileDebugStore`. Commit phase, because it mutates the map; the render-phase
+  // aggregate filters independently, so a store surviving one extra commit is invisible.
+  useEffect(() => {
+    // Bare reference: the probe settling is what turns `usesTiledPath` false for an
+    // element that stopped being tileable, and it changes nothing else this body reads.
+    void loadedDataRevision;
+    for (const layerId of [...tileDebugStoresRef.current.keys()]) {
+      const config = layers[layerId];
+      const elem = config ? resolveLayerElement(layerId, config, elementMapValue) : undefined;
+      const stillTiled =
+        config?.type === 'points' && elem ? usesTiledPath(pointsEngine, elem.key, config) : false;
+      if (!stillTiled) forgetTileDebugStore(layerId);
+    }
+  }, [layers, elementMapValue, pointsEngine, loadedDataRevision, forgetTileDebugStore]);
 
   // The single commit-phase driving effect. Build a `ResolveContext` for every
   // visible entry and hand them to the store: `reconcile` plans (pure) then loads,
@@ -946,6 +973,13 @@ export function useLayerData(
       } else if (type === 'points') {
         pointsEngine.evict(key);
         loaded.worldBounds.delete(`points:${key}`);
+        // `evict` resets the tiling slot, so every tile the overlay is holding for this
+        // element describes a loader that no longer exists.
+        for (const [layerId, config] of Object.entries(layersRef.current)) {
+          if (config.type === 'points' && config.elementKey === key) {
+            forgetTileDebugStore(layerId);
+          }
+        }
       } else if (type === 'image') {
         imagesResolver.evict(key);
         loaded.worldBounds.delete(`image:${key}`);
@@ -961,7 +995,7 @@ export function useLayerData(
       }
       // The resolver/engine effects will pick up the missing data and reload
     },
-    [pointsEngine, shapesResolver, imagesResolver, labelsResolver]
+    [pointsEngine, shapesResolver, imagesResolver, labelsResolver, forgetTileDebugStore]
   );
 
   const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
@@ -1870,12 +1904,23 @@ export function useLayerData(
     // render), so the revision is the only thing that CHANGES when a tile transitions.
     void loadedDataRevision;
     const byLayer = new Map<string, PointsTileLoadProgress>();
-    // eslint-disable-next-line react-hooks/refs -- intentional external-store read; see the isBlocking note below
-    for (const [layerId, store] of tileDebugStoresRef.current) {
-      byLayer.set(layerId, pointsTileLoadProgressFromStore(store));
+    // Driven by the CURRENT layers, not by the store map. The map only grows — deck's
+    // `Tileset2D.finalize()` clears its cache without firing the `onTileUnload` that
+    // prunes a store — so a layer that was hidden, removed, or switched to
+    // `pointsTiling: 'off'` mid-request would otherwise keep contributing its last
+    // `inFlight` count to the global spinner forever.
+    for (const layerId of layerOrder) {
+      const config = layers[layerId];
+      if (!config?.visible || config.type !== 'points') continue;
+      // eslint-disable-next-line react-hooks/refs -- intentional external-store read; see the isBlocking note below
+      const elem = resolveLayerElement(layerId, config, elementMap.current);
+      if (!elem || !usesTiledPath(pointsEngine, elem.key, config)) continue;
+      // eslint-disable-next-line react-hooks/refs -- intentional external-store read; see the isBlocking note below
+      const store = tileDebugStoresRef.current.get(layerId);
+      if (store) byLayer.set(layerId, pointsTileLoadProgressFromStore(store));
     }
     return aggregatePointsTileLoadProgress(byLayer);
-  }, [loadedDataRevision]);
+  }, [loadedDataRevision, layers, layerOrder, pointsEngine]);
 
   const isLoading = useMemo(
     () =>

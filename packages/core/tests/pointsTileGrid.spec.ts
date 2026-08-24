@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_POINTS_MEMORY_CAP } from '../src/pointsLimits.js';
 import {
   mortonTileGrid,
   POINTS_TILE_SIZE,
@@ -99,5 +100,21 @@ describe('morton tile grid', () => {
       bounds: { minX: 0, minY: 0, maxX: 1087, maxY: 363 },
     });
     expect(spanAt(dense.minZoom)).toBeLessThan(spanAt(mortonTileGrid(XENIUM).minZoom));
+  });
+
+  it('budgets the cache against the resident cap when none is given', () => {
+    // The input contract says `cacheRowBudget` defaults to the resident points memory
+    // cap. It used to default to 0, which fell through to the flat tile-count fallback,
+    // so a direct caller silently got an unbudgeted cache.
+    const implicit = mortonTileGrid(XENIUM);
+    const explicit = mortonTileGrid({ ...XENIUM, cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP });
+
+    expect(implicit.maxCacheSize).toBe(explicit.maxCacheSize);
+    expect(implicit.cacheRowBudget).toBe(explicit.cacheRowBudget);
+    // ...and it is a real budget, not the fallback tile count.
+    expect(implicit.maxCacheSize * implicit.estimatedRowsPerTile).toBeCloseTo(
+      implicit.cacheRowBudget,
+      6
+    );
   });
 });

@@ -186,6 +186,10 @@ describe('mortonTiledStrategy — the selection reaches the scan', () => {
 
     await tileLayerOf(layer).props.getTileData(tileProps);
 
+    // `calls[0]?.featureCodes` is undefined both for "no filter" and for "no scan ran
+    // at all", so without this the test survives `getTileData` never reaching the
+    // loader.
+    expect(calls).toHaveLength(1);
     expect(calls[0]?.featureCodes).toBeUndefined();
   });
 

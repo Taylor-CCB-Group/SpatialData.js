@@ -213,7 +213,7 @@ import {
   type MortonRowGroupExtent,
   mortonBoundsAgreeWithCodes,
   mortonIntervalsForBounds,
-  mortonRowGroupExtentsAreSorted,
+  mortonRowGroupOrderVerdict,
   type PointsFeatureCatalog,
   type PointsInBoundsOptions,
   type PointsInBoundsResponse,
@@ -2342,13 +2342,21 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const mortonExtents = datasetMetadata
       ? rowGroupMortonExtents(datasetMetadata.parts, datasetMetadata.totalNumRowGroups)
       : [];
-    const rowGroupsAreSorted = mortonRowGroupExtentsAreSorted(mortonExtents);
+    // "Cannot verify" is NOT "sorted" — this is a correctness gate, not an optimisation,
+    // so an absent or all-null index keeps tiling off. See `mortonRowGroupOrderVerdict`.
+    const rowGroupOrder = mortonRowGroupOrderVerdict(mortonExtents);
+    const rowGroupsAreSorted = rowGroupOrder === 'sorted';
     if (!rowGroupsAreSorted) {
       console.warn(
-        `Morton tiling disabled for ${elementPath}: its morton_code_2d column is not ` +
-          'sorted across row groups, so it is indexed by something else (a ' +
-          'feature-primary artifact carries the same column unsorted). The row-group ' +
-          'bisect needs a sorted index; falling back to the capped preload.'
+        rowGroupOrder === 'unsorted'
+          ? `Morton tiling disabled for ${elementPath}: its morton_code_2d column is not ` +
+              'sorted across row groups, so it is indexed by something else (a ' +
+              'feature-primary artifact carries the same column unsorted). The row-group ' +
+              'bisect needs a sorted index; falling back to the capped preload.'
+          : `Morton tiling disabled for ${elementPath}: its morton_code_2d column carries ` +
+              'no row-group statistics, so its sort order cannot be verified. Tiling an ' +
+              'unsorted file silently drops points, so this falls back to the capped ' +
+              'preload rather than assuming.'
       );
     }
     const firstRowGroupRowCount = datasetMetadata?.rowGroupRows?.[0] ?? 0;

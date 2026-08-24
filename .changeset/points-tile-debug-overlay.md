@@ -25,6 +25,15 @@ boundary: while a tile is in deck's cache it can be reused and belongs on the ov
 once evicted it does not. The multi-level grid is what made this visible — with a single
 fixed zoom level there was never a tile at another `z` to leave behind.
 
+That prunes a store while its layer lives. The store MAP needed the same treatment:
+deck's `finalize()` is also what runs when the layer itself goes away, so a layer that
+was hidden, removed, or switched to `pointsTiling: 'off'` mid-request left its last
+in-flight tile count behind in an append-only map — and the global "still loading"
+indicator aggregated it forever. Viewport-tile progress is now driven by the live layers
+rather than by that map, and a layer that leaves the tiled path (including through
+`reloadElement`, which resets the tiling slot underneath it) has its store dropped, so
+toggling tiling back on cannot repaint a previous session's tiles.
+
 **A superseded load reported over the one that replaced it.** Two loads for one tile can
 be in flight at once: deck restarts a tile whenever `needsReload` is set — after an abort,
 or when a `getTileData` update trigger changes, which the feature filter does on every
