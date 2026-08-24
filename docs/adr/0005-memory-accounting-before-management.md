@@ -1,6 +1,6 @@
 # Memory Accounting Before Memory Management
 
-**Status:** proposed
+**Status:** accepted
 **Related:** [ADR 0004](0004-resource-resolver-owned-by-core.md), [ADR 0002](0002-spatially-aware-vector-loading.md)
 
 Adopt byte-level **memory accounting** now; adopt a **Resource Ceiling** only when
@@ -51,7 +51,16 @@ The seam is real, exported, documented, and free: `enableWorkerChunkDecode({ cac
 will accept any `{get, set}` object today with no changes to fizarrita or
 `zarrextra`.
 
-### Prior art: `tgpu-htj2k`
+### Prior art: `intraspatial`
+
+> **Naming.** The relevant code has migrated to
+> <https://github.com/xinaesthete/intraspatial> and is called `intraspatial`
+> from here on. Earlier drafts of this ADR, ADR 0004, and the plans under
+> `docs/plans/` referred to it by its former name; all of those were renamed in
+> the same pass, so nothing is left half-renamed. The former name survives in
+> exactly one place — ADR 0004's first mention — where it is doing the job of
+> telling a reader of the older ADR that the two names are the same project.
+
 
 ```ts
 /** Anything holding resident host memory can report it in bytes (mirrors TypedArray). */
@@ -133,7 +142,7 @@ provoked.
 
 ## Rationale for deferring 4–5
 
-`tgpu-htj2k` **built and unit-tested** `selectWithinBudget` — a degrade-to-fit
+`intraspatial` **built and unit-tested** `selectWithinBudget` — a degrade-to-fit
 ceiling — and then **never called it in production**. Its ADR-0010 defers it
 *"until an actual OOM (e.g. a grazing oblique strip) can be provoked"*, because
 the geometry (Nyquist + frustum + LOD gradient) already bounds the working set to

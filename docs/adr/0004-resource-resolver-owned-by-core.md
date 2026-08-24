@@ -42,7 +42,9 @@ work cannot proceed concurrently without conflicting.
 
 This is the decisive one, and it is not a matter of taste.
 
-`tgpu-htj2k` renders 1.5 Gpx HTJ2K imagery from a real Xenium SpatialData store
+[`intraspatial`](https://github.com/xinaesthete/intraspatial) — the project this
+ADR and ADR 0005 formerly named `tgpu-htj2k`, before the relevant code migrated
+there — renders 1.5 Gpx HTJ2K imagery from a real Xenium SpatialData store
 through three.js/WebGPU **today**. It depends on `@spatialdata/core` and
 `zarrextra`, and its ADR-0010 excludes the rest by name:
 
@@ -116,7 +118,7 @@ concept.
    - `PointsResolver`, `ShapesResolver` → **`core`**. Every type they touch
      (`PointsLoadResult`, `PointsFeatureCatalog`, `ShapesRenderData`,
      `ShapesTooltipMetadata`) is already a `core` type, and both are what
-     `tgpu-htj2k` was forced to hand-roll.
+     `intraspatial` was forced to hand-roll.
    - `ImagesResolver`, `LabelsResolver` → **`vis`**, for now. See below.
 
    **`core` defines no image port.** *(Amended 2026-07-14; see "Amendment —
@@ -125,12 +127,12 @@ concept.
 
 7. **No runtime dependency enters `core`.** No Effect, no `neverthrow`, no
    TanStack in a public signature. `core` is the dependency root for
-   `tgpu-htj2k` as well as `layers`, and that repo's engine core is deliberately
+   `intraspatial` as well as `layers`, and that repo's engine core is deliberately
    dependency-free. A library may be used *inside* a resolver's implementation
    (see the `RequestSlot` spike) but must not appear in `core`'s interface.
 
    This is a **current position resting on another repo's position**, not a law.
-   It is revisable if `tgpu-htj2k`'s dependency-free stance is renegotiated —
+   It is revisable if `intraspatial`'s dependency-free stance is renegotiated —
    which is exactly the kind of cross-repo conversation §"Cross-repo consequence"
    already flags as *owed*. Read it as *not now*, not as *never*. Nothing in the
    Step 0 / Step 1 work turns on the answer either way, and the `RequestSlot`
@@ -163,12 +165,12 @@ Three things follow, and together they keep images out of `core` for now:
   instead of vendoring near-duplicates"*, and *"the long-term shape of serialized
   image state is still **evolving**."* It is a de-vendored fork of code that also
   lives upstream in Viv and in MDV. A port designed against it today would encode
-  a guess about an unsettled model — into the interface `tgpu-htj2k` depends on.
+  a guess about an unsettled model — into the interface `intraspatial` depends on.
 - **The second consumer does not need it.** Per §Non-goals below, `zarrextra`'s
-  `VivCompatiblePixelSource` **already serves both Viv and `tgpu-htj2k` today**;
+  `VivCompatiblePixelSource` **already serves both Viv and `intraspatial` today**;
   the shared seam for images already exists and sits *below* the Resolver. Images
   is the one kind of the four where the duplication argument — the entire reason
-  for this ADR — **does not apply**. `tgpu-htj2k` needs `PointsResolver` and
+  for this ADR — **does not apply**. `intraspatial` needs `PointsResolver` and
   `ShapesResolver` from `core`; it does not need an images resolver from anyone.
 - So an image port in `core` would pay a real cost to solve a problem that is not
   there.
@@ -196,8 +198,8 @@ stays with the renderer, deliberately.
 
 | Concern | Owner | Why |
 |---|---|---|
-| **Element-level** resource lifecycle — preload, catalog, row codes, geometry, tooltip metadata, fill colour | **Resource Resolver** (`core`) | Identical for every renderer. Duplicating it is what `tgpu-htj2k` was forced to do. |
-| **Tile-level** lifecycle — which tiles, at what LOD, when to abort on pan | **Renderer Adapter** | Genuinely renderer-specific. deck's `TileLayer` and `tgpu-htj2k`'s `Select` + `loadScheduler` (Nyquist + frustum + nearest-first) implement *different, correct* policies for *different* viewports and budgets. |
+| **Element-level** resource lifecycle — preload, catalog, row codes, geometry, tooltip metadata, fill colour | **Resource Resolver** (`core`) | Identical for every renderer. Duplicating it is what `intraspatial` was forced to do. |
+| **Tile-level** lifecycle — which tiles, at what LOD, when to abort on pan | **Renderer Adapter** | Genuinely renderer-specific. deck's `TileLayer` and `intraspatial`'s `Select` + `loadScheduler` (Nyquist + frustum + nearest-first) implement *different, correct* policies for *different* viewports and budgets. |
 | The **loader** facet — `capabilities`, `loadInBounds()` | **`core`**, shared | Already ADR 0003's decision. This is the seam both tile schedulers call. |
 | The **byte-level chunk/table cache** | **`core`**, shared ([ADR 0005](0005-memory-accounting-before-management.md)) | Registered downward at the store layer, so it is shared regardless of who schedules. |
 
@@ -235,7 +237,7 @@ vertex**.
 Adapter question. The images resolver is thin (loader construction, omero channel
 defaults, multi-selection stats); the heavy lifting — multiscale pyramid, tile
 fetch, codec — is in `zarrextra`, whose `VivCompatiblePixelSource` **already serves
-both Viv and `tgpu-htj2k` today**. The shared seam for images therefore already
+both Viv and `intraspatial` today**. The shared seam for images therefore already
 exists and sits *below* the Resolver. A renderer-agnostic Resolver buys the 3D
 option without spending it: go all-in on WebGPU for 3D and the Resolver does not
 change; stay on Viv for 2D and it does not change either.
@@ -263,7 +265,7 @@ Only this sentence changes: *"The canonical ordered render description lives in
 |---|---|
 | deck.gl (`@spatialdata/layers`) | shipping |
 | Viv image props (`@spatialdata/layers`) | shipping — and *already a distinct output shape*: images do not produce `Layer[]`, which is why every interface sketch grew an awkward optional `buildVivProps?` |
-| three.js / TSL (`tgpu-htj2k`) | shipping |
+| three.js / TSL (`intraspatial`) | shipping |
 | headless (no renderer) | shipping — and today cannot reach any of this logic |
 
 Four adapters, three of them live. The Viv wart is worth dwelling on: it was the
@@ -274,7 +276,7 @@ it.
 
 - **Group Entry compositing / blend rendering ops.** `CONTEXT.md` reserves
   **Group Entry** and says plainly: *"Avoid: framebuffer layer until the
-  rendering behavior exists."* That still holds. `tgpu-htj2k`'s
+  rendering behavior exists."* That still holds. `intraspatial`'s
   `splatDensity.ts` is a GPU splat-by-blending **primitive**, not a prototype of
   Render Stack compositing, and adopting it would mean adopting the whole WebGPU
   stack. A group layer-hierarchy — where blend ops would live — is expected to
@@ -292,8 +294,8 @@ it.
 
 ## Cross-repo consequence
 
-`tgpu-htj2k` ADR-0008's cross-repo layering table assigns `Select` / `Tileset` /
-`TileCache` / render backends to `tgpu-htj2k` as their **permanent** home. That
+`intraspatial` ADR-0008's cross-repo layering table assigns `Select` / `Tileset` /
+`TileCache` / render backends to `intraspatial` as their **permanent** home. That
 was decided when the only SpatialData.ts equivalent lived behind deck.gl. If the
 Resolver moves to `core`, the table should be renegotiated: **resolution to
 `core`, render backends stay.** This ADR does not unilaterally amend another
