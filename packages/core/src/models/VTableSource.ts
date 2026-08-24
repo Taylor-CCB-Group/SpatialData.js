@@ -687,7 +687,11 @@ export default class SpatialDataTableSource extends AnnDataSource {
 
   /** Drop a cache entry only if it still holds `promise` — a later call that
    * superseded it (e.g. after an eviction) must not be clobbered by an earlier
-   * promise's late resolution. */
+   * promise's late resolution.
+   *
+   * For the byte-bounded caches the same rule is spelled
+   * {@link ByteLruCache.deleteIf} / {@link ByteLruCache.recountIf}, which compare
+   * without disturbing recency. This form stays for the plain `Map`s. */
   private evictIfCurrent<V>(
     cache: Map<string, Promise<V>>,
     key: string,
@@ -1129,20 +1133,19 @@ export default class SpatialDataTableSource extends AnnDataSource {
     // source, and every later read replays a network error that cleared long
     // ago. It is a cache-liveness fix, not a change to the skip-vs-fail policy in
     // `docs/plans/parquet-io-error-handling.md`.
+    //
+    // Both handlers act through the `…If` forms, which no-op unless the entry is
+    // still the one they inserted: a retry, or an eviction, may already have
+    // replaced it, and a late settlement must not resize or delete whatever took
+    // its place. That is the same rule {@link evictIfCurrent} applies to the
+    // promise-keyed `Map`s in this class.
     void uncached.then(
       (table) => {
         entry.byteLength = arrowTableByteLength(table);
-        // Only if still current — a retry, or an eviction, may already have
-        // replaced us, and that entry must not be resized or dropped by ours
-        // (the same reasoning as {@link evictIfCurrent}).
-        if (this.parquetTableCache.peek(parquetPath) === entry) {
-          this.parquetTableCache.recount(parquetPath);
-        }
+        this.parquetTableCache.recountIf(parquetPath, entry);
       },
       () => {
-        if (this.parquetTableCache.peek(parquetPath) === entry) {
-          this.parquetTableCache.delete(parquetPath);
-        }
+        this.parquetTableCache.deleteIf(parquetPath, entry);
       }
     );
 

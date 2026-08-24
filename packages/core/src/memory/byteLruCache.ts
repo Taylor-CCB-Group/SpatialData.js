@@ -206,6 +206,40 @@ export class ByteLruCache<V> implements MemoryReporting {
     this.evictToBudget();
   }
 
+  /**
+   * Drop `key`, but only if it still holds `value`.
+   *
+   * The guard is the whole point. An entry that settles late — a decode that
+   * failed after its key was re-requested, or after eviction made room — must
+   * not reach in and remove whatever took its place; without the identity check
+   * a stale failure silently deletes a live, valid entry. `VTableSource`'s
+   * `evictIfCurrent` is the same rule for its promise-keyed `Map`s; this is the
+   * spelling for a cache whose reads carry recency, which is why it compares
+   * through {@link peek} rather than {@link get}.
+   *
+   * Returns whether anything was dropped.
+   */
+  deleteIf(key: string, value: V): boolean {
+    if (this.peek(key) !== value) {
+      return false;
+    }
+    return this.delete(key);
+  }
+
+  /**
+   * Re-measure `key`, but only if it still holds `value`. See {@link deleteIf}
+   * for why the identity check is not optional.
+   *
+   * Returns whether anything was re-measured.
+   */
+  recountIf(key: string, value: V): boolean {
+    if (this.peek(key) !== value) {
+      return false;
+    }
+    this.recount(key);
+    return true;
+  }
+
   /** Drop a key. Returns whether it was resident. */
   delete(key: string): boolean {
     const entry = this.entries.get(key);

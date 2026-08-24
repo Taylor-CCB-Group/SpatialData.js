@@ -26,6 +26,14 @@ guesses that bound a leak, not a measured working set — the ADR is explicit th
 they stay guesses until something measures them, so they are a constructor
 option rather than a constant you would have to fork the library to change.
 
+`ByteLruCache` also exposes `deleteIf(key, value)` and `recountIf(key, value)`,
+which act only while the entry is still the one the caller inserted. A late
+settlement — a decode that failed after its key was re-requested, or after
+eviction made room — must not reach in and resize or delete whatever took its
+place, and an unguarded `delete` there silently drops a live, valid entry. It is
+the same rule `VTableSource.evictIfCurrent` applies to its promise-keyed `Map`s,
+spelled for a cache whose reads carry recency.
+
 Two semantics worth knowing:
 
 - **A value larger than the whole budget is admitted, not refused**, and left as

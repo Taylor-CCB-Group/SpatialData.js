@@ -213,6 +213,63 @@ describe('ByteLruCache', () => {
     expect(cache.byteLength).toBe(0);
   });
 
+  it('deleteIf drops the entry only when it is still the one given', () => {
+    const onDispose = vi.fn();
+    const cache = bytesCache(1000, onDispose);
+    const mine = new Uint8Array(100);
+    cache.set('a', mine);
+
+    expect(cache.deleteIf('a', mine)).toBe(true);
+    expect(cache.has('a')).toBe(false);
+    expect(onDispose).toHaveBeenCalledOnce();
+  });
+
+  it('deleteIf leaves an entry that superseded the one given', () => {
+    // The bug this exists to make impossible: a late failure reaching in and
+    // deleting whatever replaced it.
+    const onDispose = vi.fn();
+    const cache = bytesCache(1000, onDispose);
+    const superseded = new Uint8Array(100);
+    const current = new Uint8Array(200);
+    cache.set('a', superseded);
+    onDispose.mockClear();
+    cache.set('a', current);
+    onDispose.mockClear();
+
+    expect(cache.deleteIf('a', superseded)).toBe(false);
+    expect(cache.peek('a')).toBe(current);
+    expect(cache.byteLength).toBe(200);
+    expect(onDispose).not.toHaveBeenCalled();
+  });
+
+  it('deleteIf is a no-op for a key that is gone entirely', () => {
+    const cache = bytesCache(1000);
+    const value = new Uint8Array(100);
+
+    expect(cache.deleteIf('missing', value)).toBe(false);
+    expect(cache.byteLength).toBe(0);
+  });
+
+  it('recountIf re-measures only the entry it was given', () => {
+    const cache = new ByteLruCache<{ byteLength: number }>({
+      maxBytes: 1000,
+      sizeOf: (value) => value.byteLength,
+    });
+    const superseded = { byteLength: 0 };
+    cache.set('a', superseded);
+    const current = { byteLength: 100 };
+    cache.set('a', current);
+
+    // A late settlement of the displaced entry must not resize the live one.
+    superseded.byteLength = 900;
+    expect(cache.recountIf('a', superseded)).toBe(false);
+    expect(cache.byteLength).toBe(100);
+
+    current.byteLength = 250;
+    expect(cache.recountIf('a', current)).toBe(true);
+    expect(cache.byteLength).toBe(250);
+  });
+
   it('satisfies MemoryReporting', () => {
     const cache: MemoryReporting = bytesCache(100);
     expect(cache.byteLength).toBe(0);
