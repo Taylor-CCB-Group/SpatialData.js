@@ -63,6 +63,22 @@ refetches. The fix is upstream stability, not downstream caching.
   single shapes element may appear in multiple layer configs with different
   opacity, filtering, table-driven colour encodings, or other visual
   properties.
+- Element caches must be keyed by the ELEMENT, never by its name. Element names
+  repeat across datasets by convention — two Xenium runs both have `transcripts`
+  — while a canvas outlives a `spatialData` swap and `PointsDataEngine` is built
+  once and deliberately kept. Keyed by name, the swapped-in element is served the
+  previous dataset's entry, and the tiled points path fails silently when that
+  happens: a correct loader parameterised by the wrong artifact draws part of the
+  map and reports no error. `AvailableElement.key` is the name qualified by the
+  identity of the element object and is what every resolver, engine and bounds
+  cache is keyed on; `AvailableElement.name` is the plain name, and it is what
+  layer configs, layer ids, tooltips and every host callback carry. Build one with
+  `availableElement(...)`. The identity registry behind it is a module-level
+  `WeakMap` from element object to token — deliberately shared across canvases,
+  since two canvases showing one element should share its cache, and not an
+  instance of the module-level-Map anti-pattern below: it caches no layer, tile or
+  loader, holds nothing alive, and is keyed by object identity rather than an
+  ad-hoc string.
 - Cosmetic props (`colors`, `contrastLimits`, `channelsVisible`, `opacity`,
   per-channel arrays, `modelMatrix`): identity may churn freely. Deck diffs
   them efficiently and updates uniforms without disturbing tile loading.
@@ -141,10 +157,11 @@ actual problem. If you see yourself reaching for any of them, stop.
 |---|---|
 | `layerPropGroups.ts`-style files enumerating "visual" vs "structural" props | Hand-rolled; silently breaks for any new prop a user-supplied extension might add. |
 | Global stores keyed by layer id (e.g. `labelsVisualStore`) | Bypasses React/deck; two SpatialCanvases sharing the same data can't have independent state; lifetimes become unmanageable. |
-| Module-level Maps caching `getTileData`, layer instances, or tile shells | Singletons across all canvases; memory leaks; racy cleanup; keyed by ad-hoc strings like `[object Object]\x00...`. |
+| Module-level Maps caching `getTileData`, layer instances, or tile shells | Singletons across all canvases; memory leaks; racy cleanup; keyed by ad-hoc strings like `[object Object]\x00...`. (The element-identity `WeakMap` behind `availableElement` is not this: it caches no render state and is keyed by object identity — see the producer contract.) |
 | Hand-rolled layer matchers in viewer components | Reimplements `LayerManager._transferLayerState`. |
 | Lifecycle overrides reading from globals | Not idiomatic deck; couples layer correctness to module-level state. |
 | Cache-key unit tests in place of behavioral tests | They keep passing while the user still sees network activity. |
+| Keying an element cache on the element's name | Names repeat across datasets, so a `spatialData` swap serves the previous dataset's entry — silently, on the tiled points path. Key on `AvailableElement.key`. |
 
 ## Behavioral test pattern
 

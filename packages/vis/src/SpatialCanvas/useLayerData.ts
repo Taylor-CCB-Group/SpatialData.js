@@ -217,7 +217,8 @@ interface UseLayerDataResult {
   getVivLayerProps: () => ImageLayerConfig[];
   /** Raw loaded image pipeline data (defaults) for the properties UI */
   getImageLayerLoadedData: (layerId: string) => ImageLoaderData | undefined;
-  /** Raw loaded image data keyed by SpatialData element key. */
+  /** Raw loaded image data for an element, by its NAME inside the SpatialData —
+   *  the same string a layer config's `elementKey` carries. */
   getImageLoadedDataByElementKey: (elementKey: string) => ImageLoaderData | undefined;
   /** Raw loaded labels pipeline data (defaults) for the properties UI */
   getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
@@ -271,8 +272,9 @@ interface UseLayerDataResult {
   isLoading: boolean;
   /** Whether any visible layer is still waiting on its first renderable resource. */
   isBlocking: boolean;
-  /** Trigger a reload of data for a specific element */
-  reloadElement: (type: string, key: string) => void;
+  /** Trigger a reload of data for a specific element, by its NAME inside the
+   *  SpatialData — the same string a layer config's `elementKey` carries. */
+  reloadElement: (type: string, name: string) => void;
   /** World-space axis-aligned bounds for one visible layer with loaded data, or null. */
   getWorldBoundsForLayer: (layerId: string) => AxisAlignedBounds | null;
   /** Union of bounds for all visible layers in order that have renderable data. */
@@ -308,8 +310,17 @@ function serializeRasterSelections(selections: RasterSelection[]): string {
     .join('\x00');
 }
 
+/**
+ * How `elementMap` is addressed: by element type and NAME, which is what a layer config
+ * carries. The identity-qualified `AvailableElement.key` is what the caches behind that
+ * map are keyed on, and the two must not be confused — see {@link AvailableElement}.
+ */
+function elementMapKey(type: string, name: string): string {
+  return `${type}:${name}`;
+}
+
 function getElementMapKey(config: Pick<LayerConfig, 'type' | 'elementKey'>): string {
-  return `${config.type}:${config.elementKey}`;
+  return elementMapKey(config.type, config.elementKey);
 }
 
 function isLabelsAvailableElement(element: AvailableElement): element is Omit<
@@ -492,9 +503,7 @@ export function useLayerData(
     const map = new Map<string, AvailableElement>();
     for (const type of ['images', 'shapes', 'points', 'labels'] as const) {
       for (const elem of availableElements[type]) {
-        // By NAME: this map answers `config.elementKey`, which is a name. The
-        // identity-qualified `elem.key` is what the resolvers behind it are keyed on.
-        map.set(`${elem.type}:${elem.name}`, elem);
+        map.set(elementMapKey(elem.type, elem.name), elem);
       }
     }
     return map;
@@ -962,14 +971,17 @@ export function useLayerData(
     (type: string, name: string) => {
       const loaded = loadedDataRef.current;
       // Public, so `name` is a name — the same string the caller's configs carry. The
-      // caches below are keyed by element identity, so translate before evicting: an
-      // element that is no longer available has no reachable entry to drop.
-      const key = elementMap.current.get(`${type}:${name}`)?.key;
-      if (!key) return;
+      // element caches are keyed by element identity, so translate before evicting one.
+      // The per-LAYER caches below are cleared either way: a config may name an element
+      // that is not currently available (a coordinate system it has no transform to),
+      // and those layers still hold projections built from the last element that was.
+      const key = elementMap.current.get(elementMapKey(type, name))?.key;
       if (type === 'shapes') {
-        shapesResolver.evict(key);
-        mergedShapeRenderDataRef.current.delete(key);
-        loaded.worldBounds.delete(`shapes:${key}`);
+        if (key) {
+          shapesResolver.evict(key);
+          mergedShapeRenderDataRef.current.delete(key);
+          loaded.worldBounds.delete(`shapes:${key}`);
+        }
         // Clear per-layer projection caches for every layer that maps to this element.
         for (const [layerId, config] of Object.entries(layersRef.current)) {
           if (config.type === 'shapes' && config.elementKey === name) {
@@ -978,8 +990,10 @@ export function useLayerData(
           }
         }
       } else if (type === 'points') {
-        pointsEngine.evict(key);
-        loaded.worldBounds.delete(`points:${key}`);
+        if (key) {
+          pointsEngine.evict(key);
+          loaded.worldBounds.delete(`points:${key}`);
+        }
         // `evict` resets the tiling slot, so every tile the overlay is holding for this
         // element describes a loader that no longer exists.
         for (const [layerId, config] of Object.entries(layersRef.current)) {
@@ -988,11 +1002,15 @@ export function useLayerData(
           }
         }
       } else if (type === 'image') {
-        imagesResolver.evict(key);
-        loaded.worldBounds.delete(`image:${key}`);
+        if (key) {
+          imagesResolver.evict(key);
+          loaded.worldBounds.delete(`image:${key}`);
+        }
       } else if (type === 'labels') {
-        labelsResolver.evict(key);
-        loaded.worldBounds.delete(`labels:${key}`);
+        if (key) {
+          labelsResolver.evict(key);
+          loaded.worldBounds.delete(`labels:${key}`);
+        }
         for (const [layerId, config] of Object.entries(layersRef.current)) {
           if (config.type === 'labels' && config.elementKey === name) {
             loaded.labelFillColorData.delete(layerId);
@@ -1590,7 +1608,7 @@ export function useLayerData(
   const getImageLoadedDataByElementKey = useCallback(
     (elementKey: string): ImageLoaderData | undefined => {
       // A name from the caller's config; the resolver is keyed by element identity.
-      const key = elementMap.current.get(`image:${elementKey}`)?.key;
+      const key = elementMap.current.get(elementMapKey('image', elementKey))?.key;
       return key ? imagesResolver.getLoadedData(key) : undefined;
     },
     [imagesResolver]
