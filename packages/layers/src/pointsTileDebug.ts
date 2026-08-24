@@ -63,6 +63,12 @@ export type PointsTileDebugEvent =
       context: PointsTileDebugViewportContext;
     }
   | { type: 'start'; tile: PointsTileHandle; at: number }
+  /**
+   * deck dropped this tile from its cache. The overlay is a picture of what deck is
+   * holding, so a tile it no longer holds must stop being drawn — see
+   * {@link reduceTileDebugEntries}.
+   */
+  | { type: 'unload'; tileId: string }
   | {
       type: 'end';
       tile: PointsTileHandle;
@@ -177,6 +183,11 @@ export function reduceTileDebugEntries(
       next.set(tile.tileId, entry);
     }
     return [...next.values()];
+  }
+
+  if (event.type === 'unload') {
+    byId.delete(event.tileId);
+    return [...byId.values()];
   }
 
   if (event.type === 'start') {

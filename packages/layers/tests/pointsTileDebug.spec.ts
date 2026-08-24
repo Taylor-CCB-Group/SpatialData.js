@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   completedSnapshotFromLoadResult,
   formatPointsTileDebugTooltip,
+  isPointsTileDebugPickObject,
+  POINTS_TILE_DEBUG_PICK_KIND,
+  pointsTileDebugPolygonData,
   reduceTileDebugEntries,
 } from '../src/pointsTileDebug.js';
 import { createTileDebugStore, createTiledPointsDebugHooks } from '../src/pointsTiledDebugHooks.js';
@@ -200,5 +203,105 @@ describe('overlapping loads for one tile', () => {
 
     expect(statusOf(hooks)?.status).toBe('error');
     expect(statusOf(hooks)?.errorMessage).toBe('boom');
+  });
+});
+
+/**
+ * The overlay's polygons are what a hover picks, and the tooltip resolver recognises
+ * them by `isPointsTileDebugPickObject`. That contract had no test and no production
+ * caller, so the tooltip formatter sat fully written and unreachable — hovering a red
+ * tile told you nothing. Pin the shape so the two ends cannot drift apart again.
+ */
+describe('tile debug pick objects', () => {
+  const entry = {
+    tileId: '1-2--1',
+    index: { x: 1, y: 2, z: -1 },
+    bbox: { minX: 512, minY: 512, maxX: 1024, maxY: 1024 },
+    clippedBounds: null,
+    status: 'error' as const,
+    requestedAt: 1_000,
+    errorMessage: 'Error: read failed',
+  };
+
+  it('produces polygons that the tooltip resolver accepts as picks', () => {
+    const data = pointsTileDebugPolygonData([entry]).map((datum) => ({
+      ...datum,
+      kind: POINTS_TILE_DEBUG_PICK_KIND,
+    }));
+
+    expect(data).toHaveLength(1);
+    expect(isPointsTileDebugPickObject(data[0])).toBe(true);
+    expect(isPointsTileDebugPickObject({ entry })).toBe(false);
+    expect(isPointsTileDebugPickObject(undefined)).toBe(false);
+  });
+
+  it('surfaces the error message a red tile cannot show on its own', () => {
+    const tooltip = formatPointsTileDebugTooltip(
+      entry,
+      { inFlight: 1, loaded: 3, loadedPoints: 900, viewportTotal: 6 },
+      2_000
+    );
+
+    expect(tooltip.title).toBe('Tile 1-2--1');
+    expect(tooltip.items).toContainEqual({ label: 'status', value: 'error' });
+    expect(tooltip.items).toContainEqual({ label: 'error', value: 'Error: read failed' });
+  });
+});
+
+/**
+ * The overlay only ever grew: `completedTilesById` is one of the sources the active
+ * set is rebuilt from, and nothing pruned it. Pan or zoom away and every tile ever
+ * loaded stayed painted — an `aborted` leftover among them being a dusty red rectangle
+ * over ground the current tiles had since rendered, which reads as an error on a tile
+ * whose data resolved. Observed live as 62 rectangles drawn for a 44-tile viewport,
+ * the extra 18 at a zoom level the view had left.
+ */
+describe('forgetting tiles deck has unloaded', () => {
+  const tile = {
+    tileId: '1-2--1',
+    index: { x: 1, y: 2, z: -1 },
+    bbox: { left: 512, top: 1024, right: 1024, bottom: 512 },
+  };
+  const bounds = { minX: 512, minY: 512, maxX: 1024, maxY: 1024 };
+
+  it('drops an unloaded tile from the overlay, aborted ones included', () => {
+    const hooks = createTiledPointsDebugHooks(createTileDebugStore());
+    const attempt = hooks.onTileLoadStart(tile);
+    hooks.onTileLoadEnd(
+      tile,
+      { success: false, aborted: true, clippedBounds: bounds, errorMessage: 'aborted' },
+      bounds,
+      attempt
+    );
+    expect(hooks.getTileDebugEntries().map((e) => e.tileId)).toEqual([tile.tileId]);
+
+    hooks.onTileUnloaded(tile.tileId);
+
+    expect(hooks.getTileDebugEntries()).toEqual([]);
+  });
+
+  it('does not resurrect it from the last viewport list', () => {
+    // The rebuild that follows every event unions the viewport tiles back in, so
+    // forgetting a tile has to take it out of that list too or it returns as `pending`
+    // and never leaves again — nothing is going to load it.
+    const hooks = createTiledPointsDebugHooks(createTileDebugStore());
+    hooks.onViewportTilesRequested([tile]);
+    const attempt = hooks.onTileLoadStart(tile);
+    hooks.onTileLoadEnd(
+      tile,
+      { success: true, clippedBounds: bounds, pointCount: 7 },
+      bounds,
+      attempt
+    );
+
+    hooks.onTileUnloaded(tile.tileId);
+
+    expect(hooks.getTileDebugEntries()).toEqual([]);
+  });
+
+  it('ignores an unload for a tile it never knew about', () => {
+    const hooks = createTiledPointsDebugHooks(createTileDebugStore());
+    hooks.onTileUnloaded('9-9--9');
+    expect(hooks.getTileDebugEntries()).toEqual([]);
   });
 });

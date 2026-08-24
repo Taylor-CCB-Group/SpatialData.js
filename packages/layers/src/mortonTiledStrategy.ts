@@ -138,6 +138,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               use3d,
             ],
           },
+          onTileUnload(unloaded: { index?: { x: number; y: number; z: number }; id?: string }) {
+            const handle = tileHandleFromDeckTile(unloaded);
+            if (handle) {
+              debugHooks.onTileUnloaded(handle.tileId);
+            }
+          },
           onViewportLoad(
             tiles: Array<{
               index?: { x: number; y: number; z: number };

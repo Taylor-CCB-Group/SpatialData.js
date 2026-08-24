@@ -39,6 +39,8 @@ import {
   buildShapesPrebuiltData,
   createTileDebugStore,
   featureFilterAwaitingRowCodes,
+  formatPointsTileDebugTooltip,
+  isPointsTileDebugPickObject,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
@@ -1586,6 +1588,26 @@ export function useLayerData(
       pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
     ): SpatialFeatureTooltipData | undefined => {
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
+
+      // The tile-status overlay, before the element guards below: it is a debug view of
+      // the LOADER, not of a feature, so it needs the pick object and the layer's tile
+      // store and nothing else. It is also the only place a tile's error message is
+      // legible — the overlay can only paint a rectangle red, and "which tile, and why"
+      // is exactly what you want when one goes red.
+      if (isPointsTileDebugPickObject(pickInfo.object)) {
+        const tooltip = formatPointsTileDebugTooltip(
+          pickInfo.object.entry,
+          pointsTileLoadProgressFromStore(tileDebugStoresRef.current.get(layerId))
+        );
+        return elem
+          ? attachTooltipElementContext(tooltip, {
+              elementKey: elem.key,
+              elementType: elem.type,
+              layerId,
+            })
+          : tooltip;
+      }
+
       if (!elem) {
         return undefined;
       }

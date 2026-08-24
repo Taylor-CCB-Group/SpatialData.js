@@ -118,6 +118,7 @@ export function createTiledPointsDebugHooks(store: TileDebugStore | undefined) {
       onTileLoadStart(_tile: PointsTileHandle): number {
         return 0;
       },
+      onTileUnloaded(_tileId: string) {},
       onTileLoadEnd(
         _tile: PointsTileHandle,
         _result: PointsTileLoadResult,
@@ -215,6 +216,56 @@ export function createTiledPointsDebugHooks(store: TileDebugStore | undefined) {
         return {
           ...nextState,
           tileDebugEntries: rebuildActiveDebugEntries(state.tileDebugEntries, nextState, at),
+        };
+      });
+    },
+    /**
+     * Forget a tile deck has dropped from its cache.
+     *
+     * Without this the overlay only ever grows. `completedTilesById` is one of the
+     * sources {@link reduceTileDebugEntries} rebuilds the active set from, and nothing
+     * pruned it, so every tile ever loaded stayed painted — including tiles from a
+     * zoom level you left, drawn over ground the current tiles have since rendered
+     * perfectly. An `aborted` leftover in that pile is a dusty red rectangle sitting
+     * on top of good data, which is indistinguishable from a real error at a glance.
+     *
+     * Panning and zooming alone is enough to produce it, and the multi-level grid made
+     * it visible: with a single fixed zoom level there was never a tile at another `z`
+     * to leave behind.
+     *
+     * deck's own `onTileUnload` is the right boundary. While a tile is still in its
+     * cache it can be reused, so it belongs on the overlay; once evicted it does not.
+     */
+    onTileUnloaded(tileId: string) {
+      store.update((state) => {
+        const known =
+          state.completedTilesById?.[tileId] !== undefined ||
+          (state.loadingTileIds ?? []).includes(tileId) ||
+          state.tileHandlesById?.[tileId] !== undefined;
+        if (!known) {
+          return state;
+        }
+        const drop = <V>(record: Record<string, V> | undefined) =>
+          Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => key !== tileId));
+        const nextState: TiledPointsDebugState = {
+          ...state,
+          completedTilesById: drop(state.completedTilesById),
+          tileHandlesById: drop(state.tileHandlesById),
+          attemptByTileId: drop(state.attemptByTileId),
+          loadingTileIds: (state.loadingTileIds ?? []).filter((id) => id !== tileId),
+          // Also out of the last viewport list, or the rebuild below puts it straight
+          // back as a `pending` tile that nothing will ever load.
+          lastViewportTiles: (state.lastViewportTiles ?? []).filter(
+            (tile) => tile.tileId !== tileId
+          ),
+        };
+        const afterUnload = reduceTileDebugEntries(state.tileDebugEntries, {
+          type: 'unload',
+          tileId,
+        });
+        return {
+          ...nextState,
+          tileDebugEntries: rebuildActiveDebugEntries(afterUnload, nextState, Date.now()),
         };
       });
     },
