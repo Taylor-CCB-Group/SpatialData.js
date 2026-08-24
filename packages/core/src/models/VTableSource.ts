@@ -717,6 +717,44 @@ export default class SpatialDataTableSource extends AnnDataSource {
     }
   }
 
+  /**
+   * Memoize an in-flight probe, but only KEEP it if it produced an answer.
+   *
+   * Both row-group index probes want the same three things: dedup concurrent callers
+   * onto one request, remember a real answer for the life of the source, and forget a
+   * `null` or a rejection so a transient failure does not become a permanent "no such
+   * value". Written out per call site that is fourteen near-identical lines twice, and
+   * the failure mode of getting it subtly wrong is invisible — a stranded probe just
+   * makes the index quietly worse forever.
+   *
+   * The eviction goes through {@link evictIfCurrent}, so a retry that already
+   * superseded this entry is never clobbered by this promise's late settlement. Same
+   * discipline as `parquetTableCache`'s rejection cleanup (ADR 0005 rung 2b); this is
+   * the plain-`Map` form of it, for values far too small to be worth a byte budget.
+   */
+  private memoizeProbe<V>(
+    cache: Map<string, Promise<V | null>>,
+    key: string,
+    run: () => Promise<V | null>
+  ): Promise<V | null> {
+    const cached = cache.get(key);
+    if (cached) {
+      return cached;
+    }
+    const pending = run();
+    cache.set(key, pending);
+    pending
+      .then((value) => {
+        if (value === null) {
+          this.evictIfCurrent(cache, key, pending);
+        }
+      })
+      .catch(() => {
+        this.evictIfCurrent(cache, key, pending);
+      });
+    return pending;
+  }
+
   private async loadParquetDatasetMetadataUncached(
     parquetPath: string
   ): Promise<ParquetDatasetMetadata | null> {
@@ -1056,18 +1094,18 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * First and last value of a column within one row group — the sorted-order index
    * the Morton row-group bisect searches.
    *
-   * **This should be reading the row group's column statistics**, which parquet
-   * writers already put in the footer we have parsed: `min`/`max` are sitting there,
-   * exact, for nothing. Instead each call range-reads the row group's bytes (every
-   * column, ~2MB on a real transcripts artifact) and decodes it twice — once for the
-   * first row, once for the last. Building the index for a 245-row-group file that
-   * way can fetch the whole file to recover ~4KB of boundary values.
+   * **This is the fallback now, not the primary path.** It range-reads the row
+   * group's bytes (every column, ~2MB on a real transcripts artifact) to recover two
+   * boundary values, `log2(rowGroups)` times per interval — on a 245-row-group file
+   * that can fetch most of the file to learn ~4KB. Row-group selection reads the
+   * footer's own statistics instead (`rowGroupColumnStats` in `parquetFooterStats`),
+   * which is exact and free; this remains for the case where those will not parse or
+   * the column carries none.
    *
-   * It is written this way because the **vendored parquet-wasm build exposes no
-   * statistics accessor**: `RowGroupMetaData` offers only `numRows`/`fileOffset`/
-   * `compressedSize`/`column`, and `ColumnChunkMetaData` offers no `statistics()`.
-   * Fixing it properly needs either a wasm rebuild that exposes statistics or a
-   * minimal Thrift read of the footer we already hold — see
+   * The statistics were unreachable when this was written — the vendored parquet-wasm
+   * build exposes no accessor, `ColumnChunkMetaData` has no `statistics()` — so the
+   * way out was always a minimal Thrift read of the footer we already hold, and that
+   * is what `parquetFooterStats.ts` now is. See
    * `docs/plans/points-morton-tiled-viewport-loading.md`.
    */
   async loadParquetRowGroupColumnExtent(
@@ -1075,27 +1113,11 @@ export default class SpatialDataTableSource extends AnnDataSource {
     columnName: string,
     rowGroupIndex: number
   ): Promise<{ min: number | null; max: number | null } | null> {
-    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}`;
-    const cached = this.rowGroupColumnExtentCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    const pending = this.readParquetRowGroupColumnExtent(parquetPath, columnName, rowGroupIndex);
-    this.rowGroupColumnExtentCache.set(cacheKey, pending);
-    // A failed probe must not be cached as a permanent "no extent" — that would
-    // strand the bisect on a transient network error for the life of the source.
-    pending
-      .then((extent) => {
-        if (extent === null && this.rowGroupColumnExtentCache.get(cacheKey) === pending) {
-          this.rowGroupColumnExtentCache.delete(cacheKey);
-        }
-      })
-      .catch(() => {
-        if (this.rowGroupColumnExtentCache.get(cacheKey) === pending) {
-          this.rowGroupColumnExtentCache.delete(cacheKey);
-        }
-      });
-    return pending;
+    return this.memoizeProbe(
+      this.rowGroupColumnExtentCache,
+      `${parquetPath}::${rowGroupIndex}::${columnName}`,
+      () => this.readParquetRowGroupColumnExtent(parquetPath, columnName, rowGroupIndex)
+    );
   }
 
   private async readParquetRowGroupColumnExtent(
@@ -1152,33 +1174,23 @@ export default class SpatialDataTableSource extends AnnDataSource {
     columnName: string,
     rowGroupIndex: number
   ): Promise<number | null> {
-    const cacheKey = `${parquetPath}::${rowGroupIndex}::${columnName}::first`;
-    const cached = this.rowGroupColumnFirstValueCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    const pending = (async () => {
-      const options: ParquetRowGroupReadOptions = { columns: [columnName], limit: 1 };
-      const table = await this.loadParquetRowGroupByGroupIndex(parquetPath, rowGroupIndex, options);
-      const column = table?.getChild(columnName);
-      if (!column || column.length === 0) {
-        return null;
+    return this.memoizeProbe(
+      this.rowGroupColumnFirstValueCache,
+      `${parquetPath}::${rowGroupIndex}::${columnName}::first`,
+      async () => {
+        const options: ParquetRowGroupReadOptions = { columns: [columnName], limit: 1 };
+        const table = await this.loadParquetRowGroupByGroupIndex(
+          parquetPath,
+          rowGroupIndex,
+          options
+        );
+        const column = table?.getChild(columnName);
+        if (!column || column.length === 0) {
+          return null;
+        }
+        return parquetColumnValueToNumber(column.get(0));
       }
-      return parquetColumnValueToNumber(column.get(0));
-    })();
-    this.rowGroupColumnFirstValueCache.set(cacheKey, pending);
-    pending
-      .then((value) => {
-        if (value === null && this.rowGroupColumnFirstValueCache.get(cacheKey) === pending) {
-          this.rowGroupColumnFirstValueCache.delete(cacheKey);
-        }
-      })
-      .catch(() => {
-        if (this.rowGroupColumnFirstValueCache.get(cacheKey) === pending) {
-          this.rowGroupColumnFirstValueCache.delete(cacheKey);
-        }
-      });
-    return pending;
+    );
   }
 
   /**

@@ -435,6 +435,56 @@ describe('Morton points tiling (canonical parquet)', () => {
     }
   });
 
+  /**
+   * The other half of the same memo, and the half that fails invisibly.
+   *
+   * Caching an in-flight promise is what dedups; KEEPING it once it has failed is what
+   * strands the index. A single transient read would otherwise pin "no extent" at that
+   * row group for the life of the source — the bisect then treats a perfectly readable
+   * group as unbounded, forever, and the only symptom is that viewport queries quietly
+   * return fewer points. Same discipline as `parquetTableCache`'s rejection cleanup
+   * (ADR 0005 rung 2b), which is why both probes now share one `memoizeProbe`.
+   *
+   * The failure surfaces as `null` rather than a throw: the read is swallowed further
+   * up, in the part-metadata probe. That is exactly why `null` has to be evicted too —
+   * a memo that only forgot rejections would still strand this.
+   */
+  it('retries an extent probe that failed, rather than caching the failure', async () => {
+    const parquetPath = 'points/transcripts/points.parquet';
+    let failNextRange = true;
+    const flakyStore = {
+      ...mockStore.store,
+      async getRange(path: string, range: Parameters<typeof mockStore.store.getRange>[1]) {
+        if (failNextRange) {
+          failNextRange = false;
+          throw new Error('transient network failure');
+        }
+        return mockStore.store.getRange(path, range);
+      },
+    };
+    const flakySource = new SpatialDataPointsSource({
+      // biome-ignore lint/suspicious/noExplicitAny: partial zarr.Readable test double
+      store: flakyStore as any,
+      fileType: '.zarr',
+    });
+
+    const failed = await flakySource.loadParquetRowGroupColumnExtent(
+      parquetPath,
+      'morton_code_2d',
+      1
+    );
+    expect(failed).toBeNull();
+    expect(failNextRange).toBe(false);
+
+    const retried = await flakySource.loadParquetRowGroupColumnExtent(
+      parquetPath,
+      'morton_code_2d',
+      1
+    );
+    expect(retried).not.toBeNull();
+    expect(typeof retried?.min).toBe('number');
+  });
+
   it('loads a bounded viewport without returning the full table', async () => {
     const full = await source.loadPoints('points/transcripts');
     const xs = full.data[0];

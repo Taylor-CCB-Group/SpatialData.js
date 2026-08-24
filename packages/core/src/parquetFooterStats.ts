@@ -368,3 +368,47 @@ export function decodeIntStat(
   }
   return null;
 }
+
+/**
+ * Per-row-group statistics for ONE column, across every part of a dataset, flattened
+ * into global row-group order.
+ *
+ * This is the walk two indexes were each doing for themselves — the feature-primary
+ * row-group skip and the Morton sort check — differing only in which column they name
+ * and how they decode the bytes. The decode is deliberately NOT folded in: it is the
+ * one part that depends on knowing the column's logical type, and getting it wrong is
+ * silent (a `uint32` Morton code read signed comes back negative past 2^31). Callers
+ * pick their decoder; the footer knowledge lives here.
+ *
+ * Returns `[]` for **"unavailable — conclude nothing"**, which every caller must
+ * treat as "do not skip / do not reject", never as "no statistics, so the answer is
+ * no". That covers a footer too short to hold a `FileMetaData`, one that will not
+ * parse, and a flattened count that disagrees with the dataset's row-group count —
+ * the last because a partial index silently mis-addresses every row group after the
+ * gap. A `null` ENTRY is narrower: that one row group has no usable statistics.
+ */
+export function rowGroupColumnStats(
+  parts: readonly { schemaBytes: Uint8Array }[],
+  columnName: string,
+  expectedRowGroupCount: number
+): Array<ParquetColumnStats | null> {
+  const stats: Array<ParquetColumnStats | null> = [];
+  for (const part of parts) {
+    // `schemaBytes` is the parquet footer: FileMetaData thrift + trailing 4-byte
+    // length + "PAR1". Strip the trailing 8 to get the FileMetaData for the parser.
+    if (part.schemaBytes.length <= 8) {
+      return [];
+    }
+    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
+    let footer: ParquetFooterStats;
+    try {
+      footer = parseParquetFileMetaData(metaBytes);
+    } catch {
+      return [];
+    }
+    for (const rowGroup of footer.rowGroups) {
+      stats.push(rowGroup.columns.find((col) => col.path === columnName) ?? null);
+    }
+  }
+  return stats.length === expectedRowGroupCount ? stats : [];
+}

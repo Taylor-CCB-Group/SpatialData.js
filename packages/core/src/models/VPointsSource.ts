@@ -2,7 +2,7 @@ import type { Vector } from 'apache-arrow';
 import {
   decodeIntStat,
   decodeUnsignedIntStat,
-  parseParquetFileMetaData,
+  rowGroupColumnStats,
 } from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
@@ -42,85 +42,41 @@ interface FeatureCodeExtent {
 }
 
 /**
- * Per-row-group `[min, max]` for the feature-code column, parsed from each part's
- * footer statistics and flattened into global row-group order. Powers the
- * feature-primary index: a row group whose range can't contain any selected code
- * is skipped without fetching it. Returns `[]` to signal "stats unavailable —
- * scan everything" (footer parse failed, a column had no statistics, or the
- * flattened count didn't match the dataset's row-group count). An entry is `null`
- * when that specific row group lacks usable stats, so it is scanned rather than
- * wrongly skipped.
+ * Per-row-group `[min, max]` for the feature-code column. Powers the feature-primary
+ * index: a row group whose range cannot contain any selected code is skipped without
+ * fetching it.
+ *
+ * Signed: feature codes are `int32` and `-1` is a real value (no code assigned).
  */
 function rowGroupFeatureCodeExtents(
   parts: readonly { schemaBytes: Uint8Array }[],
   featureCodeColumnName: string,
   expectedRowGroupCount: number
 ): Array<FeatureCodeExtent | null> {
-  const extents: Array<FeatureCodeExtent | null> = [];
-  for (const part of parts) {
-    // `schemaBytes` is the parquet footer: FileMetaData thrift + trailing 4-byte
-    // length + "PAR1". Strip the trailing 8 to get the FileMetaData for the parser.
-    if (part.schemaBytes.length <= 8) {
-      return [];
-    }
-    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
-    let footer: ReturnType<typeof parseParquetFileMetaData>;
-    try {
-      footer = parseParquetFileMetaData(metaBytes);
-    } catch {
-      return [];
-    }
-    for (const rowGroup of footer.rowGroups) {
-      const column = rowGroup.columns.find((col) => col.path === featureCodeColumnName);
-      if (!column) {
-        extents.push(null);
-        continue;
-      }
-      const min = decodeIntStat(column.minValue, column.physicalType);
-      const max = decodeIntStat(column.maxValue, column.physicalType);
-      extents.push(min !== null && max !== null ? { min, max } : null);
-    }
-  }
-  return extents.length === expectedRowGroupCount ? extents : [];
+  return rowGroupColumnStats(parts, featureCodeColumnName, expectedRowGroupCount).map((column) => {
+    const min = decodeIntStat(column?.minValue, column?.physicalType ?? null);
+    const max = decodeIntStat(column?.maxValue, column?.physicalType ?? null);
+    return min !== null && max !== null ? { min, max } : null;
+  });
 }
 
 /**
- * Per-row-group `[min, max]` for `morton_code_2d`, from the same footer statistics the
- * feature-code index reads — so this costs **nothing**: the parts, and their footer
- * bytes, are already in hand by the time the tiling probe runs.
+ * Per-row-group `[min, max]` for `morton_code_2d` — the index the tiled path selects
+ * row groups from, and the sequence its sort check reads.
  *
- * Read as UNSIGNED: the column is `uint32`, which parquet stores as INT32 with a
- * UINT_32 annotation, and Morton codes use the top bit for real.
- *
- * Returns `[]` for "unavailable — do not conclude anything", matching
- * {@link rowGroupFeatureCodeExtents}: a footer that will not parse, a column with no
- * statistics, or a flattened count that disagrees with the dataset's row-group count.
+ * UNSIGNED: the column is `uint32`, which parquet stores as INT32 with a UINT_32
+ * annotation, and Morton codes use the top bit for real — the far corner of a slide
+ * is 0xFFFFFFFF, which a signed read hands back as a negative number.
  */
 function rowGroupMortonExtents(
   parts: readonly { schemaBytes: Uint8Array }[],
   expectedRowGroupCount: number
 ): MortonRowGroupExtent[] {
-  const extents: MortonRowGroupExtent[] = [];
-  for (const part of parts) {
-    if (part.schemaBytes.length <= 8) {
-      return [];
-    }
-    // Strip the trailing 4-byte length + "PAR1" to get the FileMetaData thrift.
-    const metaBytes = part.schemaBytes.subarray(0, part.schemaBytes.length - 8);
-    let footer: ReturnType<typeof parseParquetFileMetaData>;
-    try {
-      footer = parseParquetFileMetaData(metaBytes);
-    } catch {
-      return [];
-    }
-    for (const rowGroup of footer.rowGroups) {
-      const column = rowGroup.columns.find((col) => col.path === MORTON_CODE_2D_COLUMN);
-      const min = decodeUnsignedIntStat(column?.minValue, column?.physicalType ?? null);
-      const max = decodeUnsignedIntStat(column?.maxValue, column?.physicalType ?? null);
-      extents.push(min !== null && max !== null ? [min, max] : null);
-    }
-  }
-  return extents.length === expectedRowGroupCount ? extents : [];
+  return rowGroupColumnStats(parts, MORTON_CODE_2D_COLUMN, expectedRowGroupCount).map((column) => {
+    const min = decodeUnsignedIntStat(column?.minValue, column?.physicalType ?? null);
+    const max = decodeUnsignedIntStat(column?.maxValue, column?.physicalType ?? null);
+    return min !== null && max !== null ? ([min, max] as const) : null;
+  });
 }
 
 /** Whether a row group's code range can contain any selected code. `null` extent
