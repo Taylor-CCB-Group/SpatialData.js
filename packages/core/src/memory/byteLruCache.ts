@@ -165,12 +165,17 @@ export class ByteLruCache<V> implements MemoryReporting {
    * an upsert without leaking the previous payload.
    */
   set(key: string, value: V): void {
+    // Measured before anything is mutated. `measure` rejects a size that would
+    // corrupt the accounting, and a `set` that fails has to leave the cache as
+    // it found it: measuring after the displaced entry was removed dropped that
+    // entry on the way out — unreported and undisposed — so a rejected size
+    // silently cost the caller a value the cache had been holding fine.
+    const bytes = this.measure(value);
     const previous = this.entries.get(key);
     if (previous) {
       this.entries.delete(key);
       this.residentBytes -= previous.bytes;
     }
-    const bytes = this.measure(value);
     this.entries.set(key, { value, bytes });
     this.residentBytes += bytes;
     const disposeError = previous ? this.disposeQuietly(previous.value, key) : undefined;

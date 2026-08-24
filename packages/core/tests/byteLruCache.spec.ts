@@ -158,6 +158,28 @@ describe('ByteLruCache', () => {
     expect(cache.byteLength).toBe(0);
   });
 
+  it('leaves a resident entry untouched when the replacement size is rejected', () => {
+    const onDispose = vi.fn();
+    const first = new Uint8Array(100);
+    let reject = false;
+    const cache = new ByteLruCache<Uint8Array>({
+      maxBytes: 1000,
+      sizeOf: (value) => (reject ? Number.NaN : value.byteLength),
+      onDispose,
+    });
+    cache.set('a', first);
+
+    reject = true;
+    expect(() => cache.set('a', new Uint8Array(400))).toThrow(RangeError);
+
+    // A failed set must not be a silent delete: the displaced value is still
+    // there, still counted, and was never disposed.
+    expect(cache.peek('a')).toBe(first);
+    expect(cache.byteLength).toBe(100);
+    expect(cache.size).toBe(1);
+    expect(onDispose).not.toHaveBeenCalled();
+  });
+
   it('finishes evicting even when disposal throws', () => {
     const disposed: string[] = [];
     const cache = bytesCache(200, (_value, key) => {

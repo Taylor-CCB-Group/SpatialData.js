@@ -28,18 +28,19 @@ let chunkCache: ByteLruCache<Chunk<DataType>> | undefined;
 
 /** Bytes a decoded chunk holds. */
 function chunkByteLength(chunk: Chunk<DataType>): number {
-  // Numeric dtypes give a typed array, which reports `byteLength` for free —
-  // that structural match is the whole point of `MemoryReporting`. And numeric
-  // is all this cache ever sees: the sole route in is zarrextra's
-  // `ZarrPixelSource`, i.e. OME-Zarr pixel data, which is rejected long before
-  // here if it is not a numeric raster.
+  // Everything zarrita actually hands back reports `byteLength` over its own
+  // backing buffer — typed arrays for numeric dtypes, and `ByteStringArray` /
+  // `UnicodeStringArray` for string ones, which are byte-backed too. So string
+  // chunks are measured in bytes here, not in elements, and that structural
+  // match costing nothing is the whole point of `MemoryReporting`.
   //
-  // The `length` arm is therefore a floor for a payload that should not arrive
-  // rather than a real measurement of one — element count, not UTF-8 bytes. It
-  // exists because reporting zero would make such entries invisible to the
-  // budget and so unevictable by size, which is the one way a bounded cache
-  // quietly goes back to being unbounded. If string chunks ever do reach this
-  // cache, this needs to become a real measurement.
+  // The `length` arm covers only a plain JS array, which is in the declared
+  // union but is not a shape zarrita produces — and which this cache could not
+  // reach anyway, its sole route in being zarrextra's `ZarrPixelSource`, i.e.
+  // OME-Zarr pixel data. It is a floor rather than a measurement, and it exists
+  // because reporting zero would make such an entry invisible to the budget and
+  // so unevictable by size, which is the one way a bounded cache quietly goes
+  // back to being unbounded.
   const data: { byteLength?: number; length: number } = chunk.data;
   return typeof data.byteLength === 'number' ? data.byteLength : data.length;
 }

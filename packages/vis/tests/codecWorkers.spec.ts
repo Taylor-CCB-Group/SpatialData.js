@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Chunk, DataType } from 'zarrita';
+import * as zarr from 'zarrita';
 
 const enableWorkerChunkDecode = vi.hoisted(() => vi.fn());
 
@@ -93,5 +94,50 @@ describe('ensureCodecWorkers', () => {
     ensureCodecWorkers({ chunkCacheMaxBytes: 999 });
 
     expect(getChunkCache()?.maxBytes).toBe(100);
+  });
+});
+
+describe('chunk cache accounting', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    enableWorkerChunkDecode.mockClear();
+    Reflect.deleteProperty(globalThis, 'Worker');
+  });
+
+  it('refuses a ceiling that would silently disable the bound', async () => {
+    installWorker();
+    const { ensureCodecWorkers, getChunkCache } = await import('../src/codecWorkers');
+
+    // `Infinity` and `NaN` are valid numbers that make every
+    // `resident > maxBytes` comparison false, so a host could turn the bound off
+    // by accident. `ByteLruCache` rejects them at construction, which is what
+    // makes the ceiling here safe to take from a caller unchecked.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(() => ensureCodecWorkers({ chunkCacheMaxBytes: bad })).toThrow(RangeError);
+    }
+
+    // ...and a rejected ceiling leaves nothing half-enabled.
+    expect(getChunkCache()).toBeUndefined();
+    expect(enableWorkerChunkDecode).not.toHaveBeenCalled();
+  });
+
+  it('measures string chunks by their bytes, not their element count', async () => {
+    installWorker();
+    const { ensureCodecWorkers, getChunkCache } = await import('../src/codecWorkers');
+    ensureCodecWorkers();
+
+    // zarrita hands back its own string-array types for string dtypes, and they
+    // report a real `byteLength` over their backing buffer — so they take the
+    // typed-array branch. Element count would be 3 here; the bytes are far more.
+    const strings = new zarr.UnicodeStringArray(8, ['alpha', 'beta', 'gamma']);
+    const cache = getChunkCache();
+    cache?.set('store_0:/labels:c/0', {
+      data: strings,
+      shape: [3],
+      stride: [1],
+    } as unknown as Chunk<DataType>);
+
+    expect(strings.byteLength).toBeGreaterThan(strings.length);
+    expect(cache?.byteLength).toBe(strings.byteLength);
   });
 });
