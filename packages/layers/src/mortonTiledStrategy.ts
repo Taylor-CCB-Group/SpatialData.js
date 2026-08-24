@@ -23,6 +23,7 @@ import {
   pointsTileDebugPolygonData,
   tileDebugStatusFillColor,
   tileDebugStatusLineColor,
+  tileDebugStatusLineWidth,
 } from './pointsTileDebug.js';
 import { createTiledPointsDebugHooks } from './pointsTiledDebugHooks.js';
 
@@ -222,7 +223,10 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
                   success: false,
                   aborted,
                   clippedBounds: bounds,
-                  errorMessage: aborted ? 'aborted' : String(error),
+                  // No message for an abort: `status` already says it, and a row
+                  // labelled "error" reading "aborted" is the same red-herring the
+                  // palette had, in words.
+                  ...(aborted ? {} : { errorMessage: String(error) }),
                 },
                 rawBounds,
                 attempt
@@ -276,7 +280,9 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
             getLineColor: (d: {
               entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
             }) => tileDebugStatusLineColor(d.entry.status),
-            getLineWidth: 2,
+            getLineWidth: (d: {
+              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+            }) => tileDebugStatusLineWidth(d.entry.status),
             lineWidthUnits: 'pixels',
             filled: true,
             stroked: true,
@@ -286,6 +292,7 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
               data: [debugSignature],
               getFillColor: [debugSignature],
               getLineColor: [debugSignature],
+              getLineWidth: [debugSignature],
               getPolygon: [debugSignature],
             },
           })

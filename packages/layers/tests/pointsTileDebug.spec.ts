@@ -5,8 +5,12 @@ import {
   formatPointsTileDebugTooltip,
   isPointsTileDebugPickObject,
   POINTS_TILE_DEBUG_PICK_KIND,
+  type PointsTileStatus,
   pointsTileDebugPolygonData,
   reduceTileDebugEntries,
+  tileDebugStatusFillColor,
+  tileDebugStatusLineColor,
+  tileDebugStatusLineWidth,
 } from '../src/pointsTileDebug.js';
 import { createTileDebugStore, createTiledPointsDebugHooks } from '../src/pointsTiledDebugHooks.js';
 
@@ -303,5 +307,77 @@ describe('forgetting tiles deck has unloaded', () => {
     const hooks = createTiledPointsDebugHooks(createTileDebugStore());
     hooks.onTileUnloaded('9-9--9');
     expect(hooks.getTileDebugEntries()).toEqual([]);
+  });
+});
+
+/**
+ * `aborted` used to be a dusty red, one shade off `error`. Since the overlay keeps a
+ * completed tile drawn until deck unloads it, an abandoned request could sit as a red
+ * rectangle over ground that had loaded perfectly — reported as "a tile shows an error
+ * even though the data resolved".
+ *
+ * Asserted as properties rather than exact RGB, so retuning the palette does not mean
+ * rewriting the test; what must not change is that red means one thing.
+ */
+describe('overlay palette', () => {
+  const statuses: PointsTileStatus[] = [
+    'pending',
+    'loading',
+    'loaded',
+    'empty',
+    'error',
+    'aborted',
+  ];
+  /**
+   * Reads as red: red dominant over both others AND green low. The green guard is
+   * what separates red from `loading`'s amber, which is also red-dominant but reads
+   * as orange precisely because green is high.
+   */
+  const readsAsRed = ([r, g, b]: [number, number, number, number]) =>
+    r > g + 50 && r > b + 50 && g < 130;
+
+  it('makes error the only status that reads as red', () => {
+    const red = statuses.filter(
+      (status) =>
+        readsAsRed(tileDebugStatusLineColor(status)) || readsAsRed(tileDebugStatusFillColor(status))
+    );
+    expect(red).toEqual(['error']);
+  });
+
+  it('gives every status a distinct outline', () => {
+    const seen = statuses.map((status) => tileDebugStatusLineColor(status).join(','));
+    expect(new Set(seen).size).toBe(statuses.length);
+  });
+
+  it('marks error out by weight too, not by hue alone', () => {
+    // loaded-green against error-red is the classic red-green pair, so the outline
+    // width carries the difference for anyone hue cannot. Opacity cannot do that job:
+    // `loading` is also fully opaque, deliberately, so an in-flight tile stays legible.
+    const widths = statuses.map((status) => tileDebugStatusLineWidth(status));
+    const errorWidth = tileDebugStatusLineWidth('error');
+    expect(Math.max(...widths)).toBe(errorWidth);
+    expect(widths.filter((width) => width === errorWidth)).toHaveLength(1);
+  });
+
+  it('does not label an abort as an error in the tooltip', () => {
+    // `status` already carries it. An "error" row reading "aborted" is the same
+    // red-herring the palette had, in words.
+    const aborted = completedSnapshotFromLoadResult(
+      { success: false, aborted: true },
+      { minX: 0, minY: 0, maxX: 512, maxY: 512 },
+      2_000,
+      1_000
+    );
+    expect(aborted.status).toBe('aborted');
+    expect(aborted.errorMessage).toBeUndefined();
+  });
+
+  it('keeps aborted recessive — it is a cancelled request, not a failure', () => {
+    expect(tileDebugStatusFillColor('aborted')[3]).toBeLessThan(
+      tileDebugStatusFillColor('error')[3]
+    );
+    expect(tileDebugStatusLineColor('aborted')[3]).toBeLessThan(
+      tileDebugStatusLineColor('error')[3]
+    );
   });
 });

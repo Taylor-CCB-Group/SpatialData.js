@@ -329,6 +329,24 @@ export function formatPointsTileDebugTooltip(
   };
 }
 
+/**
+ * Overlay colours, by what each status MEANS rather than by how it feels.
+ *
+ * Only `error` is red, and it is the loudest thing on the overlay: it is the one
+ * status that says something went wrong and wants reading. Everything else is a stage
+ * of ordinary progress and recedes.
+ *
+ * `aborted` used to be a dusty red — the viewport moved on and the request was
+ * cancelled, which is not a failure at all, but at a glance it was indistinguishable
+ * from `error` sitting on top of perfectly good data. It is violet now: an unoccupied
+ * hue (the palette otherwise runs neutral / amber / green / blue / red) at an alpha
+ * near `pending`'s, because a withdrawn request is the least interesting thing here.
+ *
+ * Known limit: `loaded` green against `error` red is the classic red-green pair, so
+ * hue alone does not carry the difference for everyone. That is why `error` is also
+ * the only status with a fully opaque outline and the widest one — see
+ * {@link tileDebugStatusLineWidth}.
+ */
 export function tileDebugStatusFillColor(
   status: PointsTileStatus
 ): [number, number, number, number] {
@@ -344,7 +362,7 @@ export function tileDebugStatusFillColor(
     case 'error':
       return [220, 60, 60, 70];
     case 'aborted':
-      return [180, 80, 80, 45];
+      return [150, 130, 200, 32];
   }
 }
 
@@ -363,8 +381,19 @@ export function tileDebugStatusLineColor(
     case 'error':
       return [255, 80, 80, 255];
     case 'aborted':
-      return [220, 120, 120, 220];
+      return [175, 155, 220, 190];
   }
+}
+
+/**
+ * Outline width, so `error` is distinguishable without relying on hue.
+ *
+ * Cheap insurance against the red-green limit noted above, and against the overlay
+ * being read over a busy fluorescence image where any of these colours can be lost in
+ * the background.
+ */
+export function tileDebugStatusLineWidth(status: PointsTileStatus): number {
+  return status === 'error' ? 4 : 2;
 }
 
 export function tileDebugEntriesSignature(entries: readonly PointsTileDebugEntry[]): string {
