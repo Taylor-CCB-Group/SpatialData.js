@@ -2,7 +2,7 @@
  * Packaging guard: every `exports` target must actually be in the module system its
  * extension and the package `type` imply.
  *
- * This exists because the failure mode is completely silent. `points-worker` and
+ * This exists because the failure mode is completely silent. `parquet-worker` and
  * `workers` were both emitted twice under the same `.js` name (the lib `fileName`
  * ignored `format`), so the cjs pass overwrote the es one and shipped CommonJS under
  * `.js` in a `"type": "module"` package. The build succeeded, the files existed, and
@@ -53,7 +53,7 @@ describe('published entry formats', () => {
     expect(Object.keys(packageJson.exports).sort()).toEqual([
       '.',
       './parquet-wasm',
-      './points-worker',
+      './parquet-worker',
       './workers',
     ]);
   });
@@ -84,8 +84,8 @@ describe('published entry formats', () => {
     });
   }
 
-  it('gives the points worker an ES module, which is the only thing new Worker({type:"module"}) can load', (ctx) => {
-    const worker = resolve(packageRoot, 'dist/points-worker.js');
+  it('gives the parquet worker an ES module, which is the only thing new Worker({type:"module"}) can load', (ctx) => {
+    const worker = resolve(packageRoot, 'dist/parquet-worker.js');
     if (!existsSync(worker)) return ctx.skip();
     const source = readFileSync(worker, 'utf8');
     expect(COMMONJS_PATTERN.test(source)).toBe(false);

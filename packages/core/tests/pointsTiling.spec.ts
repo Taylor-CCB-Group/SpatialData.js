@@ -361,13 +361,7 @@ describe('morton row-group sort detection', () => {
     expect(mortonRowGroupExtentsAreSorted([])).toBe(true);
     expect(mortonRowGroupExtentsAreSorted([null, null, null])).toBe(true);
 
-    expect(
-      mortonRowGroupOrderVerdict([
-        [0, 40],
-        null,
-        [50, 60],
-      ])
-    ).toBe('sorted');
+    expect(mortonRowGroupOrderVerdict([[0, 40], null, [50, 60]])).toBe('sorted');
     expect(
       mortonRowGroupOrderVerdict([
         [50, 60],

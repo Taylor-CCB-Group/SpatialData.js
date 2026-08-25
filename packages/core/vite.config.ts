@@ -76,7 +76,7 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, 'src/index.ts'),
         workers: resolve(__dirname, 'src/workers/index.ts'),
-        'points-worker': resolve(__dirname, 'src/workers/points-worker.ts'),
+        'parquet-worker': resolve(__dirname, 'src/workers/parquet-worker.ts'),
       },
       name: 'SpatialDataCore',
       formats: ['es', 'cjs'],
@@ -84,8 +84,8 @@ export default defineConfig({
       // same directory, so a name that ignores `format` is claimed twice and the cjs
       // pass silently overwrites the es one — leaving a CommonJS file under a `.js`
       // extension in a `"type": "module"` package, which nothing can load. That is how
-      // `points-worker.js` shipped: `new Worker(url, { type: 'module' })` died on
-      // `require is not defined`, so no consumer could ever start the points worker,
+      // `parquet-worker.js` shipped: `new Worker(url, { type: 'module' })` died on
+      // `require is not defined`, so no consumer could ever start the parquet worker,
       // and the feature-index scan (its only caller with no main-thread fallback) was
       // unreachable outside this repo. See `tests/distEntryFormats.spec.ts`.
       fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,

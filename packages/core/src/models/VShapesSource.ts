@@ -31,8 +31,8 @@ import type { ShapesGeometryKind, ShapesRenderData } from '../shapes';
 import { decodeShapesGeometryFlat, type FlatShapeGeometry } from '../shapesGeometryDecode.js';
 import {
   decodeShapesGeometryInWorker,
-  ensurePointsWorker,
-  isPointsWorkerEnabled,
+  ensureParquetWorker,
+  isParquetWorkerEnabled,
 } from '../workers/index.js';
 import SpatialDataTableSource from './VTableSource';
 export type PolygonShape = Array<Array<[number, number]>>;
@@ -527,7 +527,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
 
   /**
    * Decode the geometry column into flat, transferable buffers — off the main
-   * thread when the points worker is enabled, else via the identical shared
+   * thread when the parquet worker is enabled, else via the identical shared
    * decode on the main thread. The worker copy is deliberate: `loadParquetBytes`
    * caches its result, and transferring the buffer would detach the cache.
    */
@@ -536,8 +536,8 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     geometryColumnName: string,
     geometryKind: ShapesGeometryKind
   ): Promise<FlatShapeGeometry> {
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       const bytes = await this.loadParquetBytes(parquetPath);
       if (bytes) {
         const decoded = await decodeShapesGeometryInWorker({

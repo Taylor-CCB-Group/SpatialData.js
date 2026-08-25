@@ -1,5 +1,5 @@
 ---
-"@spatialdata/core": patch
+"@spatialdata/core": minor
 ---
 
 Load the vendored parquet-wasm through a package subpath, so it resolves in a

@@ -16,8 +16,8 @@
       "import": "./dist/workers.js",
       "require": "./dist/workers.cjs"
     },
-    "./points-worker": {
-      "default": "./dist/points-worker.js"
+    "./parquet-worker": {
+      "default": "./dist/parquet-worker.js"
     },
     "./parquet-wasm": {
       "types": "./vendor/parquet-wasm/parquet_wasm.d.ts",

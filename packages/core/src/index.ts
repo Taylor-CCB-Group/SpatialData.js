@@ -98,11 +98,11 @@ export * from './tooltip.js';
 // export * from './schemas/index.js';
 export * from './types.js';
 export {
-  disablePointsWorker,
-  enablePointsWorker,
-  ensurePointsWorker,
+  disableParquetWorker,
+  enableParquetWorker,
+  ensureParquetWorker,
   filterColumnarByFeatureCodesInWorker,
-  isPointsWorkerEnabled,
-  setPointsWorkerDefaultEnabled,
-  setPointsWorkerRequestTimeout,
+  isParquetWorkerEnabled,
+  setParquetWorkerDefaultEnabled,
+  setParquetWorkerRequestTimeout,
 } from './workers/index.js';

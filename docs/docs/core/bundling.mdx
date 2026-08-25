@@ -1,0 +1,128 @@
+---
+sidebar_position: 5
+---
+
+# Bundling core into an application
+
+Everything `@spatialdata/core` needs at runtime resolves through its `exports`
+map, so a bundler finds it without configuration. There is exactly **one** thing
+a bundled application has to wire up by hand: the URL of the parquet worker.
+
+If you are in a hurry, this is the whole of it:
+
+```ts
+import { enableParquetWorker } from '@spatialdata/core';
+// Vite. See below for other bundlers.
+import workerUrl from '@spatialdata/core/parquet-worker?worker&url';
+
+enableParquetWorker({ workerUrl });
+```
+
+## parquet-wasm: nothing to configure
+
+Core reads Parquet through a vendored [parquet-wasm](https://github.com/kylebarron/parquet-wasm)
+build, loaded from the `@spatialdata/core/parquet-wasm` export. Your bundler
+resolves that subpath, follows the glue's own
+`new URL('parquet_wasm_bg.wasm', import.meta.url)`, and emits the 6.6 MB wasm
+alongside your other assets. Vite, webpack/rspack and Parcel all do this.
+
+You should see something like `assets/parquet_wasm_bg-B1vu2ek6.wasm` in your
+build output. If your build has a custom `assetFileNames` (or webpack
+`assetModuleFilename`) that routes `.wasm` somewhere unhashed, check the wasm is
+not emitted twice — once by the main bundle and once by the worker bundle. With
+default asset naming both graphs produce the same hashed filename and you get a
+single copy.
+
+:::note Before 0.9.0
+
+Core used to load the glue by a package-relative path that no bundler could
+resolve, so applications 404d on `{root}/vendor/parquet-wasm/parquet_wasm.js` in
+production while dev worked. If you are pinned below 0.9.0 and carrying a plugin
+that copies core's `vendor/` directory into your output, this is what it was for
+— you can delete it once you upgrade.
+
+:::
+
+## The parquet worker: pass a URL
+
+The worker moves parquet decodes and scans off the main thread. It is opt-in,
+and a bundled application must tell core where the worker bundle lives:
+
+```ts
+import { enableParquetWorker, isParquetWorkerEnabled } from '@spatialdata/core';
+import workerUrl from '@spatialdata/core/parquet-worker?worker&url';
+
+enableParquetWorker({ workerUrl });
+```
+
+That import does more than produce a string. It is what makes your bundler
+*build* the worker — resolving core's internal chunks, `apache-arrow`, and the
+parquet-wasm the worker loads on its own side, which is a separate bundling
+context from your main thread. The equivalent in other bundlers:
+
+| Bundler       | How to get the URL                                                                                                                            |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vite / Rollup | `import workerUrl from '@spatialdata/core/parquet-worker?worker&url'` — verified in CI against a real production build                            |
+| Others        | Use whatever your bundler provides for building a worker from a module (`new Worker(new URL(...))`, a worker rule, a plugin), then pass the URL it yields. Not exercised by our CI; check that the worker and a `.wasm` both appear in your output. |
+| No bundler    | Nothing. The default already resolves (see below).                                                                                             |
+
+Calling `enableParquetWorker()` with no arguments is right **only** where core is
+loaded as published ESM without being re-bundled — a dev server serving
+`node_modules`, an import map, a CDN. There, `dist/parquet-worker.js` genuinely
+does sit next to the chunk making the request. Once a bundler inlines core's
+chunk into its own output directory, that relative URL points at nothing.
+
+### Why core cannot do this for you
+
+Sibling packages get away with a no-argument worker: `zarrextra/workers` ships a
+`new URL('./codec-worker.js', import.meta.url)` that a consumer's bundler picks
+up and emits as a static asset. That works because its codec worker is a single
+self-contained file.
+
+The parquet worker is not. `dist/parquet-worker.js` imports core's shared chunks
+and bare `apache-arrow`, and it loads a 6.6 MB wasm at runtime. Emitting it as a
+static asset copies 11 kB of unresolvable imports; making it self-contained would
+mean inlining that wasm into the worker. Neither is a good trade, so the worker
+is built by *your* bundler, from the URL import above.
+
+### If you get it wrong
+
+A worker that fails to load is detected, switched off, and logged — core falls
+back to main-thread decoding rather than waiting for a request timeout. So a
+wrong URL costs you performance, not correctness, with one exception:
+
+`loadPointsMatchingFeatureCodes` — the feature-index scan that fetches a selected
+feature's points from beyond the resident memory window — has no main-thread
+fallback and throws without a working worker. Gate any UI that depends on it:
+
+```ts
+import { isParquetWorkerEnabled } from '@spatialdata/core';
+
+if (isParquetWorkerEnabled()) {
+  // offer on-demand feature loading
+}
+```
+
+Note that `isParquetWorkerEnabled()` reports `false` after a failed startup, so
+this stays honest rather than optimistic.
+
+## Package exports
+
+| Export                              | What it is                                          |
+| ----------------------------------- | --------------------------------------------------- |
+| `@spatialdata/core`                 | The library.                                         |
+| `@spatialdata/core/workers`         | The `*InWorker` helpers, for driving the worker directly. |
+| `@spatialdata/core/parquet-worker`  | The worker bundle. Import it for its URL, not its exports. |
+| `@spatialdata/core/parquet-wasm`    | The vendored parquet-wasm glue. Core loads this itself; you should not need it. |
+
+## Checking your build
+
+Two things worth asserting in CI, both cheap:
+
+- No emitted chunk references a file the build did not emit. A missing wasm or
+  worker asset is invisible in dev and fatal in production.
+- The app actually starts the worker and decodes something. Core's own
+  `tests/production/browser/parquet-worker.spec.ts` does exactly this against a
+  real consumer build; it is the only place the published worker entry, its
+  module format, and its private parquet-wasm resolution are all exercised at
+  once.

@@ -64,10 +64,11 @@ describe('vendored parquet-wasm resolution', () => {
       if (source.includes('vendor/parquet-wasm/parquet_wasm.js')) {
         offenders.push(`${chunk} imports the glue by path instead of by subpath`);
       }
-      // Narrow to the parquet import: the points-worker client carries its own
-      // (separate, deliberate) `@vite-ignore` on `new Worker(new URL(...))`.
-      if (/@vite-ignore[\s\S]{0,200}parquet/.test(source)) {
-        offenders.push(`${chunk} suppresses resolution of the parquet import`);
+      // Narrow to the *wasm* specifier. The worker client carries its own
+      // (separate, deliberate) `@vite-ignore` on `new Worker(new URL(...))`, and
+      // since that URL is now `./parquet-worker.js`, a bare `parquet` here matches it.
+      if (/@vite-ignore[\s\S]{0,200}parquet[_-]wasm/.test(source)) {
+        offenders.push(`${chunk} suppresses resolution of the parquet-wasm import`);
       }
     }
     expect(offenders, offenders.join('\n')).toEqual([]);

@@ -5,12 +5,12 @@ import type { PointsColumnarData } from '../spatialViewFit.js';
 import {
   columnarDataFromWorkerResult,
   type ParquetRowGroupBytesChunk,
+  type ParquetWorkerMessage,
   type ParquetWorkerPayload,
+  type ParquetWorkerRequest,
+  type ParquetWorkerResponse,
   type PointsBounds,
-  type PointsWorkerMessage,
-  type PointsWorkerRequest,
-  type PointsWorkerResponse,
-} from './pointsWorkerProtocol.js';
+} from './parquetWorkerProtocol.js';
 
 let worker: Worker | undefined;
 let nextRequestId = 0;
@@ -24,7 +24,7 @@ const pending = new Map<
 >();
 
 // Safety net: if the worker was enabled but is not functionally wired (e.g. a
-// host points enablePointsWorker() at a URL that loads but whose module never
+// host points enableParquetWorker() at a URL that loads but whose module never
 // posts a response), a request would otherwise await forever. After this budget
 // with no reply we reject the request so the caller falls back to the main
 // thread (every *InWorker helper is wrapped in a try/catch fallback). Generous
@@ -33,7 +33,7 @@ const pending = new Map<
 let requestTimeoutMs = 30_000;
 
 /** Override the per-request worker timeout (ms). Set to 0/Infinity to disable. */
-export function setPointsWorkerRequestTimeout(ms: number) {
+export function setParquetWorkerRequestTimeout(ms: number) {
   requestTimeoutMs = ms;
 }
 
@@ -50,9 +50,28 @@ function settlePending(id: number) {
   return entry;
 }
 
+/**
+ * Whether this worker has ever answered — the test for "did it actually load?".
+ *
+ * A module worker whose URL 404s fires one `error` event and then stays silent,
+ * so without this every subsequent request would sit until its timeout while
+ * `isParquetWorkerEnabled()` kept claiming the worker was there. Distinguishing
+ * a dead-on-arrival worker from one that threw mid-request matters: the first is
+ * a wiring mistake and the worker should be given up on, the second is one bad
+ * request and the worker is probably still usable.
+ */
+let workerHasAnswered = false;
+/**
+ * Latch: a worker built from the default URL failed to load, so stop rebuilding it.
+ *
+ * Only `ensureParquetWorker` respects this — an explicit `enableParquetWorker()`
+ * clears it, because the caller is presumably passing a different `workerUrl`.
+ */
+let startupFailed = false;
+
 let enabled = false;
-// Points worker is opt-in: hosts call enablePointsWorker() (or
-// setPointsWorkerDefaultEnabled(true)) once they have wired the worker bundle.
+// Parquet worker is opt-in: hosts call enableParquetWorker() (or
+// setParquetWorkerDefaultEnabled(true)) once they have wired the worker bundle.
 // Auto-enabling in every browser caused loadPoints() to hang forever wherever
 // the worker isn't functionally wired (e.g. Vite dev serving core from source),
 // because the worker branch awaits a response that never arrives and the
@@ -63,11 +82,12 @@ function ensureWorkerListener() {
   if (!worker) {
     return;
   }
-  worker.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
+  worker.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
     const message = event.data;
     if (message.direction !== 'response') {
       return;
     }
+    workerHasAnswered = true;
     const entry = settlePending(message.id);
     if (!entry) {
       return;
@@ -79,19 +99,44 @@ function ensureWorkerListener() {
     }
   };
   worker.onerror = (event) => {
-    for (const [id] of [...pending]) {
-      settlePending(id)?.reject(new Error(event.message || 'Points worker error'));
+    const detail = event.message || 'Parquet worker error';
+    if (workerHasAnswered) {
+      // A live worker threw. Reject what is in flight; every `*InWorker` helper
+      // falls back to the main thread on rejection, and the next request gets to
+      // try the worker again.
+      rejectAllPending(new Error(detail));
+      return;
     }
+    // Never answered, so it never loaded — almost always a `workerUrl` that does
+    // not resolve to the published bundle. Give up on it rather than leave
+    // `isParquetWorkerEnabled()` returning true for a worker that cannot reply:
+    // callers with a main-thread fallback take it, and the one caller without a
+    // fallback (the feature-index scan) fails immediately with a real reason
+    // instead of hanging to its timeout.
+    disableParquetWorker(
+      new Error(
+        `Parquet worker failed to start (${detail}); falling back to the main thread. ` +
+          'If the worker bundle is not served next to @spatialdata/core, pass its URL: ' +
+          'enableParquetWorker({ workerUrl }).'
+      )
+    );
+    // After the disable, which clears the latch as an explicit teardown should.
+    startupFailed = true;
+    console.warn(
+      `[@spatialdata/core] parquet worker failed to start (${detail}); ` +
+        'continuing on the main thread. Pass enableParquetWorker({ workerUrl }) with a ' +
+        'bundler-resolved URL for @spatialdata/core/parquet-worker.'
+    );
   };
 }
 
 function postRequest<T>(
-  request: PointsWorkerRequest,
+  request: ParquetWorkerRequest,
   transferables: Transferable[] = []
 ): Promise<T> {
   const activeWorker = worker;
   if (!activeWorker) {
-    return Promise.reject(new Error('Points worker is not enabled'));
+    return Promise.reject(new Error('Parquet worker is not enabled'));
   }
   const id = ++nextRequestId;
   return new Promise<T>((resolve, reject) => {
@@ -104,13 +149,13 @@ function postRequest<T>(
       entry.timeout = setTimeout(() => {
         settlePending(id)?.reject(
           new Error(
-            `Points worker did not respond within ${requestTimeoutMs}ms; falling back to the main thread`
+            `Parquet worker did not respond within ${requestTimeoutMs}ms; falling back to the main thread`
           )
         );
       }, requestTimeoutMs);
     }
     pending.set(id, entry);
-    const message: PointsWorkerMessage = { id, direction: 'request', request };
+    const message: ParquetWorkerMessage = { id, direction: 'request', request };
     if (transferables.length > 0) {
       activeWorker.postMessage(message, transferables);
     } else {
@@ -137,7 +182,7 @@ export function transferablesForParquetPayload(
   return transferables;
 }
 
-function transferablesForRequest(request: PointsWorkerRequest): Transferable[] {
+function transferablesForRequest(request: ParquetWorkerRequest): Transferable[] {
   switch (request.type) {
     case 'decodeParquetRowFeatureCodes':
     case 'scanParquetFeatureCounts':
@@ -154,48 +199,108 @@ function transferablesForRequest(request: PointsWorkerRequest): Transferable[] {
   return [];
 }
 
-export function isPointsWorkerEnabled(): boolean {
+/**
+ * The published worker bundle, `dist/parquet-worker.js`, resolved at runtime.
+ *
+ * Correct wherever core is loaded as published ESM without being re-bundled — a dev
+ * server, an import map, a CDN — because `dist/parquet-worker.js` really does sit
+ * next to the chunk this runs in. A bundled application must pass `workerUrl`
+ * instead; see {@link enableParquetWorker}.
+ *
+ * Two things here are deliberate, both measured rather than assumed:
+ *
+ * `@vite-ignore` stays. Without it, *this package's* lib build resolves the URL,
+ * emits its own copy of the worker, and bakes an absolute
+ * `/assets/parquet-worker-<hash>.js` into the published chunk — a path that exists
+ * in no consumer's application.
+ *
+ * And the filename stays a literal, rather than the variable that
+ * `zarrextra/workers` hides its codec-worker name behind (docs/worker-bundling).
+ * That trick makes a consumer's bundler emit the published worker file as a static
+ * asset, which works only for a *self-contained* worker. This one is not: the built
+ * `parquet-worker.js` imports sibling chunks and bare `apache-arrow`, and copying it
+ * as an asset produced an 11.5kB file whose every import 404s. Making it
+ * self-contained would mean inlining the 6.6MB parquet-wasm into it. So a bundled
+ * consumer needs its bundler to *build* the worker — `?worker&url` in Vite — and the
+ * honest default here is the runtime-relative URL, plus the startup detection above
+ * that turns a wrong guess into a main-thread fallback instead of a hang.
+ */
+function defaultWorkerUrl(): URL {
+  return new URL(/* @vite-ignore */ './parquet-worker.js', import.meta.url);
+}
+
+export function isParquetWorkerEnabled(): boolean {
   return enabled && worker !== undefined;
 }
 
-export function enablePointsWorker(options: { workerUrl?: string | URL } = {}) {
+/**
+ * Start the parquet worker, moving parquet decodes and scans off the main thread.
+ *
+ * A bundled application passes `workerUrl`, and the import that produces it is what
+ * makes the worker part of that application's build — including the parquet-wasm the
+ * worker loads on its own side. In Vite:
+ *
+ * ```ts
+ * import workerUrl from '@spatialdata/core/parquet-worker?worker&url';
+ * enableParquetWorker({ workerUrl });
+ * ```
+ *
+ * Omit it only where core is loaded as published ESM without being re-bundled (a dev
+ * server, an import map, a CDN); see {@link defaultWorkerUrl}.
+ *
+ * A worker that fails to load is detected and switched off rather than left to time
+ * out, so a broken URL costs performance, not correctness — with one exception:
+ * `loadPointsMatchingFeatureCodes` (the feature-index scan) has no main-thread
+ * fallback and will throw. Gate any UI for it on {@link isParquetWorkerEnabled}.
+ */
+export function enableParquetWorker(options: { workerUrl?: string | URL } = {}) {
   if (typeof Worker === 'undefined') {
     return;
   }
   if (worker) {
-    disablePointsWorker();
+    disableParquetWorker();
   }
+  // An explicit call is a fresh attempt, even after a dead-on-arrival worker
+  // latched `ensureParquetWorker` off — the caller is presumably passing a URL
+  // that resolves this time.
+  startupFailed = false;
+  workerHasAnswered = false;
   if (options.workerUrl) {
     worker = new Worker(options.workerUrl, { type: 'module' });
   } else {
-    // Inline URL so Vite dev apps can bundle the worker; @vite-ignore keeps lib build
-    // emitting a runtime relative URL to dist/points-worker.js (not /assets/...).
-    worker = new Worker(new URL(/* @vite-ignore */ './points-worker.js', import.meta.url), {
-      type: 'module',
-    });
+    worker = new Worker(defaultWorkerUrl(), { type: 'module' });
   }
   ensureWorkerListener();
   enabled = true;
 }
 
-export function disablePointsWorker() {
+/** Fail every in-flight request with the same reason. */
+function rejectAllPending(reason: Error) {
+  for (const [id] of [...pending]) {
+    settlePending(id)?.reject(reason);
+  }
+}
+
+export function disableParquetWorker(reason?: Error) {
   enabled = false;
+  // Teardown forgets everything learned about the worker that just went away; the
+  // startup-failure handler re-latches after calling this.
+  startupFailed = false;
+  workerHasAnswered = false;
   if (worker) {
     worker.terminate();
     worker = undefined;
   }
-  for (const [id] of [...pending]) {
-    settlePending(id)?.reject(new Error('Points worker disabled'));
-  }
+  rejectAllPending(reason ?? new Error('Parquet worker disabled'));
 }
 
-export function setPointsWorkerDefaultEnabled(value: boolean) {
+export function setParquetWorkerDefaultEnabled(value: boolean) {
   defaultEnabled = value;
 }
 
-export function ensurePointsWorker(options: { workerUrl?: string | URL } = {}) {
-  if (!enabled && defaultEnabled) {
-    enablePointsWorker(options);
+export function ensureParquetWorker(options: { workerUrl?: string | URL } = {}) {
+  if (!enabled && defaultEnabled && !startupFailed) {
+    enableParquetWorker(options);
   }
 }
 
@@ -204,8 +309,8 @@ export async function filterColumnarByFeatureCodesInWorker(
   featureCodes: readonly number[] | undefined,
   sourceFeatureCodes: ArrayLike<number>
 ): Promise<PointsColumnarData> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     const { filterColumnarByFeatureCodes } = await import('../pointsTiling.js');
     return filterColumnarByFeatureCodes(data, featureCodes, sourceFeatureCodes);
   }
@@ -224,7 +329,7 @@ export async function filterColumnarByFeatureCodesInWorker(
       : Float32Array.from(data.data[2] as ArrayLike<number>)
     : undefined;
 
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>({
     type: 'filterColumnarByFeatureCodes',
     xs,
     ys,
@@ -234,7 +339,7 @@ export async function filterColumnarByFeatureCodesInWorker(
   });
 
   if (result.kind !== 'columnar') {
-    throw new Error('Unexpected points worker response for filterColumnarByFeatureCodes');
+    throw new Error('Unexpected parquet worker response for filterColumnarByFeatureCodes');
   }
   return columnarDataFromWorkerResult(result);
 }
@@ -252,8 +357,8 @@ export type DecodeParquetRowFeatureCodesInput = {
 export async function decodeParquetRowFeatureCodesInWorker(
   input: DecodeParquetRowFeatureCodesInput
 ): Promise<Int32Array | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     return null;
   }
   if (!input.parts?.length && !input.rowGroups?.length) {
@@ -262,16 +367,16 @@ export async function decodeParquetRowFeatureCodesInWorker(
   if (input.parts?.length && input.rowGroups?.length) {
     throw new Error('decodeParquetRowFeatureCodesInWorker requires parts or rowGroups, not both');
   }
-  const request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }> = {
     type: 'decodeParquetRowFeatureCodes',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'rowFeatureCodes') {
-    throw new Error('Unexpected points worker response for decodeParquetRowFeatureCodes');
+    throw new Error('Unexpected parquet worker response for decodeParquetRowFeatureCodes');
   }
   return result.codes;
 }
@@ -288,20 +393,20 @@ export type ScanParquetFeatureCatalogInput = {
 export async function scanParquetFeatureCatalogInWorker(
   input: ScanParquetFeatureCatalogInput
 ): Promise<PointsFeatureCatalog | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled() || input.parts.length === 0) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled() || input.parts.length === 0) {
     return null;
   }
-  const request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCatalog' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'scanParquetFeatureCatalog' }> = {
     type: 'scanParquetFeatureCatalog',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'catalog') {
-    throw new Error('Unexpected points worker response for scanParquetFeatureCatalog');
+    throw new Error('Unexpected parquet worker response for scanParquetFeatureCatalog');
   }
   return result.catalog;
 }
@@ -322,8 +427,8 @@ export async function decodeParquetGeometryCappedInWorker(
   data: ArrayLike<number>[];
   featureCodes?: Int32Array;
 } | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     return null;
   }
   if (!input.parts?.length && !input.rowGroups?.length) {
@@ -332,16 +437,16 @@ export async function decodeParquetGeometryCappedInWorker(
   if (input.parts?.length && input.rowGroups?.length) {
     throw new Error('decodeParquetGeometryCappedInWorker requires parts or rowGroups, not both');
   }
-  const request: Extract<PointsWorkerRequest, { type: 'decodeParquetGeometryCapped' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'decodeParquetGeometryCapped' }> = {
     type: 'decodeParquetGeometryCapped',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'columnar') {
-    throw new Error('Unexpected points worker response for decodeParquetGeometryCapped');
+    throw new Error('Unexpected parquet worker response for decodeParquetGeometryCapped');
   }
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
   return {
@@ -374,8 +479,8 @@ export async function decodeGeometryWithFeaturesInWorker(
   featureCodes?: Int32Array;
   featureCatalog?: PointsFeatureCatalog;
 } | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     return null;
   }
   if (!input.parts?.length && !input.rowGroups?.length) {
@@ -384,16 +489,16 @@ export async function decodeGeometryWithFeaturesInWorker(
   if (input.parts?.length && input.rowGroups?.length) {
     throw new Error('decodeGeometryWithFeaturesInWorker requires parts or rowGroups, not both');
   }
-  const request: Extract<PointsWorkerRequest, { type: 'decodeGeometryWithFeatures' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'decodeGeometryWithFeatures' }> = {
     type: 'decodeGeometryWithFeatures',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'geometryWithFeatures') {
-    throw new Error('Unexpected points worker response for decodeGeometryWithFeatures');
+    throw new Error('Unexpected parquet worker response for decodeGeometryWithFeatures');
   }
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
   return {
@@ -419,15 +524,15 @@ export type DecodeShapesGeometryInput = {
 export async function decodeShapesGeometryInWorker(
   input: DecodeShapesGeometryInput
 ): Promise<FlatShapeGeometry | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled() || input.parts.length === 0) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled() || input.parts.length === 0) {
     return null;
   }
-  const request: Extract<PointsWorkerRequest, { type: 'decodeShapesGeometry' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'decodeShapesGeometry' }> = {
     type: 'decodeShapesGeometry',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
@@ -443,14 +548,14 @@ export async function decodeShapesGeometryInWorker(
   if (result.kind === 'shapesGeometryPoint') {
     return { kind: 'point', xs: result.xs, ys: result.ys, featureCount: result.featureCount };
   }
-  throw new Error('Unexpected points worker response for decodeShapesGeometry');
+  throw new Error('Unexpected parquet worker response for decodeShapesGeometry');
 }
 
 export async function countFeatureCodesInWorker(
   sourceFeatureCodes: ArrayLike<number>
 ): Promise<Map<number, number>> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     const { countFeatureCodesHistogram } = await import('../pointsFeatures.js');
     return countFeatureCodesHistogram(sourceFeatureCodes);
   }
@@ -458,12 +563,12 @@ export async function countFeatureCodesInWorker(
     sourceFeatureCodes instanceof Int32Array
       ? sourceFeatureCodes
       : Int32Array.from(sourceFeatureCodes);
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>({
     type: 'countFeatureCodes',
     sourceFeatureCodes: codesArray,
   });
   if (result.kind !== 'featureCounts') {
-    throw new Error('Unexpected points worker response for countFeatureCodes');
+    throw new Error('Unexpected parquet worker response for countFeatureCodes');
   }
   const counts = new Map<number, number>();
   for (let index = 0; index < result.codes.length; index += 1) {
@@ -480,23 +585,23 @@ export type ScanParquetFeatureCountsInput = ParquetWorkerPayload & {
 export async function scanParquetFeatureCountsInWorker(
   input: ScanParquetFeatureCountsInput
 ): Promise<Map<number, number> | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     return null;
   }
   if (!input.parts?.length && !input.rowGroups?.length) {
     return null;
   }
-  const request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'scanParquetFeatureCounts' }> = {
     type: 'scanParquetFeatureCounts',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'featureCounts') {
-    throw new Error('Unexpected points worker response for scanParquetFeatureCounts');
+    throw new Error('Unexpected parquet worker response for scanParquetFeatureCounts');
   }
   const counts = new Map<number, number>();
   for (let index = 0; index < result.codes.length; index += 1) {
@@ -527,23 +632,23 @@ export async function scanParquetByFeatureCodesInWorker(
   matchedRows: number;
   scannedRows: number;
 } | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
     return null;
   }
   if (!input.parts?.length && !input.rowGroups?.length && !input.streamUrl) {
     return null;
   }
-  const request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'scanParquetByFeatureCodes' }> = {
     type: 'scanParquetByFeatureCodes',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'columnarScan') {
-    throw new Error('Unexpected points worker response for scanParquetByFeatureCodes');
+    throw new Error('Unexpected parquet worker response for scanParquetByFeatureCodes');
   }
   return {
     data: columnarDataFromWorkerResult(result),
@@ -564,20 +669,20 @@ export type ScanMortonRowGroupsInBoundsInput = {
 export async function scanMortonRowGroupsInBoundsInWorker(
   input: ScanMortonRowGroupsInBoundsInput
 ): Promise<PointsColumnarData | null> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled() || input.rowGroups.length === 0) {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled() || input.rowGroups.length === 0) {
     return null;
   }
-  const request: Extract<PointsWorkerRequest, { type: 'scanMortonRowGroupsInBounds' }> = {
+  const request: Extract<ParquetWorkerRequest, { type: 'scanMortonRowGroupsInBounds' }> = {
     type: 'scanMortonRowGroupsInBounds',
     ...input,
   };
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>(
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
     request,
     transferablesForRequest(request)
   );
   if (result.kind !== 'columnar') {
-    throw new Error('Unexpected points worker response for scanMortonRowGroupsInBounds');
+    throw new Error('Unexpected parquet worker response for scanMortonRowGroupsInBounds');
   }
   return columnarDataFromWorkerResult(result);
 }
@@ -587,18 +692,18 @@ export async function decodeParquetPartsInWorker(
   columns?: string[],
   maxRows?: number
 ): Promise<ReturnType<typeof tableFromIPC>> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
-    throw new Error('Points worker is required for decodeParquetPartsInWorker');
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
+    throw new Error('Parquet worker is required for decodeParquetPartsInWorker');
   }
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>({
     type: 'decodeParquetParts',
     parts,
     columns,
     maxRows,
   });
   if (result.kind !== 'parquetTable') {
-    throw new Error('Unexpected points worker response for decodeParquetParts');
+    throw new Error('Unexpected parquet worker response for decodeParquetParts');
   }
   return tableFromIPC(result.tableIpc);
 }
@@ -607,17 +712,17 @@ export async function buildFeatureCatalogInWorker(
   featureKey: string,
   tableIpc: Uint8Array
 ): Promise<PointsFeatureCatalog> {
-  ensurePointsWorker();
-  if (!isPointsWorkerEnabled()) {
-    throw new Error('Points worker is required for buildFeatureCatalogInWorker');
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
+    throw new Error('Parquet worker is required for buildFeatureCatalogInWorker');
   }
-  const result = await postRequest<Extract<PointsWorkerResponse, { ok: true }>['result']>({
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>({
     type: 'buildFeatureCatalog',
     featureKey,
     tableIpc,
   });
   if (result.kind !== 'catalog') {
-    throw new Error('Unexpected points worker response for buildFeatureCatalog');
+    throw new Error('Unexpected parquet worker response for buildFeatureCatalog');
   }
   return result.catalog;
 }

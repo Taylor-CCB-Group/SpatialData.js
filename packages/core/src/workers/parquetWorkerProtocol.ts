@@ -22,7 +22,7 @@ export type PointsBounds = {
   maxY: number;
 };
 
-export type PointsWorkerRequest =
+export type ParquetWorkerRequest =
   | {
       type: 'filterColumnarByFeatureCodes';
       xs: Float32Array;
@@ -136,7 +136,7 @@ export type PointsWorkerRequest =
       featureCodes?: readonly number[];
     }
   | {
-      // Shapes geometry decode. The points worker is host to this too — see
+      // Shapes geometry decode. The parquet worker is host to this too — see
       // `shapesGeometryDecode.ts`. If this generality holds the worker should be
       // renamed to a `parquet-worker`; deferred to avoid churning the points
       // worktree twice.
@@ -146,7 +146,7 @@ export type PointsWorkerRequest =
       geometryKind: 'polygon' | 'circle' | 'point';
     };
 
-export type PointsWorkerColumnarResult = {
+export type ParquetWorkerColumnarResult = {
   kind: 'columnar';
   shape: number[];
   xs: Float32Array;
@@ -155,18 +155,18 @@ export type PointsWorkerColumnarResult = {
   featureCodes?: Int32Array;
 };
 
-export type PointsWorkerScanResult = Omit<PointsWorkerColumnarResult, 'kind'> & {
+export type ParquetWorkerScanResult = Omit<ParquetWorkerColumnarResult, 'kind'> & {
   kind: 'columnarScan';
   matchedRows: number;
   scannedRows: number;
 };
 
-export type PointsWorkerResponse =
+export type ParquetWorkerResponse =
   | {
       ok: true;
       result:
-        | PointsWorkerColumnarResult
-        | PointsWorkerScanResult
+        | ParquetWorkerColumnarResult
+        | ParquetWorkerScanResult
         | {
             kind: 'geometryWithFeatures';
             shape: number[];
@@ -192,15 +192,15 @@ export type PointsWorkerResponse =
     }
   | { ok: false; error: string };
 
-export type PointsWorkerMessage = {
+export type ParquetWorkerMessage = {
   id: number;
 } & (
-  | { direction: 'request'; request: PointsWorkerRequest }
-  | { direction: 'response'; response: PointsWorkerResponse }
+  | { direction: 'request'; request: ParquetWorkerRequest }
+  | { direction: 'response'; response: ParquetWorkerResponse }
 );
 
 export function columnarDataFromWorkerResult(
-  result: PointsWorkerColumnarResult | PointsWorkerScanResult
+  result: ParquetWorkerColumnarResult | ParquetWorkerScanResult
 ): PointsColumnarData {
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
   const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;

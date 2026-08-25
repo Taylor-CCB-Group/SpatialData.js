@@ -61,8 +61,8 @@ describe('toSpatialEntryError — tier 2: the one quarantined recogniser', () =>
     expect(error.retryable).toBe(true);
   });
 
-  it('recognises the points-worker variant of the same message', () => {
-    const cause = new Error('parquet-wasm readParquetRowGroup is unavailable in points worker');
+  it('recognises the parquet-worker variant of the same message', () => {
+    const cause = new Error('parquet-wasm readParquetRowGroup is unavailable in parquet worker');
 
     expect(toSpatialEntryError(cause, ctx({ fallback: 'decode-failed' })).kind).toBe(
       'worker-unavailable'

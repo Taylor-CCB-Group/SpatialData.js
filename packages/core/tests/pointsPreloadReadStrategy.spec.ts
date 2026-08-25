@@ -1,7 +1,7 @@
 import { tableFromArrays } from 'apache-arrow';
 import { describe, expect, it, vi } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
-import * as pointsWorkerClient from '../src/workers/pointsWorkerClient.js';
+import * as parquetWorkerClient from '../src/workers/parquetWorkerClient.js';
 
 describe('points preload read strategy', () => {
   it('does not prefetch row-group bytes for geometry preload', async () => {
@@ -24,8 +24,8 @@ describe('points preload read strategy', () => {
     const rowGroupBytesSpy = vi.spyOn(source, 'readParquetRowGroupsBytesCapped');
     const payloadSpy = vi.spyOn(source, 'readParquetWorkerPayload');
 
-    vi.spyOn(pointsWorkerClient, 'isPointsWorkerEnabled').mockReturnValue(true);
-    vi.spyOn(pointsWorkerClient, 'decodeParquetGeometryCappedInWorker').mockResolvedValue({
+    vi.spyOn(parquetWorkerClient, 'isParquetWorkerEnabled').mockReturnValue(true);
+    vi.spyOn(parquetWorkerClient, 'decodeParquetGeometryCappedInWorker').mockResolvedValue({
       shape: [2, 100],
       data: [new Float32Array(100), new Float32Array(100)],
     });
@@ -53,7 +53,7 @@ describe('points preload read strategy', () => {
     });
     vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(100);
     vi.spyOn(source, 'canLoadParquetRowGroups').mockResolvedValue(true);
-    vi.spyOn(pointsWorkerClient, 'isPointsWorkerEnabled').mockReturnValue(false);
+    vi.spyOn(parquetWorkerClient, 'isParquetWorkerEnabled').mockReturnValue(false);
 
     const cappedSpy = vi.spyOn(source, 'loadParquetTableCapped').mockResolvedValue({
       table: tableFromArrays({

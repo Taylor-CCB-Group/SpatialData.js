@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
-import * as pointsWorkerClient from '../src/workers/pointsWorkerClient.js';
+import * as parquetWorkerClient from '../src/workers/parquetWorkerClient.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
@@ -428,12 +428,12 @@ PY`,
     expect([...featureCodes!]).toEqual([0, 0, 1, 1, 1, 2]);
   }, 120_000);
 
-  it('delegates row feature code decode to the points worker when enabled', async () => {
+  it('delegates row feature code decode to the parquet worker when enabled', async () => {
     const workerCodes = Int32Array.from([0, 1, 0, 1, 2]);
-    vi.spyOn(pointsWorkerClient, 'ensurePointsWorker').mockImplementation(() => {});
-    vi.spyOn(pointsWorkerClient, 'isPointsWorkerEnabled').mockReturnValue(true);
+    vi.spyOn(parquetWorkerClient, 'ensureParquetWorker').mockImplementation(() => {});
+    vi.spyOn(parquetWorkerClient, 'isParquetWorkerEnabled').mockReturnValue(true);
     const decodeSpy = vi
-      .spyOn(pointsWorkerClient, 'decodeParquetRowFeatureCodesInWorker')
+      .spyOn(parquetWorkerClient, 'decodeParquetRowFeatureCodesInWorker')
       .mockResolvedValue(workerCodes);
     vi.spyOn(source, 'canLoadParquetRowGroups').mockResolvedValue(false);
 
@@ -442,7 +442,7 @@ PY`,
     expect([...featureCodes!]).toEqual([...workerCodes]);
   });
 
-  it('delegates oversized feature catalog scan to the points worker when enabled', async () => {
+  it('delegates oversized feature catalog scan to the parquet worker when enabled', async () => {
     const workerCatalog = {
       featureKey: 'feature_name',
       entries: [
@@ -450,10 +450,10 @@ PY`,
         { code: 1, name: 'gene_b' },
       ],
     };
-    vi.spyOn(pointsWorkerClient, 'ensurePointsWorker').mockImplementation(() => {});
-    vi.spyOn(pointsWorkerClient, 'isPointsWorkerEnabled').mockReturnValue(true);
+    vi.spyOn(parquetWorkerClient, 'ensureParquetWorker').mockImplementation(() => {});
+    vi.spyOn(parquetWorkerClient, 'isParquetWorkerEnabled').mockReturnValue(true);
     const catalogSpy = vi
-      .spyOn(pointsWorkerClient, 'scanParquetFeatureCatalogInWorker')
+      .spyOn(parquetWorkerClient, 'scanParquetFeatureCatalogInWorker')
       .mockResolvedValue(workerCatalog);
     vi.spyOn(source, 'resolveParquetRowCount' as keyof SpatialDataPointsSource).mockResolvedValue(
       5_000_000

@@ -1,6 +1,6 @@
 import { tableFromArrays } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
-import { Float32PointBuffer, scanMortonTableInBounds } from '../src/workers/pointsWorkerScan.js';
+import { Float32PointBuffer, scanMortonTableInBounds } from '../src/workers/pointsScan.js';
 
 /**
  * The tiled scan filters by feature code using a column it looks up by name. If

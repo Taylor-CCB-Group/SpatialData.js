@@ -957,7 +957,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
         return null;
       }
       return {
-        // A COPY, deliberately. These chunks are posted to the points worker with
+        // A COPY, deliberately. These chunks are posted to the parquet worker with
         // their buffers TRANSFERRED, which detaches them here — so handing out the
         // cached metadata's own footer buffer would detach the cache on first use,
         // and every later row group would post an already-detached buffer
