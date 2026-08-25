@@ -58,10 +58,8 @@ export default defineConfig({
       ...packageRootAliases('zarrextra', distRoot('packages/zarrextra')),
       ...packageRootAliases('@spatialdata/avivatorish', distRoot('packages/avivatorish')),
       // Stands in for core's `exports` map, which this harness bypasses by aliasing
-      // package specifiers straight at `dist`. The vendored parquet-wasm glue is the
-      // one export that does not live there — core publishes it from `vendor/`, and
-      // the loader imports it by this subpath so a bundler can resolve it from
-      // wherever the chunk lands. Before the generic entry, which is prefix-matched.
+      // straight at `dist`. The parquet-wasm glue is the one export not published
+      // from there. Before the generic entry, which is prefix-matched.
       {
         find: '@spatialdata/core/parquet-wasm',
         replacement: path.join(workspaceRoot, 'packages/core/vendor/parquet-wasm/parquet_wasm.js'),

@@ -38,19 +38,12 @@ const rollupExternals = [
  * erased before rollup sees it. The first value import of a subpath would not be.
  */
 /**
- * The vendored parquet-wasm glue, named as the package subpath a consumer resolves.
+ * The vendored parquet-wasm glue, as the package subpath a consumer resolves.
  *
- * It must stay out of this bundle. `build.lib` inlines every asset regardless of
- * `assetsInlineLimit`, so bundling the glue turns its
- * `new URL('parquet_wasm_bg.wasm', import.meta.url)` into a base64 data URI — an
- * 8.8 MB chunk per output format, for a 6.6 MB wasm. External, the specifier
- * survives into the chunk verbatim and the *consumer's* bundler resolves it
- * through our `exports` map and emits the wasm as a real asset.
- *
- * It used to be reached by relative path (`../vendor/parquet-wasm/...`) behind a
- * `@vite-ignore`, which is the same thing spelled unresolvably: the comment
- * shipped, consumers skipped resolution, and the literal path 404d from `assets/`
- * in every production build (MDV#539). See `src/parquetWasmLoader.ts`.
+ * External on purpose: `build.lib` inlines every asset regardless of
+ * `assetsInlineLimit`, so bundling the glue turns its 6.6MB wasm into base64 in an
+ * 8.8MB chunk, per format. Left external, the consumer's bundler resolves it through
+ * our `exports` map and emits the wasm properly. See `src/parquetWasmLoader.ts`.
  */
 const VENDORED_PARQUET_WASM = '@spatialdata/core/parquet-wasm';
 

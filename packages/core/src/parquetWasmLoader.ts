@@ -170,29 +170,15 @@ function parquetModuleSupportsRowGroupReads(module: ParquetModule): boolean {
 }
 
 /**
- * Reach the vendored glue by *package subpath*, never by relative path.
+ * By package subpath, never by relative path: a consumer's bundler moves this chunk
+ * into its own `assets/`, where `../vendor/...` resolves to nothing (MDV#539). The
+ * subpath resolves through `exports` from wherever the chunk lands, and the bundler
+ * then follows the glue's `new URL('parquet_wasm_bg.wasm', import.meta.url)`.
  *
- * A relative specifier only resolves from the file that contains it, and a
- * consumer's bundler moves that file: core's dist chunk is inlined into the
- * app's `assets/` directory, where `../vendor/parquet-wasm/parquet_wasm.js`
- * points at `{root}/vendor/...` — nothing the build emitted. It 404s in every
- * production build while dev works, because the dev server happens to serve
- * core's `vendor/` tree straight out of node_modules (MDV#539).
- *
- * `@spatialdata/core/parquet-wasm` is resolved by the bundler through the
- * `exports` map instead, from wherever the importing chunk ends up. Vite,
- * webpack and rollup all then follow the glue's own
- * `new URL('parquet_wasm_bg.wasm', import.meta.url)` and emit the wasm as an
- * asset next to the app's other assets.
- *
- * There must be no `@vite-ignore` here. That comment survives into the published
- * chunk and tells the consumer's Vite to skip resolution — which is what left the
- * unresolvable relative path in the first place.
- *
- * Nor may this package bundle the glue itself: `build.lib` inlines every asset
- * regardless of `assetsInlineLimit`, so the 6.6 MB wasm comes back as a base64
- * data URI in an 8.8 MB chunk, once per output format. `vite.config.ts` keeps the
- * specifier external for that reason.
+ * No `@vite-ignore` — it survives into the published chunk and is what told
+ * consumers to skip resolution. And `vite.config.ts` keeps this external, because
+ * `build.lib` inlines assets regardless of size: bundled, the 6.6MB wasm comes back
+ * as base64 in an 8.8MB chunk, per format.
  */
 async function loadVendoredParquetModule(): Promise<ParquetModule> {
   const module: unknown = await import('@spatialdata/core/parquet-wasm');

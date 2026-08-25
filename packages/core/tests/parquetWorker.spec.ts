@@ -97,11 +97,7 @@ describe('parquet worker client', () => {
       vi.restoreAllMocks();
     });
 
-    /**
-     * A module worker whose URL 404s: one `error` event, then silence forever.
-     *
-     * Returns a live count of how many were constructed.
-     */
+    /** A worker whose URL 404s: one `error` event, then silence. Counts instances. */
     function installDeadOnArrivalWorker(): { count: number } {
       const constructed = { count: 0 };
       class DeadWorker {

@@ -1,13 +1,8 @@
 import { enableParquetWorker, isParquetWorkerEnabled } from '@spatialdata/core';
-// The documented consumer recipe, exercised against the built artifact. A bundled
-// application cannot use the no-argument form: the bundler inlines core's chunk into
-// its own output, so the runtime-relative `./parquet-worker.js` no longer resolves.
-// This import is what makes the worker's own bundle — including the parquet-wasm it
-// loads inside the worker, a second bundling context the main thread never
-// exercises — part of the application's build.
+// The documented consumer recipe. This import is what makes the worker's own bundle
+// — including the parquet-wasm it loads inside the worker — part of this build.
 import parquetWorkerUrl from '@spatialdata/core/parquet-worker?worker&url';
-// The `*InWorker` helpers live on the `/workers` entry; the enable/disable controls
-// are on the root one.
+// The `*InWorker` helpers live on `/workers`; the controls on the root entry.
 import { decodeShapesGeometryInWorker } from '@spatialdata/core/workers';
 import { useEffect, useState } from 'react';
 
@@ -17,13 +12,9 @@ const shapesParquetUrl = new URL(
 ).href;
 
 /**
- * Proves the published worker entry starts in a real consumer build and can decode.
- *
- * This is the scenario that would have caught SpatialData.js#148 (the worker entry
- * shipped as CommonJS, so `new Worker(url, { type: 'module' })` died on `require is
- * not defined`) and the parquet-wasm 404 that MDV#539 had to work around — the
- * worker resolves that wasm from inside its own bundle, a second bundling context
- * the main thread never exercises.
+ * Proves the published worker entry starts in a real consumer build and can decode:
+ * its module format (#148), its `exports` subpath, and the parquet-wasm it resolves
+ * inside its own bundle (MDV#539) — a context the main thread never exercises.
  */
 export function ParquetWorkerConsumer() {
   const [status, setStatus] = useState<string | null>(null);

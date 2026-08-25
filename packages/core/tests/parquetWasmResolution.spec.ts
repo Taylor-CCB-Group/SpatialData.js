@@ -1,19 +1,12 @@
 /**
  * Packaging guard: the vendored parquet-wasm glue must be reachable from a chunk
- * this package does not control the location of.
+ * whose location this package does not control.
  *
- * The loader used to import it by relative path behind a `/* @vite-ignore *\/`.
- * Both halves shipped: the comment told the consumer's bundler to skip resolution,
- * and the literal `../vendor/parquet-wasm/parquet_wasm.js` stayed in the chunk. A
- * consumer's build inlines that chunk into its own `assets/`, where the path means
- * `{root}/vendor/...` — a file no build emitted. Every production build 404d on it
- * while dev worked, because a dev server serves core's `vendor/` tree out of
- * node_modules (MDV#539 had to copy the tree into its output to compensate).
- *
- * The fix is a package subpath, `@spatialdata/core/parquet-wasm`, which resolves
- * through `exports` from wherever the chunk lands. These tests pin both ends: the
- * subpath really loads here, and nothing relative or `@vite-ignore`d is left in
- * what we publish.
+ * It used to be imported by relative path behind a `@vite-ignore`, and both halves
+ * shipped — so a consumer's build, which inlines that chunk into its own `assets/`,
+ * asked for a `vendor/` tree nothing emitted (MDV#539 copied it in to compensate).
+ * The fix is the `@spatialdata/core/parquet-wasm` subpath. These tests pin both
+ * ends: it really loads here, and nothing relative is left in what we publish.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

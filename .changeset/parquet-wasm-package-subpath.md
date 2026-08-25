@@ -7,22 +7,18 @@ consumer's production build.
 
 `@spatialdata/core/parquet-wasm` is now an export, and the loader imports it by that
 name. It used to reach the glue by relative path behind a `/* @vite-ignore */`, and
-both halves of that shipped: the comment told the consumer's bundler to skip
-resolution, and `../vendor/parquet-wasm/parquet_wasm.js` stayed in the published
-chunk. A consumer's build inlines that chunk into its own `assets/`, where the path
-means `{root}/vendor/…` — a file no build emitted. So every production build 404d on
-the first parquet read (shapes, points, tables) while dev worked, because a dev server
-serves core's `vendor/` tree straight out of node_modules. MDV had to copy the tree
-into its output to compensate (Taylor-CCB-Group/MDV#539); that workaround, and the
-identical one in this repo's own production-browser harness, can now be removed.
+both halves shipped: the comment told the consumer's bundler to skip resolution, and
+`../vendor/parquet-wasm/parquet_wasm.js` stayed in the published chunk. A consumer's
+build inlines that chunk into its own `assets/`, where the path means
+`{root}/vendor/…` — a file no build emitted. Every production build 404d on the first
+parquet read while dev worked, because a dev server serves core's `vendor/` tree out
+of node_modules. MDV had to copy that tree into its output (Taylor-CCB-Group/MDV#539);
+that workaround can go, along with the identical one in this repo's own
+production-browser harness.
 
-Resolving the subpath is the consumer bundler's job, so Vite, webpack and rollup all
-follow the glue's `new URL('parquet_wasm_bg.wasm', import.meta.url)` and emit the wasm
-as a hashed asset alongside the app's other assets — one copy per bundle, no vendor
-directory to serve. Note that deleting the `@vite-ignore` alone would not have been
-enough here: `build.lib` inlines every asset regardless of `assetsInlineLimit`, so
-bundling the glue into this package turns the 6.6 MB wasm into a base64 data URI in an
-8.8 MB chunk, once per output format. The specifier stays external for that reason.
+The consumer's bundler now resolves the subpath and emits the wasm as a hashed asset —
+one copy per bundle, no vendor directory to serve. Deleting the `@vite-ignore` alone
+would not have done it: `build.lib` inlines assets regardless of size, so bundling the
+glue here turns the 6.6MB wasm into base64 in an 8.8MB chunk, per format.
 
-The published package also drops its second copy of the wasm: `dist/vendor/` existed
-only to satisfy the relative path, and is no longer written.
+The published package also drops `dist/vendor/`, its second copy of the wasm.

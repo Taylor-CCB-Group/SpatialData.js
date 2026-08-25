@@ -53,19 +53,15 @@ function settlePending(id: number) {
 /**
  * Whether this worker has ever answered — the test for "did it actually load?".
  *
- * A module worker whose URL 404s fires one `error` event and then stays silent,
- * so without this every subsequent request would sit until its timeout while
- * `isParquetWorkerEnabled()` kept claiming the worker was there. Distinguishing
- * a dead-on-arrival worker from one that threw mid-request matters: the first is
- * a wiring mistake and the worker should be given up on, the second is one bad
- * request and the worker is probably still usable.
+ * A worker whose URL 404s fires one `error` event and is then silent forever, which
+ * has to be told apart from a live worker that threw on one request: the first is a
+ * wiring mistake to give up on, the second leaves the worker usable.
  */
 let workerHasAnswered = false;
 /**
- * Latch: a worker built from the default URL failed to load, so stop rebuilding it.
- *
- * Only `ensureParquetWorker` respects this — an explicit `enableParquetWorker()`
- * clears it, because the caller is presumably passing a different `workerUrl`.
+ * Latch: the worker failed to load, so `ensureParquetWorker` should stop rebuilding
+ * it. An explicit `enableParquetWorker()` clears it — the caller is presumably
+ * passing a different `workerUrl`.
  */
 let startupFailed = false;
 
@@ -101,18 +97,15 @@ function ensureWorkerListener() {
   worker.onerror = (event) => {
     const detail = event.message || 'Parquet worker error';
     if (workerHasAnswered) {
-      // A live worker threw. Reject what is in flight; every `*InWorker` helper
-      // falls back to the main thread on rejection, and the next request gets to
-      // try the worker again.
+      // A live worker threw: reject what is in flight (every `*InWorker` helper
+      // falls back on rejection) and let the next request try again.
       rejectAllPending(new Error(detail));
       return;
     }
-    // Never answered, so it never loaded — almost always a `workerUrl` that does
-    // not resolve to the published bundle. Give up on it rather than leave
-    // `isParquetWorkerEnabled()` returning true for a worker that cannot reply:
-    // callers with a main-thread fallback take it, and the one caller without a
-    // fallback (the feature-index scan) fails immediately with a real reason
-    // instead of hanging to its timeout.
+    // Never answered, so it never loaded — usually a `workerUrl` that does not
+    // resolve. Give up on it, rather than leave `isParquetWorkerEnabled()` true for
+    // a worker that cannot reply: callers then take their main-thread fallback, and
+    // the one caller without one fails immediately instead of hanging to a timeout.
     disableParquetWorker(
       new Error(
         `Parquet worker failed to start (${detail}); falling back to the main thread. ` +
@@ -120,8 +113,7 @@ function ensureWorkerListener() {
           'enableParquetWorker({ workerUrl }).'
       )
     );
-    // After the disable, which clears the latch as an explicit teardown should.
-    startupFailed = true;
+    startupFailed = true; // After the disable, which clears it.
     console.warn(
       `[@spatialdata/core] parquet worker failed to start (${detail}); ` +
         'continuing on the main thread. Pass enableParquetWorker({ workerUrl }) with a ' +
@@ -200,30 +192,17 @@ function transferablesForRequest(request: ParquetWorkerRequest): Transferable[] 
 }
 
 /**
- * The published worker bundle, `dist/parquet-worker.js`, resolved at runtime.
+ * The published `dist/parquet-worker.js`, resolved at runtime — correct wherever core
+ * is loaded as published ESM (dev server, import map, CDN). A bundled application
+ * must pass `workerUrl` instead; see {@link enableParquetWorker}.
  *
- * Correct wherever core is loaded as published ESM without being re-bundled — a dev
- * server, an import map, a CDN — because `dist/parquet-worker.js` really does sit
- * next to the chunk this runs in. A bundled application must pass `workerUrl`
- * instead; see {@link enableParquetWorker}.
- *
- * Two things here are deliberate, both measured rather than assumed:
- *
- * `@vite-ignore` stays. Without it, *this package's* lib build resolves the URL,
- * emits its own copy of the worker, and bakes an absolute
- * `/assets/parquet-worker-<hash>.js` into the published chunk — a path that exists
- * in no consumer's application.
- *
- * And the filename stays a literal, rather than the variable that
- * `zarrextra/workers` hides its codec-worker name behind (docs/worker-bundling).
- * That trick makes a consumer's bundler emit the published worker file as a static
- * asset, which works only for a *self-contained* worker. This one is not: the built
- * `parquet-worker.js` imports sibling chunks and bare `apache-arrow`, and copying it
- * as an asset produced an 11.5kB file whose every import 404s. Making it
- * self-contained would mean inlining the 6.6MB parquet-wasm into it. So a bundled
- * consumer needs its bundler to *build* the worker — `?worker&url` in Vite — and the
- * honest default here is the runtime-relative URL, plus the startup detection above
- * that turns a wrong guess into a main-thread fallback instead of a hang.
+ * Both details here were measured. `@vite-ignore` stays: without it *this* package's
+ * lib build resolves the URL and bakes an absolute `/assets/parquet-worker-<hash>.js`
+ * into the published chunk. And the filename stays a literal rather than the variable
+ * `zarrextra/workers` hides its worker name behind (docs/worker-bundling): that trick
+ * makes a consumer emit the published file as a *static asset*, which only works for
+ * a self-contained worker. This one imports sibling chunks and bare `apache-arrow`,
+ * so it emitted 11.5kB whose every import 404s.
  */
 function defaultWorkerUrl(): URL {
   return new URL(/* @vite-ignore */ './parquet-worker.js', import.meta.url);
@@ -237,21 +216,20 @@ export function isParquetWorkerEnabled(): boolean {
  * Start the parquet worker, moving parquet decodes and scans off the main thread.
  *
  * A bundled application passes `workerUrl`, and the import that produces it is what
- * makes the worker part of that application's build — including the parquet-wasm the
- * worker loads on its own side. In Vite:
+ * makes the worker part of that build — including the parquet-wasm the worker loads
+ * on its own side. In Vite:
  *
  * ```ts
  * import workerUrl from '@spatialdata/core/parquet-worker?worker&url';
  * enableParquetWorker({ workerUrl });
  * ```
  *
- * Omit it only where core is loaded as published ESM without being re-bundled (a dev
- * server, an import map, a CDN); see {@link defaultWorkerUrl}.
+ * Omit it only where core is not re-bundled; see {@link defaultWorkerUrl}.
  *
- * A worker that fails to load is detected and switched off rather than left to time
- * out, so a broken URL costs performance, not correctness — with one exception:
- * `loadPointsMatchingFeatureCodes` (the feature-index scan) has no main-thread
- * fallback and will throw. Gate any UI for it on {@link isParquetWorkerEnabled}.
+ * A worker that fails to load is switched off rather than left to time out, so a bad
+ * URL costs performance, not correctness — except for
+ * `loadPointsMatchingFeatureCodes`, which has no main-thread fallback and throws.
+ * Gate any UI for it on {@link isParquetWorkerEnabled}.
  */
 export function enableParquetWorker(options: { workerUrl?: string | URL } = {}) {
   if (typeof Worker === 'undefined') {
@@ -260,9 +238,7 @@ export function enableParquetWorker(options: { workerUrl?: string | URL } = {}) 
   if (worker) {
     disableParquetWorker();
   }
-  // An explicit call is a fresh attempt, even after a dead-on-arrival worker
-  // latched `ensureParquetWorker` off — the caller is presumably passing a URL
-  // that resolves this time.
+  // A fresh attempt, even after a dead worker latched `ensureParquetWorker` off.
   startupFailed = false;
   workerHasAnswered = false;
   if (options.workerUrl) {
@@ -283,8 +259,7 @@ function rejectAllPending(reason: Error) {
 
 export function disableParquetWorker(reason?: Error) {
   enabled = false;
-  // Teardown forgets everything learned about the worker that just went away; the
-  // startup-failure handler re-latches after calling this.
+  // Teardown forgets what was learned about the worker that just went away.
   startupFailed = false;
   workerHasAnswered = false;
   if (worker) {
