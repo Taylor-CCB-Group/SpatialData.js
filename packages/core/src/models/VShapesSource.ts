@@ -540,13 +540,24 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
     if (isParquetWorkerEnabled()) {
       const bytes = await this.loadParquetBytes(parquetPath);
       if (bytes) {
-        const decoded = await decodeShapesGeometryInWorker({
-          parts: [bytes.slice()],
-          geometryColumnName,
-          geometryKind,
-        });
-        if (decoded) {
-          return decoded;
+        // `null` means the worker was never available; a *rejection* means it was
+        // there and then wasn't — it timed out, died mid-request, or failed to
+        // start between the check above and the post. Both end in the same place,
+        // and only this branch can fail: a bad store read below is a real error.
+        try {
+          const decoded = await decodeShapesGeometryInWorker({
+            parts: [bytes.slice()],
+            geometryColumnName,
+            geometryKind,
+          });
+          if (decoded) {
+            return decoded;
+          }
+        } catch (error) {
+          console.warn(
+            `Worker shapes geometry decode failed for ${parquetPath}; falling back to main thread.`,
+            error
+          );
         }
       }
     }
