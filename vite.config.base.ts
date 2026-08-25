@@ -22,6 +22,18 @@ export function createWorkspaceSourceAliases(rootDir: string): WorkspaceAlias[] 
       find: '@spatialdata/avivatorish',
       replacement: path.resolve(rootDir, 'packages/avivatorish/src/index.ts'),
     },
+    // Before the bare `@spatialdata/core` entry: alias matching is first-wins and
+    // prefix-based, so that entry would otherwise rewrite this subpath to
+    // `packages/core/src/index.ts/parquet-wasm`. Same ordering trick as
+    // `zarrextra/workers` above.
+    //
+    // Not a source alias — the vendored parquet-wasm glue. Published consumers reach
+    // it through core's `exports` map; in-repo consumers bundle core from source, so
+    // they need the same subpath to land on the same file.
+    {
+      find: '@spatialdata/core/parquet-wasm',
+      replacement: path.resolve(rootDir, 'packages/core/vendor/parquet-wasm/parquet_wasm.js'),
+    },
     {
       find: '@spatialdata/core',
       replacement: path.resolve(rootDir, 'packages/core/src/index.ts'),

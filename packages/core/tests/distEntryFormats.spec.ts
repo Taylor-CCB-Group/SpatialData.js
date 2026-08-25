@@ -49,8 +49,13 @@ describe('published entry formats', () => {
     expect(packageJson.type).toBe('module');
   });
 
-  it('names at least the three known entries', () => {
-    expect(Object.keys(packageJson.exports).sort()).toEqual(['.', './points-worker', './workers']);
+  it('names at least the four known entries', () => {
+    expect(Object.keys(packageJson.exports).sort()).toEqual([
+      '.',
+      './parquet-wasm',
+      './points-worker',
+      './workers',
+    ]);
   });
 
   for (const { subpath, condition, file } of targets) {

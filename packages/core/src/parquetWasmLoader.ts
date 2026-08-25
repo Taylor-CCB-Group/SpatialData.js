@@ -169,11 +169,33 @@ function parquetModuleSupportsRowGroupReads(module: ParquetModule): boolean {
   );
 }
 
+/**
+ * Reach the vendored glue by *package subpath*, never by relative path.
+ *
+ * A relative specifier only resolves from the file that contains it, and a
+ * consumer's bundler moves that file: core's dist chunk is inlined into the
+ * app's `assets/` directory, where `../vendor/parquet-wasm/parquet_wasm.js`
+ * points at `{root}/vendor/...` — nothing the build emitted. It 404s in every
+ * production build while dev works, because the dev server happens to serve
+ * core's `vendor/` tree straight out of node_modules (MDV#539).
+ *
+ * `@spatialdata/core/parquet-wasm` is resolved by the bundler through the
+ * `exports` map instead, from wherever the importing chunk ends up. Vite,
+ * webpack and rollup all then follow the glue's own
+ * `new URL('parquet_wasm_bg.wasm', import.meta.url)` and emit the wasm as an
+ * asset next to the app's other assets.
+ *
+ * There must be no `@vite-ignore` here. That comment survives into the published
+ * chunk and tells the consumer's Vite to skip resolution — which is what left the
+ * unresolvable relative path in the first place.
+ *
+ * Nor may this package bundle the glue itself: `build.lib` inlines every asset
+ * regardless of `assetsInlineLimit`, so the 6.6 MB wasm comes back as a base64
+ * data URI in an 8.8 MB chunk, once per output format. `vite.config.ts` keeps the
+ * specifier external for that reason.
+ */
 async function loadVendoredParquetModule(): Promise<ParquetModule> {
-  const module: unknown = await import(
-    /* @vite-ignore */
-    '../vendor/parquet-wasm/parquet_wasm.js'
-  );
+  const module: unknown = await import('@spatialdata/core/parquet-wasm');
   await initializeParquetModule(module);
   const normalized = normalizeParquetModule(module);
   if (!parquetModuleSupportsRowGroupReads(normalized)) {

@@ -5,7 +5,8 @@
     "lib": ["ES2022", "WebWorker", "DOM"],
     "moduleResolution": "bundler",
     "paths": {
-      "zarrextra": ["../zarrextra/dist/index.d.ts"]
+      "zarrextra": ["../zarrextra/dist/index.d.ts"],
+      "@spatialdata/core/parquet-wasm": ["./vendor/parquet-wasm/parquet_wasm.d.ts"]
     },
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,

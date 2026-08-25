@@ -1,4 +1,3 @@
-import { cpSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { createWorkspaceSourceAliases } from '../../vite.config.base';
@@ -38,6 +37,23 @@ const rollupExternals = [
  * `apache-arrow/vector` is imported here already, but only as a type, so it is
  * erased before rollup sees it. The first value import of a subpath would not be.
  */
+/**
+ * The vendored parquet-wasm glue, named as the package subpath a consumer resolves.
+ *
+ * It must stay out of this bundle. `build.lib` inlines every asset regardless of
+ * `assetsInlineLimit`, so bundling the glue turns its
+ * `new URL('parquet_wasm_bg.wasm', import.meta.url)` into a base64 data URI — an
+ * 8.8 MB chunk per output format, for a 6.6 MB wasm. External, the specifier
+ * survives into the chunk verbatim and the *consumer's* bundler resolves it
+ * through our `exports` map and emits the wasm as a real asset.
+ *
+ * It used to be reached by relative path (`../vendor/parquet-wasm/...`) behind a
+ * `@vite-ignore`, which is the same thing spelled unresolvably: the comment
+ * shipped, consumers skipped resolution, and the literal path 404d from `assets/`
+ * in every production build (MDV#539). See `src/parquetWasmLoader.ts`.
+ */
+const VENDORED_PARQUET_WASM = '@spatialdata/core/parquet-wasm';
+
 const isExternalPackage = (id: string) =>
   rollupExternals.some((name) => id === name || id.startsWith(`${name}/`));
 
@@ -75,39 +91,11 @@ export default defineConfig({
       fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: (id) => {
-        const normalizedId = id.replace(/\\/g, '/');
-        if (normalizedId.includes('vendor/parquet-wasm/parquet_wasm.js')) {
-          return true;
-        }
-        return isExternalPackage(id);
-      },
+      external: (id) => id === VENDORED_PARQUET_WASM || isExternalPackage(id),
     },
     sourcemap: true,
     target: 'es2020',
   },
-  plugins: [
-    {
-      name: 'externalize-vendored-parquet-wasm',
-      resolveId(source) {
-        const normalizedSource = source.replace(/\\/g, '/');
-        if (normalizedSource.includes('vendor/parquet-wasm/parquet_wasm.js')) {
-          return { id: source, external: true };
-        }
-        return null;
-      },
-    },
-    {
-      name: 'copy-vendored-parquet-wasm',
-      closeBundle() {
-        cpSync(
-          resolve(__dirname, 'vendor/parquet-wasm'),
-          resolve(__dirname, 'dist/vendor/parquet-wasm'),
-          { recursive: true }
-        );
-      },
-    },
-  ],
   test: {
     globals: true,
     environment: 'node',

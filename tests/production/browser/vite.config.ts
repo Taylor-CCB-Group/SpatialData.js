@@ -1,4 +1,3 @@
-import { cpSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import react from '@vitejs/plugin-react';
@@ -39,22 +38,10 @@ const fixtureProxy = {
       ? requestPath.replace('/shapes.parquet/part.0.parquet', '/shapes.parquet')
       : requestPath,
 };
-const coreVendorDir = path.join(workspaceRoot, 'packages/core/dist/vendor');
 
 export default defineConfig({
   root: testRoot,
-  plugins: [
-    react(),
-    {
-      name: 'copy-core-parquet-wasm',
-      writeBundle() {
-        // `@spatialdata/core` publishes this vendored dynamic-import asset. Vite
-        // cannot discover the intentionally @vite-ignore import, so a consumer
-        // application must make it available at the URL used by the built module.
-        cpSync(coreVendorDir, path.join(testRoot, 'dist/vendor'), { recursive: true });
-      },
-    },
-  ],
+  plugins: [react()],
   build: {
     // The consumer has one entry point. Keeping it in one chunk avoids a current
     // Rolldown cross-chunk panic in apache-arrow's WHATWG iterator re-export.
@@ -70,6 +57,15 @@ export default defineConfig({
       },
       ...packageRootAliases('zarrextra', distRoot('packages/zarrextra')),
       ...packageRootAliases('@spatialdata/avivatorish', distRoot('packages/avivatorish')),
+      // Stands in for core's `exports` map, which this harness bypasses by aliasing
+      // package specifiers straight at `dist`. The vendored parquet-wasm glue is the
+      // one export that does not live there — core publishes it from `vendor/`, and
+      // the loader imports it by this subpath so a bundler can resolve it from
+      // wherever the chunk lands. Before the generic entry, which is prefix-matched.
+      {
+        find: '@spatialdata/core/parquet-wasm',
+        replacement: path.join(workspaceRoot, 'packages/core/vendor/parquet-wasm/parquet_wasm.js'),
+      },
       ...packageRootAliases('@spatialdata/core', distRoot('packages/core')),
       ...packageRootAliases('@spatialdata/layers', distRoot('packages/layers')),
       { find: '@deck.gl/core', replacement: deckCoreRoot },
