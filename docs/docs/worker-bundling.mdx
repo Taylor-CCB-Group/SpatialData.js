@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 6
 ---
 
 # Worker bundling pattern
@@ -127,9 +127,11 @@ Whichever shape applies, detect a worker that never loads and fall back rather
 than leaving requests to time out — `parquetWorkerClient.ts` treats an `error`
 event from a worker that has never answered as "this was never wired up",
 switches the worker off so `isParquetWorkerEnabled()` stops claiming otherwise,
-and says so once on the console. See
-[Bundling core into an application](./core/bundling) for the consumer-facing side
-of this.
+and says so once on the console.
+
+The consumer-facing side of all this — including `ensureWorkers()`, which starts
+the codec and parquet workers together — is
+[Bundling into an application](./bundling).
 
 ## Worker implementation
 

@@ -24,5 +24,5 @@ main-thread fallbacks. A bad `workerUrl` now costs performance rather than a sta
 per request — except for `loadPointsMatchingFeatureCodes`, which has no fallback and
 throws immediately with a reason.
 
-New docs page, "Bundling core into an application", covers the one thing a consumer
-must configure.
+New docs page, "Bundling into an application", covers the one thing a consumer must
+configure.

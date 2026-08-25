@@ -1,21 +1,19 @@
-import { enableParquetWorker, setParquetWorkerRequestTimeout } from '@spatialdata/core';
+import { ensureWorkers } from '@spatialdata/vis';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-// Vite bundles the core parquet worker and hands us a runtime URL. Enabling it
-// moves the CPU-heavy work off the main thread so the UI stays responsive:
-//  - the codes-with-geometry preload decode (decodeGeometryWithFeatures) — the
-//    main thread only does async range-read fetches, the worker decodes;
-//  - the per-interaction batch filter (filterColumnarByFeatureCodes, transfers
-//    the resident batch — no file re-fetch).
-// A silent/misconfigured worker still falls back to the main thread via the
-// parquetWorkerClient request timeout. Large transcripts decodes can legitimately
-// run tens of seconds in the worker, so widen the timeout accordingly.
+// The worker's TS source, because the demo lives in the repo — a consumer imports
+// '@spatialdata/core/parquet-worker?worker&url' instead. Either way it is the import
+// that puts the worker in this build; see docs/docs/bundling.mdx.
 import parquetWorkerUrl from '../../../core/src/workers/parquet-worker.ts?worker&url';
 import App from './App';
 import './index.css';
 
-enableParquetWorker({ workerUrl: parquetWorkerUrl });
-setParquetWorkerRequestTimeout(120_000);
+// Moves the CPU-heavy work off the main thread: the codes-with-geometry preload
+// decode, and the per-interaction batch filter (which transfers the resident batch
+// rather than re-fetching). A large transcripts decode legitimately runs tens of
+// seconds in the worker, hence the widened timeout; on timeout the caller falls back
+// to the main thread rather than failing.
+ensureWorkers({ parquet: { workerUrl: parquetWorkerUrl, requestTimeoutMs: 120_000 } });
 
 const root = document.getElementById('root');
 if (!root) {

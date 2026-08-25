@@ -4,8 +4,8 @@ import {
   isHoverDuringDrag,
   normalizeDeckLayerId,
   resolveDeckPickLayerIds,
-  resolveHoverFeatureTooltip,
   resolveHoveredLabel,
+  resolveHoverFeatureTooltip,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
 
 describe('isHoverDuringDrag', () => {
@@ -450,7 +450,9 @@ describe('resolveHoveredLabel', () => {
 
   it('resolves nothing when the pick is not on a label', () => {
     // Nothing under the cursor at all — moving onto empty space or off the canvas.
-    expect(resolveHoveredLabel({ picked: false, layer: { id: 'labels:cells' } }, isLabels)).toBeNull();
+    expect(
+      resolveHoveredLabel({ picked: false, layer: { id: 'labels:cells' } }, isLabels)
+    ).toBeNull();
     // A different layer kind: a shapes pick must never light up a labels layer.
     expect(
       resolveHoveredLabel(
