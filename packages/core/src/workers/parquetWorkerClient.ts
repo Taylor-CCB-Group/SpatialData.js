@@ -236,8 +236,15 @@ export type EnableParquetWorkerOptions = {
  * a self-contained worker. This one imports sibling chunks and bare `apache-arrow`,
  * so it emitted 11.5kB whose every import 404s.
  */
-function defaultWorkerUrl(): URL {
-  return new URL(/* @vite-ignore */ './parquet-worker.js', import.meta.url);
+function defaultWorkerUrl(): URL | undefined {
+  // `import.meta` is replaced with `{}` in this package's CJS output, so there is no
+  // base to resolve against and `new URL(x, undefined)` throws `Invalid URL`. A CJS
+  // host has to pass `workerUrl` or `createWorker`; say so rather than throw.
+  const base: string | undefined = (import.meta as { url?: string }).url;
+  if (!base) {
+    return undefined;
+  }
+  return new URL(/* @vite-ignore */ './parquet-worker.js', base);
 }
 
 export function isParquetWorkerEnabled(): boolean {
@@ -278,7 +285,17 @@ export function enableParquetWorker(options: EnableParquetWorkerOptions = {}) {
   } else if (options.workerUrl) {
     worker = new Worker(options.workerUrl, { type: 'module' });
   } else {
-    worker = new Worker(defaultWorkerUrl(), { type: 'module' });
+    const url = defaultWorkerUrl();
+    if (!url) {
+      startupFailed = true;
+      console.warn(
+        '[@spatialdata/core] no default parquet worker URL is available in a CommonJS ' +
+          'build; pass enableParquetWorker({ workerUrl }) or ({ createWorker }). ' +
+          'Continuing on the main thread.'
+      );
+      return;
+    }
+    worker = new Worker(url, { type: 'module' });
   }
   ensureWorkerListener();
   enabled = true;
