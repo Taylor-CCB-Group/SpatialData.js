@@ -988,23 +988,22 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // the case where colour otherwise waits for a whole separate decode.
     //
     // Two implementations of the same stream, worker first. They produce the same
-    // result; the difference is only WHERE the parquet decode runs, and that
-    // difference is the point. The main-thread one drives `ParquetFile.stream()` and
-    // `tableFromIPC` on the UI thread. The worker one range-fetches and decodes
-    // off-thread and posts batches back, so the main thread only copies each batch
-    // into its accumulator.
+    // result; the difference is only WHERE the parquet decode runs. The main-thread
+    // one drives `ParquetFile.stream()` and `tableFromIPC` on the UI thread; the
+    // worker one range-fetches and decodes off-thread and posts batches back, so the
+    // main thread only copies each batch into its accumulator.
     //
-    // Measured on a 4-part Xenium transcripts element (12.2M rows, capped at 4M,
-    // 541-gene panel) in the docs demo: the main-thread stream reaches 4M rows at
-    // ~3.6s having spent ~2.8s of that window in long tasks — a thread ~78% busy —
-    // while the worker one delivers 62 batches and all 4M rows by ~1.6s for ~0.8s of
-    // long tasks. The load-phase blocking is the part this moves; total per-session
-    // blocking barely shifts, because what is left is downstream of the preload
-    // (feature-code settling, rendering 4M points, and the unvirtualized feature
-    // list of #172). On the wide panels where the reported freezes come from — 12k+
-    // features — the gap should be far larger, since the per-batch catalog rebuild
-    // this path used to do scales with the panel and is now memoised; that regime is
-    // NOT reproduced by any store to hand, so treat it as reasoning, not a reading.
+    // Measured in the docs demo on a 4.83M-row Xenium transcripts element with a
+    // 12,448-feature panel, capped at 4M rows. Main thread: the preload NEVER
+    // finishes — 543s of long tasks and still going at 9.4 minutes, in single tasks
+    // of 113s / 93s / 90s, with ZERO worker requests posted. Worker: 62 batches, 4M
+    // rows, done at 75s, in ~4.2s tasks.
+    //
+    // Necessary but not sufficient for that dataset. The feature column is a
+    // dictionary, so batch ONE already names all 12,448 features — every one of the
+    // 62 progress ticks then re-renders the unvirtualized feature list of #172
+    // (12,453 checkboxes in the DOM), which dominates what is left. There is no
+    // "before the catalog fills" window on this path to measure in.
     //
     // The main-thread version stays as the fallback rather than being deleted,
     // because it covers every host that has not wired a worker bundle — and because
