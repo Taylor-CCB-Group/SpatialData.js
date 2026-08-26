@@ -12,8 +12,11 @@ import type {
   ParquetWorkerMessage,
   ParquetWorkerRequest,
   ParquetWorkerResponse,
+  ParquetWorkerStreamChunk,
 } from './parquetWorkerProtocol.js';
+import { transferablesForStreamChunk } from './parquetWorkerProtocol.js';
 import {
+  appendFeatureCodesFromColumn,
   countFeatureCodesFromArray,
   decodeGeometryWithFeaturesFromPayload,
   decodeParquetPartsToTable,
@@ -602,7 +605,189 @@ async function handleDecodeShapesGeometry(
   };
 }
 
-async function handleRequest(request: ParquetWorkerRequest): Promise<ParquetWorkerResponse> {
+/**
+ * Cancellation flags for in-flight `streamGeometryWithFeatures` requests, keyed by
+ * the request id the stream is running under. A `cancelParquetStream` sets the flag
+ * and the stream loop stops before its next batch; without it a superseded preload
+ * keeps range-fetching a whole element nobody will read.
+ */
+const activeStreams = new Map<number, { cancelled: boolean }>();
+
+type StreamEmitter = (chunk: ParquetWorkerStreamChunk) => void;
+
+/** Copy one axis column's first `rows` values into a fresh transferable buffer. */
+function axisBatchValues(values: ArrayLike<number>, rows: number): Float32Array {
+  const out = new Float32Array(rows);
+  if (ArrayBuffer.isView(values)) {
+    // Typed source: one `set` (with the f64 -> f32 narrowing when needed) rather
+    // than a per-row JS loop.
+    out.set((values as unknown as Float32Array).subarray(0, rows));
+    return out;
+  }
+  for (let row = 0; row < rows; row += 1) {
+    out[row] = values[row];
+  }
+  return out;
+}
+
+/**
+ * The progressive geometry+colour preload, run end to end in the worker: range-fetch
+ * each part, decode batch by batch, and post every batch back as it lands.
+ *
+ * This is the same decode `VPointsSource.streamPointsWithFeaturesByUrl` performs on
+ * the main thread, moved here. It has to stay a decode-and-emit loop rather than a
+ * decode-then-return one, because the progressive paint is the reason that path is
+ * taken at all — a single whole-payload response would swap a blocked tab for a
+ * blank one.
+ *
+ * The accumulator stays on the MAIN thread (it owns the buffers the renderer reads),
+ * so each batch carries only its own rows plus deltas: the catalog entries first seen
+ * in this batch, and this batch's per-feature tallies. `codeToName` / `nameToCode`
+ * persist across batches and across parts, so a gene coloured in batch 1 keeps its
+ * code in batch 62 and the catalog always describes the codes actually written.
+ */
+async function handleStreamGeometryWithFeatures(
+  request: Extract<ParquetWorkerRequest, { type: 'streamGeometryWithFeatures' }>,
+  emit: StreamEmitter,
+  isCancelled: () => boolean
+): Promise<ParquetWorkerResponse> {
+  const { ParquetFile } = await getParquetModule();
+  if (!ParquetFile) {
+    return { ok: false, error: 'parquet-wasm ParquetFile is unavailable in this worker' };
+  }
+  const { partUrls, axisNames, featureKey, maxRows, batchSize } = request;
+  const axisCount = axisNames.length;
+  const codeToName = new Map<number, string>();
+  const nameToCode = new Map<string, number>();
+  let emitted = 0;
+  let sawFeatureColumn = true;
+
+  for (const [partIndex, url] of partUrls.entries()) {
+    if (emitted >= maxRows || isCancelled()) {
+      break;
+    }
+    const file = await ParquetFile.fromUrl(url);
+    const stream = await file.stream({
+      columns: [...axisNames, featureKey],
+      batchSize,
+    });
+    const reader = stream.getReader();
+    try {
+      for (;;) {
+        if (emitted >= maxRows || isCancelled()) {
+          break;
+        }
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        const table = tableFromIPC(value.intoIPCStream());
+        const rows = Math.min(table.numRows, maxRows - emitted);
+        if (rows <= 0) {
+          continue;
+        }
+        const featureColumn = table.getChild(featureKey);
+        if (!featureColumn) {
+          // The projection came back without the feature column, so nothing after
+          // this point can be coloured. End the stream rather than emit flat rows
+          // the caller would take for coloured ones.
+          sawFeatureColumn = false;
+          break;
+        }
+        const axes: Float32Array[] = [];
+        for (let axis = 0; axis < axisCount; axis += 1) {
+          const column = table.getChild(axisNames[axis]);
+          axes.push(
+            column
+              ? axisBatchValues(column.toArray() as ArrayLike<number>, rows)
+              : new Float32Array(rows)
+          );
+        }
+        const knownBefore = nameToCode.size;
+        const featureCodes = new Int32Array(rows);
+        const batchCounts = new Map<number, number>();
+        appendFeatureCodesFromColumn(
+          featureColumn,
+          rows,
+          codeToName,
+          nameToCode,
+          featureCodes,
+          batchCounts,
+          0
+        );
+        // Codes are handed out as `nameToCode.size`, so everything at or above the
+        // pre-batch size is new — no diffing of the whole catalog per batch.
+        const newFeatures: Array<{ code: number; name: string }> = [];
+        for (let code = knownBefore; code < nameToCode.size; code += 1) {
+          const name = codeToName.get(code);
+          if (name !== undefined) {
+            newFeatures.push({ code, name });
+          }
+        }
+        const tallyCodes = new Int32Array(batchCounts.size);
+        const tallyCounts = new Uint32Array(batchCounts.size);
+        let tallyIndex = 0;
+        for (const [code, count] of batchCounts) {
+          tallyCodes[tallyIndex] = code;
+          tallyCounts[tallyIndex] = count;
+          tallyIndex += 1;
+        }
+        emitted += rows;
+        if (isCancelled()) {
+          // Cancelled while this batch decoded: the caller has already settled and
+          // stopped listening, so posting would only be dropped on arrival.
+          break;
+        }
+        emit({
+          kind: 'geometryWithFeaturesBatch',
+          partIndex,
+          partCount: partUrls.length,
+          rows,
+          axes,
+          featureCodes,
+          newFeatures,
+          tallyCodes,
+          tallyCounts,
+        });
+      }
+    } finally {
+      // Covers both endings: on a stream that ran to completion this resolves and
+      // releases the lock, and on an early break it also stops the reader's
+      // outstanding range requests.
+      try {
+        await reader.cancel();
+      } catch {
+        /* the stream is already gone */
+      }
+    }
+    if (!sawFeatureColumn) {
+      break;
+    }
+  }
+
+  if (isCancelled()) {
+    return { ok: true, result: { kind: 'streamCancelled' } };
+  }
+  return {
+    ok: true,
+    result: { kind: 'geometryWithFeaturesStreamEnd', rows: emitted, sawFeatureColumn },
+  };
+}
+
+function handleCancelParquetStream(
+  request: Extract<ParquetWorkerRequest, { type: 'cancelParquetStream' }>
+): ParquetWorkerResponse {
+  const target = activeStreams.get(request.streamRequestId);
+  if (target) {
+    target.cancelled = true;
+  }
+  return { ok: true, result: { kind: 'streamCancelled' } };
+}
+
+async function handleRequest(
+  request: ParquetWorkerRequest,
+  context: { emit: StreamEmitter; isCancelled: () => boolean }
+): Promise<ParquetWorkerResponse> {
   switch (request.type) {
     case 'filterColumnarByFeatureCodes':
       return handleFilterColumnar(request);
@@ -628,6 +813,10 @@ async function handleRequest(request: ParquetWorkerRequest): Promise<ParquetWork
       return handleScanMortonRowGroupsInBounds(request);
     case 'decodeShapesGeometry':
       return handleDecodeShapesGeometry(request);
+    case 'streamGeometryWithFeatures':
+      return handleStreamGeometryWithFeatures(request, context.emit, context.isCancelled);
+    case 'cancelParquetStream':
+      return handleCancelParquetStream(request);
     default: {
       const _exhaustive: never = request;
       return { ok: false, error: `Unknown request type: ${String(_exhaustive)}` };
@@ -640,7 +829,19 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
   if (message.direction !== 'request') {
     return;
   }
-  void handleRequest(message.request)
+  // Only streaming requests can be cancelled, so only they get a registry entry —
+  // an entry per request would be a leak on the ~thousands of ordinary decodes a
+  // session runs.
+  const isStreaming = message.request.type === 'streamGeometryWithFeatures';
+  const state = { cancelled: false };
+  if (isStreaming) {
+    activeStreams.set(message.id, state);
+  }
+  const emit: StreamEmitter = (chunk) => {
+    const interim: ParquetWorkerMessage = { id: message.id, direction: 'stream', chunk };
+    self.postMessage(interim, transferablesForStreamChunk(chunk));
+  };
+  void handleRequest(message.request, { emit, isCancelled: () => state.cancelled })
     .then((response) => {
       const reply: ParquetWorkerMessage = { id: message.id, direction: 'response', response };
       const transferables: Transferable[] = [];
@@ -693,5 +894,10 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
         },
       };
       self.postMessage(reply);
+    })
+    .finally(() => {
+      if (isStreaming) {
+        activeStreams.delete(message.id);
+      }
     });
 };
