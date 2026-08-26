@@ -9,19 +9,35 @@ import {
   type ParquetWorkerPayload,
   type ParquetWorkerRequest,
   type ParquetWorkerResponse,
+  type ParquetWorkerStreamChunk,
   type PointsBounds,
 } from './parquetWorkerProtocol.js';
 
 let worker: Worker | undefined;
 let nextRequestId = 0;
-const pending = new Map<
-  number,
-  {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-    timeout?: ReturnType<typeof setTimeout>;
-  }
->();
+
+type PendingRequest = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timeout?: ReturnType<typeof setTimeout>;
+  /**
+   * Set only for a STREAMING request. Its presence is what makes an interim
+   * message legal for this id — and what tells the timeout and the abort path to
+   * send the worker a cancel, since a stream it is not told about keeps fetching.
+   */
+  onChunk?: (chunk: ParquetWorkerStreamChunk) => void;
+  /**
+   * Whether any interim chunk has been delivered. A stream that fails after this
+   * has already handed the caller usable rows, so the failure is not equivalent
+   * to one that failed before producing anything — see the note on
+   * {@link streamGeometryWithFeaturesInWorker}.
+   */
+  deliveredChunk: boolean;
+  /** Detach the abort listener when the request settles, however it settles. */
+  removeAbortListener?: () => void;
+};
+
+const pending = new Map<number, PendingRequest>();
 
 // Safety net: if the worker was enabled but is not functionally wired (e.g. a
 // host points enableParquetWorker() at a URL that loads but whose module never
@@ -30,6 +46,14 @@ const pending = new Map<
 // thread (every *InWorker helper is wrapped in a try/catch fallback). Generous
 // by default because a working worker legitimately spends many seconds decoding
 // large parquet; the timeout is meant to catch a *silent* worker, not a slow one.
+//
+// It measures time SINCE THE LAST MESSAGE for this request, not time since the
+// request was posted. For the request/response types those are the same thing —
+// exactly one message ever arrives. For a stream they are not: a 4M-row preload
+// runs for minutes while posting a batch every few hundred ms, and a
+// time-since-posted budget would abandon a perfectly healthy stream mid-flight.
+// Re-arming per message keeps the meaning the comment above claims: catch a
+// worker that has gone silent, not one that is taking a while.
 let requestTimeoutMs = 30_000;
 
 /** Override the per-request worker timeout (ms). Set to 0/Infinity to disable. */
@@ -46,8 +70,67 @@ function settlePending(id: number) {
   if (entry.timeout !== undefined) {
     clearTimeout(entry.timeout);
   }
+  entry.removeAbortListener?.();
   pending.delete(id);
   return entry;
+}
+
+/**
+ * (Re)start the silence watchdog for a still-pending request. Called when the
+ * request is posted and again after every message it receives, so the budget is
+ * time-since-last-message; see {@link requestTimeoutMs}.
+ */
+function armTimeout(id: number) {
+  const entry = pending.get(id);
+  if (!entry) {
+    return;
+  }
+  if (entry.timeout !== undefined) {
+    clearTimeout(entry.timeout);
+    entry.timeout = undefined;
+  }
+  if (!(requestTimeoutMs > 0 && Number.isFinite(requestTimeoutMs))) {
+    return;
+  }
+  const budget = requestTimeoutMs;
+  entry.timeout = setTimeout(() => {
+    const stalled = settlePending(id);
+    if (!stalled) {
+      return;
+    }
+    if (stalled.onChunk) {
+      // Stop the worker fetching a payload nobody is left to receive.
+      cancelWorkerStream(id);
+    }
+    stalled.reject(
+      new Error(
+        stalled.deliveredChunk
+          ? `Parquet worker stream went quiet for ${budget}ms; falling back to the main thread`
+          : `Parquet worker did not respond within ${budget}ms; falling back to the main thread`
+      )
+    );
+  }, budget);
+}
+
+/**
+ * Ask the worker to abandon a stream, fire and forget.
+ *
+ * The cancel travels with a fresh id and registers no pending entry, so the
+ * worker's acknowledgement lands on an unknown id and is ignored. Awaiting it
+ * would only add a second request that can itself time out, on a path that is
+ * already giving up.
+ */
+function cancelWorkerStream(streamRequestId: number) {
+  const activeWorker = worker;
+  if (!activeWorker) {
+    return;
+  }
+  const message: ParquetWorkerMessage = {
+    id: ++nextRequestId,
+    direction: 'request',
+    request: { type: 'cancelParquetStream', streamRequestId },
+  };
+  activeWorker.postMessage(message);
 }
 
 /**
@@ -80,6 +163,32 @@ function ensureWorkerListener() {
   }
   worker.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
     const message = event.data;
+    if (message.direction === 'stream') {
+      workerHasAnswered = true;
+      // Deliberately `pending.get`, not `settlePending`: an interim message must
+      // leave the entry in place, because the terminal response is still to come.
+      // This is the whole difference between this protocol and the strict
+      // request/response one it grew out of.
+      const streaming = pending.get(message.id);
+      if (!streaming?.onChunk) {
+        // Either the request already settled (timed out, aborted, or the worker
+        // died) and a batch was in flight behind the cancel, or a non-streaming
+        // request somehow got one. Dropping it is right in both cases.
+        return;
+      }
+      streaming.deliveredChunk = true;
+      armTimeout(message.id);
+      try {
+        streaming.onChunk(message.chunk);
+      } catch (error) {
+        // The consumer threw on a batch, so it cannot use the rest of the stream.
+        settlePending(message.id)?.reject(
+          error instanceof Error ? error : new Error(String(error))
+        );
+        cancelWorkerStream(message.id);
+      }
+      return;
+    }
     if (message.direction !== 'response') {
       return;
     }
@@ -122,31 +231,56 @@ function ensureWorkerListener() {
   };
 }
 
+type PostRequestOptions = {
+  /** Provide to receive interim batches; see {@link PendingRequest.onChunk}. */
+  onChunk?: (chunk: ParquetWorkerStreamChunk) => void;
+  /**
+   * Abandon the request when this fires. For a stream that also posts a cancel,
+   * so a superseded load stops costing bandwidth in the worker rather than
+   * merely stopping being listened to.
+   */
+  signal?: AbortSignal;
+};
+
 function postRequest<T>(
   request: ParquetWorkerRequest,
-  transferables: Transferable[] = []
+  transferables: Transferable[] = [],
+  options: PostRequestOptions = {}
 ): Promise<T> {
   const activeWorker = worker;
   if (!activeWorker) {
     return Promise.reject(new Error('Parquet worker is not enabled'));
   }
+  const { signal } = options;
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
   const id = ++nextRequestId;
   return new Promise<T>((resolve, reject) => {
-    const entry: {
-      resolve: (value: unknown) => void;
-      reject: (error: Error) => void;
-      timeout?: ReturnType<typeof setTimeout>;
-    } = { resolve: resolve as (value: unknown) => void, reject };
-    if (requestTimeoutMs > 0 && Number.isFinite(requestTimeoutMs)) {
-      entry.timeout = setTimeout(() => {
-        settlePending(id)?.reject(
-          new Error(
-            `Parquet worker did not respond within ${requestTimeoutMs}ms; falling back to the main thread`
-          )
-        );
-      }, requestTimeoutMs);
-    }
+    const entry: PendingRequest = {
+      resolve: resolve as (value: unknown) => void,
+      reject,
+      deliveredChunk: false,
+      ...(options.onChunk ? { onChunk: options.onChunk } : {}),
+    };
     pending.set(id, entry);
+    if (signal) {
+      const onAbort = () => {
+        const aborted = settlePending(id);
+        if (!aborted) {
+          return;
+        }
+        if (aborted.onChunk) {
+          cancelWorkerStream(id);
+        }
+        aborted.reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      entry.removeAbortListener = () => {
+        signal.removeEventListener('abort', onAbort);
+      };
+    }
+    armTimeout(id);
     const message: ParquetWorkerMessage = { id, direction: 'request', request };
     if (transferables.length > 0) {
       activeWorker.postMessage(message, transferables);
@@ -563,6 +697,83 @@ export async function decodeGeometryWithFeaturesInWorker(
     ...(result.featureCodes ? { featureCodes: result.featureCodes } : {}),
     ...(result.featureCatalog ? { featureCatalog: result.featureCatalog } : {}),
   };
+}
+
+export type StreamGeometryWithFeaturesInput = {
+  /**
+   * Range-readable absolute URLs for the dataset's parts, in order. The CALLER
+   * establishes that they are servable (`canStreamParquetByUrl` plus a
+   * `serverSupportsStreamingRanges` probe per origin) — the worker cannot probe
+   * cheaply, and the reader panics rather than erroring on a refused range.
+   */
+  partUrls: string[];
+  axisNames: string[];
+  featureKey: string;
+  maxRows: number;
+  batchSize: number;
+  /** Superseded load: cancels the worker's fetching, not just our listening. */
+  signal?: AbortSignal;
+};
+
+export type StreamGeometryWithFeaturesEnd = {
+  /** Rows emitted across every batch — what the caller should have accumulated. */
+  rows: number;
+  /** False when a part's projection lacked the feature column; rows are uncoloured. */
+  sawFeatureColumn: boolean;
+};
+
+/**
+ * Progressive geometry+colour preload, decoded ENTIRELY in the worker.
+ *
+ * The worker range-fetches each part itself and posts batches back as it decodes
+ * them, so the main thread's only per-batch work is copying the batch into its
+ * accumulator. That is the point: the equivalent main-thread stream
+ * (`VPointsSource.streamPointsWithFeaturesByUrl`) keeps the progressive paint but
+ * does the parquet decode on the UI thread, which is where a 4M-row Xenium
+ * element's tens of seconds of long tasks come from.
+ *
+ * Returns null when the worker is off or there is nothing to read, matching the
+ * other `*InWorker` helpers — the caller falls through to the main-thread stream.
+ *
+ * ON FAILURE it REJECTS, even when batches were already delivered and painted.
+ * There is no partial-success return, deliberately: a truncated preload is
+ * indistinguishable to every downstream consumer from a complete one (they read
+ * `preloadTruncated` and the row cap, not "how far did the stream get"), so
+ * reporting one as success would silently drop points and skew the per-feature
+ * tallies. Rejecting sends the caller to the main-thread stream, which restarts
+ * from row 0 and re-paints over the partial — the worst case is the cost this
+ * whole path exists to avoid, which is exactly the status quo it replaced.
+ *
+ * Batches already handed to `onBatch` are therefore not a commitment. They are
+ * safe to have painted: each progress tick carries the catalog matching its own
+ * codes, so a later tick from a different code space is reconciled by the same
+ * `remapRowFeatureCodes` handoff that already spans preload and full scan.
+ */
+export async function streamGeometryWithFeaturesInWorker(
+  input: StreamGeometryWithFeaturesInput,
+  onBatch: (chunk: ParquetWorkerStreamChunk) => void
+): Promise<StreamGeometryWithFeaturesEnd | null> {
+  ensureParquetWorker();
+  if (!isParquetWorkerEnabled()) {
+    return null;
+  }
+  if (input.partUrls.length === 0 || input.maxRows <= 0) {
+    return null;
+  }
+  const { signal, ...rest } = input;
+  const request: Extract<ParquetWorkerRequest, { type: 'streamGeometryWithFeatures' }> = {
+    type: 'streamGeometryWithFeatures',
+    ...rest,
+  };
+  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
+    request,
+    [],
+    { onChunk: onBatch, ...(signal ? { signal } : {}) }
+  );
+  if (result.kind !== 'geometryWithFeaturesStreamEnd') {
+    throw new Error('Unexpected parquet worker response for streamGeometryWithFeatures');
+  }
+  return { rows: result.rows, sawFeatureColumn: result.sawFeatureColumn };
 }
 
 export type DecodeShapesGeometryInput = {

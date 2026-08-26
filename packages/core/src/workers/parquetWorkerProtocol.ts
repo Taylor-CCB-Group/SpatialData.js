@@ -136,6 +136,42 @@ export type ParquetWorkerRequest =
       featureCodes?: readonly number[];
     }
   | {
+      /**
+       * Progressive geometry+colour preload, streamed END TO END in the worker.
+       *
+       * The worker opens each part with `ParquetFile.fromUrl` and issues its own
+       * ranged fetches, so the caller ships URLs rather than bytes and never
+       * decodes. Batches come back as {@link ParquetWorkerStreamChunk} messages
+       * under this request's id, followed by one terminal response — the only
+       * request type in this protocol with more than one message per id.
+       *
+       * The caller resolves the URLs and vouches for the server (see
+       * `canStreamParquetByUrl` / `serverSupportsStreamingRanges`); the worker
+       * assumes both and fails the request if a URL will not open.
+       */
+      type: 'streamGeometryWithFeatures';
+      /** Absolute, range-readable URLs, in dataset part order. */
+      partUrls: string[];
+      axisNames: string[];
+      featureKey: string;
+      /** Stop once this many rows have been emitted, across all parts. */
+      maxRows: number;
+      /** Rows per emitted batch; the caller's `PRELOAD_STREAM_BATCH_ROWS`. */
+      batchSize: number;
+    }
+  | {
+      /**
+       * Stop a `streamGeometryWithFeatures` early — a superseded load, or a
+       * client-side timeout. Without it the worker keeps fetching a payload
+       * nobody will read.
+       *
+       * Carries the id of the stream to cancel, not its own: cancel travels as an
+       * ordinary request with a fresh id so it settles through the same path.
+       */
+      type: 'cancelParquetStream';
+      streamRequestId: number;
+    }
+  | {
       // Shapes geometry decode. The parquet worker is host to this too — see
       // `shapesGeometryDecode.ts`. If this generality holds the worker should be
       // renamed to a `parquet-worker`; deferred to avoid churning the points
@@ -145,6 +181,52 @@ export type ParquetWorkerRequest =
       geometryColumnName: string;
       geometryKind: 'polygon' | 'circle' | 'point';
     };
+
+/**
+ * One decoded batch of a {@link ParquetWorkerRequest} of type
+ * `streamGeometryWithFeatures`, posted while the request is still running.
+ *
+ * Deliberately a DELTA, not a snapshot: the accumulator lives on the main thread
+ * (it owns the buffers the renderer reads), so each batch carries only its own
+ * rows and only the catalog entries this batch was the first to see. Posting a
+ * growing snapshot instead would re-copy the whole preload once per batch —
+ * O(rows x batches) transfer for a 4M-row element.
+ *
+ * `axes` is one array per axis, in `axisNames` order, each of length `rows`; the
+ * buffers are transferred, so the worker must not retain them.
+ */
+export type ParquetWorkerStreamChunk = {
+  kind: 'geometryWithFeaturesBatch';
+  /** Index of the part this batch came from, and how many parts there are. */
+  partIndex: number;
+  partCount: number;
+  /** Rows in this batch — the length of every array below except the tallies. */
+  rows: number;
+  axes: Float32Array[];
+  featureCodes: Int32Array;
+  /**
+   * Catalog entries first assigned in this batch. Empty once the stream has seen
+   * every feature, which for a dictionary column is usually after batch one.
+   */
+  newFeatures: ReadonlyArray<{ code: number; name: string }>;
+  /**
+   * Per-feature row tallies FOR THIS BATCH, as parallel arrays over the codes the
+   * batch actually used. The main thread adds them into its running totals; a
+   * whole-tally snapshot per batch would be O(features x batches).
+   */
+  tallyCodes: Int32Array;
+  tallyCounts: Uint32Array;
+};
+
+/** Buffers to transfer with a stream chunk. */
+export function transferablesForStreamChunk(chunk: ParquetWorkerStreamChunk): Transferable[] {
+  return [
+    ...chunk.axes.map((axis) => axis.buffer),
+    chunk.featureCodes.buffer,
+    chunk.tallyCodes.buffer,
+    chunk.tallyCounts.buffer,
+  ];
+}
 
 export type ParquetWorkerColumnarResult = {
   kind: 'columnar';
@@ -176,6 +258,23 @@ export type ParquetWorkerResponse =
             featureCodes?: Int32Array;
             featureCatalog?: PointsFeatureCatalog;
           }
+        | {
+            /**
+             * Terminal message of a `streamGeometryWithFeatures` request: the
+             * rows are already on the main thread, so this only reports how the
+             * stream ended.
+             */
+            kind: 'geometryWithFeaturesStreamEnd';
+            /** Total rows emitted across every batch of this stream. */
+            rows: number;
+            /**
+             * False when a part's projection came back without the feature
+             * column, which is the one case where the emitted rows are NOT
+             * coloured and the caller has to settle codes separately.
+             */
+            sawFeatureColumn: boolean;
+          }
+        | { kind: 'streamCancelled' }
         | { kind: 'parquetTable'; tableIpc: Uint8Array }
         | { kind: 'catalog'; catalog: PointsFeatureCatalog }
         | { kind: 'rowFeatureCodes'; codes: Int32Array; numRows: number }
@@ -197,6 +296,13 @@ export type ParquetWorkerMessage = {
 } & (
   | { direction: 'request'; request: ParquetWorkerRequest }
   | { direction: 'response'; response: ParquetWorkerResponse }
+  /**
+   * An INTERIM message: more may follow under this id, and a `response` is still
+   * to come. Only `streamGeometryWithFeatures` produces these — every other
+   * request type posts exactly one `response` and nothing else, which is why a
+   * reader that ignores this direction still behaves correctly for them.
+   */
+  | { direction: 'stream'; chunk: ParquetWorkerStreamChunk }
 );
 
 export function columnarDataFromWorkerResult(

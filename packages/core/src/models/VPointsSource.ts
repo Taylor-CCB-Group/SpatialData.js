@@ -6,6 +6,7 @@ import {
 } from '../parquetFooterStats.js';
 import {
   buildFeatureCatalogFromColumns,
+  featureCatalogFromCodeMap,
   featureCodeMapFromCatalog,
   mergeFeatureCountsIntoCatalog,
   resolveRowFeatureCodesFromTable,
@@ -16,6 +17,7 @@ import type {
   PointsLoadProgress,
   PointsLoadResult,
 } from '../pointsLoadOptions.js';
+import { PointsStreamAccumulator } from '../pointsStreamAccumulator.js';
 import { basename } from '../Vutils';
 import {
   decodeGeometryWithFeaturesInWorker,
@@ -27,7 +29,9 @@ import {
   scanParquetByFeatureCodesInWorker,
   scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
+  streamGeometryWithFeaturesInWorker,
 } from '../workers/parquetWorkerClient.js';
+import { appendFeatureCodesFromColumn } from '../workers/pointsScan.js';
 
 interface ColumnarPointsChunk {
   shape: number[];
@@ -287,20 +291,6 @@ const FEATURE_STREAM_BATCH_ROWS = 16_384;
 const PRELOAD_STREAM_BATCH_ROWS = 65_536;
 
 /**
- * Assign a code to each row of one feature-column batch, appending into `codeBuffer`
- * at `offset` and tallying into `codeCounts`.
- *
- * Codes are allocated on first sight via the shared `nameToCode`, so they stay
- * stable for the whole stream — a gene coloured in batch 1 keeps its code in batch
- * 62, and `codeToName` always describes the codes actually written. For a
- * dictionary chunk that means dictionary order, not row order; the caller documents
- * why that is fine.
- *
- * A DICTIONARY column resolves its values once per chunk and maps raw indices;
- * asking the vector per row would materialise a JS string per point (~59s for 4M
- * rows) instead of once per distinct feature. See `resolveRowFeatureCodesFromTable`.
- */
-/**
  * Add this batch's per-feature row counts into `counts`, resolving names through
  * the already-populated `nameToCode`.
  *
@@ -359,58 +349,6 @@ export function tallyFeatureCodesFromColumn(
       }
     }
     seen += take;
-    chunkStart += chunk.length;
-  }
-}
-
-function appendFeatureCodesFromColumn(
-  column: Vector,
-  rows: number,
-  codeToName: Map<number, string>,
-  nameToCode: Map<string, number>,
-  codeBuffer: Int32Array,
-  codeCounts: Map<number, number>,
-  offset: number
-): void {
-  const codeFor = (name: string): number => {
-    let code = nameToCode.get(name);
-    if (code === undefined) {
-      code = nameToCode.size;
-      nameToCode.set(name, code);
-      codeToName.set(code, name);
-    }
-    return code;
-  };
-  let written = 0;
-  let chunkStart = 0;
-  for (const chunk of column.data) {
-    if (written >= rows) {
-      break;
-    }
-    const take = Math.min(chunk.length, rows - written);
-    const dictionary = chunk.dictionary;
-    if (dictionary && chunk.nullCount === 0) {
-      const codeByIndex = new Int32Array(dictionary.length);
-      for (let index = 0; index < dictionary.length; index += 1) {
-        const name = dictionary.get(index);
-        codeByIndex[index] = name == null ? -1 : codeFor(String(name));
-      }
-      const indices = chunk.values as ArrayLike<number>;
-      for (let row = 0; row < take; row += 1) {
-        const index = indices[row];
-        const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
-        codeBuffer[offset + written + row] = code;
-        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
-      }
-    } else {
-      for (let row = 0; row < take; row += 1) {
-        const value = column.get(chunkStart + row);
-        const code = value == null ? -1 : codeFor(String(value));
-        codeBuffer[offset + written + row] = code;
-        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
-      }
-    }
-    written += take;
     chunkStart += chunk.length;
   }
 }
@@ -609,6 +547,41 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * reads, worker disabled, nothing decoded) so the caller falls back to one-shot.
    */
   /**
+   * Range-readable URLs for every part of this element's parquet, or null if any
+   * link in the chain will not serve a stream.
+   *
+   * All four bails matter and none of them is a failure: no `ParquetFile` in this
+   * runtime (Node, and any build without it), no dataset metadata, a part whose
+   * store path is not an http(s) URL (a file:/blob:/custom-scheme store), or an
+   * origin that refuses the suffix and bounded ranges the reader needs. Callers
+   * fall through to a byte-oriented path in every case.
+   *
+   * Shared by the main-thread stream and the worker one so the two agree on
+   * exactly when streaming is possible — the worker cannot make this judgement
+   * itself (the per-origin range probe is cached here, and a refused range makes
+   * the reader panic rather than throw).
+   */
+  private async resolveStreamablePartUrls(parquetPath: string): Promise<string[] | null> {
+    if (!(await this.canStreamParquetByUrl())) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    const partPaths = dataset?.parts.map((part) => part.path);
+    if (!partPaths || partPaths.length === 0) {
+      return null;
+    }
+    const partUrls: string[] = [];
+    for (const partPath of partPaths) {
+      const url = this.resolveStoreUrl(partPath);
+      if (!url || !(await this.serverSupportsStreamingRanges(url))) {
+        return null;
+      }
+      partUrls.push(url);
+    }
+    return partUrls;
+  }
+
+  /**
    * Progressive preload that streams geometry AND colour together.
    *
    * The row-group preload below cannot read a DICTIONARY-typed `feature_name`, so
@@ -653,21 +626,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       signal?: AbortSignal;
     }
   ): Promise<PointsLoadResult | null> {
-    if (!(await this.canStreamParquetByUrl())) {
+    const partUrls = await this.resolveStreamablePartUrls(parquetPath);
+    if (!partUrls) {
       return null;
-    }
-    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
-    const partPaths = dataset?.parts.map((part) => part.path);
-    if (!partPaths || partPaths.length === 0) {
-      return null;
-    }
-    const partUrls: string[] = [];
-    for (const partPath of partPaths) {
-      const url = this.resolveStoreUrl(partPath);
-      if (!url || !(await this.serverSupportsStreamingRanges(url))) {
-        return null;
-      }
-      partUrls.push(url);
     }
     const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
     if (!ParquetFile) {
@@ -677,7 +638,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const { axisNames, featureKey, maxRows } = options;
     const axisCount = axisNames.length;
     const { tableFromIPC } = await import('apache-arrow');
-    const { featureCatalogFromCodeMap } = await import('../pointsFeatures.js');
 
     // Preallocate once and append at a cursor; partials expose the filled prefix as
     // subarray VIEWS so emitting progress stays O(1).
@@ -764,6 +724,88 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
     return filled > 0 ? snapshot() : null;
+  }
+
+  /**
+   * The same progressive geometry+colour preload as
+   * {@link streamPointsWithFeaturesByUrl}, with the range-fetching AND the parquet
+   * decode moved into the worker.
+   *
+   * The main thread keeps only what it must own: the capability decision (see
+   * {@link resolveStreamablePartUrls}), the accumulator the renderer reads from, and
+   * the progress callback. Per batch it copies the batch's rows into that
+   * accumulator and merges two small deltas — no parquet decode, no dictionary walk,
+   * no string materialisation.
+   *
+   * Preserving the progressive paint is the whole reason this is a stream rather
+   * than one `decodeGeometryWithFeatures` request. A single whole-payload decode in
+   * the worker would keep the tab responsive but leave the canvas empty until the
+   * entire 23MB / 4M-row payload finished — trading a frozen tab for a blank one.
+   *
+   * Returns null when the worker is off or the store cannot stream, so the caller
+   * falls through to the main-thread stream. A failure PART WAY THROUGH rejects
+   * instead: see the contract note on `streamGeometryWithFeaturesInWorker` for why
+   * a partial is not reported as success.
+   */
+  private async streamPointsWithFeaturesInWorker(
+    parquetPath: string,
+    options: {
+      axisNames: string[];
+      featureKey: string;
+      maxRows: number;
+      totalRowCount: number;
+      preloadTruncated: boolean;
+      hasFeatureCodeColumn: boolean;
+      onProgress?: (progress: PointsLoadProgress) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<PointsLoadResult | null> {
+    ensureParquetWorker();
+    if (!isParquetWorkerEnabled()) {
+      return null;
+    }
+    const partUrls = await this.resolveStreamablePartUrls(parquetPath);
+    if (!partUrls) {
+      return null;
+    }
+
+    const { axisNames, featureKey, maxRows } = options;
+    const accumulator = new PointsStreamAccumulator({
+      axisCount: axisNames.length,
+      maxRows,
+      featureKey,
+      totalRowCount: options.totalRowCount,
+      preloadTruncated: options.preloadTruncated,
+      hasFeatureCodeColumn: options.hasFeatureCodeColumn,
+    });
+
+    const end = await streamGeometryWithFeaturesInWorker(
+      {
+        partUrls,
+        axisNames,
+        featureKey,
+        maxRows,
+        batchSize: PRELOAD_STREAM_BATCH_ROWS,
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+      (chunk) => {
+        if (accumulator.append(chunk) === 0) {
+          return;
+        }
+        options.onProgress?.({
+          // Unfiltered preload: every decoded row is kept, so scanned === matched.
+          scannedRows: accumulator.filled,
+          matchedRows: accumulator.filled,
+          partIndex: chunk.partIndex,
+          partCount: chunk.partCount,
+          partialResult: accumulator.snapshot(),
+        });
+      }
+    );
+    if (!end) {
+      return null;
+    }
+    return accumulator.filled > 0 ? accumulator.snapshot() : null;
   }
 
   private async streamPointsGeometryByRowGroup(
@@ -940,46 +982,69 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
 
-    // Progressive preload: stream geometry AND the feature column in the same
-    // batches, so points paint already coloured. Tried before the row-group path
-    // because that one cannot read a dictionary feature column at all — the case
-    // where colour otherwise waits for a whole separate decode.
+    // Preferred progressive preload: stream geometry AND the feature column in the
+    // same batches, so points paint already coloured. Tried before the row-group
+    // path below because that one cannot read a dictionary feature column at all —
+    // the case where colour otherwise waits for a whole separate decode.
     //
-    // WARNING: when this path is TAKEN it runs BEFORE the worker gate below and
-    // decodes ON THE MAIN THREAD. `streamPointsWithFeaturesByUrl` drives
-    // parquet-wasm's `ParquetFile` and `tableFromIPC` itself; only the per-batch
-    // *bookkeeping* after that is the dictionary lookup and typed-array copy this
-    // comment used to claim was all of it.
+    // Two implementations of the same stream, worker first. They produce the same
+    // result; the difference is only WHERE the parquet decode runs. The main-thread
+    // one drives `ParquetFile.stream()` and `tableFromIPC` on the UI thread; the
+    // worker one range-fetches and decodes off-thread and posts batches back, so the
+    // main thread only copies each batch into its accumulator.
     //
-    // It is taken only where the store can serve streaming range reads — see the
-    // four `return null` bails at the top of that method (no url-streaming support,
-    // no parts, a part whose URL will not range-read, no `ParquetFile`). Anywhere it
-    // bails, control falls through and the worker path below runs normally. So this
-    // is not "the worker is never used for points"; it is "on a store that supports
-    // streaming, an element with a feature key and a progress callback — the normal
-    // case for a coloured points layer — decodes its whole preload on the main
-    // thread, whether or not the worker is enabled".
+    // Measured in the docs demo on a 4.83M-row Xenium transcripts element with a
+    // 12,448-feature panel, capped at 4M rows. Main thread: the preload NEVER
+    // finishes — 543s of long tasks and still going at 9.4 minutes, in single tasks
+    // of 113s / 93s / 90s, with ZERO worker requests posted. Worker: 62 batches, 4M
+    // rows, done at 75s, in ~4.2s tasks.
     //
-    // Measured on such a store, a 4M-row capped preload of a 5-part Xenium
-    // transcripts element: five ~700ms decodes, ~4.4s of long tasks, zero
-    // `decodeParquetGeometryCapped` requests posted. Not a regression — this has
-    // been the shape since #89 — but it is why enabling the worker does not make
-    // that points layer stop blocking. Fixing it means decoding these batches in
-    // the worker; gating this path on the worker instead only trades a frozen tab
-    // for a blank one, since the progressive paint is what it buys. Neither is a
-    // drive-by. See the investigation in this branch before changing the order.
+    // Necessary but not sufficient for that dataset. The feature column is a
+    // dictionary, so batch ONE already names all 12,448 features — every one of the
+    // 62 progress ticks then re-renders the unvirtualized feature list of #172
+    // (12,453 checkboxes in the DOM), which dominates what is left. There is no
+    // "before the catalog fills" window on this path to measure in.
+    //
+    // The main-thread version stays as the fallback rather than being deleted,
+    // because it covers every host that has not wired a worker bundle — and because
+    // a stream that fails part way through restarts here from row 0 (see the
+    // contract note on `streamGeometryWithFeaturesInWorker`: a partial is never
+    // reported as success, since nothing downstream can tell a truncated preload
+    // from a complete one).
+    //
+    // What is NOT an option is gating this whole block on the worker and letting
+    // worker hosts take the one-shot `decodeGeometryWithFeatures` below instead.
+    // That keeps the tab responsive but shows nothing until the entire payload
+    // decodes — a frozen tab traded for a blank one, on the path whose entire value
+    // is that colour appears after the first batch.
     if (options.onProgress && featureKey) {
+      const streamOptions = {
+        axisNames,
+        featureKey,
+        maxRows,
+        totalRowCount: rowCount,
+        preloadTruncated: truncatePreload,
+        hasFeatureCodeColumn: featureCodeColumnName !== undefined,
+        onProgress: options.onProgress,
+        ...(options.signal ? { signal: options.signal } : {}),
+      };
       try {
-        const streamed = await this.streamPointsWithFeaturesByUrl(parquetPath, {
-          axisNames,
-          featureKey,
-          maxRows,
-          totalRowCount: rowCount,
-          preloadTruncated: truncatePreload,
-          hasFeatureCodeColumn: featureCodeColumnName !== undefined,
-          onProgress: options.onProgress,
-          ...(options.signal ? { signal: options.signal } : {}),
-        });
+        const streamed = await this.streamPointsWithFeaturesInWorker(parquetPath, streamOptions);
+        if (streamed?.featureCodes !== undefined) {
+          return streamed;
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
+        console.warn(
+          `Worker streaming points preload failed for ${elementPath}; ` +
+            'retrying on the main thread.',
+          error
+        );
+      }
+      try {
+        const streamed = await this.streamPointsWithFeaturesByUrl(parquetPath, streamOptions);
         if (streamed?.featureCodes !== undefined) {
           return streamed;
         }

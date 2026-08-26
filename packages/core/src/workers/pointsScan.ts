@@ -526,6 +526,77 @@ export function scanMortonTableInBounds(input: {
   }
 }
 
+/**
+ * Assign a code to each row of one feature-column batch, appending into `codeBuffer`
+ * at `offset` and tallying into `codeCounts`.
+ *
+ * Codes are allocated on first sight via the shared `nameToCode`, so they stay
+ * stable for the whole stream — a gene coloured in batch 1 keeps its code in batch
+ * 62, and `codeToName` always describes the codes actually written. For a
+ * dictionary chunk that means dictionary order, not row order; the caller documents
+ * why that is fine.
+ *
+ * Lives here rather than beside its main-thread caller because the worker's
+ * `streamGeometryWithFeatures` handler needs the identical accumulation — the two
+ * paths must assign the same codes for the same stream or the catalog they publish
+ * would not describe the codes they wrote.
+ *
+ * A DICTIONARY column resolves its values once per chunk and maps raw indices;
+ * asking the vector per row would materialise a JS string per point (~59s for 4M
+ * rows) instead of once per distinct feature. See `resolveRowFeatureCodesFromTable`.
+ */
+export function appendFeatureCodesFromColumn(
+  column: Vector,
+  rows: number,
+  codeToName: Map<number, string>,
+  nameToCode: Map<string, number>,
+  codeBuffer: Int32Array,
+  codeCounts: Map<number, number>,
+  offset: number
+): void {
+  const codeFor = (name: string): number => {
+    let code = nameToCode.get(name);
+    if (code === undefined) {
+      code = nameToCode.size;
+      nameToCode.set(name, code);
+      codeToName.set(code, name);
+    }
+    return code;
+  };
+  let written = 0;
+  let chunkStart = 0;
+  for (const chunk of column.data) {
+    if (written >= rows) {
+      break;
+    }
+    const take = Math.min(chunk.length, rows - written);
+    const dictionary = chunk.dictionary;
+    if (dictionary && chunk.nullCount === 0) {
+      const codeByIndex = new Int32Array(dictionary.length);
+      for (let index = 0; index < dictionary.length; index += 1) {
+        const name = dictionary.get(index);
+        codeByIndex[index] = name == null ? -1 : codeFor(String(name));
+      }
+      const indices = chunk.values as ArrayLike<number>;
+      for (let row = 0; row < take; row += 1) {
+        const index = indices[row];
+        const code = index >= 0 && index < codeByIndex.length ? codeByIndex[index] : -1;
+        codeBuffer[offset + written + row] = code;
+        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+      }
+    } else {
+      for (let row = 0; row < take; row += 1) {
+        const value = column.get(chunkStart + row);
+        const code = value == null ? -1 : codeFor(String(value));
+        codeBuffer[offset + written + row] = code;
+        codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+      }
+    }
+    written += take;
+    chunkStart += chunk.length;
+  }
+}
+
 export function extractRowFeatureCodesFromTable(
   table: Table,
   featureKey: string,
