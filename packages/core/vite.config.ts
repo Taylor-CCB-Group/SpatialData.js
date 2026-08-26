@@ -64,6 +64,12 @@ export default defineConfig({
   resolve: {
     alias: createWorkspaceSourceAliases(resolve(__dirname, '../..')),
   },
+  // NOTE: the cjs pass warns EMPTY_IMPORT_META twice, and that is expected. It
+  // replaces `import.meta` with `{}`, which both call sites now rely on: each reads
+  // `import.meta.url` into a variable and checks it, so `undefined` there means "no
+  // module URL in this build" rather than a crash. Rolldown's suggested
+  // `transform.define` suppression is not reachable through Vite's config in v8 —
+  // passing it here changes nothing — so the warning stays until it is.
   build: {
     lib: {
       entry: {

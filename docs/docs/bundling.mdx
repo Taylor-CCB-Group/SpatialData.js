@@ -117,11 +117,44 @@ upgrade.
 
 ## Other bundlers
 
-| Bundler       | How to get the worker URL                                                                                                                                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Vite / Rollup | `import workerUrl from '@spatialdata/core/parquet-worker?worker&url'` — verified in CI against a real production build                                                                                                        |
-| Others        | Use whatever your bundler provides for building a worker from a module (`new Worker(new URL(...))`, a worker rule, a plugin), then pass the URL it yields. Not exercised by our CI; check the worker and a `.wasm` both appear in your output. |
-| No bundler    | Nothing. `ensureWorkers()` with no `workerUrl` already resolves.                                                                                                                                                            |
+| Bundler       | How to wire it                                                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Vite / Rollup | `import workerUrl from '@spatialdata/core/parquet-worker?worker&url'`, then `ensureWorkers({ parquet: { workerUrl } })` — verified in CI against a real production build                                  |
+| webpack       | `createWorker` with a **local** entry file, below. This docs site does it, so every docs build exercises it.                                                                                             |
+| Others        | Whatever your bundler provides for building a worker from a module, then pass either a URL (`workerUrl`) or a factory (`createWorker`). Check the worker and a `.wasm` both appear in your output.        |
+| No bundler    | Nothing. `ensureWorkers()` with no options already resolves.                                                                                                                                            |
+
+### webpack, and `createWorker`
+
+webpack cannot hand you a URL for a *bundled* worker ahead of time: it only builds one
+when it can see the `new Worker(new URL(...))` form literally. So give it a factory
+instead of a URL:
+
+```ts
+ensureWorkers({
+  parquet: {
+    createWorker: () =>
+      new Worker(new URL('./parquetWorkerEntry.ts', import.meta.url), { type: 'module' }),
+  },
+});
+```
+
+That URL must point at a **local file in your own source**, which is one line:
+
+```ts
+// parquetWorkerEntry.ts
+import '@spatialdata/core/parquet-worker';
+```
+
+Pointing it straight at the bare specifier — `new URL('@spatialdata/core/parquet-worker',
+import.meta.url)` — does **not** work. webpack resolves it to core's published
+`dist/parquet-worker.js` and emits that file as a static asset, still carrying its
+relative imports to sibling chunks and a bare `apache-arrow`: 9 kB whose every import
+404s, the same shape of failure as copying the worker. Going through a local file makes
+webpack treat it as a worker entry and bundle the graph behind it.
+
+`createWorker` takes precedence over `workerUrl`. It is a factory rather than a `Worker`
+because enabling tears down and rebuilds — an instance could only be used once.
 
 ## Checking your build
 

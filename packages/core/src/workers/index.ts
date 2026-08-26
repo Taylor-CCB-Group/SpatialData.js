@@ -7,6 +7,7 @@ export {
   decodeParquetRowFeatureCodesInWorker,
   decodeShapesGeometryInWorker,
   disableParquetWorker,
+  type EnableParquetWorkerOptions,
   enableParquetWorker,
   ensureParquetWorker,
   filterColumnarByFeatureCodesInWorker,

@@ -15,6 +15,32 @@ export type EnsureParquetWorkerOptions = {
    */
   workerUrl?: string | URL;
   /**
+   * Build the Worker yourself, for bundlers that cannot hand back a URL for a
+   * *bundled* worker — webpack is the case this exists for. Takes precedence over
+   * {@link workerUrl}; see `enableParquetWorker` in core for the why.
+   *
+   * The URL must point at a one-line entry file in YOUR source, not at the bare
+   * `@spatialdata/core/parquet-worker` specifier — that makes webpack emit core's
+   * published worker entry as an unbundled static asset whose every import 404s.
+   *
+   * ```ts
+   * // parquetWorkerEntry.ts
+   * import '@spatialdata/core/parquet-worker';
+   * ```
+   *
+   * ```ts
+   * ensureWorkers({
+   *   parquet: {
+   *     createWorker: () =>
+   *       new Worker(new URL('./parquetWorkerEntry.ts', import.meta.url), {
+   *         type: 'module',
+   *       }),
+   *   },
+   * });
+   * ```
+   */
+  createWorker?: () => Worker;
+  /**
    * Per-request budget before a silent worker is treated as stuck and the caller
    * falls back to the main thread. Defaults to 30s; a large transcripts decode
    * legitimately runs longer than that.
@@ -51,7 +77,10 @@ function ensureParquetWorker(options: EnsureParquetWorkerOptions): boolean {
   }
   if (!parquetAttempted) {
     parquetAttempted = true;
-    enableParquetWorker({ workerUrl: options.workerUrl });
+    enableParquetWorker({
+      ...(options.workerUrl ? { workerUrl: options.workerUrl } : {}),
+      ...(options.createWorker ? { createWorker: options.createWorker } : {}),
+    });
     if (options.requestTimeoutMs !== undefined) {
       setParquetWorkerRequestTimeout(options.requestTimeoutMs);
     }

@@ -99,6 +99,7 @@ export * from './tooltip.js';
 export * from './types.js';
 export {
   disableParquetWorker,
+  type EnableParquetWorkerOptions,
   enableParquetWorker,
   ensureParquetWorker,
   filterColumnarByFeatureCodesInWorker,

@@ -144,14 +144,20 @@ async function initializeParquetModule(module: unknown) {
     process.versions?.node != null &&
     typeof window === 'undefined';
 
-  if (isNodeRuntime && typeof initSync === 'function') {
+  // No base URL, no disk path. This package's CJS output has `import.meta` replaced
+  // with `{}`, so `import.meta.url` is `undefined` there and `fileURLToPath(undefined)`
+  // throws a TypeError — in the very build that exists to serve Node. Fall through to
+  // the async init instead of crashing. (The CJS build also resolves `node:*` to
+  // browser stubs, so this branch could not have worked there regardless.)
+  const moduleUrl: unknown = import.meta.url;
+  if (isNodeRuntime && typeof initSync === 'function' && typeof moduleUrl === 'string') {
     const [{ readFileSync }, { fileURLToPath }, { dirname, join }] = await Promise.all([
       import('node:fs'),
       import('node:url'),
       import('node:path'),
     ]);
     const wasmPath = join(
-      dirname(fileURLToPath(import.meta.url)),
+      dirname(fileURLToPath(moduleUrl)),
       '../vendor/parquet-wasm/parquet_wasm_bg.wasm'
     );
     initSync({ module: readFileSync(wasmPath) });
