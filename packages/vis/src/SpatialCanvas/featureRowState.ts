@@ -197,3 +197,101 @@ export function featureRowOpacity(state: FeatureRowState): number {
   }
   return state.tone === 'loading' ? 0.6 : 0.4;
 }
+
+/**
+ * Everything a feature list's rows are classified against, gathered so one object
+ * identity stands for "nothing that affects any row has changed".
+ *
+ * Virtualization is why. With only the visible window in the DOM, the remaining
+ * per-render cost is the summary: the "N of M not loaded" lines count rows across
+ * the entire catalog, so they stay O(features) however few rows are mounted.
+ * Bundling lets the panel memoise that pass on one dependency.
+ *
+ * Every field is a primitive or an object whose identity changes exactly when its
+ * contents do — the engine's resident-code/count reads rebuild only when the
+ * row-code buffer changes, and the matching codes are cached on the scan signature.
+ */
+export interface FeatureRowsInput {
+  entries: readonly { code: number; name: string; count?: number }[];
+  /** Feature codes present in the resident (preloaded) window. */
+  residentCodes: ReadonlySet<number> | undefined;
+  /** Feature codes on screen via the last-completed feature-index scan. */
+  loadedMatchingCodes: ReadonlySet<number> | undefined;
+  /** The current selection as codes. Ignored when `allSelected`/`noneSelected`. */
+  selectedCodes: ReadonlySet<number>;
+  allSelected: boolean;
+  noneSelected: boolean;
+  scanning: boolean;
+  supportsOnDemandLoad: boolean;
+  residentKnown: boolean;
+  residentFeatureCounts: ReadonlyMap<number, number> | undefined;
+  /** Dataset totals by code, so a row need not rescan `entries` to find its own. */
+  datasetCountByCode: ReadonlyMap<number, number>;
+  /** This LAYER draws tiles (the element's tiling probe AND its config say so). */
+  tiled: boolean;
+}
+
+/** A row's classification plus the signals that produced it — the panel shows both,
+ * so they cannot drift apart. */
+export interface FeatureRowInfo {
+  resident: boolean;
+  rendered: boolean;
+  selected: boolean;
+  state: FeatureRowState;
+}
+
+/** Classify one feature row against the whole list's inputs. */
+export function classifyFeatureRow(code: number, input: FeatureRowsInput): FeatureRowInfo {
+  const resident = input.residentKnown && (input.residentCodes?.has(code) ?? false);
+  const rendered = input.loadedMatchingCodes?.has(code) ?? false;
+  const selected = !input.noneSelected && (input.allSelected || input.selectedCodes.has(code));
+  const state = describeFeatureRowState({
+    resident,
+    rendered,
+    selected,
+    scanning: input.scanning,
+    supportsOnDemandLoad: input.supportsOnDemandLoad,
+    residentKnown: input.residentKnown,
+    residentPointCount: input.residentFeatureCounts?.get(code),
+    datasetPointCount: input.datasetCountByCode.get(code),
+    tiled: input.tiled,
+  });
+  return { resident, rendered, selected, state };
+}
+
+/** How many rows are greyed, and how many are drawn but only in part. */
+export interface FeatureRowsSummary {
+  /** Rows whose points are not on screen at all. */
+  notLoadedCount: number;
+  /** Rows that ARE drawn, but only the part inside the memory cap. Counted apart
+   * from `notLoadedCount` because they look healthy — un-greyed, full dataset count
+   * beside them — while most of their points are missing. */
+  partialCount: number;
+}
+
+/**
+ * The two whole-catalog tallies behind the panel's summary lines — the single
+ * O(features) pass left after virtualization, so memoise it on the
+ * {@link FeatureRowsInput} identity. Retains no per-row result; only mounted rows
+ * need one, from {@link classifyFeatureRow}.
+ *
+ * Both are 0 when the resident set is unknown, matching `describeFeatureRowState`'s
+ * "treat everything as shown" fallback — with nothing to compare against, a
+ * shortfall claim would be invented rather than measured.
+ */
+export function summariseFeatureRows(input: FeatureRowsInput): FeatureRowsSummary {
+  if (!input.residentKnown) {
+    return { notLoadedCount: 0, partialCount: 0 };
+  }
+  let notLoadedCount = 0;
+  let partialCount = 0;
+  for (const entry of input.entries) {
+    const { state } = classifyFeatureRow(entry.code, input);
+    if (state.greyed) {
+      notLoadedCount += 1;
+    } else if (state.tone === 'partial') {
+      partialCount += 1;
+    }
+  }
+  return { notLoadedCount, partialCount };
+}

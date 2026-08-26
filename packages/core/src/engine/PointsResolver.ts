@@ -796,12 +796,38 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return { signature: key.slice(0, hash), memoryCap: Number(key.slice(hash + 1)) };
   }
 
-  /** Feature codes a matched batch/scan covers, parsed from its signature. */
-  private static coveredCodes(signature: string): Set<number> {
-    if (signature === '') {
-      return new Set();
+  /**
+   * Feature codes a matched batch/scan covers, parsed from its signature.
+   *
+   * Memoised for two reasons: the parse is O(codes) over a string 12k entries long
+   * on a wide Xenium panel, run on every coverage check; and, more importantly, a
+   * fresh `Set` per call has a fresh identity per call, so every `useMemo` keyed on
+   * it downstream would miss and the panel's whole-catalog pass would run per render
+   * regardless.
+   *
+   * Keyed by signature, a pure function of the code list, so a hit is always right.
+   * A small map rather than one slot because several signatures are live at once — a
+   * settled batch's and an in-flight scan's. Read-only; every use is `has` / `size`.
+   */
+  private static readonly coveredCodesCache = new Map<string, ReadonlySet<number>>();
+  private static readonly COVERED_CODES_CACHE_MAX = 8;
+
+  private static coveredCodes(signature: string): ReadonlySet<number> {
+    const cached = PointsResolver.coveredCodesCache.get(signature);
+    if (cached) {
+      return cached;
     }
-    return new Set(signature.split(',').map(Number));
+    const codes: ReadonlySet<number> =
+      signature === '' ? new Set<number>() : new Set(signature.split(',').map(Number));
+    if (PointsResolver.coveredCodesCache.size >= PointsResolver.COVERED_CODES_CACHE_MAX) {
+      // Map iterates in insertion order, so the first key is the oldest.
+      const oldest = PointsResolver.coveredCodesCache.keys().next();
+      if (!oldest.done) {
+        PointsResolver.coveredCodesCache.delete(oldest.value);
+      }
+    }
+    PointsResolver.coveredCodesCache.set(signature, codes);
+    return codes;
   }
 
   /**
