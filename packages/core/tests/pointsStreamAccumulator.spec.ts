@@ -84,9 +84,7 @@ describe('PointsStreamAccumulator', () => {
     accumulator.append(
       chunk({ xs: [1], ys: [1], codes: [0], newFeatures: [{ code: 0, name: 'ABCC11' }] })
     );
-    expect(accumulator.snapshot().featureCatalog?.entries).toEqual([
-      { code: 0, name: 'ABCC11' },
-    ]);
+    expect(accumulator.snapshot().featureCatalog?.entries).toEqual([{ code: 0, name: 'ABCC11' }]);
 
     accumulator.append(
       chunk({ xs: [2], ys: [2], codes: [1], newFeatures: [{ code: 1, name: 'ACE2' }] })
