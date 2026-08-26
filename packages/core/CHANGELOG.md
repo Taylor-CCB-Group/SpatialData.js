@@ -1,5 +1,395 @@
 # @spatialdata/core
 
+## 0.9.0
+
+### Minor Changes
+
+- [#132](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/132) [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Bound the two parquet caches on `SpatialDataTableSource` by resident bytes
+  ([ADR 0005](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0005-memory-accounting-before-management.md)
+  rung 2), and add the `ByteLruCache` they are built on.
+  
+  `parquetTableBytes` (compressed file bytes) and `parquetTableCache` (decoded
+  Arrow tables) were plain `Record`s with no eviction of any kind. A source held
+  **both tiers of every parquet file any caller had ever touched**, simultaneously,
+  until the source itself was discarded — double memory for zero eviction benefit.
+  That is a leak, and this fixes it rather than building an architecture around it:
+  both are now byte-bounded LRUs that report `byteLength`, and memory is
+  assertable in a test for the first time.
+  
+  **Breaking for anyone reading those two fields directly.** They are no longer
+  plain objects: `source.parquetTableBytes[path]` becomes
+  `source.parquetTableBytes.get(path)`, with `peek` for a read that should not
+  count as a use, plus `has`, `delete`, `clear`, `size` and `byteLength`. Nothing
+  in this repository outside `VTableSource` touched either one.
+  
+  Ceilings default to 128 MB encoded and 256 MB decoded per source, overridable
+  via the new `parquetCacheLimits` field on `DataSourceParams`. The numbers are
+  guesses that bound a leak, not a measured working set — the ADR is explicit that
+  they stay guesses until something measures them, so they are a constructor
+  option rather than a constant you would have to fork the library to change.
+  
+  `ByteLruCache` also exposes `deleteIf(key, value)` and `recountIf(key, value)`,
+  which act only while the entry is still the one the caller inserted. A late
+  settlement — a decode that failed after its key was re-requested, or after
+  eviction made room — must not reach in and resize or delete whatever took its
+  place, and an unguarded `delete` there silently drops a live, valid entry. It is
+  the same rule `VTableSource.evictIfCurrent` applies to its promise-keyed `Map`s,
+  spelled for a cache whose reads carry recency.
+  
+  Two semantics worth knowing:
+  
+  - **A value larger than the whole budget is admitted, not refused**, and left as
+    the sole resident. Refusing it would be the worse failure: `loadParquetBytes`
+    runs roughly twenty times per points load, so a file that can never be admitted
+    becomes twenty refetches of the file that was already too big to fetch once.
+  - **Entries are inserted before their size is known.** The decoded cache holds
+    the in-flight promise — that is what dedupes concurrent callers onto one WASM
+    decode — so it is sized at zero until the table lands, then recounted. Arrow's
+    `Data.byteLength` walks the whole child tree, so it is asked exactly once per
+    table and the total is maintained incrementally from there.
+
+- [#132](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/132) [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Add `MemoryReporting` — `{ readonly byteLength: number }` — the first rung of
+  [ADR 0005](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0005-memory-accounting-before-management.md).
+  
+  The library had a memory *policy* and no memory *accounting*: `DEFAULT_POINTS_MEMORY_CAP`
+  is a row count applied to one element kind, and nothing anywhere could answer
+  "how many bytes are resident right now?". This is that answer, and only that
+  answer — no tiers, no eviction, no ceiling.
+  
+  The name is doing the work. `byteLength` is what `TypedArray`, `ArrayBuffer` and
+  `DataView` already call this, so every payload we actually hold satisfies the
+  interface structurally, with no wrapper and no import. That is what makes it
+  cheap enough to put on every cache rather than on a chosen few.
+  
+  Implementors take on one obligation: keep the number cheap to read — a running
+  total maintained on insert and evict, not a scan of the residents per read — so
+  that callers can poll it freely.
+
+- [#166](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/166) [`eeb7785`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/eeb7785b30f87e1fd42aeff52cedf6b69c30e9ab) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Load the vendored parquet-wasm through a package subpath, so it resolves in a
+  consumer's production build.
+  
+  `@spatialdata/core/parquet-wasm` is now an export, and the loader imports it by that
+  name. It used to reach the glue by relative path behind a `/* @vite-ignore */`, and
+  both halves shipped: the comment told the consumer's bundler to skip resolution, and
+  `../vendor/parquet-wasm/parquet_wasm.js` stayed in the published chunk. A consumer's
+  build inlines that chunk into its own `assets/`, where the path means
+  `{root}/vendor/…` — a file no build emitted. Every production build 404d on the first
+  parquet read while dev worked, because a dev server serves core's `vendor/` tree out
+  of node_modules. MDV had to copy that tree into its output (Taylor-CCB-Group/MDV#539);
+  that workaround can go, along with the identical one in this repo's own
+  production-browser harness.
+  
+  The consumer's bundler now resolves the subpath and emits the wasm as a hashed asset —
+  one copy per bundle, no vendor directory to serve. Deleting the `@vite-ignore` alone
+  would not have done it: `build.lib` inlines assets regardless of size, so bundling the
+  glue here turns the 6.6MB wasm into base64 in an 8.8MB chunk, per format.
+  
+  The published package also drops `dist/vendor/`, its second copy of the wasm.
+
+- [#166](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/166) [`eeb7785`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/eeb7785b30f87e1fd42aeff52cedf6b69c30e9ab) Thanks [@xinaesthete](https://github.com/xinaesthete)! - **Breaking:** the points worker is now the parquet worker. It decodes and scans
+  parquet for shapes as much as for points, so the old name described one caller. No
+  aliases:
+  
+  | Before                          | After                              |
+  | ------------------------------- | ---------------------------------- |
+  | `@spatialdata/core/points-worker` | `@spatialdata/core/parquet-worker` |
+  | `enablePointsWorker`            | `enableParquetWorker`              |
+  | `disablePointsWorker`           | `disableParquetWorker`             |
+  | `ensurePointsWorker`            | `ensureParquetWorker`              |
+  | `isPointsWorkerEnabled`         | `isParquetWorkerEnabled`           |
+  | `setPointsWorkerDefaultEnabled` | `setParquetWorkerDefaultEnabled`   |
+  | `setPointsWorkerRequestTimeout` | `setParquetWorkerRequestTimeout`   |
+  | `PointsWorkerRequest` / `Response` / `Message` | `ParquetWorkerRequest` / `Response` / `Message` |
+  
+  A worker that never loads is now detected instead of left to time out: an `error`
+  from a worker that has not yet answered means it was never wired up, so it is
+  switched off, `isParquetWorkerEnabled()` reports `false`, and callers take their
+  main-thread fallbacks. A bad `workerUrl` now costs performance rather than a stall
+  per request — except for `loadPointsMatchingFeatureCodes`, which has no fallback and
+  throws immediately with a reason.
+  
+  New docs page, "Bundling into an application", covers the one thing a consumer must
+  configure.
+
+- [#155](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/155) [`09bc5e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/09bc5e935281e1e9d4d67cd9d3a0aa5a1053a4bb) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Points: render Morton-indexed elements from viewport tiles, on by default.
+  
+  A points element backed by a Morton-ordered Parquet artifact now draws through deck's
+  `TileLayer`, reading row groups for the viewport, instead of a memory-capped resident
+  preload. A 12.1M-point Xenium `transcripts` element can be explored at full detail, and
+  the resident memory cap no longer applies to it. Tiles colour by feature, honour the
+  feature filter inside the row-group scan, and subdivide with zoom.
+  
+  `pointsTiling` defaults to `'auto'`, so every points element is probed once and takes the
+  tiled path if — and only if — it can. Read the config through `pointsTilingEnabled(...)`
+  rather than comparing to `'auto'`: the default has to mean the same thing to the resolver
+  deciding what to load, the hook deciding what to render, and the panel drawing the
+  checkbox. `pointsTiling: 'off'` restores the previous behaviour per layer.
+  
+  **Why on rather than opt-in.** On a Morton artifact the capped preload is not a neutral
+  alternative: it keeps the first `cap` rows in FILE order, and file order there is a prefix
+  of the Z-curve — a spatially skewed chunk of the slide rather than a sample of it.
+  
+  **What it costs, measured.** At the default zoomed-out framing of that 12.1M-point
+  element the tiled path loads all 44 tiles — 12,165,029 points / ~158 MB, the whole
+  artifact — against a 4M-row prefix for the preload. First paint on a fully zoomed-out
+  view is ~3x the rows, in exchange for a correct picture that streams in 44 pieces instead
+  of blocking on one decode. Zooming OUT is the one direction viewport tiling does not
+  help, because there is no coarser representation to read; that wants a multi-resolution
+  points pyramid, not a finer index. An element that cannot be tiled is unaffected beyond
+  one probe (4 range reads / ~2.16 MB), cached with its metadata.
+  
+  Applying a feature filter does **not** reduce I/O, and the plan's original expectation
+  that it would has been corrected: row groups are chosen *spatially*, and a gene's points
+  are spread across all of them. It cuts what is uploaded and drawn — one gene takes a
+  viewport tile from 3,128,988 points to 87,594 — not what is read. Narrowing the fetch by
+  feature needs a feature-primary index (the open question in ADR 0002/0003).
+  
+  **The tile grid is derived from the artifact.** It was one fixed level
+  (`minZoom`/`maxZoom: -1`), so every tile was 1024 local units at every zoom, and 1024 came
+  from deck's defaults rather than from the data. `mortonTileGrid` now derives both ends
+  from point density: the finest level stays at least one row group's footprint, the
+  coarsest holds at most 400k rows, and `zoomOffset = log2(modelMatrixScale)` couples deck's
+  `z` to tile spans expressed in local units. `maxCacheSize` comes from a row budget rather
+  than deck's `5 x the selected tile count`, which on a coarse viewport of this element
+  could retain ~220 tiles / ~71M rows against a 4M resident cap. Accounting only — nothing
+  evicts by bytes yet (ADR 0005). `PointsLoaderCapabilities` gains `totalRows` and
+  `maxRowsPerGroup`, which the grid is derived from, and `mortonTileGrid` applies its
+  documented default (the resident points memory cap) when no `cacheRowBudget` is given.
+  
+  Tiling is per LAYER but the probe's answer is cached per ELEMENT, so every consumer
+  combines the two (`usesTiledPath`, `isTiledFor`). Reading the probe alone left a layer
+  rendering tiles after the user switched tiling off, while planning went back to
+  preloading — both at once.
+  
+  Per package:
+  
+  - **`@spatialdata/core`** — `PointsResolver` gains a `tiling` resource (a one-key
+    `RequestSlot` holding the element's tileable Morton metadata, or `null` when it cannot
+    drive tiles) and reports what a tiled entry actually has: no `preload` resource (absent,
+    not idle, so `isBlocking` skips it), world `bounds` from the artifact's own extent so
+    auto-fit can frame the layer before a tile loads, geometry status driven by the probe.
+    `blockingResources` covers `tiling` as well as `preload`. `scanMortonTableInBounds`
+    appends a feature code per point in lockstep with the geometry, and
+    `loadMortonPointsInBounds` projects the code column whenever the artifact **has** one
+    rather than only when a filter is active — the no-filter "all features" view was
+    precisely the case that arrived without codes. `planPointsLoads` moves here from
+    `@spatialdata/layers` (re-exported there; no consumer import moves), and
+    `transformAxisAlignedBounds` is new.
+  `PointsDataEngine.ensureTilingMetadata` is idempotent once the probe has settled: a ready
+  `RequestSlot` answers with a fresh resolved promise, so a repeat call would otherwise churn
+  the layer's status loading→ready and re-run the resident release. A *failed* probe stays
+  retryable.
+  
+  - **`@spatialdata/layers`** — `mortonTiledStrategy`, and
+    `PointsRendererAdapter.getTiledResource` memoised on (element, metadata): a new resource
+    identity would make `TileLayer` refetch every visible tile, so a pan would become a full
+    reload.
+  - **`@spatialdata/vis`** — the tiled branch in `getLayers`, tiled world bounds,
+    `hasRenderableLayerData` counting a tiled element as drawable, viewport-tile progress
+    feeding `isLoading`, and `pointsTiling` / `showTileDebugOverlay` panel controls.
+  
+  Three things a tiled layer got wrong once it was actually drawing, also fixed here. The
+  resident window is now released when the probe settles — `plan()` stops *asking* for a
+  preload, which is not the same as evicting one — along with its row-aligned codes and
+  feature-index scan, though the catalog stays, since it describes the element rather than
+  the window. The panel's truncation notice no longer reads "4,000,000 of 12,165,021 points
+  in memory — capped" directly above "the memory cap does not apply"; it says nothing, and
+  the memory-cap control is hidden. And point sizing is one behaviour instead of two: the
+  tile path sized in fixed pixels while the preloaded path used world units, so a zoomed-out
+  tiled layer drew every one of its millions of points as a fixed screen dot, saturating
+  density into a flat mass and hardening every tile seam into what looked like a rendering
+  fault. Both paths now size in world units with the model-matrix scale folded in.
+  
+  A short feature-codes array is dropped rather than padded, on both paths: the remaining
+  points would read code 0 — a *valid* feature — and be confidently mis-coloured, which is
+  worse than no colour at all.
+
+### Patch Changes
+
+- [#132](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/132) [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Give zarr imagery a decoded chunk cache
+  ([ADR 0005](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0005-memory-accounting-before-management.md)
+  rung 3). There was not one before — not an undersized one, none at all.
+  
+  fizarrita has always accepted a `{ get, set }` cache on `getWorker`, and
+  `zarrextra` has always plumbed it through `enableWorkerChunkDecode({ cache })`.
+  `ensureCodecWorkers()` called that with no options, so `cache` was `undefined`
+  and fizarrita fell back to its no-op. The seam was exported, documented, typed
+  end to end, and empty. Every tile therefore paid a network round-trip *and* a
+  re-decode every time it came back into view.
+  
+  It is now filled with a byte-bounded LRU, default 256 MB, overridable with
+  `ensureCodecWorkers({ chunkCacheMaxBytes })` on the first call. `getChunkCache()`
+  returns it for inspection (`byteLength` is what it currently holds) or for
+  `clear()`.
+  
+  `RasterElement.getStore()` is now memoized, and that is load-bearing rather than
+  tidiness: fizarrita keys chunks as `store_N:{array path}:{chunk key}`, where `N`
+  comes from a `WeakMap` on the **store instance**, and `createPrefixedStore`
+  returns a fresh object literal on every call. Handing out a new view per caller
+  would give one chunk a different key per view, so the cache would fill with
+  duplicates and never hit. One stable view per element is what makes it a cache.
+  
+  Two things worth stating plainly about what ends up in there:
+  
+  - **Absent chunks are cached as data.** fizarrita materialises a full zero-filled
+    typed array for a missing chunk and caches it like any other, so a sparse array
+    can spend real bytes on nothing. The byte bound makes that survivable; it does
+    not make it free.
+  - **Concurrent readers of one chunk share a single fetch and decode.** fizarrita
+    keys in-flight operations the same way it keys this cache, closing the window
+    between "someone started fetching this" and "the result is cacheable". So the
+    cache sees one write per chunk however many readers wanted it, and the byte
+    total counts each chunk once.
+
+- [#132](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/132) [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Stop a transient parquet fetch failure from poisoning `loadParquetTable` for the
+  lifetime of the source.
+  
+  `parquetTableCache` stores the table promise *before* it settles. That is
+  deliberate and correct — it is what makes concurrent callers for the same file
+  share one `readParquet` + `tableFromIPC` decode instead of racing two WASM
+  parses of the same bytes. What was missing is the other half: nothing ever
+  removed a promise that settled as a *rejection*. A single failed read — a
+  dropped connection, a 503, a store not yet warm — left a rejected promise
+  parked at that path forever, and every subsequent read of that element replayed
+  a network error that had long since cleared. The only recovery was to construct
+  a new source.
+  
+  The cached promise now evicts itself on rejection, and only if it is still the
+  current entry for that path, so a retry that already superseded it is not
+  clobbered by the earlier promise's late rejection. This is the same
+  `evictIfCurrent` discipline `loadParquetDatasetMetadata` and
+  `discoverMultipartPartPaths` already use.
+  
+  In-flight dedup and the caching of successful tables are unchanged, and so is
+  the deliberate skip-vs-fail policy in `docs/plans/parquet-io-error-handling.md`:
+  the rejection still propagates unchanged to the caller that provoked it. It just
+  stops being the answer given to the next one.
+
+- [#155](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/155) [`09bc5e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/09bc5e935281e1e9d4d67cd9d3a0aa5a1053a4bb) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Points (Morton): fix viewport queries silently dropping row groups, refuse to tile an
+  artifact that only looks Morton-ordered, and stop the row-group search doing orders of
+  magnitude more work than the query needs.
+  
+  Everything here is measured against a real 12.1M-point Xenium `transcripts` artifact
+  (245 row groups) with a viewport-sized query rectangle.
+  
+  **Row groups were silently dropped — the holes in the tiled render.**
+  `readParquetRowGroupColumnExtent` took a row group's last value with
+  `readParquetRowGroup(..., { offset: rowCount - 1, limit: 1 })`, and the vendored
+  parquet-wasm **ignores `offset` on a row-group read**: it returned the first row again, so
+  every row group reported `max === min`. Nothing errored. The bisect asks "first row group
+  whose max >= target", and an understated max moves that answer one group too far forward,
+  so the row group that actually *contained* the interval start was never read — one
+  viewport query lost **11 of the 92 matching row groups, 187,990 points (6%)**. The upper
+  bound now comes from the sort order instead: a row group's values all lie at or below the
+  next row group's first value. That is conservative, needs only the read that works, and
+  halves the reads. The regression test asserts an exact point count rather than "more than
+  zero"; this class of bug is silent by construction, and only a total sees it.
+  
+  **Row-group selection no longer reads the file at all.** `selectMortonRowGroups` picks
+  from the per-row-group `[min, max]` the tiling probe parses out of the parquet footer. The
+  bisect it replaces range-read the row group's BYTES — every column, ~2MB — to recover two
+  boundary values, `log2(rowGroups)` steps per Morton interval. On one 1024 um viewport
+  tile, both returning the same 643,961 points:
+  
+  | row-group selection | range reads | bytes | wall |
+  |---|---|---|---|
+  | bisect | 97 | 175.12 MB | 2911 ms |
+  | footer index | 32 | 57.83 MB | 1035 ms |
+  
+  The remaining 32 reads are the row-group data itself. The footer path is also stricter:
+  the bisect tested only `max` and assumed row groups tile the code space without gaps,
+  while this intersects both ends. The bisect stays as the fallback when statistics will not
+  parse, so this is an optimisation rather than a new requirement.
+  
+  **Two guards, because a file can carry the column and still not be Morton-ordered.**
+  
+  - *The sentinel box must be the domain the codes were quantised against.* Those rows are
+    a claim the artifact makes about itself, and nothing in the file forces it to be true.
+    Believing a wrong one does not fail — it clips the tile grid to the bogus box, so whole
+    regions are never requested. `getPointsTilingMetadata` now recomputes `morton_code_2d`
+    from x/y for a sample of real rows and requires a majority to agree: a sound artifact
+    matches 320/320 sampled rows and one with a stale sentinel box matches 0/320, so the
+    test is not marginal. The sample comes from the middle of the file, because a truncated
+    box can agree with the true one near the origin by coincidence but never in the interior.
+  - *The column must actually ascend.* A feature-primary artifact — sorted
+    `(feature, morton)` — carries the identical column with identical, correct values, a
+    correct sentinel box, and every field the probe looks for. Only the order is wrong, and
+    nothing in the file said so, so the bisect landed arbitrarily and a tile came back
+    holding whichever feature blocks lived in the row groups it picked: some tiles showed
+    one or two genes, most showed none. The probe now requires the per-row-group `[min, max]`
+    to be non-decreasing. On the permutations store,
+    `transcripts_feature_then_morton` descends at 185 of its 244 boundaries while both
+    morton-primary elements descend at none — including `transcripts_morton_then_feature`,
+    so a *secondary* feature key stays supported and the test is on the file rather than on
+    the element's name.
+  
+  Both gates fail CLOSED, which takes a third state: an extents list that is empty (no
+  footer, a parse failure, a row-group count that disagreed) or entirely null (the column
+  carries no statistics) is `'unverified'`, not `'sorted'` — see `mortonRowGroupOrderVerdict`.
+  Reading either as sorted would pass a feature-primary artifact through the one gate that
+  exists to stop it, and an all-null index is worse still, because every unknown extent is
+  included and so every tile scans the whole file. An extent that is not a range at all
+  (non-finite, or `min > max`) is rejected for the same reason: it cannot come from healthy
+  statistics, so it means the decode is wrong.
+  
+  Both decline loudly and fall through to the capped preload. The sort check is free (the
+  footer bytes are already in hand) and runs first, so a rejected element now costs less
+  than before. `decodeUnsignedIntStat` is new: `morton_code_2d` is `uint32`, which parquet
+  stores as INT32 with a UINT_32 annotation, and Morton codes use the top bit for real, so
+  a signed decode reads the far corner of a slide as negative. `mortonCode2dForPoint` /
+  `mortonBoundsAgreeWithCodes` are exported for the sentinel check, and pin the interleave
+  convention (x in the even bits) that `zcoverRectangle` and the writer both already assumed
+  without anything checking they stayed in step.
+  
+  **`zcoverRectangle` stops at `MORTON_ZCOVER_MAX_DEPTH` (10).** It recursed to the full 16
+  bits per axis, resolving the rectangle to individual quantised cells when its only job is
+  picking row groups — **38,014 intervals** to select 92 row groups. At the cap that is 521
+  intervals selecting the **same 92 row groups**, verified over a viewport tile, the whole
+  slide and a zoomed-in box. A coarser cell can only widen the covered code range, and the
+  rows it brings in are filtered against the exact bounds after the read.
+  
+  Two internal consolidations, no behaviour change: `rowGroupFeatureCodeExtents` and
+  `rowGroupMortonExtents` were the same footer walk twice and now share
+  `rowGroupColumnStats`, with the decode left at each call site because that is the part
+  that depends on the column's logical type. And the two row-group probes each hand-rolled
+  "memoize the in-flight promise, but forget a `null` or a rejection"; they now share one
+  `memoizeProbe` built on the existing `evictIfCurrent`, so a late settlement cannot clobber
+  the retry that superseded it. That pins the half nothing covered — a failed extent probe
+  must be retried, not remembered, or one transient read leaves the bisect treating a
+  readable row group as unbounded for the life of the source.
+
+- [#153](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/153) [`ceaf2ef`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ceaf2ef378cd72cca2ae472c5fe3cb8b20142027) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Distinguish a feature that is fully loaded from one the memory cap only sampled.
+  
+  `resident` means a feature has **at least one** point inside the memory cap. On a
+  truncated element that is true of nearly every feature, so the panel greyed nothing,
+  showed each feature's full dataset count beside it, and presented a sample as the
+  whole answer. On a Xenium transcripts element (8.07M points, 4M cap) all 541
+  features read as resident while half the data was absent.
+  
+  `describeFeatureRowState` takes optional `residentPointCount` / `datasetPointCount`
+  and returns a new `partial` tone — drawn, so not greyed, but labelled and explained
+  with both counts and the share. A completed feature-index scan vetoes it: that
+  supplies the feature whole, so its resident shortfall is no longer what is on screen.
+  The built-in panel shows `resident / dataset` on those rows and a summary line, and
+  falls back to the previous behaviour whenever counts are unknown.
+  
+  Fixes a latent bug this exposed: `getResidentFeatureCounts` answered from the preload
+  result's own tally, which is frozen in the resident preview's code space and is not
+  remapped when the full catalog supersedes it. For a dictionary-only element that
+  attributed one gene's count to another. Counts now derive from the reconciled row
+  codes, memoised on the same identity as the resident-codes set.
+
+- [#166](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/166) [`eeb7785`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/eeb7785b30f87e1fd42aeff52cedf6b69c30e9ab) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Fall back to the main thread when the parquet worker rejects a shapes decode.
+  
+  `loadFlatShapeGeometry` handled the worker returning `null` — never enabled — but
+  let a rejection propagate, so a request timeout, a worker that died mid-request, or
+  one that failed to start between the enabled check and the post failed the whole
+  element instead of decoding it on the main thread. Every other worker call site
+  already caught. The catch is scoped to the worker call, so a genuine store read
+  failure still surfaces as one.
+- Updated dependencies [[`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55), [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55)]:
+  - zarrextra@0.5.0
+
 ## 0.8.0
 
 ### Minor Changes

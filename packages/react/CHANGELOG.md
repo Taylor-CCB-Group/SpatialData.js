@@ -1,5 +1,12 @@
 # @spatialdata/react
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55), [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55), [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55), [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55), [`eeb7785`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/eeb7785b30f87e1fd42aeff52cedf6b69c30e9ab), [`eeb7785`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/eeb7785b30f87e1fd42aeff52cedf6b69c30e9ab), [`09bc5e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/09bc5e935281e1e9d4d67cd9d3a0aa5a1053a4bb), [`09bc5e9`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/09bc5e935281e1e9d4d67cd9d3a0aa5a1053a4bb), [`ceaf2ef`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ceaf2ef378cd72cca2ae472c5fe3cb8b20142027), [`eeb7785`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/eeb7785b30f87e1fd42aeff52cedf6b69c30e9ab)]:
+  - @spatialdata/core@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes
