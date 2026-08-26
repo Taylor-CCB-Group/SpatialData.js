@@ -144,9 +144,28 @@ updates:
       interval: weekly
       day: monday
     groups:
+      # Majors are excluded for the same reason they are excluded from the npm
+      # groups above, and for one that is specific to this ecosystem: an action
+      # major is the one kind of bump this repository's CI is structurally unable
+      # to test.
+      #
+      # release.yml runs only on `push: main`, so a pull request that changes it
+      # gets a green tick from checks that never touched the file. #156 bumped
+      # `changesets/action` 1 -> 2 inside this group, alongside routine bumps,
+      # and read as a batch to wave through. v2 renamed every input the step
+      # passes and dropped support for Changesets CLI v2, so the release broke on
+      # main and #167 reverted it. As an individual PR it would have arrived with
+      # its own release notes and its own review.
+      #
+      # `scripts/check-release-toolchain.mjs` now fails such a PR outright, but
+      # that check knows about one action. This keeps every other action major a
+      # deliberate, separately reviewed change.
       actions:
         patterns:
           - '*'
+        update-types:
+          - minor
+          - patch
 
   # --- Python: the reader/writer utility package -----------------------------
   - package-ecosystem: uv

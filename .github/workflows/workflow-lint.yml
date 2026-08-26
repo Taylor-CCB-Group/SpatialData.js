@@ -42,3 +42,34 @@ jobs:
       # meant to fail on our mistakes, not on a linter release.
       - name: Lint workflow files (actionlint)
         uses: docker://rhysd/actionlint:1.7.12
+
+  # actionlint stops at the workflow file. It cannot know that a `uses:` ref and
+  # a devDependency in package.json have to move as a pair, and GitHub Actions
+  # itself will not complain about a `with:` key the action does not declare —
+  # unknown inputs are dropped in silence.
+  #
+  # release.yml is triggered only by `push: main`, so nothing on a pull request
+  # exercises it; #156 bumped changesets/action v1 -> v2 inside the routine
+  # weekly `actions` group, went green, and broke the release on main. This job
+  # is the pull-request-time stand-in for the run that cannot happen here. It
+  # belongs in this file rather than test.yml because it is workflow validation
+  # and, like actionlint, needs no dependency install to do it.
+  release-toolchain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository (release-toolchain)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.14.1'
+
+      # No `pnpm install`: the script reads package.json and release.yml as text
+      # and imports nothing outside node:*, so it runs on a bare checkout.
+      - name: Check release workflow against the Changesets CLI major
+        run: node scripts/check-release-toolchain.mjs

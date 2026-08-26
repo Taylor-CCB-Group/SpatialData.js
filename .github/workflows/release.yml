@@ -34,11 +34,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # changesets/action v2 renamed every input this step uses (`version` ->
+      # `version-script`, `title` -> `pr-title`, `commit` -> `commit-message`)
+      # and dropped the `GITHUB_TOKEN` environment variable in favour of a
+      # `github-token` input, which already defaults to `${{ github.token }}`.
+      # It also requires Changesets CLI v3 and refuses to run against v2 — the
+      # major bump in the root `@changesets/cli` devDependency is what makes
+      # this step legal, and `scripts/check-release-toolchain.mjs` is what keeps
+      # the two from drifting apart again. See the note in dependabot.yml.
+      #
+      # Publishing stays out of CI (see RELEASE.md); this step only ever opens
+      # the version PR, so v2 dropping its `NPM_TOKEN`/`.npmrc` handling costs
+      # us nothing.
       - name: Create version PR
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
-          version: pnpm version-packages
-          title: Version packages
-          commit: Version packages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          version-script: pnpm version-packages
+          pr-title: Version packages
+          commit-message: Version packages

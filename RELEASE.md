@@ -70,6 +70,11 @@ npm dist-tag add zarrextra@<latest-version> next
    pnpm version-packages
    ```
 
+   Since Changesets v3, `changeset version` exits 1 when there is nothing to
+   release, rather than exiting 0 having done nothing. That is only a surprise
+   when running it by hand: the GitHub Action checks for pending changesets
+   first and skips the version script when there are none.
+
 4. Review the version PR carefully:
 
    - package versions
@@ -125,6 +130,26 @@ npm dist-tag add zarrextra@<latest-version> next
     ```bash
     pnpm add @spatialdata/vis
     ```
+
+## Release tooling
+
+The `Version Packages` workflow and the Changesets CLI are a matched pair:
+`changesets/action@v2` requires `@changesets/cli` v3 and refuses to run against
+v2, and its input names differ from v1's. Neither major can move on its own.
+
+Nothing on a pull request runs `release.yml` — its only trigger is `push: main`
+— so a change to it is green by default, which is how a Dependabot bump of the
+action to v2 reached main against a v2 CLI. The `release-toolchain` job in
+`Workflow Lint` closes that gap by checking the pairing statically:
+
+```bash
+pnpm lint:release-toolchain
+```
+
+Taking a new major of `changesets/action` means updating the `ACTION_MAJORS`
+table in `scripts/check-release-toolchain.mjs` alongside the workflow and the
+CLI dependency; the check fails on an unrecognised major rather than assuming
+it is fine.
 
 ## If something looks wrong
 
