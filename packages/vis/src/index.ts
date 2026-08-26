@@ -114,3 +114,9 @@ export {
 export { default as Table } from './Table';
 export { default as Transforms } from './Transforms';
 export { default as SpatialDataTree } from './Tree';
+export {
+  type EnsureParquetWorkerOptions,
+  type EnsureWorkersOptions,
+  ensureWorkers,
+  type WorkersEnabled,
+} from './workers';

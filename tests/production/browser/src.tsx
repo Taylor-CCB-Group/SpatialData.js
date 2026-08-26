@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { LabelsColorByConsumer } from './labelsColorByScenario';
+import { ParquetWorkerConsumer } from './parquetWorkerScenario';
 import { PolygonFixtureConsumer } from './polygonShapesScenario';
 
 /**
@@ -12,6 +13,7 @@ import { PolygonFixtureConsumer } from './polygonShapesScenario';
 const scenarios = {
   'polygon-shapes': PolygonFixtureConsumer,
   'labels-color-by': LabelsColorByConsumer,
+  'parquet-worker': ParquetWorkerConsumer,
 } as const;
 
 type ScenarioName = keyof typeof scenarios;

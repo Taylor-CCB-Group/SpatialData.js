@@ -169,11 +169,19 @@ function parquetModuleSupportsRowGroupReads(module: ParquetModule): boolean {
   );
 }
 
+/**
+ * By package subpath, never by relative path: a consumer's bundler moves this chunk
+ * into its own `assets/`, where `../vendor/...` resolves to nothing (MDV#539). The
+ * subpath resolves through `exports` from wherever the chunk lands, and the bundler
+ * then follows the glue's `new URL('parquet_wasm_bg.wasm', import.meta.url)`.
+ *
+ * No `@vite-ignore` — it survives into the published chunk and is what told
+ * consumers to skip resolution. And `vite.config.ts` keeps this external, because
+ * `build.lib` inlines assets regardless of size: bundled, the 6.6MB wasm comes back
+ * as base64 in an 8.8MB chunk, per format.
+ */
 async function loadVendoredParquetModule(): Promise<ParquetModule> {
-  const module: unknown = await import(
-    /* @vite-ignore */
-    '../vendor/parquet-wasm/parquet_wasm.js'
-  );
+  const module: unknown = await import('@spatialdata/core/parquet-wasm');
   await initializeParquetModule(module);
   const normalized = normalizeParquetModule(module);
   if (!parquetModuleSupportsRowGroupReads(normalized)) {

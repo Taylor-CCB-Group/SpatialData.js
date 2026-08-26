@@ -1,4 +1,3 @@
-import { cpSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { createWorkspaceSourceAliases } from '../../vite.config.base';
@@ -38,6 +37,16 @@ const rollupExternals = [
  * `apache-arrow/vector` is imported here already, but only as a type, so it is
  * erased before rollup sees it. The first value import of a subpath would not be.
  */
+/**
+ * The vendored parquet-wasm glue, as the package subpath a consumer resolves.
+ *
+ * External on purpose: `build.lib` inlines every asset regardless of
+ * `assetsInlineLimit`, so bundling the glue turns its 6.6MB wasm into base64 in an
+ * 8.8MB chunk, per format. Left external, the consumer's bundler resolves it through
+ * our `exports` map and emits the wasm properly. See `src/parquetWasmLoader.ts`.
+ */
+const VENDORED_PARQUET_WASM = '@spatialdata/core/parquet-wasm';
+
 const isExternalPackage = (id: string) =>
   rollupExternals.some((name) => id === name || id.startsWith(`${name}/`));
 
@@ -60,7 +69,7 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, 'src/index.ts'),
         workers: resolve(__dirname, 'src/workers/index.ts'),
-        'points-worker': resolve(__dirname, 'src/workers/points-worker.ts'),
+        'parquet-worker': resolve(__dirname, 'src/workers/parquet-worker.ts'),
       },
       name: 'SpatialDataCore',
       formats: ['es', 'cjs'],
@@ -68,46 +77,18 @@ export default defineConfig({
       // same directory, so a name that ignores `format` is claimed twice and the cjs
       // pass silently overwrites the es one — leaving a CommonJS file under a `.js`
       // extension in a `"type": "module"` package, which nothing can load. That is how
-      // `points-worker.js` shipped: `new Worker(url, { type: 'module' })` died on
-      // `require is not defined`, so no consumer could ever start the points worker,
+      // `parquet-worker.js` shipped: `new Worker(url, { type: 'module' })` died on
+      // `require is not defined`, so no consumer could ever start the parquet worker,
       // and the feature-index scan (its only caller with no main-thread fallback) was
       // unreachable outside this repo. See `tests/distEntryFormats.spec.ts`.
       fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: (id) => {
-        const normalizedId = id.replace(/\\/g, '/');
-        if (normalizedId.includes('vendor/parquet-wasm/parquet_wasm.js')) {
-          return true;
-        }
-        return isExternalPackage(id);
-      },
+      external: (id) => id === VENDORED_PARQUET_WASM || isExternalPackage(id),
     },
     sourcemap: true,
     target: 'es2020',
   },
-  plugins: [
-    {
-      name: 'externalize-vendored-parquet-wasm',
-      resolveId(source) {
-        const normalizedSource = source.replace(/\\/g, '/');
-        if (normalizedSource.includes('vendor/parquet-wasm/parquet_wasm.js')) {
-          return { id: source, external: true };
-        }
-        return null;
-      },
-    },
-    {
-      name: 'copy-vendored-parquet-wasm',
-      closeBundle() {
-        cpSync(
-          resolve(__dirname, 'vendor/parquet-wasm'),
-          resolve(__dirname, 'dist/vendor/parquet-wasm'),
-          { recursive: true }
-        );
-      },
-    },
-  ],
   test: {
     globals: true,
     environment: 'node',

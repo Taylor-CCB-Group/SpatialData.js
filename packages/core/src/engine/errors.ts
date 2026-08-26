@@ -11,8 +11,8 @@
  * `core`'s leaf loaders throw bare `Error(string)` and will keep doing so — the
  * resolver classifies at the seam, and pushing typed errors down into every
  * loader is explicitly not this design. More decisively: anything that crossed
- * the points-worker boundary has *already* lost its type, because the worker's
- * failure channel is `{ ok: false; error: string }` (`pointsWorkerProtocol.ts`).
+ * the parquet-worker boundary has *already* lost its type, because the worker's
+ * failure channel is `{ ok: false; error: string }` (`parquetWorkerProtocol.ts`).
  * By the time a worker-side decode failure reaches us it is a string. No amount
  * of cleverness in this module recovers what the postMessage boundary threw away.
  *
@@ -182,11 +182,11 @@ function messageOf(cause: unknown): string {
  * where `decode-failed` is not always meaningfully so, which is why the
  * distinction is worth one narrow recogniser.
  *
- * Throw sites: `points-worker.ts` ("readParquetRowGroup is unavailable in points
- * worker"), `pointsWorkerScan.ts` ("readParquetRowGroup is unavailable").
+ * Throw sites: `parquet-worker.ts` ("readParquetRowGroup is unavailable in
+ * parquet worker"), `pointsScan.ts` ("readParquetRowGroup is unavailable").
  *
  * TODO(Track A): delete this. Track A owns the worker protocol and can introduce
- * a typed `PointsWorkerUnavailableError`, at which point the `instanceof` tier
+ * a typed `ParquetWorkerUnavailableError`, at which point the `instanceof` tier
  * covers it losslessly and this function goes away.
  */
 function recognise(cause: unknown): SpatialEntryErrorFallbackKind | undefined {

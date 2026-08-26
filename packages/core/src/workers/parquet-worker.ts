@@ -9,10 +9,10 @@ import { filterColumnarByFeatureCodes } from '../pointsTiling.js';
 import { decodeShapesGeometryFlat } from '../shapesGeometryDecode.js';
 import { tessellateFlatPolygons } from '../shapesPolygonTessellate.js';
 import type {
-  PointsWorkerMessage,
-  PointsWorkerRequest,
-  PointsWorkerResponse,
-} from './pointsWorkerProtocol.js';
+  ParquetWorkerMessage,
+  ParquetWorkerRequest,
+  ParquetWorkerResponse,
+} from './parquetWorkerProtocol.js';
 import {
   countFeatureCodesFromArray,
   decodeGeometryWithFeaturesFromPayload,
@@ -27,7 +27,7 @@ import {
   scanMortonTableInBounds,
   scanTableByFeatureCodes,
   scanTableFeatureCounts,
-} from './pointsWorkerScan.js';
+} from './pointsScan.js';
 
 function toFloat32Array(values: ArrayLike<number>): Float32Array {
   if (values instanceof Float32Array) {
@@ -44,7 +44,7 @@ function toInt32Array(values: ArrayLike<number>): Int32Array {
 }
 
 function handleFilterColumnar(
-  request: Extract<PointsWorkerRequest, { type: 'filterColumnarByFeatureCodes' }>
+  request: Extract<ParquetWorkerRequest, { type: 'filterColumnarByFeatureCodes' }>
 ) {
   const filtered = filterColumnarByFeatureCodes(
     {
@@ -78,8 +78,8 @@ function handleFilterColumnar(
 }
 
 async function handleDecodeParquet(
-  request: Extract<PointsWorkerRequest, { type: 'decodeParquetParts' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'decodeParquetParts' }>
+): Promise<ParquetWorkerResponse> {
   const { readParquet } = await getParquetModule();
   const merged = await decodeParquetPartsToTable(
     readParquet,
@@ -97,8 +97,8 @@ async function handleDecodeParquet(
 }
 
 async function handleDecodeParquetRowFeatureCodes(
-  request: Extract<PointsWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'decodeParquetRowFeatureCodes' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   const table = await decodeParquetPayloadToTable(
     parquetModule.readParquet,
@@ -127,8 +127,8 @@ async function handleDecodeParquetRowFeatureCodes(
 }
 
 async function handleScanParquetFeatureCatalog(
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCatalog' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'scanParquetFeatureCatalog' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   const catalog = await scanFeatureCatalogFromPayload(
     parquetModule.readParquet,
@@ -142,8 +142,8 @@ async function handleScanParquetFeatureCatalog(
 }
 
 async function handleDecodeParquetGeometryCapped(
-  request: Extract<PointsWorkerRequest, { type: 'decodeParquetGeometryCapped' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'decodeParquetGeometryCapped' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   const table = await decodeParquetPayloadToTable(
     parquetModule.readParquet,
@@ -176,8 +176,8 @@ async function handleDecodeParquetGeometryCapped(
 }
 
 async function handleDecodeGeometryWithFeatures(
-  request: Extract<PointsWorkerRequest, { type: 'decodeGeometryWithFeatures' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'decodeGeometryWithFeatures' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   const result = await decodeGeometryWithFeaturesFromPayload(
     parquetModule.readParquet,
@@ -200,8 +200,8 @@ async function handleDecodeGeometryWithFeatures(
 }
 
 function handleCountFeatureCodes(
-  request: Extract<PointsWorkerRequest, { type: 'countFeatureCodes' }>
-): PointsWorkerResponse {
+  request: Extract<ParquetWorkerRequest, { type: 'countFeatureCodes' }>
+): ParquetWorkerResponse {
   const { codes, countValues } = countFeatureCodesFromArray(request.sourceFeatureCodes);
   return {
     ok: true,
@@ -215,7 +215,7 @@ function handleCountFeatureCodes(
 
 async function scanTablesForFeatureCounts(
   parquetModule: ParquetModule,
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }>
+  request: Extract<ParquetWorkerRequest, { type: 'scanParquetFeatureCounts' }>
 ): Promise<Map<number, number>> {
   const columns = [
     request.featureKey,
@@ -245,8 +245,8 @@ async function scanTablesForFeatureCounts(
 }
 
 async function handleScanParquetFeatureCounts(
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetFeatureCounts' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'scanParquetFeatureCounts' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   const counts = await scanTablesForFeatureCounts(parquetModule, request);
   const { codes, countValues } = histogramToSortedArrays(counts);
@@ -277,7 +277,7 @@ const streamFilesByUrl = new Map<string, Promise<ParquetWasmFile>>();
  * granular without the protocol needing streamed responses.
  */
 async function scanStreamByFeatureCodes(
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
+  request: Extract<ParquetWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
   input: {
     matchedRows: number;
     xs: Float32PointBuffer;
@@ -290,7 +290,7 @@ async function scanStreamByFeatureCodes(
   const url = request.streamUrl as string;
   const { ParquetFile } = await getParquetModule();
   if (!ParquetFile) {
-    throw new Error('ParquetFile.stream is unavailable in the points worker');
+    throw new Error('ParquetFile.stream is unavailable in the parquet worker');
   }
   let filePromise = streamFilesByUrl.get(url);
   if (!filePromise) {
@@ -352,7 +352,7 @@ async function scanStreamByFeatureCodes(
 
 async function scanPayloadByFeatureCodes(
   parquetModule: ParquetModule,
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
+  request: Extract<ParquetWorkerRequest, { type: 'scanParquetByFeatureCodes' }>,
   input: {
     matchedRows: number;
     xs: Float32PointBuffer;
@@ -431,8 +431,8 @@ async function scanPayloadByFeatureCodes(
 }
 
 async function handleScanParquetByFeatureCodes(
-  request: Extract<PointsWorkerRequest, { type: 'scanParquetByFeatureCodes' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'scanParquetByFeatureCodes' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   const hasZ = request.axisNames.includes('z');
   // Typed accumulators, reserved per chunk against an exact upper bound inside the
@@ -471,11 +471,14 @@ async function handleScanParquetByFeatureCodes(
 }
 
 async function handleScanMortonRowGroupsInBounds(
-  request: Extract<PointsWorkerRequest, { type: 'scanMortonRowGroupsInBounds' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'scanMortonRowGroupsInBounds' }>
+): Promise<ParquetWorkerResponse> {
   const parquetModule = await getParquetModule();
   if (!parquetModule.readParquetRowGroup) {
-    return { ok: false, error: 'parquet-wasm readParquetRowGroup is unavailable in points worker' };
+    return {
+      ok: false,
+      error: 'parquet-wasm readParquetRowGroup is unavailable in parquet worker',
+    };
   }
   const hasZ = request.axisNames.includes('z');
   const columns = [
@@ -537,8 +540,8 @@ async function handleScanMortonRowGroupsInBounds(
 }
 
 function handleBuildFeatureCatalog(
-  request: Extract<PointsWorkerRequest, { type: 'buildFeatureCatalog' }>
-): PointsWorkerResponse {
+  request: Extract<ParquetWorkerRequest, { type: 'buildFeatureCatalog' }>
+): ParquetWorkerResponse {
   const table = tableFromIPC(request.tableIpc);
   const nameColumn = table.getChild(request.featureKey);
   if (!nameColumn) {
@@ -560,8 +563,8 @@ function handleBuildFeatureCatalog(
 }
 
 async function handleDecodeShapesGeometry(
-  request: Extract<PointsWorkerRequest, { type: 'decodeShapesGeometry' }>
-): Promise<PointsWorkerResponse> {
+  request: Extract<ParquetWorkerRequest, { type: 'decodeShapesGeometry' }>
+): Promise<ParquetWorkerResponse> {
   const { readParquet } = await getParquetModule();
   // Project only the geometry column: the feature index / row-index columns are
   // cheap and stay on the main thread; the WKB parse is the expensive part.
@@ -599,7 +602,7 @@ async function handleDecodeShapesGeometry(
   };
 }
 
-async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorkerResponse> {
+async function handleRequest(request: ParquetWorkerRequest): Promise<ParquetWorkerResponse> {
   switch (request.type) {
     case 'filterColumnarByFeatureCodes':
       return handleFilterColumnar(request);
@@ -632,14 +635,14 @@ async function handleRequest(request: PointsWorkerRequest): Promise<PointsWorker
   }
 }
 
-self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
+self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
   const message = event.data;
   if (message.direction !== 'request') {
     return;
   }
   void handleRequest(message.request)
     .then((response) => {
-      const reply: PointsWorkerMessage = { id: message.id, direction: 'response', response };
+      const reply: ParquetWorkerMessage = { id: message.id, direction: 'response', response };
       const transferables: Transferable[] = [];
       if (response.ok) {
         if (response.result.kind === 'columnar' || response.result.kind === 'columnarScan') {
@@ -681,7 +684,7 @@ self.onmessage = (event: MessageEvent<PointsWorkerMessage>) => {
       self.postMessage(reply, transferables);
     })
     .catch((error: unknown) => {
-      const reply: PointsWorkerMessage = {
+      const reply: ParquetWorkerMessage = {
         id: message.id,
         direction: 'response',
         response: {

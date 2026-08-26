@@ -9,7 +9,7 @@ import {
   Int32PointBuffer,
   scanFeatureCatalogFromPayload,
   scanTableByFeatureCodes,
-} from '../src/workers/pointsWorkerScan.js';
+} from '../src/workers/pointsScan.js';
 
 const throwingReadParquet = (() => {
   throw new Error('readParquet should not be called on the rowGroup path');

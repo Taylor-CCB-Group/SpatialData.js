@@ -2,7 +2,7 @@
 //
 // This is the CPU-heavy half of shapes loading — the WKB parse — factored out of
 // `VShapesSource` so it can run *either* on the main thread (fallback) or inside
-// the points worker. It depends only on `apache-arrow` + `ol/format/WKB`, never on
+// the parquet worker. It depends only on `apache-arrow` + `ol/format/WKB`, never on
 // zarrita/the store, so it is safe to import into the worker bundle.
 //
 // It produces **flat GeoArrow-style typed arrays** (interleaved coordinates +

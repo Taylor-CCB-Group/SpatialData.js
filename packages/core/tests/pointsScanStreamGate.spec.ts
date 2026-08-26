@@ -63,7 +63,7 @@ describe('feature scan — streaming gate', () => {
 
   it('declines when the reader is unavailable in this runtime', async () => {
     // `supportsParquetStreaming()` is false off the browser main thread — notably
-    // inside the points worker, and in Node.
+    // inside the parquet worker, and in Node.
     const internals = harness({ canStreamParquetByUrl: async () => false });
     await expect(internals.canStreamMatchingScan(parquetPath)).resolves.toBeNull();
   });

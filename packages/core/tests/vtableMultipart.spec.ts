@@ -124,7 +124,7 @@ describe('SpatialDataTableSource multipart parquet reads', () => {
 });
 
 /**
- * Row-group chunks are handed to the points worker with their buffers TRANSFERRED
+ * Row-group chunks are handed to the parquet worker with their buffers TRANSFERRED
  * (zero-copy), which detaches them in this thread. `schemaBytes` used to be a live
  * reference into the cached dataset metadata, so the first transfer detached the
  * CACHE — and the next row group posted an already-detached buffer:

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 6
 ---
 
 # Worker bundling pattern
@@ -98,6 +98,40 @@ export const disableMyWorker = controls.disableMyWorker;
 For `zarrextra/workers`, `src/workers/index.ts` is the source entry and
 `src/workers/index.package.ts` is the package entry used by the Vite library
 build.
+
+## When this pattern does not apply
+
+The package-mode factory above only works for a **self-contained** worker — one
+file, no sibling chunks, no bare specifiers, no separately-emitted wasm. A
+consumer's bundler treats the URL as a *static asset* reference: it copies the
+published worker file into the application's output and rewrites the URL. It does
+not follow anything that file imports.
+
+`zarrextra`'s codec worker qualifies (its own build pass, tree-shaking disabled,
+everything inlined). `@spatialdata/core`'s parquet worker does not: the built
+`dist/parquet-worker.js` imports core's shared chunks and bare `apache-arrow`, and
+it loads a 6.6 MB parquet-wasm at runtime. Copied as an asset it is 11 kB of
+imports that all 404. Making it self-contained would mean inlining that wasm into
+the worker, and again into every other bundle that needs it.
+
+So a worker with heavy or shared dependencies inverts the rule: the *consumer's*
+bundler has to build it, and the package's job is to make that one line easy and
+to fail loudly when it is missing.
+
+```ts
+import workerUrl from '@spatialdata/core/parquet-worker?worker&url';
+enableParquetWorker({ workerUrl });
+```
+
+Whichever shape applies, detect a worker that never loads and fall back rather
+than leaving requests to time out — `parquetWorkerClient.ts` treats an `error`
+event from a worker that has never answered as "this was never wired up",
+switches the worker off so `isParquetWorkerEnabled()` stops claiming otherwise,
+and says so once on the console.
+
+The consumer-facing side of all this — including `ensureWorkers()`, which starts
+the codec and parquet workers together — is
+[Bundling into an application](./bundling).
 
 ## Worker implementation
 

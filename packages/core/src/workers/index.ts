@@ -6,24 +6,24 @@ export {
   decodeParquetPartsInWorker,
   decodeParquetRowFeatureCodesInWorker,
   decodeShapesGeometryInWorker,
-  disablePointsWorker,
-  enablePointsWorker,
-  ensurePointsWorker,
+  disableParquetWorker,
+  enableParquetWorker,
+  ensureParquetWorker,
   filterColumnarByFeatureCodesInWorker,
-  isPointsWorkerEnabled,
+  isParquetWorkerEnabled,
   scanMortonRowGroupsInBoundsInWorker,
   scanParquetByFeatureCodesInWorker,
   scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
-  setPointsWorkerDefaultEnabled,
-  setPointsWorkerRequestTimeout,
+  setParquetWorkerDefaultEnabled,
+  setParquetWorkerRequestTimeout,
   transferablesForParquetPayload,
-} from './pointsWorkerClient.js';
+} from './parquetWorkerClient.js';
 
 export type {
   ParquetRowGroupBytesChunk,
+  ParquetWorkerMessage,
   ParquetWorkerPayload,
-  PointsWorkerMessage,
-  PointsWorkerRequest,
-  PointsWorkerResponse,
-} from './pointsWorkerProtocol.js';
+  ParquetWorkerRequest,
+  ParquetWorkerResponse,
+} from './parquetWorkerProtocol.js';

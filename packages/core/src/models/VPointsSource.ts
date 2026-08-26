@@ -21,13 +21,13 @@ import {
   decodeGeometryWithFeaturesInWorker,
   decodeParquetGeometryCappedInWorker,
   decodeParquetRowFeatureCodesInWorker,
-  ensurePointsWorker,
-  isPointsWorkerEnabled,
+  ensureParquetWorker,
+  isParquetWorkerEnabled,
   scanMortonRowGroupsInBoundsInWorker,
   scanParquetByFeatureCodesInWorker,
   scanParquetFeatureCatalogInWorker,
   scanParquetFeatureCountsInWorker,
-} from '../workers/pointsWorkerClient.js';
+} from '../workers/parquetWorkerClient.js';
 
 interface ColumnarPointsChunk {
   shape: number[];
@@ -968,8 +968,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
 
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       // Progressive preload (D3), when the caller asked for progress and the store
       // supports row-group range reads. Streams the axes — plus an authoritative
       // integer code column when the dataset has one, so those datasets stream
@@ -1220,7 +1220,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     const { tableFromIPC } = await import('apache-arrow');
     const { Float32PointBuffer, Int32PointBuffer, scanTableByFeatureCodes } = await import(
-      '../workers/pointsWorkerScan.js'
+      '../workers/pointsScan.js'
     );
 
     let matchedRows = 0;
@@ -1267,7 +1267,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // Preferred: stream IN THE WORKER, so the decode stays off the main thread.
     // One request per row-group window keeps progress granular without the worker
     // protocol needing streamed responses — each response is simply a chunk.
-    if (isPointsWorkerEnabled() && rowGroupCounts.length === partUrls.length) {
+    if (isParquetWorkerEnabled() && rowGroupCounts.length === partUrls.length) {
       const featureCodeEntries = options.featureCodeByName
         ? [...options.featureCodeByName].map(([name, code]) => ({ name, code }))
         : undefined;
@@ -1399,7 +1399,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       featureCodeByName?: ReadonlyMap<string, number>;
     }
   ) {
-    ensurePointsWorker();
+    ensureParquetWorker();
     checkAbort(options.abort);
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
@@ -1419,9 +1419,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       return { totalRowCount, axisNames, scannedRows: 0, matchedRows: 0 };
     }
 
-    if (!isPointsWorkerEnabled()) {
+    if (!isParquetWorkerEnabled()) {
       throw new Error(
-        'Feature-filtered points loading requires the points worker and parquet part bytes.'
+        'Feature-filtered points loading requires the parquet worker and parquet part bytes.'
       );
     }
 
@@ -1541,7 +1541,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           ...(featureCodeEntries ? { featureCodeEntries } : {}),
         });
         if (!partial) {
-          throw new Error('Feature-filtered points loading requires the points worker.');
+          throw new Error('Feature-filtered points loading requires the parquet worker.');
         }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
@@ -1586,7 +1586,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           ...(featureCodeEntries ? { featureCodeEntries } : {}),
         });
         if (!partial) {
-          throw new Error('Feature-filtered points loading requires the points worker.');
+          throw new Error('Feature-filtered points loading requires the parquet worker.');
         }
         scannedRows += partial.scannedRows;
         if (partial.matchedRows > 0) {
@@ -1691,8 +1691,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const canUseRowGroups = await this.canLoadParquetRowGroups();
     const datasetRowGroups = datasetMetadata?.totalNumRowGroups ?? 0;
 
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
@@ -1730,7 +1730,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           columns: columnNames,
         });
         if (table && table.numRows > 0) {
-          const { scanTableFeatureCounts } = await import('../workers/pointsWorkerScan.js');
+          const { scanTableFeatureCounts } = await import('../workers/pointsScan.js');
           scanTableFeatureCounts(table, featureKey, featureCodeColumnName, counts);
         }
       }
@@ -1806,7 +1806,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
   /**
    * Load per-row feature codes aligned with {@link loadPoints} rows. Deferred from
    * geometry preload so large datasets do not block the first render. Parquet decode
-   * and code extraction run on the points worker when enabled; falls back to the
+   * and code extraction run on the parquet worker when enabled; falls back to the
    * main thread when the worker is unavailable.
    */
   async loadPointsRowFeatureCodes(
@@ -1855,8 +1855,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       ? [...featureCodeByName.entries()].map(([name, code]) => ({ name, code }))
       : undefined;
 
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, { maxRows });
         const workerInput = {
@@ -2163,8 +2163,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       );
     }
 
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
@@ -2482,8 +2482,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       ? [...featureCodeByName.entries()].map(([name, code]) => ({ name, code }))
       : undefined;
 
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       try {
         const payload = await this.readParquetWorkerPayload(parquetPath, {
           maxRows: Number.POSITIVE_INFINITY,
@@ -2636,7 +2636,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // Dynamic, like the call site below: keeps the worker scan module out of the
     // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
     const { Float32PointBuffer, Int32PointBuffer, scanMortonTableInBounds } = await import(
-      '../workers/pointsWorkerScan.js'
+      '../workers/pointsScan.js'
     );
     const xs = new Float32PointBuffer();
     const ys = new Float32PointBuffer();
@@ -2648,8 +2648,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // to arrive without them and render flat.
     const featureCodeColumnName = metadata.featureCodeColumnName || undefined;
 
-    ensurePointsWorker();
-    if (isPointsWorkerEnabled()) {
+    ensureParquetWorker();
+    if (isParquetWorkerEnabled()) {
       const rowGroupChunks = [];
       for (const rowGroup of rowGroups) {
         checkAbort(options.signal);
