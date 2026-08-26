@@ -1,5 +1,72 @@
 # zarrextra
 
+## 0.5.0
+
+### Minor Changes
+
+- [#132](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/132) [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Move to `@fideus-labs/fizarrita` and `@fideus-labs/worker-pool` 2.1.0.
+  
+  A major bump upstream, but a no-op at this seam: the pieces `zarrextra` touches —
+  `getWorker`, `ChunkCache`, `GetWorkerOptions`, the codec-worker entry — are
+  unchanged in shape. What moved is internal to fizarrita (`createDefaultWorker`
+  relocating to a `create-worker` module, a `WorkerLike` abstraction so the pool can
+  run on `node:worker_threads`), and all of it is still exported from the package
+  root we import from. Nothing here needed editing to compile.
+  
+  What we get for it is the whole of what ADR 0005 recorded as owed upstream:
+  
+  - **Concurrent readers of one chunk now share a single fetch and decode.**
+    fizarrita keys in-flight operations the same way it keys the chunk cache, so
+    the window between "someone started fetching this" and "the result is
+    cacheable" no longer costs a duplicate round-trip and a duplicate decompression.
+    This is what makes the chunk cache worth its bytes on a pan that re-enters
+    ground already in flight.
+  - **Metadata reads and the chunk-shape probe are memoised per `(store, path)`.**
+    Every `getWorker` call used to re-read `zarr.json`/`.zarray` and re-run
+    `probeActualChunkShape`, *before* the cache was consulted — so a populated
+    chunk cache could not eliminate them and every tile paid for both.
+  - **Codec classification no longer mistakes compressed chunks for uncompressed
+    ones.** The old check named the compressors it knew; anything else — JPEG 2000
+    and HTJ2K among them — took the not-compressed branch and reported its
+    *compressed* length as its decompressed size, feeding a wrong number to chunk
+    shape inference. It now allowlists the codecs that preserve byte count instead.
+    This one affects our imagery directly.
+  - **`getWorker` accepts an `AbortSignal`**, forwarded to every `store.get`.
+    Not taken up here yet — `rejectOnAbort` still only settles the promise early,
+    so a cancelled read stops being awaited while its fetch and decode run on.
+    Wiring it through is now possible and is deliberately left as its own change.
+
+- [#132](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/132) [`824576c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/824576c2012e41ba0d628863f7acb0b671948a55) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Make a cancelled chunk read actually cancel.
+  
+  `getZarrChunk` accepted an `AbortSignal` and wrapped the read in `rejectOnAbort`,
+  which raced the signal against the promise and rejected early. That stopped the
+  caller *awaiting* the read and nothing more: the store request and the worker
+  decode ran to completion, unobserved. A pan that outran its tiles paid the full
+  network and decode cost of every tile it had already abandoned, and the only
+  visible sign was that the numbers never quite added up.
+  
+  The signal is now handed to whichever backend is serving the read, both of which
+  take it as a first-class option:
+  
+  - **fizarrita** (worker decode) aborts the store requests it makes — metadata,
+    chunk-shape probe, and chunk fetches alike — and drops chunk tasks still queued
+    on the worker pool rather than starting them.
+  - **zarrita** (main thread) forwards it to every `store.get` and re-checks it
+    between chunks, so a multi-chunk read stops early instead of running the rest
+    out.
+  
+  Neither interrupts a decode already running on a worker; that result is decoded
+  and discarded. So this bounds what a cancelled read *starts*, not what it has
+  already handed over — worth knowing before treating cancellation as free.
+  
+  `rejectOnAbort` is deleted rather than kept alongside: fizarrita rejects promptly
+  with the signal's reason on its own, and two things racing to reject one read is
+  a good way to end up unable to say which reason a caller will see.
+  
+  The signal is also now structurally excluded from the backend-level options set
+  once by `enableWorkerChunkDecode`. Cancellation belongs to a single read, and a
+  signal parked on the backend would quietly govern every read it ever served.
+
 ## 0.4.0
 
 ### Minor Changes
