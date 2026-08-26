@@ -19,11 +19,20 @@ export type EnsureParquetWorkerOptions = {
    * *bundled* worker — webpack is the case this exists for. Takes precedence over
    * {@link workerUrl}; see `enableParquetWorker` in core for the why.
    *
+   * The URL must point at a one-line entry file in YOUR source, not at the bare
+   * `@spatialdata/core/parquet-worker` specifier — that makes webpack emit core's
+   * published worker entry as an unbundled static asset whose every import 404s.
+   *
+   * ```ts
+   * // parquetWorkerEntry.ts
+   * import '@spatialdata/core/parquet-worker';
+   * ```
+   *
    * ```ts
    * ensureWorkers({
    *   parquet: {
    *     createWorker: () =>
-   *       new Worker(new URL('@spatialdata/core/parquet-worker', import.meta.url), {
+   *       new Worker(new URL('./parquetWorkerEntry.ts', import.meta.url), {
    *         type: 'module',
    *       }),
    *   },

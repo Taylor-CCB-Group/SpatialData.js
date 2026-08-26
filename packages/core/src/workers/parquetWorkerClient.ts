@@ -204,18 +204,28 @@ export type EnableParquetWorkerOptions = {
   /**
    * Build the Worker yourself, for bundlers that cannot hand back a URL for a
    * *bundled* worker. webpack is the case this exists for: it only builds a worker
-   * when it can see the `new Worker(new URL(...))` form, and a bare `new URL()` on a
-   * module emits the unbundled source as a static asset instead — 11kB whose every
-   * import 404s.
+   * when it can see the `new Worker(new URL(...))` form literally, and only when that
+   * URL points at a file in your own source.
+   *
+   * ```ts
+   * // parquetWorkerEntry.ts — one line, in YOUR source tree
+   * import '@spatialdata/core/parquet-worker';
+   * ```
    *
    * ```ts
    * enableParquetWorker({
    *   createWorker: () =>
-   *     new Worker(new URL('@spatialdata/core/parquet-worker', import.meta.url), {
+   *     new Worker(new URL('./parquetWorkerEntry.ts', import.meta.url), {
    *       type: 'module',
    *     }),
    * });
    * ```
+   *
+   * The local file is not ceremony. Pointing the URL straight at the bare specifier —
+   * `new URL('@spatialdata/core/parquet-worker', import.meta.url)` — resolves to this
+   * package's published `dist/parquet-worker.js` and makes webpack emit *that file* as
+   * a static asset, still carrying its relative imports to sibling chunks and a bare
+   * `apache-arrow`: 9kB whose every import 404s. Measured, not theorised.
    *
    * A factory rather than a `Worker`, because enabling tears down and rebuilds: an
    * instance could only be used once. Takes precedence over {@link workerUrl}.
@@ -240,8 +250,11 @@ function defaultWorkerUrl(): URL | undefined {
   // `import.meta` is replaced with `{}` in this package's CJS output, so there is no
   // base to resolve against and `new URL(x, undefined)` throws `Invalid URL`. A CJS
   // host has to pass `workerUrl` or `createWorker`; say so rather than throw.
-  const base: string | undefined = (import.meta as { url?: string }).url;
-  if (!base) {
+  // Read through `unknown` rather than asserting a shape: the cjs build replaces
+  // `import.meta` with `{}`, so this genuinely may not be a string at runtime and the
+  // type should say so rather than be talked out of it.
+  const base: unknown = import.meta.url;
+  if (typeof base !== 'string') {
     return undefined;
   }
   return new URL(/* @vite-ignore */ './parquet-worker.js', base);
@@ -280,22 +293,39 @@ export function enableParquetWorker(options: EnableParquetWorkerOptions = {}) {
   // A fresh attempt, even after a dead worker latched `ensureParquetWorker` off.
   startupFailed = false;
   workerHasAnswered = false;
-  if (options.createWorker) {
-    worker = options.createWorker();
-  } else if (options.workerUrl) {
-    worker = new Worker(options.workerUrl, { type: 'module' });
-  } else {
-    const url = defaultWorkerUrl();
-    if (!url) {
-      startupFailed = true;
-      console.warn(
-        '[@spatialdata/core] no default parquet worker URL is available in a CommonJS ' +
-          'build; pass enableParquetWorker({ workerUrl }) or ({ createWorker }). ' +
-          'Continuing on the main thread.'
-      );
-      return;
+  // Constructing a Worker can throw synchronously — a `createWorker` factory is host
+  // code, and `new Worker` itself throws on a URL the browser rejects or a CSP that
+  // forbids it. Everything else here treats a bad worker as a performance cost rather
+  // than a failure, and a throw would break that promise by taking out the caller's
+  // render instead. Degrade the same way a dead worker does.
+  try {
+    if (options.createWorker) {
+      worker = options.createWorker();
+    } else if (options.workerUrl) {
+      worker = new Worker(options.workerUrl, { type: 'module' });
+    } else {
+      const url = defaultWorkerUrl();
+      if (!url) {
+        startupFailed = true;
+        console.warn(
+          '[@spatialdata/core] no default parquet worker URL is available in a CommonJS ' +
+            'build; pass enableParquetWorker({ workerUrl }) or ({ createWorker }). ' +
+            'Continuing on the main thread.'
+        );
+        return;
+      }
+      worker = new Worker(url, { type: 'module' });
     }
-    worker = new Worker(url, { type: 'module' });
+  } catch (error) {
+    worker = undefined;
+    enabled = false;
+    startupFailed = true;
+    console.warn(
+      `[@spatialdata/core] parquet worker could not be constructed (${
+        error instanceof Error ? error.message : String(error)
+      }); continuing on the main thread.`
+    );
+    return;
   }
   ensureWorkerListener();
   enabled = true;

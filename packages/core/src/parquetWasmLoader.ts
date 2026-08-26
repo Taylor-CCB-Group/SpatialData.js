@@ -149,8 +149,8 @@ async function initializeParquetModule(module: unknown) {
   // throws a TypeError — in the very build that exists to serve Node. Fall through to
   // the async init instead of crashing. (The CJS build also resolves `node:*` to
   // browser stubs, so this branch could not have worked there regardless.)
-  const moduleUrl: string | undefined = (import.meta as { url?: string }).url;
-  if (isNodeRuntime && typeof initSync === 'function' && moduleUrl) {
+  const moduleUrl: unknown = import.meta.url;
+  if (isNodeRuntime && typeof initSync === 'function' && typeof moduleUrl === 'string') {
     const [{ readFileSync }, { fileURLToPath }, { dirname, join }] = await Promise.all([
       import('node:fs'),
       import('node:url'),

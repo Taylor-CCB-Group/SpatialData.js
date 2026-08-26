@@ -945,20 +945,28 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // because that one cannot read a dictionary feature column at all — the case
     // where colour otherwise waits for a whole separate decode.
     //
-    // WARNING: this runs BEFORE the worker gate below and decodes ON THE MAIN
-    // THREAD. `streamPointsWithFeaturesByUrl` drives parquet-wasm's `ParquetFile`
-    // and `tableFromIPC` itself; only the per-batch *bookkeeping* after that is the
-    // dictionary lookup and typed-array copy this comment used to claim was all of
-    // it. So on any element with a feature key and a progress callback — the normal
-    // case for a coloured points layer — the whole preload decodes on the main
-    // thread and the parquet worker never sees it, enabled or not.
+    // WARNING: when this path is TAKEN it runs BEFORE the worker gate below and
+    // decodes ON THE MAIN THREAD. `streamPointsWithFeaturesByUrl` drives
+    // parquet-wasm's `ParquetFile` and `tableFromIPC` itself; only the per-batch
+    // *bookkeeping* after that is the dictionary lookup and typed-array copy this
+    // comment used to claim was all of it.
     //
-    // Measured on a 4M-row capped preload of a 5-part Xenium transcripts element:
-    // five ~700ms decodes, ~4.4s of long tasks, zero `decodeParquetGeometryCapped`
-    // requests posted. Not a regression — this has been the shape since #89 — but
-    // it is why enabling the worker does not make a points layer stop blocking.
-    // Fixing it means decoding these batches in the worker or gating this path on
-    // the worker being unavailable; both change what paints when, so neither is a
+    // It is taken only where the store can serve streaming range reads — see the
+    // four `return null` bails at the top of that method (no url-streaming support,
+    // no parts, a part whose URL will not range-read, no `ParquetFile`). Anywhere it
+    // bails, control falls through and the worker path below runs normally. So this
+    // is not "the worker is never used for points"; it is "on a store that supports
+    // streaming, an element with a feature key and a progress callback — the normal
+    // case for a coloured points layer — decodes its whole preload on the main
+    // thread, whether or not the worker is enabled".
+    //
+    // Measured on such a store, a 4M-row capped preload of a 5-part Xenium
+    // transcripts element: five ~700ms decodes, ~4.4s of long tasks, zero
+    // `decodeParquetGeometryCapped` requests posted. Not a regression — this has
+    // been the shape since #89 — but it is why enabling the worker does not make
+    // that points layer stop blocking. Fixing it means decoding these batches in
+    // the worker; gating this path on the worker instead only trades a frozen tab
+    // for a blank one, since the progressive paint is what it buys. Neither is a
     // drive-by. See the investigation in this branch before changing the order.
     if (options.onProgress && featureKey) {
       try {
