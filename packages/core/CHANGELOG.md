@@ -1,5 +1,187 @@
 # @spatialdata/core
 
+## 0.10.0
+
+### Minor Changes
+
+- [#171](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/171) [`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `enableParquetWorker` and `ensureWorkers` accept a `createWorker` factory, for
+  bundlers that cannot hand back a URL for a *bundled* worker.
+  
+  webpack is the case this exists for. It only builds a worker when it can see the
+  `new Worker(new URL(...))` form literally, so there is no URL to import ahead of
+  time; `workerUrl` has no answer for it, and the "Other bundlers" row of the bundling
+  page was advice nobody could follow.
+  
+  ```ts
+  // myWorkerEntry.ts — one line, in your own source
+  import '@spatialdata/core/parquet-worker';
+  ```
+  
+  ```ts
+  ensureWorkers({
+    parquet: {
+      createWorker: () =>
+        new Worker(new URL('./myWorkerEntry.ts', import.meta.url), { type: 'module' }),
+    },
+  });
+  ```
+  
+  The local entry file is load-bearing: pointing the URL at the bare
+  `@spatialdata/core/parquet-worker` specifier makes webpack emit this package's published
+  worker entry as an unbundled static asset, 9kB whose every import 404s.
+  
+  Constructing the worker is also now failure-tolerant. A `createWorker` factory is host
+  code and can throw, and `new Worker` itself throws on a URL the browser rejects or under
+  a CSP that forbids it; either used to propagate out of `enableParquetWorker` and take the
+  caller's render with it. Both are now caught, warned about, and left switched off, which
+  is how every other worker failure here already behaves.
+  
+  A factory rather than a `Worker`, because enabling tears down and rebuilds — an
+  instance could only be used once. Takes precedence over `workerUrl`; Vite hosts keep
+  using the `?worker&url` import and are unaffected.
+
+- [#174](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/174) [`e83af29`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/e83af29f19749e1c7afe3fa755f01386587700d9) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Stream the progressive points preload in the parquet worker
+  
+  A points layer coloured by feature ran its preload through
+  `streamPointsWithFeaturesByUrl` — parquet-wasm's `ParquetFile.stream()` and
+  `tableFromIPC` **on the main thread**, from above the worker gate, so enabling the
+  parquet worker made no difference to it. It now range-fetches and decodes in the
+  worker, posting batches back as they land, so the progressive coloured paint survives
+  while the main thread only copies each batch into its accumulator.
+  
+  Docs demo, 4.83M-row Xenium transcripts element with a 12,448-feature panel, capped at
+  4M rows:
+  
+  | | before | after |
+  | --- | --- | --- |
+  | worker requests | **zero** | 62 batches, 4M rows |
+  | preload completes | **never** (9.4 min, still going) | 75 s |
+  | worst single task | 113 s | ~4.2 s |
+  | long tasks to that point | 543 s and climbing | 63 s |
+  
+  Not sufficient on its own: the dictionary feature column names all 12,448 features in
+  batch one, so every progress tick re-renders the unvirtualized feature list of [#172](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/172),
+  which dominates what is left.
+  
+  New in the worker protocol, which now carries more than one message per request:
+  
+  - `ParquetWorkerMessage` gains a `direction: 'stream'` interim variant alongside the
+    terminal `response`. Interim messages do not settle the request.
+  - `setParquetWorkerRequestTimeout` now measures time since the **last message**, not
+    time to the only response — unchanged for request/response types, where one message
+    ever arrives, but without it a minutes-long stream looks stuck.
+  - A new `cancelParquetStream` request stops the worker *fetching*, not just the client
+    listening.
+  
+  The main-thread stream stays as the fallback for hosts without a worker bundle. A
+  stream that fails after delivering batches rejects rather than reporting a partial as
+  success — nothing downstream can tell a truncated preload from a complete one — and
+  the caller restarts there from row 0.
+
+- [#176](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/176) [`b5a7f40`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b5a7f4019687b029a48fc816e14ef63cfe6f62fd) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Add `streamPoints()`, the async-iterable form of the incremental points load
+  
+  `onProgress(partialResult)` left three properties implicit that an iterable states
+  outright ([#175](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/175)): partial failure is *consumed n items, then it threw*, cancellation is
+  `break`, and read-ahead depth is visible rather than unexpressed.
+  
+  ```ts
+  for await (const progress of element.streamPoints({ includeFeatureCodes: true })) {
+    draw(progress.partialResult);
+  }
+  ```
+  
+  Additive:
+  
+  - `SpatialDataPointsSource.streamPoints` / `PointsElement.streamPoints` — an
+    `AsyncGenerator<PointsLoadProgress, PointsLoadResult>`. It yields the growing result
+    and *returns* the settled one, which `for await` discards.
+  - `streamPointsMatchingFeatureCodes` beside `loadPointsMatchingFeatureCodes`.
+  - `coalesceLatest`, `sampleByStep` and `drainStream` — generic combinators over async
+    iterables. `coalesceLatest` is the rate lever: it drops superseded items when the
+    consumer falls behind, sound here only because every points tick is cumulative.
+  
+  `PointsLoadOptions.onProgress` is deprecated but fully supported and implemented by
+  draining the same generator, so the two cannot drift. It still selects the progressive
+  read path, so a caller passing no callback takes the one-shot decode exactly as before.
+  Nothing is scheduled for removal.
+  
+  Internally `streamGeometryWithFeaturesInWorker` is a generator and `postRequest`'s
+  `onChunk` option is gone; streaming requests go through `postStreamingRequest`, which
+  owns the queue. Neither is published, so no consumer sees the change.
+  
+  Not done here: `PointsResolver` keeps its `silent`-emit throttle. It has to keep the
+  partial fresh on every tick while notifying rarely, which is neither combinator's
+  policy, so replacing it deserves its own evidence.
+
+### Patch Changes
+
+- [#171](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/171) [`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Stop the cjs build's `import.meta` replacement from being a latent crash.
+  
+  The cjs pass replaces `import.meta` with `{}`, so `import.meta.url` is `undefined`
+  there. Two call sites used it unguarded, and both were in code meant to serve Node —
+  the one runtime the cjs build exists for:
+  
+  - the parquet-wasm loader's Node branch called `fileURLToPath(undefined)`, a
+    `TypeError`, on the first parquet read;
+  - `defaultWorkerUrl()` called `new URL('./parquet-worker.js', undefined)`, which throws
+    `Invalid URL`, so `enableParquetWorker()` with no `workerUrl` threw instead of
+    falling back.
+  
+  Both now read `import.meta.url` into a variable and check it. The loader falls through
+  to the async init; `enableParquetWorker` warns that a CommonJS host must pass
+  `workerUrl` or `createWorker`, and leaves the worker off rather than throwing.
+  
+  Two caveats worth knowing. The build still emits `EMPTY_IMPORT_META` twice — that is
+  now expected and is commented as such in `packages/core/vite.config.ts`; rolldown's
+  suggested `transform.define` suppression is not reachable through Vite 8's config.
+  And the cjs entry cannot currently be `require`d at all, for an unrelated reason:
+  `anndata.js` publishes no CommonJS export, so `require('@spatialdata/core')` fails
+  before any of this is reached. These guards are correctness for when that is fixed,
+  not a claim that the cjs build works today.
+
+- [#171](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/171) [`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Correct the comment on the progressive points preload, which claimed it "needs no
+  worker: the per-batch work is a dictionary lookup and a typed-array copy".
+  
+  It is not. `streamPointsWithFeaturesByUrl` drives parquet-wasm's `ParquetFile` and
+  `tableFromIPC` itself, on the main thread, and it is tried *before* the
+  `isParquetWorkerEnabled()` gate.
+  
+  Scope matters here: that path is only taken where the store can serve streaming range
+  reads. Where it cannot, the method bails and the worker path runs as normal. So the
+  claim is not "points never use the worker" — it is that on a streaming-capable store,
+  an element with a feature key and a progress callback (the normal case for a coloured
+  points layer) decodes its whole preload on the main thread, worker enabled or not.
+  
+  Measured on a 4M-row capped preload of a five-part Xenium transcripts element: five
+  ~700ms decodes, ~4.4s of long tasks, and zero `decodeParquetGeometryCapped` requests
+  posted. Behaviour is unchanged here — this has been the shape since [#89](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/89) — but the
+  comment actively misled anyone looking for why enabling the worker does not stop a
+  points layer blocking.
+
+- [#176](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/176) [`b5a7f40`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b5a7f4019687b029a48fc816e14ef63cfe6f62fd) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Virtualize the points feature list
+  
+  The list rendered a row per catalog entry. On a 12,448-feature Xenium element that is
+  91,107 DOM nodes and 12,453 checkboxes for a list showing eight rows at a time ([#172](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/172));
+  measured after, 745 nodes and 17 rows.
+  
+  Windowed with `@tanstack/react-virtual` (a new `@spatialdata/vis` dependency) at a fixed
+  22px row height — the rows are single lines, so nothing needs measuring. Scroll extent,
+  search, sorting, colour overrides and hover highlighting are unchanged.
+  
+  That promoted the classification pass to the floor, so it goes too: the summary lines
+  count greyed and partly-loaded rows across the whole catalog however few rows render,
+  and they ran on every engine notify. They are now memoised, and only mounted rows are
+  classified per render.
+  
+  Two things virtualization would otherwise have cost, fixed with it: the scroll
+  container is focusable, so a keyboard user can still reach features outside the
+  mounted window; and a hovered row that the virtualizer unmounts no longer leaves a
+  stale highlight on the canvas, since removing a node fires no `mouseleave`.
+  
+  One supporting change in `@spatialdata/core`: `PointsResolver`'s covered-codes set is
+  memoised on the scan signature. It was re-parsing a 12k-entry string and returning a
+  fresh `Set` per call, which defeated any memoisation downstream of it.
+
 ## 0.9.0
 
 ### Minor Changes

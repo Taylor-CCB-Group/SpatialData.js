@@ -1,5 +1,77 @@
 # @spatialdata/vis
 
+## 0.10.0
+
+### Minor Changes
+
+- [#171](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/171) [`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `enableParquetWorker` and `ensureWorkers` accept a `createWorker` factory, for
+  bundlers that cannot hand back a URL for a *bundled* worker.
+  
+  webpack is the case this exists for. It only builds a worker when it can see the
+  `new Worker(new URL(...))` form literally, so there is no URL to import ahead of
+  time; `workerUrl` has no answer for it, and the "Other bundlers" row of the bundling
+  page was advice nobody could follow.
+  
+  ```ts
+  // myWorkerEntry.ts — one line, in your own source
+  import '@spatialdata/core/parquet-worker';
+  ```
+  
+  ```ts
+  ensureWorkers({
+    parquet: {
+      createWorker: () =>
+        new Worker(new URL('./myWorkerEntry.ts', import.meta.url), { type: 'module' }),
+    },
+  });
+  ```
+  
+  The local entry file is load-bearing: pointing the URL at the bare
+  `@spatialdata/core/parquet-worker` specifier makes webpack emit this package's published
+  worker entry as an unbundled static asset, 9kB whose every import 404s.
+  
+  Constructing the worker is also now failure-tolerant. A `createWorker` factory is host
+  code and can throw, and `new Worker` itself throws on a URL the browser rejects or under
+  a CSP that forbids it; either used to propagate out of `enableParquetWorker` and take the
+  caller's render with it. Both are now caught, warned about, and left switched off, which
+  is how every other worker failure here already behaves.
+  
+  A factory rather than a `Worker`, because enabling tears down and rebuilds — an
+  instance could only be used once. Takes precedence over `workerUrl`; Vite hosts keep
+  using the `?worker&url` import and are unaffected.
+
+- [#176](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/176) [`b5a7f40`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b5a7f4019687b029a48fc816e14ef63cfe6f62fd) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Virtualize the points feature list
+  
+  The list rendered a row per catalog entry. On a 12,448-feature Xenium element that is
+  91,107 DOM nodes and 12,453 checkboxes for a list showing eight rows at a time ([#172](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/172));
+  measured after, 745 nodes and 17 rows.
+  
+  Windowed with `@tanstack/react-virtual` (a new `@spatialdata/vis` dependency) at a fixed
+  22px row height — the rows are single lines, so nothing needs measuring. Scroll extent,
+  search, sorting, colour overrides and hover highlighting are unchanged.
+  
+  That promoted the classification pass to the floor, so it goes too: the summary lines
+  count greyed and partly-loaded rows across the whole catalog however few rows render,
+  and they ran on every engine notify. They are now memoised, and only mounted rows are
+  classified per render.
+  
+  Two things virtualization would otherwise have cost, fixed with it: the scroll
+  container is focusable, so a keyboard user can still reach features outside the
+  mounted window; and a hovered row that the virtualizer unmounts no longer leaves a
+  stale highlight on the canvas, since removing a node fires no `mouseleave`.
+  
+  One supporting change in `@spatialdata/core`: `PointsResolver`'s covered-codes set is
+  memoised on the scan signature. It was re-parsing a 12k-entry string and returning a
+  fresh `Set` per call, which defeated any memoisation downstream of it.
+
+### Patch Changes
+
+- Updated dependencies [[`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8), [`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8), [`e83af29`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/e83af29f19749e1c7afe3fa755f01386587700d9), [`625f5b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/625f5b1a2daef873f1bfd29c518e2a201aa225a8), [`b5a7f40`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b5a7f4019687b029a48fc816e14ef63cfe6f62fd), [`b5a7f40`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b5a7f4019687b029a48fc816e14ef63cfe6f62fd)]:
+  - @spatialdata/core@0.10.0
+  - @spatialdata/layers@0.10.0
+  - @spatialdata/react@0.10.0
+  - @spatialdata/avivatorish@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes
