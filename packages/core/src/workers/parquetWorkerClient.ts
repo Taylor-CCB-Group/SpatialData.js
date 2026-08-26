@@ -191,6 +191,38 @@ function transferablesForRequest(request: ParquetWorkerRequest): Transferable[] 
   return [];
 }
 
+export type EnableParquetWorkerOptions = {
+  /**
+   * Where the worker bundle lives, from an import your bundler resolves. In Vite:
+   * `import workerUrl from '@spatialdata/core/parquet-worker?worker&url'`.
+   *
+   * Omit only when core is loaded as published ESM without being re-bundled — a dev
+   * server, an import map, a CDN — where `dist/parquet-worker.js` really does sit
+   * next to the chunk asking for it.
+   */
+  workerUrl?: string | URL;
+  /**
+   * Build the Worker yourself, for bundlers that cannot hand back a URL for a
+   * *bundled* worker. webpack is the case this exists for: it only builds a worker
+   * when it can see the `new Worker(new URL(...))` form, and a bare `new URL()` on a
+   * module emits the unbundled source as a static asset instead — 11kB whose every
+   * import 404s.
+   *
+   * ```ts
+   * enableParquetWorker({
+   *   createWorker: () =>
+   *     new Worker(new URL('@spatialdata/core/parquet-worker', import.meta.url), {
+   *       type: 'module',
+   *     }),
+   * });
+   * ```
+   *
+   * A factory rather than a `Worker`, because enabling tears down and rebuilds: an
+   * instance could only be used once. Takes precedence over {@link workerUrl}.
+   */
+  createWorker?: () => Worker;
+};
+
 /**
  * The published `dist/parquet-worker.js`, resolved at runtime — correct wherever core
  * is loaded as published ESM (dev server, import map, CDN). A bundled application
@@ -231,7 +263,7 @@ export function isParquetWorkerEnabled(): boolean {
  * `loadPointsMatchingFeatureCodes`, which has no main-thread fallback and throws.
  * Gate any UI for it on {@link isParquetWorkerEnabled}.
  */
-export function enableParquetWorker(options: { workerUrl?: string | URL } = {}) {
+export function enableParquetWorker(options: EnableParquetWorkerOptions = {}) {
   if (typeof Worker === 'undefined') {
     return;
   }
@@ -241,7 +273,9 @@ export function enableParquetWorker(options: { workerUrl?: string | URL } = {}) 
   // A fresh attempt, even after a dead worker latched `ensureParquetWorker` off.
   startupFailed = false;
   workerHasAnswered = false;
-  if (options.workerUrl) {
+  if (options.createWorker) {
+    worker = options.createWorker();
+  } else if (options.workerUrl) {
     worker = new Worker(options.workerUrl, { type: 'module' });
   } else {
     worker = new Worker(defaultWorkerUrl(), { type: 'module' });
@@ -273,7 +307,7 @@ export function setParquetWorkerDefaultEnabled(value: boolean) {
   defaultEnabled = value;
 }
 
-export function ensureParquetWorker(options: { workerUrl?: string | URL } = {}) {
+export function ensureParquetWorker(options: EnableParquetWorkerOptions = {}) {
   if (!enabled && defaultEnabled && !startupFailed) {
     enableParquetWorker(options);
   }

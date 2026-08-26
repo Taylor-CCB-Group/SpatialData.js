@@ -940,11 +940,26 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       }
     }
 
-    // Preferred progressive preload: stream geometry AND the feature column in the
-    // same batches, so points paint already coloured. Tried before the row-group
-    // path because that one cannot read a dictionary feature column at all — the
-    // case where colour otherwise waits for a whole separate decode. Needs no
-    // worker: the per-batch work is a dictionary lookup and a typed-array copy.
+    // Progressive preload: stream geometry AND the feature column in the same
+    // batches, so points paint already coloured. Tried before the row-group path
+    // because that one cannot read a dictionary feature column at all — the case
+    // where colour otherwise waits for a whole separate decode.
+    //
+    // WARNING: this runs BEFORE the worker gate below and decodes ON THE MAIN
+    // THREAD. `streamPointsWithFeaturesByUrl` drives parquet-wasm's `ParquetFile`
+    // and `tableFromIPC` itself; only the per-batch *bookkeeping* after that is the
+    // dictionary lookup and typed-array copy this comment used to claim was all of
+    // it. So on any element with a feature key and a progress callback — the normal
+    // case for a coloured points layer — the whole preload decodes on the main
+    // thread and the parquet worker never sees it, enabled or not.
+    //
+    // Measured on a 4M-row capped preload of a 5-part Xenium transcripts element:
+    // five ~700ms decodes, ~4.4s of long tasks, zero `decodeParquetGeometryCapped`
+    // requests posted. Not a regression — this has been the shape since #89 — but
+    // it is why enabling the worker does not make a points layer stop blocking.
+    // Fixing it means decoding these batches in the worker or gating this path on
+    // the worker being unavailable; both change what paints when, so neither is a
+    // drive-by. See the investigation in this branch before changing the order.
     if (options.onProgress && featureKey) {
       try {
         const streamed = await this.streamPointsWithFeaturesByUrl(parquetPath, {
