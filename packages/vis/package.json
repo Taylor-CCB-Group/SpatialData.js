@@ -42,6 +42,7 @@
     "@spatialdata/core": "workspace:*",
     "@spatialdata/layers": "workspace:*",
     "@spatialdata/react": "workspace:*",
+    "@tanstack/react-virtual": "^3.14.10",
     "@uidotdev/usehooks": "^2.4.1",
     "@uiw/react-json-view": "2.0.0-alpha.43",
     "@vivjs/views": "catalog:",

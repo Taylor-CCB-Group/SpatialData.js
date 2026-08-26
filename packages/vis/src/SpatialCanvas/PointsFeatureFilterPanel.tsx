@@ -4,10 +4,16 @@ import {
   resolveFeatureSelectionCodes,
 } from '@spatialdata/core';
 import { featureCodeToRgb } from '@spatialdata/layers';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSpatialCanvasActions } from './context';
-import { describeFeatureRowState, featureRowOpacity } from './featureRowState';
+import {
+  classifyFeatureRow,
+  type FeatureRowsInput,
+  featureRowOpacity,
+  summariseFeatureRows,
+} from './featureRowState';
 import { usePointsFeatureState } from './PointsFeatureState';
 import type { PointsLayerConfig } from './types';
 
@@ -81,19 +87,38 @@ const panelStyle: CSSProperties = {
   fontSize: '12px',
 };
 
+/**
+ * Fixed row height (px) for the virtualized list. Fixed rather than measured: a row
+ * is one line of text beside a checkbox and a swatch, so there is nothing to
+ * measure and the virtualizer stays off `ResizeObserver`. {@link featureRowStyle}
+ * pins the same number on the row — rows are absolutely positioned, so one taller
+ * than its estimate would overlap its neighbour rather than push it down.
+ */
+const FEATURE_ROW_HEIGHT = 22;
+
+/** Scroll viewport height, also the virtualizer's `initialRect`, so the first
+ * render (before layout measures the container) windows to rows rather than none. */
+const FEATURE_LIST_HEIGHT = 180;
+
 const listStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 4,
-  maxHeight: 180,
+  maxHeight: FEATURE_LIST_HEIGHT,
   overflowY: 'auto',
-  padding: '4px 0',
 };
 
 const checkboxLabelStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 6,
+};
+
+/** A virtualized row: absolutely positioned in the spacer, translated to its slot. */
+const featureRowStyle: CSSProperties = {
+  ...checkboxLabelStyle,
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  width: '100%',
+  height: FEATURE_ROW_HEIGHT,
 };
 
 const helperStyle: CSSProperties = {
@@ -187,6 +212,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     supportsOnDemandLoad,
     matchingLoadState,
     residentFeatureCounts,
+    highlightedFeature,
     requestCatalog,
     setHighlightedFeature,
     retryFailedLoads,
@@ -214,10 +240,15 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     entry.count ?? partialCounts?.get(entry.code);
   const countIsPartial = (entry: { code: number; count?: number }): boolean =>
     entry.count === undefined && partialCounts?.get(entry.code) !== undefined;
-  // Dataset totals by code, so a row can be compared against what is resident without
-  // rescanning `entries` per row.
-  const datasetCountByCode = new Map<number, number>(
-    entries.flatMap((entry) => (entry.count !== undefined ? [[entry.code, entry.count]] : []))
+  // Dataset totals by code, so a row need not rescan `entries` to find its own.
+  // Memoised: it is O(features) to build, and it feeds the whole-catalog pass below,
+  // which a fresh Map per render would defeat.
+  const datasetCountByCode = useMemo(
+    () =>
+      new Map<number, number>(
+        entries.flatMap((entry) => (entry.count !== undefined ? [[entry.code, entry.count]] : []))
+      ),
+    [entries]
   );
   /** Resident points for a feature, when that is meaningfully LESS than the dataset —
    * i.e. there is a shortfall worth showing. `undefined` otherwise. */
@@ -229,13 +260,26 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
   };
   // The selection persists as NAMES (see `PointsLayerConfig.featureNames`), but the
   // rest of this panel — checkboxes, greying, the engine reads — works in codes.
-  // Resolve once here against the catalog we are already rendering.
-  const selection = resolveFeatureSelectionCodes(config, catalog);
+  // Resolve once here against the catalog we are already rendering. Memoised on the
+  // two config fields rather than on `config`, which is a fresh object every render;
+  // its identity gates the whole-catalog pass below.
+  const configFeatureNames = config.featureNames;
+  const configFeatureCodes = config.featureCodes;
+  const selection = useMemo(
+    () =>
+      resolveFeatureSelectionCodes(
+        { featureNames: configFeatureNames, featureCodes: configFeatureCodes },
+        catalog
+      ),
+    [configFeatureNames, configFeatureCodes, catalog]
+  );
   const allSelected = selection === undefined;
   const noneSelected = selection !== undefined && selection.length === 0;
-  const selectedCodes = allSelected
-    ? new Set(entries.map((entry) => entry.code))
-    : new Set(selection ?? []);
+  const selectedCodes = useMemo(
+    () =>
+      allSelected ? new Set(entries.map((entry) => entry.code)) : new Set<number>(selection ?? []),
+    [allSelected, entries, selection]
+  );
 
   const sortedEntries = useMemo(() => {
     const list = [...entries];
@@ -262,6 +306,89 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     }
     return sortedEntries.filter((entry) => entry.name.toLowerCase().includes(query));
   }, [sortedEntries, searchQuery]);
+
+  // A feature's points are "loaded" (renderable now, not greyed) if it is in the
+  // instant resident preview OR its points are currently on screen via the
+  // last-completed feature-index scan (`loadedMatchingCodes`). Keying off what's
+  // rendered — not the current scan's settled state — keeps already-loaded
+  // features un-greyed while a newly added feature's scan is still in flight.
+  const residentKnown = residentCodes !== undefined;
+  // Element fact AND this layer's config — the probe's answer is cached per element
+  // and outlives the config that asked for it.
+  const tiledLayer = tiled && pointsTilingEnabled(config.pointsTiling);
+  const scanning = matchingLoadState?.loading ?? false;
+  const rowsInput = useMemo<FeatureRowsInput>(
+    () => ({
+      entries,
+      residentCodes,
+      loadedMatchingCodes,
+      selectedCodes,
+      allSelected,
+      noneSelected,
+      scanning,
+      supportsOnDemandLoad,
+      residentKnown,
+      residentFeatureCounts,
+      datasetCountByCode,
+      tiled: tiledLayer,
+    }),
+    [
+      entries,
+      residentCodes,
+      loadedMatchingCodes,
+      selectedCodes,
+      allSelected,
+      noneSelected,
+      scanning,
+      supportsOnDemandLoad,
+      residentKnown,
+      residentFeatureCounts,
+      datasetCountByCode,
+      tiledLayer,
+    ]
+  );
+  // The one remaining whole-catalog pass: the summary lines below count rows across
+  // every feature, not the mounted window, so this is O(features) however few rows
+  // render. Memoised so it re-runs when an answer could have changed, rather than on
+  // every engine notify — dozens of times during a streaming preload.
+  const { notLoadedCount, partialCount } = useMemo(
+    () => summariseFeatureRows(rowsInput),
+    [rowsInput]
+  );
+  const rowInfo = (code: number) => classifyFeatureRow(code, rowsInput);
+
+  // Virtualized list. Without it a 12,448-feature Xenium panel mounts 12,453
+  // checkboxes and ~91k DOM nodes — most of a minute of long tasks on its own
+  // (#172). The React Compiler skips this component anyway ('use no memo' above),
+  // which is what its incompatible-library warning about this hook amounts to here.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visibleEntries.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => FEATURE_ROW_HEIGHT,
+    // Codes are unique and stable, so a row keeps its React identity — and its open
+    // colour picker — as the window scrolls past it.
+    getItemKey: (index) => visibleEntries[index]?.code ?? index,
+    overscan: 8,
+    // Before layout measures the scroll box, fall back to its known height rather
+    // than zero, or the first paint windows to no rows at all.
+    initialRect: { width: 0, height: FEATURE_LIST_HEIGHT },
+  });
+
+  // A hovered row can be unmounted by a scroll while the pointer is still over it,
+  // and removing a node fires no `mouseleave` — so the row's own handler never runs
+  // and the canvas keeps emphasising a feature that is no longer under the pointer.
+  // Watch for the highlighted row leaving the window instead. A boolean dep, so this
+  // fires once on that transition rather than per render or per scroll event.
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const highlightMounted =
+    highlightedFeature === null ||
+    virtualRows.some((row) => visibleEntries[row.index]?.code === highlightedFeature);
+  useEffect(() => {
+    if (!highlightMounted) {
+      setHighlightedFeature(null);
+    }
+  }, [highlightMounted, setHighlightedFeature]);
 
   // Write NAMES, and clear any legacy `featureCodes` so the two cannot disagree —
   // `featureNames` wins when both are set, and a stale code list left behind in a
@@ -381,46 +508,6 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
 
   const selectedCount = noneSelected ? 0 : allSelected ? entries.length : selectedCodes.size;
   const showSearch = entries.length > FEATURE_LIST_SEARCH_THRESHOLD;
-  // A feature's points are "loaded" (renderable now, not greyed) if it is in the
-  // instant resident preview OR its points are currently on screen via the
-  // last-completed feature-index scan (`loadedMatchingCodes`). Keying off what's
-  // rendered — not the current scan's settled state — keeps already-loaded
-  // features un-greyed while a newly added feature's scan is still in flight.
-  const residentKnown = residentCodes !== undefined;
-  // Element fact AND this layer's config — the probe's answer is cached per element
-  // and outlives the config that asked for it.
-  const tiledLayer = tiled && pointsTilingEnabled(config.pointsTiling);
-  const scanning = matchingLoadState?.loading ?? false;
-  const rowInfo = (code: number) => {
-    const resident = residentKnown && (residentCodes?.has(code) ?? false);
-    const rendered = loadedMatchingCodes?.has(code) ?? false;
-    const selected = !noneSelected && (allSelected || selectedCodes.has(code));
-    const state = describeFeatureRowState({
-      resident,
-      rendered,
-      selected,
-      scanning,
-      supportsOnDemandLoad,
-      residentKnown,
-      residentPointCount: residentFeatureCounts?.get(code),
-      datasetPointCount: datasetCountByCode.get(code),
-      tiled: tiledLayer,
-    });
-    return { resident, rendered, selected, state };
-  };
-  const notLoadedCount = residentKnown
-    ? entries.reduce((total, entry) => total + (rowInfo(entry.code).state.greyed ? 1 : 0), 0)
-    : 0;
-  // Features that ARE drawn but only in part. Counted separately from `notLoadedCount`
-  // because they are the opposite failure of understanding: those rows look completely
-  // healthy — un-greyed, with a full dataset count beside them — while most of their
-  // points are outside the cap.
-  const partialCount = residentKnown
-    ? entries.reduce(
-        (total, entry) => total + (rowInfo(entry.code).state.tone === 'partial' ? 1 : 0),
-        0
-      )
-    : 0;
 
   return (
     <div style={panelStyle}>
@@ -512,111 +599,131 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           style={searchStyle}
         />
       ) : null}
-      <div style={listStyle}>
-        {visibleEntries.map((entry) => {
-          const { resident, rendered, selected, state } = rowInfo(entry.code);
-          const countStr =
-            entry.count !== undefined ? ` · ${entry.count.toLocaleString()} pts` : '';
-          // Multi-line diagnostic: the human state + reason, then the raw signals
-          // that drove the decision (what made this row grey / not grey).
-          const overridden = colorOverrides?.[entry.name] !== undefined;
-          const rgb = effectiveRgb(entry.name, entry.code);
-          const title =
-            `${entry.name} · code ${entry.code}${countStr}\n` +
-            `${state.label}: ${state.reason}\n` +
-            `[resident=${resident ? 'y' : 'n'} rendered=${rendered ? 'y' : 'n'} ` +
-            `selected=${selected ? 'y' : 'n'} scan=${scanning ? 'running' : 'idle'}]`;
-          return (
-            <label
-              key={entry.code}
-              style={{ ...checkboxLabelStyle, opacity: featureRowOpacity(state) }}
-              title={title}
-              onMouseEnter={() => setHighlightedFeature(entry.code)}
-              onMouseLeave={() => setHighlightedFeature(null)}
-            >
-              <input
-                type="checkbox"
-                checked={selected}
-                onChange={(event) => toggleFeature(entry.code, event.target.checked)}
-              />
-              {/* Swatch = colour picker: this span's background is the effective
-                  colour and a transparent colour input overlays it. Interactive content
-                  inside the label, so operating it does not toggle the checkbox. */}
-              <span
+      {/* Focusable: only the MOUNTED rows hold checkboxes, so without a tab stop on
+          the scroller a keyboard user reaches ~17 of 12,448 features and the list
+          never scrolls. Arrow/PageDown on the focused container scrolls it. It carries
+          no `aria-label` because biome will not accept a name on a generic role
+          without a `<fieldset>`; the "Features (…)" heading right above names it.
+          biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be
+          keyboard reachable (WCAG 2.1.1); virtualization is what made it load-bearing. */}
+      <div ref={listRef} style={listStyle} tabIndex={0}>
+        {/* Spacer sized to the whole list, windowed rows inside it: the scrollbar
+            tracks all 12k features while the DOM holds ~20. */}
+        <div style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}>
+          {virtualRows.map((virtualRow) => {
+            const entry = visibleEntries[virtualRow.index];
+            if (!entry) {
+              return null;
+            }
+            const { resident, rendered, selected, state } = rowInfo(entry.code);
+            const countStr =
+              entry.count !== undefined ? ` · ${entry.count.toLocaleString()} pts` : '';
+            // Multi-line diagnostic: the human state + reason, then the raw signals
+            // that drove the decision (what made this row grey / not grey).
+            const overridden = colorOverrides?.[entry.name] !== undefined;
+            const rgb = effectiveRgb(entry.name, entry.code);
+            const title =
+              `${entry.name} · code ${entry.code}${countStr}\n` +
+              `${state.label}: ${state.reason}\n` +
+              `[resident=${resident ? 'y' : 'n'} rendered=${rendered ? 'y' : 'n'} ` +
+              `selected=${selected ? 'y' : 'n'} scan=${scanning ? 'running' : 'idle'}]`;
+            return (
+              <label
+                key={virtualRow.key}
+                data-index={virtualRow.index}
                 style={{
-                  ...colorSwatchStyle,
-                  background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
-                  ...(overridden ? colorSwatchOverriddenStyle : {}),
+                  ...featureRowStyle,
+                  transform: `translateY(${virtualRow.start}px)`,
+                  opacity: featureRowOpacity(state),
                 }}
-                title={`${entry.name} colour${overridden ? ' (overridden)' : ''}`}
+                title={title}
+                onMouseEnter={() => setHighlightedFeature(entry.code)}
+                onMouseLeave={() => setHighlightedFeature(null)}
               >
                 <input
-                  type="color"
-                  aria-label={`${entry.name} colour`}
-                  value={rgbToHex(rgb)}
-                  style={colorInputStyle}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => setColorOverride(entry.name, hexToRgb(event.target.value))}
+                  type="checkbox"
+                  checked={selected}
+                  onChange={(event) => toggleFeature(entry.code, event.target.checked)}
                 />
-              </span>
-              <span>
-                {entry.name}
-                {state.greyed ? ' ·' : ''}
-              </span>
-              {overridden ? (
-                <button
-                  type="button"
-                  style={resetOverrideStyle}
-                  title="Reset to default colour"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    clearColorOverride(entry.name);
+                {/* Swatch = colour picker: this span's background is the effective
+                    colour and a transparent colour input overlays it. Interactive content
+                    inside the label, so operating it does not toggle the checkbox. */}
+                <span
+                  style={{
+                    ...colorSwatchStyle,
+                    background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
+                    ...(overridden ? colorSwatchOverriddenStyle : {}),
                   }}
+                  title={`${entry.name} colour${overridden ? ' (overridden)' : ''}`}
                 >
-                  ⟲
-                </button>
-              ) : null}
-              {hasAnyCounts
-                ? (() => {
-                    // Once dataset totals land, keep showing the resident tally too when
-                    // it falls short — the panel used to drop it, which is what let a
-                    // capped element present "1,182,402" for a feature it was drawing a
-                    // fraction of. `rendered` means a scan supplied it whole, so the
-                    // shortfall is no longer what's on screen.
-                    const shortfall =
-                      state.tone === 'partial' ? residentShortfall(entry) : undefined;
-                    return (
-                      <span
-                        style={countStyle}
-                        title={
-                          shortfall !== undefined
-                            ? `${shortfall.toLocaleString()} of ${formatFeatureCount(
-                                entry.count
-                              )} points are inside the memory cap`
-                            : countIsPartial(entry)
-                              ? 'Points loaded so far (resident window) — dataset total still counting'
-                              : 'Points in the dataset'
-                        }
-                      >
-                        {shortfall !== undefined ? (
-                          <>
-                            <span style={shortfallStyle}>{shortfall.toLocaleString()}</span>
-                            <span style={ofTotalStyle}> / {formatFeatureCount(entry.count)}</span>
-                          </>
-                        ) : (
-                          <>
-                            {countIsPartial(entry) ? '≥' : ''}
-                            {formatFeatureCount(effectiveCount(entry))}
-                          </>
-                        )}
-                      </span>
-                    );
-                  })()
-                : null}
-            </label>
-          );
-        })}
+                  <input
+                    type="color"
+                    aria-label={`${entry.name} colour`}
+                    value={rgbToHex(rgb)}
+                    style={colorInputStyle}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => setColorOverride(entry.name, hexToRgb(event.target.value))}
+                  />
+                </span>
+                <span>
+                  {entry.name}
+                  {state.greyed ? ' ·' : ''}
+                </span>
+                {overridden ? (
+                  <button
+                    type="button"
+                    style={resetOverrideStyle}
+                    title="Reset to default colour"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      event.preventDefault();
+                      clearColorOverride(entry.name);
+                    }}
+                  >
+                    ⟲
+                  </button>
+                ) : null}
+                {hasAnyCounts
+                  ? (() => {
+                      // Once dataset totals land, keep showing the resident tally too when
+                      // it falls short — the panel used to drop it, which is what let a
+                      // capped element present "1,182,402" for a feature it was drawing a
+                      // fraction of. `rendered` means a scan supplied it whole, so the
+                      // shortfall is no longer what's on screen.
+                      const shortfall =
+                        state.tone === 'partial' ? residentShortfall(entry) : undefined;
+                      return (
+                        <span
+                          style={countStyle}
+                          title={
+                            shortfall !== undefined
+                              ? `${shortfall.toLocaleString()} of ${formatFeatureCount(
+                                  entry.count
+                                )} points are inside the memory cap`
+                              : countIsPartial(entry)
+                                ? 'Points loaded so far (resident window) — dataset total still counting'
+                                : 'Points in the dataset'
+                          }
+                        >
+                          {shortfall !== undefined ? (
+                            <>
+                              <span style={shortfallStyle}>{shortfall.toLocaleString()}</span>
+                              <span style={ofTotalStyle}> / {formatFeatureCount(entry.count)}</span>
+                            </>
+                          ) : (
+                            <>
+                              {countIsPartial(entry) ? '≥' : ''}
+                              {formatFeatureCount(effectiveCount(entry))}
+                            </>
+                          )}
+                        </span>
+                      );
+                    })()
+                  : null}
+              </label>
+            );
+          })}
+        </div>
         {showSearch && visibleEntries.length === 0 ? (
           <div style={helperStyle}>No features match your search.</div>
         ) : null}

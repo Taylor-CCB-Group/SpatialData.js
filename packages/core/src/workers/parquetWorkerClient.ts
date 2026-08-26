@@ -21,11 +21,12 @@ type PendingRequest = {
   reject: (error: Error) => void;
   timeout?: ReturnType<typeof setTimeout>;
   /**
-   * Set only for a STREAMING request. Its presence is what makes an interim
-   * message legal for this id — and what tells the timeout and the abort path to
-   * send the worker a cancel, since a stream it is not told about keeps fetching.
+   * Set only for a STREAMING request, and only by {@link postStreamingRequest} — its
+   * generator's sink, not a caller-supplied callback. Its presence makes an interim
+   * message legal for this id, and tells the timeout and abort paths to cancel: a
+   * stream the worker is not told about keeps fetching.
    */
-  onChunk?: (chunk: ParquetWorkerStreamChunk) => void;
+  deliverChunk?: (chunk: ParquetWorkerStreamChunk) => void;
   /**
    * Whether any interim chunk has been delivered. A stream that fails after this
    * has already handed the caller usable rows, so the failure is not equivalent
@@ -98,7 +99,7 @@ function armTimeout(id: number) {
     if (!stalled) {
       return;
     }
-    if (stalled.onChunk) {
+    if (stalled.deliverChunk) {
       // Stop the worker fetching a payload nobody is left to receive.
       cancelWorkerStream(id);
     }
@@ -170,7 +171,7 @@ function ensureWorkerListener() {
       // This is the whole difference between this protocol and the strict
       // request/response one it grew out of.
       const streaming = pending.get(message.id);
-      if (!streaming?.onChunk) {
+      if (!streaming?.deliverChunk) {
         // Either the request already settled (timed out, aborted, or the worker
         // died) and a batch was in flight behind the cancel, or a non-streaming
         // request somehow got one. Dropping it is right in both cases.
@@ -179,7 +180,7 @@ function ensureWorkerListener() {
       streaming.deliveredChunk = true;
       armTimeout(message.id);
       try {
-        streaming.onChunk(message.chunk);
+        streaming.deliverChunk(message.chunk);
       } catch (error) {
         // The consumer threw on a batch, so it cannot use the rest of the stream.
         settlePending(message.id)?.reject(
@@ -232,8 +233,6 @@ function ensureWorkerListener() {
 }
 
 type PostRequestOptions = {
-  /** Provide to receive interim batches; see {@link PendingRequest.onChunk}. */
-  onChunk?: (chunk: ParquetWorkerStreamChunk) => void;
   /**
    * Abandon the request when this fires. For a stream that also posts a cancel,
    * so a superseded load stops costing bandwidth in the worker rather than
@@ -241,6 +240,30 @@ type PostRequestOptions = {
    */
   signal?: AbortSignal;
 };
+
+/**
+ * Abandoning `signal` settles the pending entry and, for a stream, tells the worker
+ * to stop fetching. Shared by the request/response and streaming posts.
+ */
+function attachAbort(id: number, entry: PendingRequest, signal: AbortSignal | undefined) {
+  if (!signal) {
+    return;
+  }
+  const onAbort = () => {
+    const aborted = settlePending(id);
+    if (!aborted) {
+      return;
+    }
+    if (aborted.deliverChunk) {
+      cancelWorkerStream(id);
+    }
+    aborted.reject(new DOMException('Aborted', 'AbortError'));
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  entry.removeAbortListener = () => {
+    signal.removeEventListener('abort', onAbort);
+  };
+}
 
 function postRequest<T>(
   request: ParquetWorkerRequest,
@@ -261,25 +284,9 @@ function postRequest<T>(
       resolve: resolve as (value: unknown) => void,
       reject,
       deliveredChunk: false,
-      ...(options.onChunk ? { onChunk: options.onChunk } : {}),
     };
     pending.set(id, entry);
-    if (signal) {
-      const onAbort = () => {
-        const aborted = settlePending(id);
-        if (!aborted) {
-          return;
-        }
-        if (aborted.onChunk) {
-          cancelWorkerStream(id);
-        }
-        aborted.reject(new DOMException('Aborted', 'AbortError'));
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-      entry.removeAbortListener = () => {
-        signal.removeEventListener('abort', onAbort);
-      };
-    }
+    attachAbort(id, entry, signal);
     armTimeout(id);
     const message: ParquetWorkerMessage = { id, direction: 'request', request };
     if (transferables.length > 0) {
@@ -288,6 +295,91 @@ function postRequest<T>(
       activeWorker.postMessage(message);
     }
   });
+}
+
+/**
+ * Post a STREAMING request, yielding its interim chunks and returning the terminal
+ * response's result.
+ *
+ * The worker boundary stays push (`postMessage` is push), so this sits on top of the
+ * message plumbing: chunks land in a queue and the generator drains it. What it buys
+ * is semantics the callback shape could only state in prose — partial failure is
+ * `try`/`catch` around the loop, `break` runs the `finally` below and cancels, and
+ * the queue makes read-ahead depth visible. Credit-based backpressure (the worker
+ * waiting before decoding on) is a further step, worth taking only if depth hurts.
+ *
+ * No transferables: streaming requests carry plain descriptors and the worker
+ * range-fetches the bytes itself.
+ */
+async function* postStreamingRequest<T>(
+  request: ParquetWorkerRequest,
+  options: PostRequestOptions = {}
+): AsyncGenerator<ParquetWorkerStreamChunk, T> {
+  const activeWorker = worker;
+  if (!activeWorker) {
+    throw new Error('Parquet worker is not enabled');
+  }
+  if (options.signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+  const id = ++nextRequestId;
+  const queue: ParquetWorkerStreamChunk[] = [];
+  let settled: { ok: true; value: T } | { ok: false; error: Error } | undefined;
+  let wake: (() => void) | undefined;
+  const notify = () => {
+    const resume = wake;
+    wake = undefined;
+    resume?.();
+  };
+
+  const entry: PendingRequest = {
+    resolve: (value) => {
+      settled = { ok: true, value: value as T };
+      notify();
+    },
+    reject: (error) => {
+      settled = { ok: false, error };
+      notify();
+    },
+    deliveredChunk: false,
+    deliverChunk: (chunk) => {
+      queue.push(chunk);
+      notify();
+    },
+  };
+  pending.set(id, entry);
+  attachAbort(id, entry, options.signal);
+  armTimeout(id);
+  activeWorker.postMessage({ id, direction: 'request', request } satisfies ParquetWorkerMessage);
+
+  try {
+    for (;;) {
+      // Queue before terminal state, always: chunks that arrived alongside the end
+      // (or a rejection) are still the caller's — dropping them would discard rows
+      // the worker already decoded and sent.
+      const chunk = queue.shift();
+      if (chunk !== undefined) {
+        yield chunk;
+        continue;
+      }
+      if (settled) {
+        if (settled.ok) {
+          return settled.value;
+        }
+        throw settled.error;
+      }
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+  } finally {
+    // The consumer left early — `break`, an exception, or collection. On a normal
+    // end the message handler has already settled this id, so this is a no-op.
+    if (pending.has(id)) {
+      settlePending(id);
+      cancelWorkerStream(id);
+    }
+  }
 }
 
 export function transferablesForParquetPayload(
@@ -732,27 +824,25 @@ export type StreamGeometryWithFeaturesEnd = {
  * does the parquet decode on the UI thread, which is where a 4M-row Xenium
  * element's tens of seconds of long tasks come from.
  *
- * Returns null when the worker is off or there is nothing to read, matching the
- * other `*InWorker` helpers — the caller falls through to the main-thread stream.
+ * Yields each decoded batch and RETURNS the stream's end summary — or `null` when
+ * the worker is off or there is nothing to read, matching the other `*InWorker`
+ * helpers, so the caller falls through to the main-thread stream.
  *
- * ON FAILURE it REJECTS, even when batches were already delivered and painted.
- * There is no partial-success return, deliberately: a truncated preload is
- * indistinguishable to every downstream consumer from a complete one (they read
- * `preloadTruncated` and the row cap, not "how far did the stream get"), so
- * reporting one as success would silently drop points and skew the per-feature
- * tallies. Rejecting sends the caller to the main-thread stream, which restarts
- * from row 0 and re-paints over the partial — the worst case is the cost this
- * whole path exists to avoid, which is exactly the status quo it replaced.
+ * ON FAILURE it THROWS, even when batches were already yielded. There is no
+ * partial-success return, deliberately: downstream reads `preloadTruncated` and the
+ * row cap, not "how far did the stream get", so reporting a truncated preload as
+ * success would silently drop points and skew the per-feature tallies. Throwing
+ * sends the caller to the main-thread stream, which restarts from row 0.
  *
- * Batches already handed to `onBatch` are therefore not a commitment. They are
- * safe to have painted: each progress tick carries the catalog matching its own
- * codes, so a later tick from a different code space is reconciled by the same
- * `remapRowFeatureCodes` handoff that already spans preload and full scan.
+ * Batches already yielded are therefore not a commitment — the consumer took n
+ * items, then it threw. They are safe to have painted: each carries the catalog
+ * matching its own codes, reconciled by the same `remapRowFeatureCodes` handoff that
+ * already spans preload and full scan. `break` tells the worker to stop fetching;
+ * see {@link postStreamingRequest}.
  */
-export async function streamGeometryWithFeaturesInWorker(
-  input: StreamGeometryWithFeaturesInput,
-  onBatch: (chunk: ParquetWorkerStreamChunk) => void
-): Promise<StreamGeometryWithFeaturesEnd | null> {
+export async function* streamGeometryWithFeaturesInWorker(
+  input: StreamGeometryWithFeaturesInput
+): AsyncGenerator<ParquetWorkerStreamChunk, StreamGeometryWithFeaturesEnd | null> {
   ensureParquetWorker();
   if (!isParquetWorkerEnabled()) {
     return null;
@@ -765,11 +855,9 @@ export async function streamGeometryWithFeaturesInWorker(
     type: 'streamGeometryWithFeatures',
     ...rest,
   };
-  const result = await postRequest<Extract<ParquetWorkerResponse, { ok: true }>['result']>(
-    request,
-    [],
-    { onChunk: onBatch, ...(signal ? { signal } : {}) }
-  );
+  const result = yield* postStreamingRequest<
+    Extract<ParquetWorkerResponse, { ok: true }>['result']
+  >(request, signal ? { signal } : {});
   if (result.kind !== 'geometryWithFeaturesStreamEnd') {
     throw new Error('Unexpected parquet worker response for streamGeometryWithFeatures');
   }

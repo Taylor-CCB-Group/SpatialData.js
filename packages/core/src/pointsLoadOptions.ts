@@ -13,7 +13,14 @@ export interface PointsLoadOptions {
   memoryCap?: number;
   /** When set, scan the dataset for matching features instead of capping raw rows first. */
   featureCodes?: readonly number[];
-  /** Progress callback for filtered scans (main thread). */
+  /**
+   * Progress callback for progressive/filtered loads.
+   *
+   * @deprecated Prefer `streamPoints`, which `loadPoints` now drains (#175): partial
+   * failure is "consumed n items, then it threw", cancellation is `break`, and rate
+   * control is a combinator rather than a producer flag. Still fully supported, and
+   * still what selects the progressive read path; nothing scheduled for removal.
+   */
   onProgress?: (progress: PointsLoadProgress) => void;
   /**
    * When true with {@link featureCodes}, scan the full dataset for matches (slow).

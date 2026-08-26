@@ -663,6 +663,20 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.vPoints.loadPoints(`points/${this.key}`, options);
   }
 
+  /**
+   * This element's points as an async iterable, yielding the growing result — the
+   * pull-style form of {@link loadPoints}. See `SpatialDataPointsSource.streamPoints`.
+   *
+   * ```ts
+   * for await (const progress of element.streamPoints({ includeFeatureCodes: true })) {
+   *   draw(progress.partialResult);
+   * }
+   * ```
+   */
+  streamPoints(options?: PointsLoadOptions) {
+    return this.vPoints.streamPoints(`points/${this.key}`, options);
+  }
+
   async loadRowFeatureCodes(options?: {
     memoryCap?: number;
     featureCatalog?: PointsFeatureCatalog | null;
@@ -680,12 +694,23 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
   async loadPointsMatchingFeatureCodes(options: {
     memoryCap: number;
     featureCodes: readonly number[];
+    /** @deprecated Prefer {@link streamPointsMatchingFeatureCodes}. */
     onProgress?: (progress: PointsLoadProgress) => void;
     featureCodeByName?: ReadonlyMap<string, number>;
     /** Aborts the scan between row-group chunks when it is superseded. */
     signal?: AbortSignal;
   }) {
     return this.vPoints.loadPointsMatchingFeatureCodes(`points/${this.key}`, options);
+  }
+
+  /** The async-iterable form of {@link loadPointsMatchingFeatureCodes}. */
+  streamPointsMatchingFeatureCodes(options: {
+    memoryCap: number;
+    featureCodes: readonly number[];
+    featureCodeByName?: ReadonlyMap<string, number>;
+    signal?: AbortSignal;
+  }) {
+    return this.vPoints.streamPointsMatchingFeatureCodes(`points/${this.key}`, options);
   }
 
   async loadFeatureCounts() {

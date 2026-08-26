@@ -1,4 +1,5 @@
 import type { Vector } from 'apache-arrow';
+import { drainStream } from '../asyncStream.js';
 import {
   decodeIntStat,
   decodeUnsignedIntStat,
@@ -94,6 +95,45 @@ function extentMayContainSelectedCodes(
     return true;
   }
   return extent.max >= selectedMin && extent.min <= selectedMax;
+}
+
+/** What the feature-index scan generators yield and return. */
+type MatchingFeatureScanChunks = AsyncGenerator<
+  { progress: PointsLoadProgress },
+  { totalRowCount: number; axisNames: string[]; scannedRows: number; matchedRows: number }
+>;
+
+/**
+ * Re-express the feature-index scan's chunks as a progress stream that RETURNS the
+ * settled result. Each `partialResult` is already the full accumulated buffer, so no
+ * re-accumulation here; the totals come from the generator's return value, which
+ * also counts rows scanned after the last match.
+ */
+async function* collectMatchingFeatureScan(
+  chunks: MatchingFeatureScanChunks,
+  memoryCap: number,
+  signal?: AbortSignal
+): AsyncGenerator<PointsLoadProgress, PointsLoadResult> {
+  let latest: PointsLoadResult | undefined;
+  for (;;) {
+    checkAbort(signal);
+    const next = await chunks.next();
+    if (next.done) {
+      const { totalRowCount, scannedRows, matchedRows, axisNames } = next.value;
+      if (!latest) {
+        // No chunks matched at all.
+        return emptyFilteredPointsResult(axisNames, totalRowCount);
+      }
+      return {
+        ...latest,
+        totalRowCount,
+        scannedRowCount: scannedRows,
+        preloadTruncated: matchedRows >= memoryCap,
+      };
+    }
+    latest = next.value.progress.partialResult;
+    yield next.value.progress;
+  }
 }
 
 function emptyFilteredPointsResult(axisNames: string[], totalRowCount: number): PointsLoadResult {
@@ -613,7 +653,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * Returns null when the fast path does not apply (non-URL store, no suffix-range
    * support, no streaming reader, nothing decoded) so the caller falls through.
    */
-  private async streamPointsWithFeaturesByUrl(
+  private async *streamPointsWithFeaturesByUrl(
     parquetPath: string,
     options: {
       axisNames: string[];
@@ -622,10 +662,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       totalRowCount: number;
       preloadTruncated: boolean;
       hasFeatureCodeColumn: boolean;
-      onProgress?: (progress: PointsLoadProgress) => void;
       signal?: AbortSignal;
     }
-  ): Promise<PointsLoadResult | null> {
+  ): AsyncGenerator<PointsLoadProgress, PointsLoadResult | null> {
     const partUrls = await this.resolveStreamablePartUrls(parquetPath);
     if (!partUrls) {
       return null;
@@ -710,14 +749,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             filled
           );
           filled += rows;
-          options.onProgress?.({
+          yield {
             // Unfiltered preload: every decoded row is kept, so scanned === matched.
             scannedRows: filled,
             matchedRows: filled,
             partIndex,
             partCount: partUrls.length,
             partialResult: snapshot(),
-          });
+          };
         }
       } finally {
         reader.releaseLock();
@@ -747,7 +786,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * instead: see the contract note on `streamGeometryWithFeaturesInWorker` for why
    * a partial is not reported as success.
    */
-  private async streamPointsWithFeaturesInWorker(
+  private async *streamPointsWithFeaturesInWorker(
     parquetPath: string,
     options: {
       axisNames: string[];
@@ -756,10 +795,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       totalRowCount: number;
       preloadTruncated: boolean;
       hasFeatureCodeColumn: boolean;
-      onProgress?: (progress: PointsLoadProgress) => void;
       signal?: AbortSignal;
     }
-  ): Promise<PointsLoadResult | null> {
+  ): AsyncGenerator<PointsLoadProgress, PointsLoadResult | null> {
     ensureParquetWorker();
     if (!isParquetWorkerEnabled()) {
       return null;
@@ -779,36 +817,49 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       hasFeatureCodeColumn: options.hasFeatureCodeColumn,
     });
 
-    const end = await streamGeometryWithFeaturesInWorker(
-      {
-        partUrls,
-        axisNames,
-        featureKey,
-        maxRows,
-        batchSize: PRELOAD_STREAM_BATCH_ROWS,
-        ...(options.signal ? { signal: options.signal } : {}),
-      },
-      (chunk) => {
-        if (accumulator.append(chunk) === 0) {
-          return;
+    const chunks = streamGeometryWithFeaturesInWorker({
+      partUrls,
+      axisNames,
+      featureKey,
+      maxRows,
+      batchSize: PRELOAD_STREAM_BATCH_ROWS,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    // Hand-driven rather than `for await`, because this stream's END is its return
+    // value, which `for await` discards. That costs the automatic close, hence the
+    // `finally`: without it a consumer breaking out of OUR stream leaves the worker
+    // fetching a payload nobody will read. `chunks` is always suspended at a yield by
+    // then — a return arriving mid-`next()` queues until our own yield — so awaiting
+    // cannot deadlock.
+    try {
+      for (;;) {
+        const next = await chunks.next();
+        if (next.done) {
+          if (!next.value) {
+            return null;
+          }
+          break;
         }
-        options.onProgress?.({
+        const chunk = next.value;
+        if (accumulator.append(chunk) === 0) {
+          continue;
+        }
+        yield {
           // Unfiltered preload: every decoded row is kept, so scanned === matched.
           scannedRows: accumulator.filled,
           matchedRows: accumulator.filled,
           partIndex: chunk.partIndex,
           partCount: chunk.partCount,
           partialResult: accumulator.snapshot(),
-        });
+        };
       }
-    );
-    if (!end) {
-      return null;
+    } finally {
+      await chunks.return(null);
     }
     return accumulator.filled > 0 ? accumulator.snapshot() : null;
   }
 
-  private async streamPointsGeometryByRowGroup(
+  private async *streamPointsGeometryByRowGroup(
     parquetPath: string,
     options: {
       axisNames: string[];
@@ -820,10 +871,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
        * per-row codes at all — the worker gates code extraction on `featureKey`. */
       featureKey?: string;
       featureCodeColumnName?: string;
-      onProgress?: (progress: PointsLoadProgress) => void;
       signal?: AbortSignal;
     }
-  ): Promise<PointsLoadResult | null> {
+  ): AsyncGenerator<PointsLoadProgress, PointsLoadResult | null> {
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
     if (!dataset || dataset.totalNumRowGroups <= 0) {
       return null;
@@ -921,30 +971,80 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         }
       }
       filled += rows;
-      options.onProgress?.({
+      yield {
         // Unfiltered preload: every decoded row is kept, so scanned === matched.
         scannedRows: filled,
         matchedRows: filled,
         partIndex: rowGroupIndex,
         partCount: dataset.totalNumRowGroups,
         partialResult: snapshot(),
-      });
+      };
     }
     return filled > 0 ? snapshot() : null;
   }
 
+  /**
+   * Load a points element, yielding the growing result as it decodes — the
+   * pull-style form of {@link loadPoints}, and the one to prefer (#175).
+   *
+   * ```ts
+   * for await (const progress of source.streamPoints(path, { includeFeatureCodes: true })) {
+   *   draw(progress.partialResult);
+   * }
+   * ```
+   *
+   * Partial failure is "consumed n items, then it threw" — what you already drew
+   * stays drawn. `break` cancels: it runs the `finally` chain where the worker-backed
+   * stream posts its cancel (`options.signal` still covers supersession decided
+   * elsewhere). Rate control is a combinator — `coalesceLatest` / `sampleByStep`.
+   *
+   * RETURNS the final {@link PointsLoadResult}, which `for await` discards; drive
+   * `next()` for both, or use {@link loadPoints}. Unlike `loadPoints` this always
+   * takes a progressive path where one is available.
+   */
+  streamPoints(
+    elementPath: string,
+    options: PointsLoadOptions = {}
+  ): AsyncGenerator<PointsLoadProgress, PointsLoadResult> {
+    return this.pointsStream(elementPath, options, true);
+  }
+
+  /**
+   * Load a points element in one call. Implemented by draining {@link streamPoints},
+   * so the deprecated `onProgress` callback cannot drift from the stream.
+   */
   async loadPoints(
     elementPath: string,
     options: PointsLoadOptions = {}
   ): Promise<PointsLoadResult> {
+    return drainStream(
+      // No `onProgress` means the caller never wanted the progressive decode —
+      // the path selection `loadPoints` has always made.
+      this.pointsStream(elementPath, options, options.onProgress !== undefined),
+      options.onProgress
+    );
+  }
+
+  /**
+   * The body shared by {@link streamPoints} and {@link loadPoints}. `progressive`
+   * picks between the streaming readers and the one-shot decodes — not simply
+   * `true`, because a stream nobody is watching would be a different, slower load
+   * for every caller that never asked for ticks.
+   */
+  private async *pointsStream(
+    elementPath: string,
+    options: PointsLoadOptions,
+    progressive: boolean
+  ): AsyncGenerator<PointsLoadProgress, PointsLoadResult> {
     checkAbort(options.signal);
     const memoryCap = resolvePointsMemoryCap(options.memoryCap);
     if (options.featureCodes !== undefined && options.fullDatasetFeatureScan === true) {
-      return this.loadPointsMatchingFeatureCodes(elementPath, {
+      const scan = this.loadPointsMatchingFeatureCodesByChunk(elementPath, {
         memoryCap,
         featureCodes: options.featureCodes,
-        onProgress: options.onProgress,
+        ...(options.signal ? { abort: options.signal } : {}),
       });
+      return yield* collectMatchingFeatureScan(scan, memoryCap, options.signal);
     }
 
     const parquetPath = getParquetPath(elementPath);
@@ -1017,7 +1117,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // That keeps the tab responsive but shows nothing until the entire payload
     // decodes — a frozen tab traded for a blank one, on the path whose entire value
     // is that colour appears after the first batch.
-    if (options.onProgress && featureKey) {
+    if (progressive && featureKey) {
       const streamOptions = {
         axisNames,
         featureKey,
@@ -1025,11 +1125,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         totalRowCount: rowCount,
         preloadTruncated: truncatePreload,
         hasFeatureCodeColumn: featureCodeColumnName !== undefined,
-        onProgress: options.onProgress,
         ...(options.signal ? { signal: options.signal } : {}),
       };
+      // `yield*` delegates: each reader's ticks reach our consumer unchanged and its
+      // return value is what we test. A reader that throws after yielding has already
+      // handed rows over — deliberate; the next reader restarts from row 0 and paints
+      // over the partial.
       try {
-        const streamed = await this.streamPointsWithFeaturesInWorker(parquetPath, streamOptions);
+        const streamed = yield* this.streamPointsWithFeaturesInWorker(parquetPath, streamOptions);
         if (streamed?.featureCodes !== undefined) {
           return streamed;
         }
@@ -1044,7 +1147,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         );
       }
       try {
-        const streamed = await this.streamPointsWithFeaturesByUrl(parquetPath, streamOptions);
+        const streamed = yield* this.streamPointsWithFeaturesByUrl(parquetPath, streamOptions);
         if (streamed?.featureCodes !== undefined) {
           return streamed;
         }
@@ -1062,9 +1165,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       // supports row-group range reads. Streams the axes — plus an authoritative
       // integer code column when the dataset has one, so those datasets stream
       // COLOURED rather than colour-later.
-      if (options.onProgress && (await this.canLoadParquetRowGroups())) {
+      if (progressive && (await this.canLoadParquetRowGroups())) {
         try {
-          const streamed = await this.streamPointsGeometryByRowGroup(parquetPath, {
+          const streamed = yield* this.streamPointsGeometryByRowGroup(parquetPath, {
             axisNames,
             columns: [...axisNames, ...(featureCodeColumnName ? [featureCodeColumnName] : [])],
             maxRows,
@@ -1072,7 +1175,6 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             preloadTruncated: truncatePreload,
             ...(featureKey ? { featureKey } : {}),
             ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
-            onProgress: options.onProgress,
             ...(options.signal ? { signal: options.signal } : {}),
           });
           // The streamed batch is the FINAL result only when nothing more is needed
@@ -1694,12 +1796,15 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     return { totalRowCount, axisNames, scannedRows, matchedRows };
   }
-  async loadPointsMatchingFeatureCodes(
+  /**
+   * Whole-dataset scan for a feature selection, yielding the growing matched batch —
+   * the pull-style form of {@link loadPointsMatchingFeatureCodes}.
+   */
+  streamPointsMatchingFeatureCodes(
     elementPath: string,
     options: {
       memoryCap: number;
       featureCodes: readonly number[];
-      onProgress?: (progress: PointsLoadProgress) => void;
       /** Authoritative name→code map for dict-only elements (no `*_codes`
        * column), letting the scan resolve each row's `feature_name` to the same
        * code space the selection was made in. When absent for a dict-only
@@ -1708,34 +1813,36 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       /** Aborts the scan between row-group chunks when it is superseded. */
       signal?: AbortSignal;
     }
-  ): Promise<PointsLoadResult> {
-    const chunkGenerator = this.loadPointsMatchingFeatureCodesByChunk(elementPath, {
-      ...options,
-      abort: options.signal,
-    });
-    // Each `progress.partialResult` is already the full accumulated buffer, so the
-    // last one IS the whole matched batch — no need to re-accumulate/concat here.
-    // Final totals come from the generator's return value (authoritative: it also
-    // counts rows scanned after the last match, which the last partial can't see).
-    let latest: PointsLoadResult | undefined;
-    while (true) {
-      checkAbort(options.signal);
-      const next = await chunkGenerator.next();
-      if (next.done) {
-        const { totalRowCount, scannedRows, matchedRows, axisNames } = next.value;
-        if (!latest) {
-          return emptyFilteredPointsResult(axisNames, totalRowCount);
-        }
-        return {
-          ...latest,
-          totalRowCount,
-          scannedRowCount: scannedRows,
-          preloadTruncated: matchedRows >= options.memoryCap,
-        };
-      }
-      options.onProgress?.(next.value.progress);
-      latest = next.value.progress.partialResult;
+  ): AsyncGenerator<PointsLoadProgress, PointsLoadResult> {
+    return collectMatchingFeatureScan(
+      this.loadPointsMatchingFeatureCodesByChunk(elementPath, {
+        ...options,
+        ...(options.signal ? { abort: options.signal } : {}),
+      }),
+      options.memoryCap,
+      options.signal
+    );
+  }
+
+  async loadPointsMatchingFeatureCodes(
+    elementPath: string,
+    options: {
+      memoryCap: number;
+      featureCodes: readonly number[];
+      /**
+       * @deprecated Prefer {@link streamPointsMatchingFeatureCodes}; this is
+       * implemented by draining it.
+       */
+      onProgress?: (progress: PointsLoadProgress) => void;
+      featureCodeByName?: ReadonlyMap<string, number>;
+      /** Aborts the scan between row-group chunks when it is superseded. */
+      signal?: AbortSignal;
     }
+  ): Promise<PointsLoadResult> {
+    return drainStream(
+      this.streamPointsMatchingFeatureCodes(elementPath, options),
+      options.onProgress
+    );
   }
 
   private async resolveExplicitFeatureCodeColumn(elementPath: string): Promise<{

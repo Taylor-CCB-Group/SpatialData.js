@@ -4,6 +4,9 @@
  * Core library for interfacing with SpatialData stores in TypeScript/JavaScript
  */
 
+// Combinators for the async-iterable streaming APIs (#175) — `streamPoints` and
+// friends. Generic; nothing points-specific.
+export { coalesceLatest, drainStream, sampleByStep } from './asyncStream.js';
 // Resource Resolver contracts (ADR 0004).
 export * from './engine/index.js';
 // Memory accounting (ADR 0005).
