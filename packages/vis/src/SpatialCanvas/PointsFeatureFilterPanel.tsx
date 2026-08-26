@@ -212,6 +212,7 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     supportsOnDemandLoad,
     matchingLoadState,
     residentFeatureCounts,
+    highlightedFeature,
     requestCatalog,
     setHighlightedFeature,
     retryFailedLoads,
@@ -373,6 +374,21 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
     // than zero, or the first paint windows to no rows at all.
     initialRect: { width: 0, height: FEATURE_LIST_HEIGHT },
   });
+
+  // A hovered row can be unmounted by a scroll while the pointer is still over it,
+  // and removing a node fires no `mouseleave` — so the row's own handler never runs
+  // and the canvas keeps emphasising a feature that is no longer under the pointer.
+  // Watch for the highlighted row leaving the window instead. A boolean dep, so this
+  // fires once on that transition rather than per render or per scroll event.
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const highlightMounted =
+    highlightedFeature === null ||
+    virtualRows.some((row) => visibleEntries[row.index]?.code === highlightedFeature);
+  useEffect(() => {
+    if (!highlightMounted) {
+      setHighlightedFeature(null);
+    }
+  }, [highlightMounted, setHighlightedFeature]);
 
   // Write NAMES, and clear any legacy `featureCodes` so the two cannot disagree —
   // `featureNames` wins when both are set, and a stale code list left behind in a
@@ -583,11 +599,18 @@ export function PointsFeatureFilterPanel({ config }: PointsFeatureFilterPanelPro
           style={searchStyle}
         />
       ) : null}
-      <div ref={listRef} style={listStyle}>
+      {/* Focusable: only the MOUNTED rows hold checkboxes, so without a tab stop on
+          the scroller a keyboard user reaches ~17 of 12,448 features and the list
+          never scrolls. Arrow/PageDown on the focused container scrolls it. It carries
+          no `aria-label` because biome will not accept a name on a generic role
+          without a `<fieldset>`; the "Features (…)" heading right above names it.
+          biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be
+          keyboard reachable (WCAG 2.1.1); virtualization is what made it load-bearing. */}
+      <div ref={listRef} style={listStyle} tabIndex={0}>
         {/* Spacer sized to the whole list, windowed rows inside it: the scrollbar
             tracks all 12k features while the DOM holds ~20. */}
         <div style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}>
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          {virtualRows.map((virtualRow) => {
             const entry = visibleEntries[virtualRow.index];
             if (!entry) {
               return null;

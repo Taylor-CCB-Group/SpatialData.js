@@ -8,7 +8,7 @@
  * it is the floor the DOM cost was hiding.
  */
 import type { PointsDataEngine, PointsLoadTarget } from '@spatialdata/layers';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpatialCanvasProvider } from '../src/SpatialCanvas/context';
 import { PointsFeatureFilterPanel } from '../src/SpatialCanvas/PointsFeatureFilterPanel';
@@ -33,11 +33,15 @@ function catalogOf(count: number) {
  * `usePointsFeatureState` calls. A real engine would drag in a store and a loader. */
 function stubEngine(overrides: Record<string, unknown> = {}) {
   const catalog = catalogOf(FEATURE_COUNT);
+  let highlighted = -1;
   const engine = {
     subscribe: () => () => {},
     getVersion: () => 1,
     ensureFeatureCatalog: vi.fn(async () => {}),
-    setHighlightedFeature: vi.fn(),
+    getHighlightedFeature: () => highlighted,
+    setHighlightedFeature: vi.fn((_key: string, code: number | null) => {
+      highlighted = code ?? -1;
+    }),
     retry: vi.fn(),
     supportsFeatureScan: () => true,
     getFeatureCatalog: () => catalog,
@@ -112,6 +116,32 @@ describe('points feature list virtualization', () => {
     // 12,448 features rendered a row each measured at 91,107 nodes. The windowed
     // panel is ~112. Any number in the low hundreds means the window is holding.
     expect(container.querySelectorAll('*').length).toBeLessThan(500);
+  });
+
+  it('makes the scroll container focusable, so rows outside the window stay reachable', () => {
+    const { container } = renderPanel(stubEngine());
+    const scroller = container.querySelector<HTMLElement>('div[style*="overflow-y: auto"]');
+    // Only mounted rows hold checkboxes. Without a tab stop on the scroller itself,
+    // Tab leaves the list after ~17 of 12,448 features and never scrolls it.
+    expect(scroller?.tabIndex).toBe(0);
+  });
+
+  it('clears a highlight whose row the virtualizer has unmounted', () => {
+    const engine = stubEngine();
+    const { container } = renderPanel(engine);
+    const scroller = container.querySelector<HTMLElement>('div[style*="overflow-y: auto"]');
+    // Hover the first row, then scroll far past it. Removing a node fires no
+    // `mouseleave`, so the row's own handler never runs — the panel has to notice
+    // the highlighted row leaving the window.
+    const firstRow = container.querySelectorAll('label')[2];
+    fireEvent.mouseEnter(firstRow);
+    expect(engine.getHighlightedFeature(LAYER_KEY)).toBeGreaterThanOrEqual(0);
+
+    if (scroller) {
+      scroller.scrollTop = 8_000;
+      fireEvent.scroll(scroller);
+    }
+    expect(engine.getHighlightedFeature(LAYER_KEY)).toBe(-1);
   });
 
   it('still reports the full catalog size in the header', () => {

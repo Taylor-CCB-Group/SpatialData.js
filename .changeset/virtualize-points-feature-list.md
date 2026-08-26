@@ -18,6 +18,11 @@ count greyed and partly-loaded rows across the whole catalog however few rows re
 and they ran on every engine notify. They are now memoised, and only mounted rows are
 classified per render.
 
+Two things virtualization would otherwise have cost, fixed with it: the scroll
+container is focusable, so a keyboard user can still reach features outside the
+mounted window; and a hovered row that the virtualizer unmounts no longer leaves a
+stale highlight on the canvas, since removing a node fires no `mouseleave`.
+
 One supporting change in `@spatialdata/core`: `PointsResolver`'s covered-codes set is
 memoised on the scan signature. It was re-parsing a 12k-entry string and returning a
 fresh `Set` per call, which defeated any memoisation downstream of it.

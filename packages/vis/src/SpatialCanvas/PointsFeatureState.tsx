@@ -136,6 +136,10 @@ export interface PointsFeatureState {
   /** Running per-feature counts over the resident window (`code → rows`), available
    * while the whole-dataset counts scan is still running. Partial by construction. */
   residentFeatureCounts: ReturnType<PointsDataEngine['getResidentFeatureCounts']>;
+  /** The hover-emphasised feature code, or `null` when nothing is highlighted. A
+   * panel needs to READ this, not just set it: a virtualized list can unmount the
+   * hovered row without a `mouseleave`, leaving an emphasis nothing will clear. */
+  highlightedFeature: number | null;
   /** Stable callback — trigger the full-dataset catalog build (idempotent). */
   requestCatalog: () => void;
   /** Stable callback — set (or clear, with null) the hover-highlighted feature code
@@ -160,6 +164,7 @@ const EMPTY_POINTS_FEATURE_STATE: Omit<
   truncation: undefined,
   tiled: false,
   residentFeatureCounts: undefined,
+  highlightedFeature: null,
 };
 
 /**
@@ -224,6 +229,9 @@ export function usePointsFeatureState(
     truncation: engine.getActiveTruncation(key, featureCodes),
     tiled: engine.isTiled(key),
     residentFeatureCounts: engine.getResidentFeatureCounts(key),
+    // The engine stores "none" as -1; null reads better and matches the setter.
+    highlightedFeature:
+      engine.getHighlightedFeature(key) < 0 ? null : engine.getHighlightedFeature(key),
     requestCatalog,
     setHighlightedFeature,
     retryFailedLoads,
