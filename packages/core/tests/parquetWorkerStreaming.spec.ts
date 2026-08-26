@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   disableParquetWorker,
   enableParquetWorker,
@@ -169,6 +169,17 @@ describe('parquet worker streaming protocol', () => {
   });
 
   describe('the silence watchdog', () => {
+    // Fake timers, deliberately. These assert a RELATIONSHIP between the budget and
+    // the gaps between messages, and a real-timer version of the first one — six
+    // 20ms sleeps under a 60ms budget — fails whenever the machine is busy enough
+    // for one sleep to overrun. That is a flake, not a finding.
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('does not fire while batches keep arriving, however long the stream runs', async () => {
       const scripted = installScriptedWorker();
       enableParquetWorker({ workerUrl: 'about:blank' });
@@ -178,10 +189,10 @@ describe('parquet worker streaming protocol', () => {
       const pending = streamGeometryWithFeaturesInWorker(STREAM_INPUT, (chunk) => seen.push(chunk));
       await Promise.resolve();
 
-      // Six batches at 20ms apart is 120ms of streaming under a 60ms budget: a
+      // Six batches 20ms apart is 120ms of streaming under a 60ms budget: a
       // time-since-POSTED timeout abandons this healthy stream half way through.
       for (let index = 0; index < 6; index += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await vi.advanceTimersByTimeAsync(20);
         scripted.emit(batch(0, 10, index === 0 ? { code: 0, name: 'ABCC11' } : null));
       }
       scripted.finish({
@@ -203,7 +214,9 @@ describe('parquet worker streaming protocol', () => {
       const streamId = scripted.postedIds[0];
       scripted.emit(batch(0, 10, { code: 0, name: 'ABCC11' }));
 
-      await expect(pending).rejects.toThrow(/stream went quiet for 40ms/);
+      const settled = expect(pending).rejects.toThrow(/stream went quiet for 40ms/);
+      await vi.advanceTimersByTimeAsync(41);
+      await settled;
       // Otherwise the worker keeps range-fetching a payload nobody will read.
       expect(scripted.posted).toContainEqual({
         type: 'cancelParquetStream',
@@ -216,7 +229,9 @@ describe('parquet worker streaming protocol', () => {
       enableParquetWorker({ workerUrl: 'about:blank' });
       setParquetWorkerRequestTimeout(30);
       const pending = streamGeometryWithFeaturesInWorker(STREAM_INPUT, () => {});
-      await expect(pending).rejects.toThrow(/did not respond within 30ms/);
+      const settled = expect(pending).rejects.toThrow(/did not respond within 30ms/);
+      await vi.advanceTimersByTimeAsync(31);
+      await settled;
       expect(scripted.posted[0]?.type).toBe('streamGeometryWithFeatures');
     });
   });
