@@ -57,22 +57,22 @@ catalog:
   babel-plugin-react-compiler: ^1.0.0
   '@deck.gl/aggregation-layers': ~9.3.7
   '@deck.gl/arcgis': ~9.3.7
-  '@deck.gl/core': ~9.3.7
-  '@deck.gl/extensions': ~9.3.7
-  '@deck.gl/geo-layers': ~9.3.7
+  '@deck.gl/core': ~9.4.0
+  '@deck.gl/extensions': ~9.4.0
+  '@deck.gl/geo-layers': ~9.4.0
   '@deck.gl/google-maps': ~9.3.7
-  '@deck.gl/layers': ~9.3.7
+  '@deck.gl/layers': ~9.4.0
   '@deck.gl/mapbox': ~9.3.7
-  '@deck.gl/mesh-layers': ~9.3.7
-  '@deck.gl/react': ~9.3.7
-  '@deck.gl/widgets': ~9.3.7
-  '@loaders.gl/core': ~4.4.3
-  '@luma.gl/constants': ~9.3.6
-  '@luma.gl/core': ~9.3.6
-  '@luma.gl/engine': ~9.3.6
-  '@luma.gl/gltf': ~9.3.6
-  '@luma.gl/shadertools': ~9.3.6
-  '@luma.gl/webgl': ~9.3.6
+  '@deck.gl/mesh-layers': ~9.4.0
+  '@deck.gl/react': ~9.4.0
+  '@deck.gl/widgets': ~9.4.0
+  '@loaders.gl/core': ~4.5.1
+  '@luma.gl/constants': ~9.4.1
+  '@luma.gl/core': ~9.4.1
+  '@luma.gl/engine': ~9.4.1
+  '@luma.gl/gltf': ~9.4.1
+  '@luma.gl/shadertools': ~9.4.1
+  '@luma.gl/webgl': ~9.4.1
   '@math.gl/core': ^4.1.0
   '@types/node': ^26.1.2
   '@types/react': ^19.2.0
@@ -83,7 +83,7 @@ catalog:
   '@vivjs/views': 0.22.1
   anndata.js: ^0.0.2
   apache-arrow: ^21.2.0
-  deck.gl: ~9.3.7
+  deck.gl: ~9.4.0
   react: ^19.2.1
   react-dom: ^19.2.1
   # TypeScript 7.0 (the native port) ships no JS API, so tools that use the compiler
