@@ -266,7 +266,9 @@ keeping.** "Fewer row-group range reads" does not happen on a Morton artifact:
 
 Row groups are chosen **spatially**, and a gene's points are spread across all of
 them, so no feature filter can skip one. What the filter buys is 36x fewer points
-leaving the worker — the GPU, memory and overdraw win — not less I/O. Narrowing the
+leaving the worker — the GPU, memory and overdraw win — not less I/O.
+*(Re-measured on freshly written artifacts in [Bytes per viewport query](#bytes-per-viewport-query-measured):
+same 92 row groups, 1.5% fewer bytes, 24,000x fewer points.)* Narrowing the
 *fetch* by feature needs a feature-primary index; that is exactly what the
 `transcripts_feature_then_morton` / `transcripts_morton_then_feature` permutations
 exist to explore, and it is the open index-selection question in ADR 0002/0003 rather
@@ -439,6 +441,87 @@ returning fewer points.
 
 ---
 
+## Bytes per viewport query, measured
+
+Measured 2026-09-23 against a regenerated permutations store, driving the real
+`loadPointsInBounds` and counting **true bytes on the wire** through a logging proxy in
+front of the store server (`Cache-Control: no-store` on every response, so nothing the
+browser or undici cached could hide a fetch). Scenario is the manifest's own
+`center-tile` — the interquartile box of the slide, i.e. 25% of its area. Node was the
+driver deliberately: `supportsParquetStreaming()` is false there, so the run takes the
+byte-oriented row-group path this document is about rather than the streaming reader.
+
+### The writer's encoding change converts fully into bandwidth
+
+The Python writer now chooses encodings from the data rather than taking pyarrow's
+dictionary-everything default (`BYTE_STREAM_SPLIT` for floats, `DELTA_BINARY_PACKED` for
+high-cardinality ascending integers, `PLAIN` for unordered ids). On this store that made
+`transcripts_morton` 439.0 MB → 234.3 MB on disk. The same ratio shows up per query:
+
+| `transcripts_morton`, one viewport | old | new | |
+|---|---|---|---|
+| all 541 features | 168.0 MB | **89.6 MB** | 1.87x |
+| one gene | 165.8 MB | **88.2 MB** | 1.88x |
+| 16 genes | 165.8 MB | **88.2 MB** | 1.88x |
+
+Worth stating because it was not obvious in advance: the saving is not an artifact of
+whole-file size. The tiled path range-reads whole row groups, so a smaller row group is
+directly a smaller read, and the file-size ratio and the per-query ratio agree to two
+decimal places. It also decodes faster — 22 ms → 12 ms on a 200k-row Xenium-shaped
+frame through the vendored parquet-wasm.
+
+### Feature selection still buys zero I/O — now re-measured on fresh artifacts
+
+| selection | points returned | range reads | bytes |
+|---|---|---|---|
+| all 541 features | 3,128,885 | 96 | 89.6 MB |
+| one gene | **129** | 92 | 88.2 MB |
+| 16 genes | 107,247 | 92 | 88.2 MB |
+
+Counted as *distinct byte ranges*, not row groups: a few of them are the footer and
+probe reads rather than row-group payload, which is where the 96/92 difference comes
+from — not from the filter skipping anything.
+
+A 24,000x reduction in points for a **1.5%** reduction in bytes, off the same reads.
+This reproduces the finding above on artifacts written by today's writer, so it is a
+property of the index, not of the stale store it was first seen on.
+
+### `morton_then_feature` is a no-op at the I/O level, not merely on disk
+
+Byte-for-byte identical to `transcripts_morton` on every scenario above: same request
+count, same byte ranges, same total. Morton is 16 bits per axis, so at 12.17M points
+only ~0.14% of rows share a code and the secondary key is almost never consulted. The
+earlier evidence was equal column sizes; this is the same claim measured where it
+matters.
+
+### `feature_then_morton` is not a viewport query at all
+
+The probe rejects it — *"its `morton_code_2d` column is not sorted across row groups"* —
+and it falls back to the capped whole-file preload: **274.8 MB in 6 requests**. Expected,
+and the reason it is not a tiling fixture (see Verification).
+
+### What is still expensive
+
+~92 of 245 row groups for 25% of the slide area. A rectangle maps to many Morton
+intervals, so spatial selectivity is far short of the area ratio, and that is now the
+dominant term — the encoding change halved the constant without touching it. Narrowing
+it needs either fewer round trips (batching adjacent row groups into one range read, or
+issuing them concurrently — the scan loop awaits each row group serially) or a genuinely
+feature-selective artifact. Note that **smaller row groups make the current loop worse**:
+cost tracks row-group *count*, not bytes, so a `row_group_size=5000` permutation turned
+one viewport query into ~2,400 serial round trips.
+
+### Method note, because it bit twice
+
+The proxy log **appends**. Two runs under the same scenario labels sum silently and look
+like a regression — the first pass of this measurement reported the new store reading
+*more* (179.1 MB, 196 requests), which was an aborted run added to a good one. The tell
+is distinct byte ranges versus request count: 96 ranges against 196 requests means each
+range was fetched twice. Start a fresh log per run and assert that no scenario label
+repeats.
+
+---
+
 ## Remaining work
 
 **Step 5 — Trustworthy grid. ✅ done.**
@@ -546,6 +629,12 @@ its own tests instead of being asserted incidentally forty times.
   — a single-row-group fixture proves nothing.
 - **Beware the fixture-proxy trap**: the vis demo's `/test-fixtures` proxy 502s when a
   launcher sets `PORT`, and worktrees need the fixture symlink.
+- Regenerated again on 2026-09-23 as `xenium_2.q0.001.htj2k.index-permutations-v3.zarr`
+  (the writer's new encodings, a page index, and a footer `sorting_columns` declared only
+  where the file actually honours it). That store is what the byte measurements below
+  were taken on; the 2026-08-12 store remains alongside it as the "old encoding"
+  baseline. A sweep of coarsened-Morton and small-row-group permutations was written and
+  then **dropped** — see the last subsection of the byte measurements for why.
 - The permutations store was regenerated on 2026-08-12; all four points elements are
   now sound. If you are on an **older copy**, `transcripts_morton_then_feature` and
   `transcripts_feature_then_morton` carry the stale sentinel box — the probe will now
