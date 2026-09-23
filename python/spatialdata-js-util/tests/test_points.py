@@ -262,3 +262,34 @@ def test_morton_coarsening_groups_features_within_a_spatial_bucket(tmp_path) -> 
 def test_morton_sort_points_rejects_out_of_range_coarsening(levels: int) -> None:
     with pytest.raises(ValueError, match="morton_coarsen_levels"):
         morton_sort_points(_points_frame(rows=8), morton_coarsen_levels=levels)
+
+
+def test_write_morton_points_parquet_rejects_an_unknown_encoding_policy(tmp_path) -> None:
+    # A CLI or TUI string sails past the type hint; a typo used to write pyarrow
+    # defaults and report them as the tuned plan.
+    with pytest.raises(ValueError, match="Unknown encoding policy"):
+        write_morton_points_parquet(
+            _points_frame(rows=8),
+            tmp_path / "points.parquet",
+            feature_key="feature_name",
+            encodings="Auto",  # type: ignore[arg-type]
+        )
+
+
+def test_pyarrow_default_records_no_plan_rather_than_an_empty_one(tmp_path) -> None:
+    from spatialdata_js_util.points import ENCODING_PLAN_ATTR
+
+    tuned = write_morton_points_parquet(
+        _points_frame(rows=64), tmp_path / "a.parquet", feature_key="feature_name"
+    )
+    default = write_morton_points_parquet(
+        _points_frame(rows=64),
+        tmp_path / "b.parquet",
+        feature_key="feature_name",
+        encodings="pyarrow-default",
+    )
+
+    assert tuned.attrs[ENCODING_PLAN_ATTR] is not None
+    # An empty plan would serialise as "no column uses a dictionary", the opposite of
+    # what pyarrow's default actually does.
+    assert default.attrs[ENCODING_PLAN_ATTR] is None

@@ -5,7 +5,7 @@ import {
   decodeUnsignedIntStat,
   rowGroupColumnStats,
 } from '../parquetFooterStats.js';
-import { readBatchWithinBudget } from '../parquetStreamWatchdog.js';
+import { readBatchWithinBudget, withinBudget } from '../parquetStreamWatchdog.js';
 import {
   buildFeatureCatalogFromColumns,
   featureCatalogFromCodeMap,
@@ -703,11 +703,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (filled >= maxRows) {
         break;
       }
-      const file = await ParquetFile.fromUrl(url);
-      const stream = await file.stream({
-        columns: [...axisNames, featureKey],
-        batchSize: PRELOAD_STREAM_BATCH_ROWS,
-      });
+      const file = await withinBudget(ParquetFile.fromUrl(url), 'opening the points preload');
+      const stream = await withinBudget(
+        file.stream({
+          columns: [...axisNames, featureKey],
+          batchSize: PRELOAD_STREAM_BATCH_ROWS,
+        }),
+        'opening the points preload'
+      );
       const reader = stream.getReader();
       try {
         for (;;) {
@@ -1522,11 +1525,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (matchedRows >= options.memoryCap) {
         break;
       }
-      const file = await ParquetFile.fromUrl(url);
-      const stream = await file.stream({
-        columns: options.columnNames,
-        batchSize: PRELOAD_STREAM_BATCH_ROWS,
-      });
+      const file = await withinBudget(ParquetFile.fromUrl(url), 'opening the feature scan');
+      const stream = await withinBudget(
+        file.stream({
+          columns: options.columnNames,
+          batchSize: PRELOAD_STREAM_BATCH_ROWS,
+        }),
+        'opening the feature scan'
+      );
       const reader = stream.getReader();
       try {
         for (;;) {
@@ -2257,17 +2263,23 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const stall = createStallGuard(FEATURE_STREAM_STALL_TIMEOUT_MS);
     const scanAllParts = async () => {
       for (const url of partUrls) {
-        const file = await ParquetFile.fromUrl(url);
-        const stream = await file.stream({
-          columns: columnNames,
-          batchSize: FEATURE_STREAM_BATCH_ROWS,
-        });
+        const file = await withinBudget(
+          ParquetFile.fromUrl(url),
+          'opening the feature catalog scan'
+        );
+        const stream = await withinBudget(
+          file.stream({
+            columns: columnNames,
+            batchSize: FEATURE_STREAM_BATCH_ROWS,
+          }),
+          'opening the feature catalog scan'
+        );
         const reader = stream.getReader();
         try {
           for (;;) {
             const { done, value } = await readBatchWithinBudget(
               reader,
-              'streaming points in bounds'
+              'scanning the feature catalog'
             );
             if (done) {
               break;

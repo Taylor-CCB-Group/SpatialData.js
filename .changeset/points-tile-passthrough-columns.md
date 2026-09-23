@@ -18,11 +18,17 @@ Naming them in `columns` now returns them in `PointsInBoundsResponse.columns`, o
 value per point, in lockstep with the geometry — a decode and transfer cost only, and
 no extra bandwidth.
 
-Numeric 32-bit columns only. A requested column that is missing, non-numeric, or
-64-bit is **refused with a warning** rather than served wrong: `transcript_id` does
-not survive a `Float32Array`, and a string column such as `cell_id` would otherwise
-have come back as a correctly-sized, correctly-aligned array of `NaN`. A string
-column wants codes plus a catalog, the shape `featureCodes` already uses; that is not
-built yet.
+Float, bool and integers up to 32 bits, carried in a `Float64Array` — the one lane
+that represents all of them exactly, where a `Float32Array` would quietly round an
+Int32 above 2^24. A requested column that is missing, non-numeric, or 64-bit is
+**refused with a warning** rather than served wrong: `transcript_id` cannot survive
+the lane, and a string column such as `cell_id` would otherwise have come back as a
+correctly-sized, correctly-aligned array of `NaN`. A string column wants codes plus a
+catalog, the shape `featureCodes` already uses; that is not built yet.
+
+Values are re-read from each row group as it is scanned. They are deliberately not
+cached alongside the accumulating buffer: a tile spanning two row groups would
+otherwise pair the second group's points with the first group's values, one value per
+point, which no length check can detect.
 
 Works on both the worker and main-thread branches of the tiled load.

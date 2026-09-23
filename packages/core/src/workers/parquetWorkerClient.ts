@@ -252,16 +252,14 @@ function ensureWorkerListener() {
   };
   worker.onerror = (event) => {
     const detail = event.message || 'Parquet worker error';
-    if (workerHasAnswered) {
-      // A live worker threw: reject what is in flight (every `*InWorker` helper
-      // falls back on rejection) and let the next request try again.
-      rejectAllPending(new Error(detail));
-      return;
-    }
-    if (workerLoaded) {
-      // Loaded, then died without ever answering — the parquet-wasm panic case. The
-      // worker object is unusable from here, but nothing is wrong with the wiring, so
-      // replace it rather than switching the feature off for the rest of the page.
+    if (workerLoaded || workerHasAnswered) {
+      // Loaded, then died — the parquet-wasm panic case. Answering first does NOT make
+      // it survivable: a panic poisons the wasm instance, so a worker that served the
+      // metadata and catalog requests and then hit a refused range is just as dead as
+      // one that never spoke. Gating recovery on "has not answered yet" made this, the
+      // common case, unrecoverable, and left a dead worker installed with
+      // `isParquetWorkerEnabled()` still true so every later request waited out
+      // `armTimeout`. Nothing is wrong with the wiring, so replace it.
       restartAfterCrash(detail);
       return;
     }

@@ -138,4 +138,100 @@ describe('morton scan — passthrough columns', () => {
     expect(Object.keys(result.values)).toEqual(['qv']);
     expect(result.rejected).toEqual([]);
   });
+
+  /**
+   * A tile spanning two row groups scans a second table with `rowIndex` restarting at
+   * zero. Binding the values once, when the columns were resolved, paired the second
+   * group's points with the first group's values — one value per point, so the
+   * output-length checks could not see it.
+   */
+  it('reads values from the row group being scanned, not the one it resolved against', () => {
+    const groupOne = tableFromArrays({
+      x: Float32Array.from([0, 1]),
+      y: Float32Array.from([0, 1]),
+      morton: Int32Array.from([10, 11]),
+      qv: Float32Array.from([10, 11]),
+    } as never);
+    const groupTwo = tableFromArrays({
+      x: Float32Array.from([2, 3]),
+      y: Float32Array.from([2, 3]),
+      morton: Int32Array.from([12, 13]),
+      qv: Float32Array.from([22, 33]),
+    } as never);
+
+    const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
+    const resolved = resolvePassthroughColumns(groupOne, ['qv'], context);
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const zs = new Float32PointBuffer();
+    for (const table of [groupOne, groupTwo]) {
+      scanMortonTableInBounds({
+        table,
+        rowGroupIndex: 1,
+        bounds: { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 },
+        ...context,
+        xs,
+        ys,
+        zs,
+        passthrough: resolved.columns,
+      } as never);
+    }
+
+    expect(Array.from(xs.toArray())).toEqual([0, 1, 2, 3]);
+    expect(Array.from(resolved.columns[0]?.buffer.toArray() ?? [])).toEqual([10, 11, 22, 33]);
+  });
+
+  it('carries a Bool column as 0/1 rather than NaN', () => {
+    const arrow = tableFromArrays({
+      x: Float32Array.from([0, 1]),
+      y: Float32Array.from([0, 1]),
+      morton: Int32Array.from([10, 11]),
+      overlaps_nucleus: [true, false],
+    } as never);
+    const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
+    const resolved = resolvePassthroughColumns(arrow, ['overlaps_nucleus'], context);
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const zs = new Float32PointBuffer();
+    scanMortonTableInBounds({
+      table: arrow,
+      rowGroupIndex: 1,
+      bounds: { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 },
+      ...context,
+      xs,
+      ys,
+      zs,
+      passthrough: resolved.columns,
+    } as never);
+
+    expect(resolved.rejected).toEqual([]);
+    expect(Array.from(resolved.columns[0]?.buffer.toArray() ?? [])).toEqual([1, 0]);
+  });
+
+  it('keeps an Int32 above the Float32 integer limit exact', () => {
+    const exact = 16_777_217; // 2^24 + 1, the first integer a Float32Array rounds
+    const arrow = tableFromArrays({
+      x: Float32Array.from([0]),
+      y: Float32Array.from([0]),
+      morton: Int32Array.from([10]),
+      codeword_index: Int32Array.from([exact]),
+    } as never);
+    const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
+    const resolved = resolvePassthroughColumns(arrow, ['codeword_index'], context);
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const zs = new Float32PointBuffer();
+    scanMortonTableInBounds({
+      table: arrow,
+      rowGroupIndex: 1,
+      bounds: { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 },
+      ...context,
+      xs,
+      ys,
+      zs,
+      passthrough: resolved.columns,
+    } as never);
+
+    expect(resolved.columns[0]?.buffer.toArray()[0]).toBe(exact);
+  });
 });

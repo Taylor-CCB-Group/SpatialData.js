@@ -246,8 +246,12 @@ export type ParquetWorkerColumnarResult = {
    * in lockstep with `xs`/`ys`. A requested name is absent here when the column is
    * missing, non-numeric, or 64-bit — the worker warns rather than returning values
    * the caller cannot trust.
+   *
+   * `Float64Array` because it is the one lane that carries every accepted source type
+   * exactly: int32, float32, float64 and bool all round-trip, where `Float32Array`
+   * would quietly round an Int32 above 2^24.
    */
-  columns?: Record<string, Float32Array>;
+  columns?: Record<string, Float64Array>;
 };
 
 export type ParquetWorkerScanResult = Omit<ParquetWorkerColumnarResult, 'kind'> & {

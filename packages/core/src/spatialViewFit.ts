@@ -29,7 +29,8 @@ export type PointsColumnarData = {
   /**
    * Optional extra per-point columns, each aligned row-for-row with {@link data}.
    * Requested via `PointsInBoundsOptions.columns`; a name absent here was one the
-   * reader could not serve.
+   * reader could not serve. Carried as `Float64Array`, the one lane that represents
+   * every accepted source type (int32, float32, float64, bool) exactly.
    */
   columns?: Record<string, ArrayLike<number>>;
 };

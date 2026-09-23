@@ -39,6 +39,7 @@ MORTON_COARSE_COLUMN = "__morton_coarse__"
 DICTIONARY_CARDINALITY_RATIO = 0.125
 
 EncodingPolicy = Literal["auto", "pyarrow-default"]
+ENCODING_POLICIES: frozenset[str] = frozenset(("auto", "pyarrow-default"))
 
 
 @dataclass(frozen=True)
@@ -276,9 +277,17 @@ def _write_arrow_table_in_row_groups(
     encodings: EncodingPolicy = "auto",
     write_page_index: bool = True,
     sort_columns: Sequence[str] | None = None,
-) -> ColumnEncodingPlan:
+) -> ColumnEncodingPlan | None:
     if row_group_size <= 0:
         raise ValueError("row_group_size must be positive")
+    # `EncodingPolicy` is a type hint, which a CLI or TUI string sails straight past. An
+    # unrecognised value silently wrote pyarrow defaults and reported them as the tuned
+    # plan, so a typo was indistinguishable from the real thing in the manifest.
+    if encodings not in ENCODING_POLICIES:
+        raise ValueError(
+            f"Unknown encoding policy {encodings!r}; expected one of "
+            + ", ".join(sorted(ENCODING_POLICIES))
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     schema = table.schema
     if metadata:
@@ -286,13 +295,17 @@ def _write_arrow_table_in_row_groups(
         merged[b"spatialdata_multiscale"] = json.dumps(metadata).encode()
         schema = schema.with_metadata(merged)
 
-    plan = plan_column_encodings(table) if encodings == "auto" else ColumnEncodingPlan()
+    # `None`, not an empty plan: an empty `ColumnEncodingPlan` serialises to
+    # `{"use_dictionary": [], "column_encoding": {}}`, which a manifest reader would take
+    # to mean "no column uses a dictionary" — the exact opposite of what pyarrow's
+    # default does. Absent is the honest record for "we did not choose".
+    plan = plan_column_encodings(table) if encodings == "auto" else None
     encoding_options: dict[str, Any] = (
         {
             "use_dictionary": plan.use_dictionary,
             "column_encoding": plan.column_encoding,
         }
-        if encodings == "auto"
+        if plan is not None
         else {}
     )
     sorting_columns = _declarable_sorting_columns(table, sort_columns)

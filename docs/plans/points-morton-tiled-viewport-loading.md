@@ -631,10 +631,10 @@ its own tests instead of being asserted incidentally forty times.
   launcher sets `PORT`, and worktrees need the fixture symlink.
 - Regenerated again on 2026-09-23 as `xenium_2.q0.001.htj2k.index-permutations-v3.zarr`
   (the writer's new encodings, a page index, and a footer `sorting_columns` declared only
-  where the file actually honours it). That store is what the byte measurements below
+  where the file actually honours it). That store is what the byte measurements above
   were taken on; the 2026-08-12 store remains alongside it as the "old encoding"
   baseline. A sweep of coarsened-Morton and small-row-group permutations was written and
-  then **dropped** — see the last subsection of the byte measurements for why.
+  then **dropped** — see [What is still expensive](#what-is-still-expensive) for why.
 - The permutations store was regenerated on 2026-08-12; all four points elements are
   now sound. If you are on an **older copy**, `transcripts_morton_then_feature` and
   `transcripts_feature_then_morton` carry the stale sentinel box — the probe will now

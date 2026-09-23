@@ -39,6 +39,12 @@ class FakeWorker {
   crash(message = 'Uncaught RuntimeError: unreachable') {
     this.onerror?.({ message });
   }
+  /** A reply to a request nobody is waiting for: enough to mark the worker healthy. */
+  answer() {
+    this.onmessage?.({
+      data: { id: 999, direction: 'response', response: { ok: false, error: 'no such id' } },
+    });
+  }
 }
 
 function startWorker() {
@@ -105,11 +111,32 @@ describe('parquet worker crash recovery', () => {
       const live = instances.at(-1);
       live?.signalReady();
       // A reply proves this worker is healthy, whatever the previous one did.
-      live?.onmessage?.({
-        data: { id: 999, direction: 'response', response: { ok: false, error: 'no such id' } },
-      });
+      live?.answer();
       live?.crash();
       expect(isParquetWorkerEnabled()).toBe(true);
+      // Replaced each round, not merely left enabled: five crashes past a budget of
+      // three only survive because answering refills it.
+      expect(instances).toHaveLength(round + 2);
     }
+  });
+
+  /**
+   * The common case, and the one the first cut of this got wrong. Metadata and catalog
+   * requests usually succeed before a refused range panics, and gating recovery on
+   * "has not answered yet" left the dead worker installed with
+   * `isParquetWorkerEnabled()` still true — so every later request waited out the
+   * silence watchdog instead of reaching a live worker.
+   */
+  it('replaces a worker that crashes after it has already answered', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const instances = startWorker();
+    instances[0]?.signalReady();
+    instances[0]?.answer();
+
+    instances[0]?.crash();
+
+    expect(instances).toHaveLength(2);
+    expect(instances[0]?.terminated).toBe(true);
+    expect(isParquetWorkerEnabled()).toBe(true);
   });
 });

@@ -308,7 +308,7 @@ export async function scanFeatureCatalogFromPayload(
  * is decoded, so pushes never reallocate. Growth is still handled, because a wrong
  * or absent hint must stay correct rather than corrupt the output.
  */
-class TypedPointBuffer<T extends Float32Array | Int32Array> {
+class TypedPointBuffer<T extends Float32Array | Float64Array | Int32Array> {
   private buffer: T;
   private count = 0;
 
@@ -362,6 +362,12 @@ class TypedPointBuffer<T extends Float32Array | Int32Array> {
 export class Float32PointBuffer extends TypedPointBuffer<Float32Array> {
   constructor(initialCapacity = 0) {
     super((length) => new Float32Array(length), initialCapacity);
+  }
+}
+
+export class Float64PointBuffer extends TypedPointBuffer<Float64Array> {
+  constructor(initialCapacity = 0) {
+    super((length) => new Float64Array(length), initialCapacity);
   }
 }
 
@@ -427,8 +433,13 @@ function numericColumnValues(column: Vector | null | undefined): ArrayLike<numbe
  */
 export interface PassthroughColumn {
   name: string;
-  values: ArrayLike<number>;
-  buffer: Float32PointBuffer;
+  /**
+   * Accumulates across row groups. Deliberately the ONLY state carried between
+   * tables: the values are re-read from each table as it is scanned, because a tile
+   * spanning two row groups would otherwise pair the second group's points with the
+   * first group's values — one value per point, so no length check could catch it.
+   */
+  buffer: Float64PointBuffer;
 }
 
 /** Why a requested passthrough column could not be served. */
@@ -440,6 +451,26 @@ export interface PassthroughColumnRejection {
 export interface ResolvedPassthroughColumns {
   columns: PassthroughColumn[];
   rejected: PassthroughColumnRejection[];
+}
+
+/**
+ * Values for one passthrough column, read from the table about to be scanned.
+ *
+ * Bool is converted here rather than in `numericColumnValues`: that helper's boxed
+ * path keeps only `typeof value === 'number'`, so an Arrow Bool column would come back
+ * as a full-length array of `NaN` — the same silently-aligned, silently-meaningless
+ * result that a string column produced before the type guard was added.
+ */
+function passthroughValues(column: Vector): ArrayLike<number> | null {
+  if (DataType.isBool(column.type)) {
+    const out = new Float64Array(column.length);
+    for (let index = 0; index < column.length; index += 1) {
+      const value = column.get(index);
+      out[index] = value === null || value === undefined ? Number.NaN : value ? 1 : 0;
+    }
+    return out;
+  }
+  return numericColumnValues(column);
 }
 
 /** Columns the scan supplies itself; requesting one again would duplicate it. */
@@ -457,6 +488,18 @@ function isReservedScanColumn(
   );
 }
 
+/**
+ * Decide which requested columns the scan can serve, from the arrow SCHEMA.
+ *
+ * Never from the decoded values: `numericColumnValues` answers a boxed read of a string
+ * column with `Number.NaN` rather than null, so trusting it would hand back a `cell_id`
+ * column of the right length, in lockstep, and entirely meaningless.
+ *
+ * Accepts float, bool, and integers up to 32 bits — every one of which a `Float64Array`
+ * represents exactly. A 64-bit integer does not, so it is refused rather than returned
+ * quietly rounded; a string column wants codes plus a catalog, the shape `featureCodes`
+ * already uses, and is not served here.
+ */
 export function resolvePassthroughColumns(
   table: Table,
   requested: readonly string[] | undefined,
@@ -473,29 +516,23 @@ export function resolvePassthroughColumns(
       rejected.push({ name, reason: 'missing' });
       continue;
     }
-    // Decided on the arrow TYPE, never on the decoded values. `numericColumnValues`
-    // answers a boxed read of a string column with `Number.NaN` rather than with
-    // null, so trusting it here would have handed back a `cell_id` column of NaN —
-    // the right length, in lockstep, and entirely meaningless.
     const type = column.type;
-    const isFloat = DataType.isFloat(type);
-    const isInt = DataType.isInt(type);
-    if (!isFloat && !isInt && !DataType.isBool(type)) {
+    if (DataType.isInt(type)) {
+      // `bitWidth` is on the Int type; anything wider than 32 bits cannot survive the
+      // f64 lane exactly, so refuse it rather than round `transcript_id`.
+      if (type.bitWidth > 32) {
+        rejected.push({ name, reason: 'precision' });
+        continue;
+      }
+    } else if (!DataType.isFloat(type) && !DataType.isBool(type)) {
       rejected.push({ name, reason: 'not-numeric' });
       continue;
     }
-    // A 64-bit lane does not survive the `Float32Array` these buffers are made of.
-    // Refusing `transcript_id` is better than returning it rounded.
-    if (isInt && (type as { bitWidth?: number }).bitWidth === 64) {
-      rejected.push({ name, reason: 'precision' });
-      continue;
-    }
-    const values = numericColumnValues(column);
-    if (!values) {
+    if (!passthroughValues(column)) {
       rejected.push({ name, reason: 'not-numeric' });
       continue;
     }
-    columns.push({ name, values, buffer: new Float32PointBuffer() });
+    columns.push({ name, buffer: new Float64PointBuffer() });
   }
   return { columns, rejected };
 }
@@ -577,11 +614,21 @@ export function scanMortonTableInBounds(input: {
   if (input.codes) {
     input.codes.reserve(numRows);
   }
-  // Hoisted out of the row loop for the same reason the value arrays are: this is
-  // read once per matched row, and `input.passthrough` is almost always empty.
-  const passthrough = input.passthrough ?? EMPTY_PASSTHROUGH;
-  for (const extra of passthrough) {
+  // Bound to THIS table, every call. The columns were resolved once (by name, against
+  // the file's schema, which every row group shares) but their values must come from
+  // the row group being scanned — `rowIndex` restarts at zero for each one.
+  const passthrough: Array<{ values: ArrayLike<number>; buffer: Float64PointBuffer }> = [];
+  for (const extra of input.passthrough ?? EMPTY_PASSTHROUGH) {
+    const column = input.table.getChild(extra.name);
+    const values = column ? passthroughValues(column) : null;
+    if (!values) {
+      // Present when resolved, absent now: scanning on would silently shorten this
+      // column against the geometry. Drop it here and the caller's length check drops
+      // it from the result.
+      continue;
+    }
     extra.buffer.reserve(numRows);
+    passthrough.push({ values, buffer: extra.buffer });
   }
   for (let rowIndex = 0; rowIndex < numRows; rowIndex += 1) {
     // Sentinels only ever occupy the first rows of the first row group, so this

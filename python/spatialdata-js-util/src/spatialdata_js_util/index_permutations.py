@@ -256,6 +256,10 @@ def write_index_permutations(
                 "tiling_kind": condition.tiling_kind,
                 "row_group_size": condition_row_group_size,
                 "morton_coarsen_levels": condition.morton_coarsen_levels,
+                # The policy NAME as well as the resolved plan: under
+                # `pyarrow-default` there is no plan to record, and without the name a
+                # reader cannot tell an old-encoding baseline from a tuned artifact.
+                "encoding_policy": encodings if condition.sort_order else None,
                 "encodings": encoding_plan,
                 "page_index": write_page_index if condition.sort_order else None,
             }

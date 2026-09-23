@@ -48,3 +48,37 @@ export async function readBatchWithinBudget<T>(
     }
   }
 }
+
+/**
+ * The same budget, for the steps that OPEN a stream.
+ *
+ * `ParquetFile.fromUrl()` and `file.stream()` issue their own range requests, so the
+ * panic this module exists for can land there too — before there is a reader to guard.
+ * Bounding only the reads left the open able to hang exactly as the reads once did.
+ */
+export async function withinBudget<T>(work: Promise<T>, label: string): Promise<T> {
+  const budget = parquetRequestTimeoutMs();
+  if (!(budget > 0 && Number.isFinite(budget))) {
+    return work;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `Parquet stream went quiet for ${budget}ms while ${label}; ` +
+                'falling back to the byte-oriented reader.'
+            )
+          );
+        }, budget);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}

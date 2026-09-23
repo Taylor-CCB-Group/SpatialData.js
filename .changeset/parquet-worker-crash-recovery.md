@@ -21,6 +21,11 @@ answered?" — distinguishes the two failures:
 | bundle never loads (bad `workerUrl`, CSP) | disabled, latched | unchanged: disabled, latched |
 | loads, then crashes | **disabled, latched** | **replaced, feature stays up** |
 
+Answering first does not make a crash survivable — a panic poisons the wasm instance —
+so a loaded worker is replaced whether or not it has already replied. Gating recovery on
+"has not answered yet" would have missed the common case, since metadata and catalog
+requests usually succeed before a refused range panics.
+
 A crash after `ready` rejects the in-flight requests — their transferables died with the
 worker, so they cannot be replayed — and starts a replacement with the same options. The
 caller's retry then runs against a live worker, which is the difference between a
