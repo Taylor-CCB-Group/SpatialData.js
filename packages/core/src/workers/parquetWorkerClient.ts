@@ -1019,6 +1019,7 @@ export type ScanMortonRowGroupsInBoundsInput = {
   mortonCodeColumnName: string;
   featureCodeColumnName?: string;
   featureCodes?: readonly number[];
+  passthroughColumns?: readonly string[];
 };
 
 export async function scanMortonRowGroupsInBoundsInWorker(

@@ -26,6 +26,8 @@ import {
   Float32PointBuffer,
   histogramToSortedArrays,
   Int32PointBuffer,
+  type PassthroughColumn,
+  resolvePassthroughColumns,
   scanFeatureCatalogFromPayload,
   scanMortonTableInBounds,
   scanTableByFeatureCodes,
@@ -484,12 +486,14 @@ async function handleScanMortonRowGroupsInBounds(
     };
   }
   const hasZ = request.axisNames.includes('z');
+  const requestedPassthrough = request.passthroughColumns ?? [];
   const columns = [
     'x',
     'y',
     ...(hasZ ? ['z'] : []),
     request.mortonCodeColumnName,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
+    ...requestedPassthrough,
   ];
   const xs = new Float32PointBuffer();
   const ys = new Float32PointBuffer();
@@ -499,6 +503,10 @@ async function handleScanMortonRowGroupsInBounds(
   // needs. Gating this on `request.featureCodes` (the filter) would leave the
   // default view flat.
   const codes = request.featureCodeColumnName ? new Int32PointBuffer() : undefined;
+  // Resolved against the FIRST row group's table and reused for the rest: every row
+  // group shares the file's schema, so a column that resolves once resolves always,
+  // and re-resolving per chunk would hand each one its own buffer.
+  let passthrough: PassthroughColumn[] | undefined;
   for (const chunk of request.rowGroups) {
     const table = tableFromIPC(
       parquetModule
@@ -507,6 +515,22 @@ async function handleScanMortonRowGroupsInBounds(
         })
         .intoIPCStream()
     );
+    if (!passthrough) {
+      const resolved = resolvePassthroughColumns(table, requestedPassthrough, {
+        axisNames: request.axisNames,
+        mortonCodeColumnName: request.mortonCodeColumnName,
+        ...(request.featureCodeColumnName
+          ? { featureCodeColumnName: request.featureCodeColumnName }
+          : {}),
+      });
+      passthrough = resolved.columns;
+      for (const rejection of resolved.rejected) {
+        // Silence here would look like a column of zeros in the caller's analysis.
+        console.warn(
+          `Points tile passthrough column "${rejection.name}" not served (${rejection.reason}).`
+        );
+      }
+    }
     scanMortonTableInBounds({
       table,
       rowGroupIndex: chunk.globalRowGroupIndex ?? chunk.rowGroupIndex,
@@ -519,12 +543,22 @@ async function handleScanMortonRowGroupsInBounds(
       ys,
       zs,
       ...(codes ? { codes } : {}),
+      ...(passthrough.length ? { passthrough } : {}),
     });
   }
   const outX = xs.toArray();
   const outY = ys.toArray();
   const outZ = hasZ ? zs.toArray() : undefined;
   const outCodes = codes?.toArray();
+  // Same "short is worse than absent" rule as the codes: a short passthrough column
+  // would silently realign against the wrong points.
+  const outPassthrough = passthrough?.length
+    ? Object.fromEntries(
+        passthrough
+          .map((extra) => [extra.name, extra.buffer.toArray()] as const)
+          .filter(([, values]) => values.length === outX.length)
+      )
+    : undefined;
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,
@@ -538,6 +572,7 @@ async function handleScanMortonRowGroupsInBounds(
       // read code 0 — a VALID feature — and be confidently mis-coloured. Ship them
       // only when there is exactly one per point.
       ...(outCodes && outCodes.length === outX.length ? { featureCodes: outCodes } : {}),
+      ...(outPassthrough ? { columns: outPassthrough } : {}),
     },
   };
 }

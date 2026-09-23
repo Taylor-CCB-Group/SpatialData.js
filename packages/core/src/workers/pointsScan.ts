@@ -1,4 +1,4 @@
-import { type Table, tableFromIPC, type Vector } from 'apache-arrow';
+import { DataType, type Table, tableFromIPC, type Vector } from 'apache-arrow';
 import {
   accumulateFeatureCatalogFromTable,
   buildFeatureCatalogFromColumns,
@@ -411,6 +411,97 @@ function numericColumnValues(column: Vector | null | undefined): ArrayLike<numbe
   return out;
 }
 
+/**
+ * A numeric column carried through the tiled scan alongside the geometry.
+ *
+ * These cost nothing on the wire. parquet-wasm cannot fetch an individual column
+ * chunk (`docs/parquet-wasm-limitations.md`), so the tiled path already range-reads
+ * every column of every row group it touches and then throws most of them away at
+ * decode time — `qv`, `nucleus_distance` and `overlaps_nucleus` are paid for on
+ * every tile whether or not anyone asks for them. Asking is the cheap part.
+ *
+ * Numeric only, and 32 bits at that: a 64-bit identifier cannot survive a
+ * `Float32Array`, so {@link resolvePassthroughColumns} refuses one rather than
+ * returning quietly-wrong values. String columns (`cell_id`) want codes plus a
+ * catalog, the shape `featureCodes` already uses, and are not served here.
+ */
+export interface PassthroughColumn {
+  name: string;
+  values: ArrayLike<number>;
+  buffer: Float32PointBuffer;
+}
+
+/** Why a requested passthrough column could not be served. */
+export interface PassthroughColumnRejection {
+  name: string;
+  reason: 'missing' | 'not-numeric' | 'precision';
+}
+
+export interface ResolvedPassthroughColumns {
+  columns: PassthroughColumn[];
+  rejected: PassthroughColumnRejection[];
+}
+
+/** Columns the scan supplies itself; requesting one again would duplicate it. */
+function isReservedScanColumn(
+  name: string,
+  input: { axisNames: string[]; mortonCodeColumnName: string; featureCodeColumnName?: string }
+): boolean {
+  return (
+    name === 'x' ||
+    name === 'y' ||
+    name === 'z' ||
+    input.axisNames.includes(name) ||
+    name === input.mortonCodeColumnName ||
+    name === input.featureCodeColumnName
+  );
+}
+
+export function resolvePassthroughColumns(
+  table: Table,
+  requested: readonly string[] | undefined,
+  context: { axisNames: string[]; mortonCodeColumnName: string; featureCodeColumnName?: string }
+): ResolvedPassthroughColumns {
+  const columns: PassthroughColumn[] = [];
+  const rejected: PassthroughColumnRejection[] = [];
+  for (const name of requested ?? []) {
+    if (isReservedScanColumn(name, context)) {
+      continue;
+    }
+    const column = table.getChild(name);
+    if (!column) {
+      rejected.push({ name, reason: 'missing' });
+      continue;
+    }
+    // Decided on the arrow TYPE, never on the decoded values. `numericColumnValues`
+    // answers a boxed read of a string column with `Number.NaN` rather than with
+    // null, so trusting it here would have handed back a `cell_id` column of NaN —
+    // the right length, in lockstep, and entirely meaningless.
+    const type = column.type;
+    const isFloat = DataType.isFloat(type);
+    const isInt = DataType.isInt(type);
+    if (!isFloat && !isInt && !DataType.isBool(type)) {
+      rejected.push({ name, reason: 'not-numeric' });
+      continue;
+    }
+    // A 64-bit lane does not survive the `Float32Array` these buffers are made of.
+    // Refusing `transcript_id` is better than returning it rounded.
+    if (isInt && (type as { bitWidth?: number }).bitWidth === 64) {
+      rejected.push({ name, reason: 'precision' });
+      continue;
+    }
+    const values = numericColumnValues(column);
+    if (!values) {
+      rejected.push({ name, reason: 'not-numeric' });
+      continue;
+    }
+    columns.push({ name, values, buffer: new Float32PointBuffer() });
+  }
+  return { columns, rejected };
+}
+
+const EMPTY_PASSTHROUGH: readonly PassthroughColumn[] = [];
+
 export function scanMortonTableInBounds(input: {
   table: Table;
   rowGroupIndex: number;
@@ -429,6 +520,14 @@ export function scanMortonTableInBounds(input: {
    * a push must skip all four buffers together.
    */
   codes?: Int32PointBuffer;
+  /**
+   * Extra numeric columns to carry through, in lockstep with the geometry. Same
+   * contract as {@link codes}: index i belongs to point i, so every `continue`
+   * above a push must skip these too. Build them with
+   * {@link resolvePassthroughColumns} so the reserved and unrepresentable names
+   * are filtered out before they get here.
+   */
+  passthrough?: readonly PassthroughColumn[];
 }): void {
   const allowedFeatureCodes = featureCodeAllowSet(input.featureCodes);
   const filterByFeature = allowedFeatureCodes !== null;
@@ -478,6 +577,12 @@ export function scanMortonTableInBounds(input: {
   if (input.codes) {
     input.codes.reserve(numRows);
   }
+  // Hoisted out of the row loop for the same reason the value arrays are: this is
+  // read once per matched row, and `input.passthrough` is almost always empty.
+  const passthrough = input.passthrough ?? EMPTY_PASSTHROUGH;
+  for (const extra of passthrough) {
+    extra.buffer.reserve(numRows);
+  }
   for (let rowIndex = 0; rowIndex < numRows; rowIndex += 1) {
     // Sentinels only ever occupy the first rows of the first row group, so this
     // stays on the (rare) boxed read rather than materialising the whole column.
@@ -515,6 +620,11 @@ export function scanMortonTableInBounds(input: {
     if (zValues) {
       const z = zValues[rowIndex];
       input.zs.push(Number.isFinite(z) ? z : 0);
+    }
+    for (const extra of passthrough) {
+      // NaN is kept rather than coerced: unlike a feature code, a missing `qv` or
+      // `nucleus_distance` has no in-band sentinel, and 0 is a plausible reading.
+      extra.buffer.push(extra.values[rowIndex]);
     }
     if (collectCodes) {
       const code = (featureCodeValues as ArrayLike<number>)[rowIndex];

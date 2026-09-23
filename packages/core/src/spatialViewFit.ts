@@ -26,6 +26,12 @@ export type PointsColumnarData = {
   shape?: number[];
   /** Optional per-point feature code, aligned row-for-row with {@link data}. */
   featureCodes?: ArrayLike<number>;
+  /**
+   * Optional extra per-point columns, each aligned row-for-row with {@link data}.
+   * Requested via `PointsInBoundsOptions.columns`; a name absent here was one the
+   * reader could not serve.
+   */
+  columns?: Record<string, ArrayLike<number>>;
 };
 
 /** Same default as Viv ImageView detail framing. */

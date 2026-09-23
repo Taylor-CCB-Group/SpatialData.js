@@ -45,6 +45,20 @@ export interface PointsInBoundsOptions {
   featureCodes?: readonly number[];
   zoom?: number;
   signal?: AbortSignal;
+  /**
+   * Extra numeric columns to return per point, in `PointsInBoundsResponse.columns`.
+   *
+   * Free on the wire: the tiled path range-reads whole row groups because
+   * parquet-wasm cannot fetch an individual column chunk
+   * ({@link ../../docs/parquet-wasm-limitations.md}), so `qv`, `nucleus_distance`
+   * and `overlaps_nucleus` are already fetched and are simply dropped at decode
+   * time. The cost of naming one here is decode and transfer, not bandwidth.
+   *
+   * 32-bit numeric columns only. A 64-bit identifier (`transcript_id`) cannot be
+   * carried in a `Float32Array` and is refused with a warning rather than silently
+   * rounded; a string column (`cell_id`) wants codes plus a catalog, the shape
+   * `featureCodes` uses, and is not served yet.
+   */
   columns?: string[];
 }
 

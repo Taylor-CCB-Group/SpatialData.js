@@ -2830,9 +2830,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     // Dynamic, like the call site below: keeps the worker scan module out of the
     // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
-    const { Float32PointBuffer, Int32PointBuffer, scanMortonTableInBounds } = await import(
-      '../workers/pointsScan.js'
-    );
+    const {
+      Float32PointBuffer,
+      Int32PointBuffer,
+      resolvePassthroughColumns,
+      scanMortonTableInBounds,
+    } = await import('../workers/pointsScan.js');
     const xs = new Float32PointBuffer();
     const ys = new Float32PointBuffer();
     const zs = new Float32PointBuffer();
@@ -2842,6 +2845,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // feature, and the "all features" view (no filter) is exactly the case that used
     // to arrive without them and render flat.
     const featureCodeColumnName = metadata.featureCodeColumnName || undefined;
+    // Extra columns cost nothing to fetch: this path range-reads whole row groups —
+    // parquet-wasm cannot fetch a single column chunk — so `qv`, `nucleus_distance`
+    // and friends are already on the wire and are merely being discarded at decode.
+    // Naming them here is what stops that.
+    const passthroughColumns = options.columns ?? [];
 
     ensureParquetWorker();
     if (isParquetWorkerEnabled()) {
@@ -2865,6 +2873,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             mortonCodeColumnName: metadata.mortonCodeColumnName,
             featureCodeColumnName,
             featureCodes: options.featureCodes,
+            ...(passthroughColumns.length ? { passthroughColumns } : {}),
           });
           if (workerResult) {
             return {
@@ -2874,6 +2883,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
               loadMode: 'row-groups',
               tiling: metadata,
               ...(workerResult.featureCodes ? { featureCodes: workerResult.featureCodes } : {}),
+              ...(workerResult.columns ? { columns: workerResult.columns } : {}),
             };
           }
         } catch (error) {
@@ -2891,8 +2901,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       ...(hasZ ? ['z'] : []),
       metadata.mortonCodeColumnName,
       ...(featureCodeColumnName ? [featureCodeColumnName] : []),
+      ...passthroughColumns,
     ];
     const codes = featureCodeColumnName ? new Int32PointBuffer() : undefined;
+    // Resolved once, off the first row group's table: the schema is the file's, not
+    // the row group's, so a later chunk cannot change the answer.
+    let passthrough: Awaited<ReturnType<typeof resolvePassthroughColumns>>['columns'] | undefined;
     for (const rowGroup of rowGroups) {
       checkAbort(options.signal);
       const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup, {
@@ -2900,6 +2914,19 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       });
       if (!table) {
         continue;
+      }
+      if (!passthrough) {
+        const resolved = resolvePassthroughColumns(table, passthroughColumns, {
+          axisNames: metadata.axisNames,
+          mortonCodeColumnName: metadata.mortonCodeColumnName,
+          ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+        });
+        passthrough = resolved.columns;
+        for (const rejection of resolved.rejected) {
+          console.warn(
+            `Points tile passthrough column "${rejection.name}" not served (${rejection.reason}).`
+          );
+        }
       }
       scanMortonTableInBounds({
         table,
@@ -2913,6 +2940,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         ys,
         zs,
         ...(codes ? { codes } : {}),
+        ...(passthrough.length ? { passthrough } : {}),
       });
     }
 
@@ -2922,6 +2950,13 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     const pointCount = xs.length;
     const outCodes = codes?.toArray();
+    const outColumns = passthrough?.length
+      ? Object.fromEntries(
+          passthrough
+            .map((extra) => [extra.name, extra.buffer.toArray()] as const)
+            .filter(([, values]) => values.length === pointCount)
+        )
+      : undefined;
     return {
       data: hasZ ? [xs.toArray(), ys.toArray(), zs.toArray()] : [xs.toArray(), ys.toArray()],
       shape: [hasZ ? 3 : 2, pointCount],
@@ -2931,6 +2966,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       // One code per point or none at all — a short array would leave the tail
       // reading code 0, a valid feature, and mis-colour it with conviction.
       ...(outCodes && outCodes.length === pointCount ? { featureCodes: outCodes } : {}),
+      ...(outColumns ? { columns: outColumns } : {}),
     };
   }
 }

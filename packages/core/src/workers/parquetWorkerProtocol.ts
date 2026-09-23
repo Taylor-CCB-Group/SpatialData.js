@@ -134,6 +134,12 @@ export type ParquetWorkerRequest =
       mortonCodeColumnName: string;
       featureCodeColumnName?: string;
       featureCodes?: readonly number[];
+      /**
+       * Extra numeric columns to return alongside the geometry. Free on the wire —
+       * the row group's bytes are fetched whole either way — so this is a decode
+       * cost only. See `resolvePassthroughColumns`.
+       */
+      passthroughColumns?: readonly string[];
     }
   | {
       /**
@@ -235,6 +241,13 @@ export type ParquetWorkerColumnarResult = {
   ys: Float32Array;
   zs?: Float32Array;
   featureCodes?: Int32Array;
+  /**
+   * Requested passthrough columns that the scan could serve, one value per point,
+   * in lockstep with `xs`/`ys`. A requested name is absent here when the column is
+   * missing, non-numeric, or 64-bit — the worker warns rather than returning values
+   * the caller cannot trust.
+   */
+  columns?: Record<string, Float32Array>;
 };
 
 export type ParquetWorkerScanResult = Omit<ParquetWorkerColumnarResult, 'kind'> & {
@@ -310,5 +323,11 @@ export function columnarDataFromWorkerResult(
 ): PointsColumnarData {
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
   const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;
-  return { shape: result.shape, data, ...(featureCodes ? { featureCodes } : {}) };
+  const columns = 'columns' in result ? result.columns : undefined;
+  return {
+    shape: result.shape,
+    data,
+    ...(featureCodes ? { featureCodes } : {}),
+    ...(columns ? { columns } : {}),
+  };
 }
