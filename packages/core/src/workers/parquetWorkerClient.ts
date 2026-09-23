@@ -62,6 +62,19 @@ export function setParquetWorkerRequestTimeout(ms: number) {
   requestTimeoutMs = ms;
 }
 
+/**
+ * The same silence budget, for readers that are not the worker.
+ *
+ * `ParquetFile.stream()` can also be driven on the main thread, where it has exactly
+ * the failure this budget exists to catch: parquet-wasm answers a refused HTTP range by
+ * panicking and leaving its promise unsettled. Sharing the knob keeps one meaning —
+ * "catch a reader that has gone silent, not one that is slow" — and one thing for a
+ * host to tune.
+ */
+export function parquetRequestTimeoutMs(): number {
+  return requestTimeoutMs;
+}
+
 /** Remove a pending request, clearing its timeout, and return its callbacks. */
 function settlePending(id: number) {
   const entry = pending.get(id);

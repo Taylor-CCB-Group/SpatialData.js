@@ -5,6 +5,7 @@ import {
   decodeUnsignedIntStat,
   rowGroupColumnStats,
 } from '../parquetFooterStats.js';
+import { readBatchWithinBudget } from '../parquetStreamWatchdog.js';
 import {
   buildFeatureCatalogFromColumns,
   featureCatalogFromCodeMap,
@@ -714,7 +715,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           if (filled >= maxRows) {
             break;
           }
-          const { done, value } = await reader.read();
+          const { done, value } = await readBatchWithinBudget(
+            reader,
+            'streaming the points preload'
+          );
           if (done) {
             break;
           }
@@ -1530,7 +1534,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           if (matchedRows >= options.memoryCap) {
             break;
           }
-          const { done, value } = await reader.read();
+          const { done, value } = await readBatchWithinBudget(
+            reader,
+            'scanning for selected features'
+          );
           if (done) {
             break;
           }
@@ -2258,7 +2265,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         const reader = stream.getReader();
         try {
           for (;;) {
-            const { done, value } = await reader.read();
+            const { done, value } = await readBatchWithinBudget(
+              reader,
+              'streaming points in bounds'
+            );
             if (done) {
               break;
             }
