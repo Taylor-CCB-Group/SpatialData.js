@@ -557,6 +557,15 @@ describe('Morton points tiling (canonical parquet)', () => {
     }
   });
 
+  /**
+   * The three tests below each build their own malformed parquet fixture through
+   * `uv run python`, which is ~2s of interpreter startup and writer work before a
+   * single assertion runs. vitest's 5s default is not a budget for that: under
+   * full-suite parallelism they timed out intermittently while passing when the file
+   * ran alone, which reads as a flaky product rather than a slow fixture. They carry
+   * the same 120s as the `beforeAll` above, and as the uv-shelling tests in
+   * `pointsFeatures.spec.ts`, for the same reason.
+   */
   it('does not enable morton tiling when sentinel row group is oversized', async () => {
     const badFixtureRoot = await mkdtemp(join(tmpdir(), 'bad-morton-points-'));
     try {
@@ -579,7 +588,7 @@ describe('Morton points tiling (canonical parquet)', () => {
     } finally {
       execSync(`rm -rf ${JSON.stringify(badFixtureRoot)}`, { stdio: 'pipe' });
     }
-  });
+  }, 120_000);
 
   /**
    * The sentinel box is a claim the artifact makes about itself. Believing a wrong one
@@ -612,7 +621,7 @@ describe('Morton points tiling (canonical parquet)', () => {
       warn.mockRestore();
       execSync(`rm -rf ${JSON.stringify(badFixtureRoot)}`, { stdio: 'pipe' });
     }
-  });
+  }, 120_000);
 
   /**
    * The bisect binary-searches the row-group Morton index, which only means anything
@@ -650,5 +659,5 @@ describe('Morton points tiling (canonical parquet)', () => {
       warn.mockRestore();
       execSync(`rm -rf ${JSON.stringify(featureFirstRoot)}`, { stdio: 'pipe' });
     }
-  });
+  }, 120_000);
 });
