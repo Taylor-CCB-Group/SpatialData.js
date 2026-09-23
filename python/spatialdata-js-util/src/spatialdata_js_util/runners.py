@@ -10,7 +10,13 @@ from typing import Any, Sequence, TypeVar
 import pandas as pd
 
 from .errors import WriterCommandError
-from .index_permutations import DEFAULT_CONDITIONS, IndexCondition, write_index_permutations
+from .index_permutations import (
+    DEFAULT_CONDITIONS,
+    FEATURE_SELECTIVITY_CONDITIONS,
+    IndexCondition,
+    write_index_permutations,
+)
+from .points import EncodingPolicy
 from .points import (
     build_spatialdata_multiscale_metadata,
     write_morton_points_parquet,
@@ -292,10 +298,15 @@ def run_write_index_permutations(
     overwrite: bool = False,
     row_group_size: int = 50_000,
     compression: str = "zstd",
+    encodings: EncodingPolicy = "auto",
+    write_page_index: bool = True,
 ) -> dict[str, Any]:
     selected: tuple[IndexCondition, ...] | None = None
     if condition_ids:
-        by_id = {condition.id: condition for condition in DEFAULT_CONDITIONS}
+        by_id = {
+            condition.id: condition
+            for condition in (*DEFAULT_CONDITIONS, *FEATURE_SELECTIVITY_CONDITIONS)
+        }
         missing = [value for value in condition_ids if value not in by_id]
         if missing:
             raise WriterCommandError(f"Unknown conditions: {', '.join(missing)}")
@@ -311,6 +322,8 @@ def run_write_index_permutations(
             overwrite=overwrite,
             row_group_size=row_group_size,
             compression=compression,
+            encodings=encodings,
+            write_page_index=write_page_index,
         )
     )
 

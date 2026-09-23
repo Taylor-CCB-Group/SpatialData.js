@@ -44,8 +44,11 @@ from .pyramids import (
 from .points import (
     MORTON_CODE_2D_COLUMN,
     MORTON_CODE_EXTREME_VALUE_INDICATOR,
+    MORTON_COARSE_COLUMN,
+    ColumnEncodingPlan,
     build_spatialdata_multiscale_metadata,
     morton_sort_points,
+    plan_column_encodings,
     write_morton_points_parquet,
     write_multiscale_points_parquet,
 )
@@ -65,6 +68,8 @@ __all__ = [
     "JP2K_PRESETS",
     "MORTON_CODE_2D_COLUMN",
     "MORTON_CODE_EXTREME_VALUE_INDICATOR",
+    "MORTON_COARSE_COLUMN",
+    "ColumnEncodingPlan",
     "CscConversion",
     "PyramidResult",
     "RecompressedSpatialData",
@@ -79,6 +84,7 @@ __all__ = [
     "htj2k_preset_quality",
     "is_htj2k_codec",
     "morton_sort_points",
+    "plan_column_encodings",
     "recompress_spatialdata",
     "register_codecs",
     "resolve_recompression_config",
