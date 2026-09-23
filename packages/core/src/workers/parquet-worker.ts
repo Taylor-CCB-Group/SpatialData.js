@@ -936,3 +936,13 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
       }
     });
 };
+
+// Announce that the bundle evaluated. The client uses this, not "has it answered a
+// request yet?", to decide whether a later `error` event means "never loaded" (a
+// wiring mistake to give up on) or "loaded, then crashed" (restartable). Posted last
+// so it cannot arrive before `self.onmessage` is installed and a request racing it
+// gets dropped.
+{
+  const ready: ParquetWorkerMessage = { id: -1, direction: 'ready' };
+  self.postMessage(ready);
+}

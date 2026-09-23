@@ -1611,7 +1611,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
     if (!isParquetWorkerEnabled()) {
       throw new Error(
-        'Feature-filtered points loading requires the parquet worker and parquet part bytes.'
+        'Feature-filtered points loading requires the parquet worker, which is not ' +
+          'running. It restarts itself after a crash, so retrying usually succeeds; ' +
+          'if it never starts, pass enableParquetWorker({ workerUrl }).'
       );
     }
 

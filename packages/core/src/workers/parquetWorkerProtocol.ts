@@ -316,6 +316,20 @@ export type ParquetWorkerMessage = {
    * reader that ignores this direction still behaves correctly for them.
    */
   | { direction: 'stream'; chunk: ParquetWorkerStreamChunk }
+  /**
+   * Posted once, as the worker module finishes evaluating, before any request.
+   *
+   * It exists to tell two failures apart that otherwise look identical from the
+   * client: a worker whose bundle never loaded (a wiring mistake — give up), and
+   * a worker that loaded and later crashed (recoverable — restart it). Answering
+   * that with "has it replied to a request yet?" misreads the second as the
+   * first whenever the crash beats the first response, which is exactly what a
+   * `RuntimeError: unreachable` out of parquet-wasm does.
+   *
+   * It carries no `id`, being unsolicited; {@link ParquetWorkerMessage} pairs it
+   * with a sentinel so the envelope stays one shape.
+   */
+  | { direction: 'ready' }
 );
 
 export function columnarDataFromWorkerResult(
