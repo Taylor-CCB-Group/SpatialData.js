@@ -50,40 +50,66 @@ overrides:
   # our own lockfile so the alerts close.
   'fast-xml-parser@>=5.0.0 <5.10.1': ^5.10.1
   'protocol-buffers-schema@<3.6.1': ^3.6.1
+  # deck.gl 9.4 and luma.gl 9.4 both depend on @loaders.gl/* via carets, but the
+  # loaders.gl packages pin their own siblings exactly. pnpm therefore resolves two
+  # variants of the family (4.4.3 under deck, 4.4.5 under luma), which duplicates
+  # @deck.gl/layers and the global loader registry in @loaders.gl/core. deck.gl 9.3
+  # happened to resolve to a single family; 9.4 does not. Pin the whole family to the
+  # newest in-range release so there is one copy again. Bump these together.
+  '@loaders.gl/3d-tiles': ^4.4.5
+  '@loaders.gl/compression': ^4.4.5
+  '@loaders.gl/core': ^4.4.5
+  '@loaders.gl/crypto': ^4.4.5
+  '@loaders.gl/draco': ^4.4.5
+  '@loaders.gl/geoarrow': ^4.4.5
+  '@loaders.gl/gis': ^4.4.5
+  '@loaders.gl/gltf': ^4.4.5
+  '@loaders.gl/images': ^4.4.5
+  '@loaders.gl/loader-utils': ^4.4.5
+  '@loaders.gl/math': ^4.4.5
+  '@loaders.gl/mvt': ^4.4.5
+  '@loaders.gl/schema': ^4.4.5
+  '@loaders.gl/schema-utils': ^4.4.5
+  '@loaders.gl/terrain': ^4.4.5
+  '@loaders.gl/textures': ^4.4.5
+  '@loaders.gl/tiles': ^4.4.5
+  '@loaders.gl/wms': ^4.4.5
+  '@loaders.gl/worker-utils': ^4.4.5
+  '@loaders.gl/xml': ^4.4.5
+  '@loaders.gl/zip': ^4.4.5
 
 catalog:
   '@zarrita/storage': ^0.2.0
   '@rolldown/plugin-babel': ^0.2.3
   babel-plugin-react-compiler: ^1.0.0
-  '@deck.gl/aggregation-layers': ~9.3.7
-  '@deck.gl/arcgis': ~9.3.7
-  '@deck.gl/core': ~9.3.7
-  '@deck.gl/extensions': ~9.3.7
-  '@deck.gl/geo-layers': ~9.3.7
-  '@deck.gl/google-maps': ~9.3.7
-  '@deck.gl/layers': ~9.3.7
-  '@deck.gl/mapbox': ~9.3.7
-  '@deck.gl/mesh-layers': ~9.3.7
-  '@deck.gl/react': ~9.3.7
-  '@deck.gl/widgets': ~9.3.7
-  '@loaders.gl/core': ~4.4.3
-  '@luma.gl/constants': ~9.3.6
-  '@luma.gl/core': ~9.3.6
-  '@luma.gl/engine': ~9.3.6
-  '@luma.gl/gltf': ~9.3.6
-  '@luma.gl/shadertools': ~9.3.6
-  '@luma.gl/webgl': ~9.3.6
+  '@deck.gl/aggregation-layers': ~9.4.0
+  '@deck.gl/arcgis': ~9.4.0
+  '@deck.gl/core': ~9.4.0
+  '@deck.gl/extensions': ~9.4.0
+  '@deck.gl/geo-layers': ~9.4.0
+  '@deck.gl/google-maps': ~9.4.0
+  '@deck.gl/layers': ~9.4.0
+  '@deck.gl/mapbox': ~9.4.0
+  '@deck.gl/mesh-layers': ~9.4.0
+  '@deck.gl/react': ~9.4.0
+  '@deck.gl/widgets': ~9.4.0
+  '@luma.gl/constants': ~9.4.2
+  '@luma.gl/core': ~9.4.2
+  '@luma.gl/engine': ~9.4.2
+  '@luma.gl/gltf': ~9.4.2
+  '@luma.gl/shadertools': ~9.4.2
+  '@luma.gl/webgl': ~9.4.2
   '@math.gl/core': ^4.1.0
   '@types/node': ^26.1.2
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^6.0.1
-  '@hms-dbmi/viv': ^0.22.0
-  '@vivjs/constants': 0.22.1
-  '@vivjs/views': 0.22.1
+  '@hms-dbmi/viv': ^0.23.0
+  '@vivjs/constants': 0.23.0
+  '@vivjs/views': 0.23.0
   anndata.js: ^0.0.2
   apache-arrow: ^21.2.0
-  deck.gl: ~9.3.7
+  deck.gl: ~9.4.0
   react: ^19.2.1
   react-dom: ^19.2.1
   # TypeScript 7.0 (the native port) ships no JS API, so tools that use the compiler
@@ -96,3 +122,17 @@ catalog:
   zarrita: ^0.7.1
   zod: ^4.1.13
   jsdom: ^30.0.1
+
+# pnpm's minimum-release-age gate holds back freshly published versions. Viv 0.23.0
+# was published the same day this bump was taken, so pnpm recorded these exclusions
+# rather than refusing the install. They are a one-off waiver for this specific set
+# of versions, not a standing exemption — drop them once the gate would pass anyway.
+minimumReleaseAgeExclude:
+  - '@hms-dbmi/viv@0.23.0'
+  - '@vivjs/constants@0.23.0'
+  - '@vivjs/extensions@0.23.0'
+  - '@vivjs/layers@0.23.0'
+  - '@vivjs/loaders@0.23.0'
+  - '@vivjs/types@0.23.0'
+  - '@vivjs/viewers@0.23.0'
+  - '@vivjs/views@0.23.0'
