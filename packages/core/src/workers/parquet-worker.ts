@@ -889,6 +889,14 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
           if (response.result.featureCodes) {
             transferables.push(response.result.featureCodes.buffer);
           }
+          if ('columns' in response.result && response.result.columns) {
+            // Passthrough columns are the same shape of payload as the geometry — one
+            // f64 lane per point — so leaving them out of this list quietly structured-
+            // CLONED them, which is the copy the whole transfer list exists to avoid.
+            for (const values of Object.values(response.result.columns)) {
+              transferables.push(values.buffer);
+            }
+          }
         } else if (response.result.kind === 'geometryWithFeatures') {
           transferables.push(response.result.xs.buffer, response.result.ys.buffer);
           if (response.result.zs) {

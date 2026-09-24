@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  countFeatureCodesInWorker,
   disableParquetWorker,
   enableParquetWorker,
   isParquetWorkerEnabled,
@@ -39,10 +40,18 @@ class FakeWorker {
   crash(message = 'Uncaught RuntimeError: unreachable') {
     this.onerror?.({ message });
   }
-  /** A reply to a request nobody is waiting for: enough to mark the worker healthy. */
-  answer() {
+  /**
+   * Answer the request currently in flight, successfully. It has to be BOTH — a
+   * pending id and `ok: true` — because that is now the only thing that counts as
+   * recovery; an error, or a reply on an id nobody awaits, deliberately does not.
+   */
+  answer(id: number) {
     this.onmessage?.({
-      data: { id: 999, direction: 'response', response: { ok: false, error: 'no such id' } },
+      data: {
+        id,
+        direction: 'response',
+        response: { ok: true, result: { kind: 'streamCancelled' } },
+      },
     });
   }
 }
@@ -52,6 +61,20 @@ function startWorker() {
   vi.stubGlobal('Worker', FakeWorker);
   enableParquetWorker({ createWorker: () => new FakeWorker() as unknown as Worker });
   return FakeWorker.instances;
+}
+
+/**
+ * Put a request in flight and answer it successfully, which is what now refills the
+ * restart budget. The rejection is expected and swallowed: the worker is about to be
+ * crashed out from under it in every test that uses this.
+ */
+function answerOneRequest(live: FakeWorker | undefined) {
+  const inFlight = countFeatureCodesInWorker(Int32Array.from([1])).catch(() => undefined);
+  const posted = live?.posted.at(-1) as { id: number } | undefined;
+  if (posted) {
+    live?.answer(posted.id);
+  }
+  return inFlight;
 }
 
 afterEach(() => {
@@ -111,13 +134,39 @@ describe('parquet worker crash recovery', () => {
       const live = instances.at(-1);
       live?.signalReady();
       // A reply proves this worker is healthy, whatever the previous one did.
-      live?.answer();
+      answerOneRequest(live);
       live?.crash();
       expect(isParquetWorkerEnabled()).toBe(true);
       // Replaced each round, not merely left enabled: five crashes past a budget of
       // three only survive because answering refills it.
       expect(instances).toHaveLength(round + 2);
     }
+  });
+
+  it('does not let an error response refill the budget', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const instances = startWorker();
+
+    // Responsive is not the same as working. A worker that errors on every request and
+    // then crashes would otherwise refill its own budget forever.
+    for (let round = 0; round < 5; round += 1) {
+      const live = instances.at(-1);
+      live?.signalReady();
+      const inFlight = countFeatureCodesInWorker(Int32Array.from([1])).catch(() => undefined);
+      const posted = live?.posted.at(-1) as { id: number } | undefined;
+      live?.onmessage?.({
+        data: {
+          id: posted?.id ?? 0,
+          direction: 'response',
+          response: { ok: false, error: 'that store is poisoned' },
+        },
+      });
+      void inFlight;
+      live?.crash();
+    }
+
+    expect(isParquetWorkerEnabled()).toBe(false);
+    expect(instances.length).toBeLessThanOrEqual(4);
   });
 
   /**
@@ -131,7 +180,7 @@ describe('parquet worker crash recovery', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const instances = startWorker();
     instances[0]?.signalReady();
-    instances[0]?.answer();
+    answerOneRequest(instances[0]);
 
     instances[0]?.crash();
 

@@ -12,11 +12,12 @@ filter and any intracellular/extracellular work.
 
 They were never the expensive part. parquet-wasm cannot fetch an individual column
 chunk ([limitations](../docs/parquet-wasm-limitations.md)), so this path range-reads
-**whole row groups, every column**, and projection happens later at decode time. The
-bytes for these columns are already on the wire and were simply being thrown away.
-Naming them in `columns` now returns them in `PointsInBoundsResponse.columns`, one
-value per point, in lockstep with the geometry — a decode and transfer cost only, and
-no extra bandwidth.
+**whole row groups, every column**. And `{ columns }` turns out to be inert in the
+vendored build — there is no projected decode either, so these columns were already
+being fetched *and* decoded, then discarded. Naming them in `columns` now returns them
+in `PointsInBoundsResponse.columns`, one value per point, in lockstep with the
+geometry. The added cost is materialising each one into a buffer and transferring it;
+no extra bandwidth, and no extra decode.
 
 Float, bool and integers up to 32 bits, carried in a `Float64Array` — the one lane
 that represents all of them exactly, where a `Float32Array` would quietly round an

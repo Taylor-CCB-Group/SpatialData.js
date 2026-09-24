@@ -170,9 +170,10 @@ export type DecodeGeometryWithFeaturesResult = {
  * This is the off-thread half of the codes-with-geometry preload: the caller
  * fetches whole row-group (or part) bytes via async range reads and hands them
  * here (in the worker) so the CPU-heavy parquet decode never touches the main
- * thread. Column projection still runs during decode, but the *bytes* are whole
- * row groups (all columns) — parquet-wasm cannot fetch individual column chunks
- * (see docs/parquet-wasm-limitations.md). Mirrors the main-thread derivation in
+ * thread. The *bytes* are whole row groups (all columns) — parquet-wasm cannot fetch
+ * individual column chunks — and `{ columns }` is inert in the vendored build, so the
+ * decode is the full column set too (see docs/parquet-wasm-limitations.md). Mirrors
+ * the main-thread derivation in
  * `VPointsSource.loadPoints` so both paths produce identical codes + catalog.
  */
 export async function decodeGeometryWithFeaturesFromPayload(
@@ -420,16 +421,17 @@ function numericColumnValues(column: Vector | null | undefined): ArrayLike<numbe
 /**
  * A numeric column carried through the tiled scan alongside the geometry.
  *
- * These cost nothing on the wire. parquet-wasm cannot fetch an individual column
- * chunk (`docs/parquet-wasm-limitations.md`), so the tiled path already range-reads
- * every column of every row group it touches and then throws most of them away at
- * decode time — `qv`, `nucleus_distance` and `overlaps_nucleus` are paid for on
- * every tile whether or not anyone asks for them. Asking is the cheap part.
+ * These cost nothing on the wire, and nothing to decode. parquet-wasm cannot fetch an
+ * individual column chunk, and `{ columns }` is inert in the vendored build
+ * (`docs/parquet-wasm-limitations.md`), so the tiled path already range-reads AND
+ * decodes every column of every row group it touches, then discards most of them —
+ * `qv`, `nucleus_distance` and `overlaps_nucleus` are paid for on every tile whether or
+ * not anyone asks for them. Asking adds one buffer and one transfer.
  *
- * Numeric only, and 32 bits at that: a 64-bit identifier cannot survive a
- * `Float32Array`, so {@link resolvePassthroughColumns} refuses one rather than
- * returning quietly-wrong values. String columns (`cell_id`) want codes plus a
- * catalog, the shape `featureCodes` already uses, and are not served here.
+ * Float, bool and integers up to 32 bits, all of which a `Float64Array` carries
+ * exactly. A 64-bit identifier does not, so {@link resolvePassthroughColumns} refuses
+ * one rather than returning it quietly rounded. String columns (`cell_id`) want codes
+ * plus a catalog, the shape `featureCodes` already uses, and are not served here.
  */
 export interface PassthroughColumn {
   name: string;
@@ -544,10 +546,10 @@ export function resolvePassthroughColumns(
       rejected.push({ name, reason: 'not-numeric' });
       continue;
     }
-    if (!passthroughValues(column)) {
-      rejected.push({ name, reason: 'not-numeric' });
-      continue;
-    }
+    // Schema only. Calling `passthroughValues` here to prove the column decodes would
+    // materialise every value of every requested column at resolve time, and the scan
+    // decodes it again per row group anyway — the checks above are the decision, and
+    // `scanMortonTableInBounds` drops a column that cannot be read when it gets there.
     columns.push({ name, buffer: new Float64PointBuffer() });
   }
   return { columns, rejected };

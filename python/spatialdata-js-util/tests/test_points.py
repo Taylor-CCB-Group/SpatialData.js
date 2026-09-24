@@ -293,3 +293,32 @@ def test_pyarrow_default_records_no_plan_rather_than_an_empty_one(tmp_path) -> N
     # An empty plan would serialise as "no column uses a dictionary", the opposite of
     # what pyarrow's default actually does.
     assert default.attrs[ENCODING_PLAN_ATTR] is None
+
+
+def test_morton_sort_points_keeps_a_callers_coarse_named_column(tmp_path) -> None:
+    df = _points_frame(rows=16)
+    df[MORTON_COARSE_COLUMN] = np.arange(len(df))
+
+    # No coarsening requested, so that column is the caller's and must survive.
+    out = morton_sort_points(df, feature_key="feature_name")
+
+    assert MORTON_COARSE_COLUMN in out.columns
+
+
+def test_morton_sort_points_refuses_to_overwrite_a_reserved_coarse_column() -> None:
+    df = _points_frame(rows=16)
+    df[MORTON_COARSE_COLUMN] = np.arange(len(df))
+
+    with pytest.raises(ValueError, match="reserved for the coarsened Morton sort key"):
+        morton_sort_points(df, feature_key="feature_name", morton_coarsen_levels=4)
+
+
+def test_explicit_zero_row_group_size_reaches_the_writer_validation(tmp_path) -> None:
+    # `or` used to swallow it and substitute the default, hiding a caller error.
+    with pytest.raises(ValueError, match="row_group_size must be positive"):
+        write_morton_points_parquet(
+            _points_frame(rows=8),
+            tmp_path / "points.parquet",
+            feature_key="feature_name",
+            row_group_size=0,
+        )

@@ -229,6 +229,14 @@ def morton_sort_points(
             f"{MORTON_CODE_BITS_PER_AXIS - 1}, got {morton_coarsen_levels}"
         )
 
+    if morton_coarsen_levels is not None and MORTON_COARSE_COLUMN in df.columns:
+        # The name is reserved for the transient sort key, and the drop below cannot
+        # tell a caller's column from ours. Refuse rather than silently delete theirs.
+        raise ValueError(
+            f"Input frame already has a {MORTON_COARSE_COLUMN!r} column, which is "
+            "reserved for the coarsened Morton sort key"
+        )
+
     out = _append_feature_codes(df.copy(), feature_key)
     x_min = float(out["x"].min())
     x_max = float(out["x"].max())
@@ -259,7 +267,9 @@ def morton_sort_points(
     rest = rest.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
 
     combined = pd.concat([sentinel, rest], ignore_index=True)
-    if MORTON_COARSE_COLUMN in combined.columns:
+    # Only when THIS call added it: with no coarsening requested, a column of that name
+    # came from the caller and is theirs to keep.
+    if morton_coarsen_levels is not None and MORTON_COARSE_COLUMN in combined.columns:
         combined = combined.drop(columns=[MORTON_COARSE_COLUMN])
     combined = _move_string_like_columns_right(combined)
     combined.attrs[MORTON_SENTINEL_COUNT_ATTR] = len(sentinel)

@@ -233,7 +233,14 @@ def write_index_permutations(
             encoding_plan = None
         else:
             sort_order = _condition_sort_order(condition, feature_key)
-            condition_row_group_size = condition.row_group_size or row_group_size
+            # `is None`, not `or`: an explicit 0 is a caller error and belongs in
+            # the writer's "row_group_size must be positive", not silently replaced
+            # by the default.
+            condition_row_group_size = (
+                row_group_size
+                if condition.row_group_size is None
+                else condition.row_group_size
+            )
             written = write_morton_points_parquet(
                 df,
                 output_parquet,

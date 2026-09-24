@@ -1,4 +1,4 @@
-import { Float16, makeData, makeVector, tableFromArrays, vectorFromArray } from 'apache-arrow';
+import { Float16, makeData, makeVector, Table, tableFromArrays } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import {
   Float32PointBuffer,
@@ -221,14 +221,11 @@ describe('morton scan — passthrough columns', () => {
     const half = makeVector(
       makeData({ type: new Float16(), data: new Uint16Array([15360, 16384, 15360]) })
     );
-    const arrow = tableFromArrays({
+    const withHalf = tableFromArrays({
       x: Float32Array.from([0, 1, 2]),
       y: Float32Array.from([0, 1, 2]),
       morton: Int32Array.from([10, 11, 12]),
-    } as never).assign(tableFromArrays({ pad: Int32Array.from([0, 0, 0]) } as never));
-    const withHalf = arrow.assign(
-      new (arrow.constructor as never as typeof arrow)({ qv: half } as never)
-    );
+    } as never).assign(new Table({ qv: half }));
     expect(withHalf.getChild('qv')?.nullCount).toBe(0);
     expect(withHalf.getChild('qv')?.type).toBeInstanceOf(Float16);
 

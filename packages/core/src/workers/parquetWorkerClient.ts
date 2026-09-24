@@ -176,8 +176,9 @@ let activeOptions: EnableParquetWorkerOptions = {};
  * Restarts left for the current worker. Bounded because the crash may be deterministic —
  * a store whose every request panics would otherwise respawn forever, turning one broken
  * element into an unbounded loop of worker construction. Replenished by
- * {@link RESTART_BUDGET} on every successful response, so a long session that hits an
- * occasional bad range keeps recovering, while a worker that cannot answer at all stops.
+ * {@link RESTART_BUDGET} when a request it was waiting for comes back SUCCESSFUL, so a
+ * long session that hits an occasional bad range keeps recovering, while a worker that
+ * only ever errors or crashes runs the budget down and stops.
  */
 let restartsRemaining = 0;
 const RESTART_BUDGET = 3;
@@ -237,14 +238,19 @@ function ensureWorkerListener() {
       return;
     }
     workerHasAnswered = true;
-    // A worker that is answering is healthy, whatever it did earlier: give it its
-    // full budget back so recovery is per-incident rather than per-page.
-    restartsRemaining = RESTART_BUDGET;
     const entry = settlePending(message.id);
     if (!entry) {
       return;
     }
     if (message.response.ok) {
+      // Only a SUCCESSFUL answer to a request we were waiting for counts as recovery.
+      // Refilling on any response let two weaker things vouch for the worker: an
+      // `ok: false`, which says it is responsive but not that it is working, and a
+      // reply landing on an unknown id — which every `cancelParquetStream` ack does,
+      // by design. A worker that errors and then crashes on each attempt would have
+      // refilled its own budget indefinitely, which is the unbounded respawn the
+      // budget exists to stop.
+      restartsRemaining = RESTART_BUDGET;
       entry.resolve(message.response.result);
     } else {
       entry.reject(new Error(message.response.error));
