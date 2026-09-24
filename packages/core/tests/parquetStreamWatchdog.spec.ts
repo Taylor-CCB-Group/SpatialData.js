@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readBatchWithinBudget, withinBudget } from '../src/parquetStreamWatchdog.js';
+import {
+  openStreamWithinBudget,
+  readBatchWithinBudget,
+  withinBudget,
+} from '../src/parquetStreamWatchdog.js';
 import { setParquetWorkerRequestTimeout } from '../src/workers/parquetWorkerClient.js';
 
 /**
@@ -120,5 +124,43 @@ describe('withinBudget', () => {
     await expect(withinBudget(slow, 'opening it')).rejects.toThrow(/went quiet/);
     // An unhandled rejection here would fail the run.
     await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+});
+
+/**
+ * Opening the file and opening the stream are two awaits. The first succeeding and the
+ * second timing out left the `ParquetFile` live, referenced by nobody, holding wasm
+ * memory for the life of the page.
+ */
+describe('openStreamWithinBudget', () => {
+  it('returns the stream when both opens land in time', async () => {
+    const stream = { cancel: () => Promise.resolve() };
+    const file = { stream: () => Promise.resolve(stream), free: vi.fn() };
+
+    const opened = await openStreamWithinBudget(Promise.resolve(file), {}, 'testing');
+
+    expect(opened.stream).toBe(stream);
+    expect(file.free).not.toHaveBeenCalled();
+  });
+
+  it('frees the file when the stream open times out', async () => {
+    setParquetWorkerRequestTimeout(20);
+    const free = vi.fn();
+    const file = { stream: () => new Promise<never>(() => {}), free };
+
+    await expect(openStreamWithinBudget(Promise.resolve(file), {}, 'opening it')).rejects.toThrow(
+      /went quiet/
+    );
+    expect(free).toHaveBeenCalledTimes(1);
+  });
+
+  it('frees the file when the stream open rejects outright', async () => {
+    const free = vi.fn();
+    const file = { stream: () => Promise.reject(new Error('corrupt footer')), free };
+
+    await expect(openStreamWithinBudget(Promise.resolve(file), {}, 'opening it')).rejects.toThrow(
+      'corrupt footer'
+    );
+    expect(free).toHaveBeenCalledTimes(1);
   });
 });

@@ -111,3 +111,34 @@ export async function withinBudget<T>(
     }
   }
 }
+
+/** The subset of the wasm file handle this module needs. */
+interface OpenableParquetFile<S> {
+  stream(options: Record<string, unknown>): Promise<S>;
+  free?(): void;
+}
+
+/**
+ * Open a file and then a stream on it, both budgeted, without leaking the file.
+ *
+ * The two opens are separate awaits, so the first can succeed and the second time out —
+ * and then the `ParquetFile` is live, referenced by nobody, holding wasm memory until
+ * the page goes away. Pairing them here is what makes "the stream open failed" and
+ * "the file was released" the same event, at all three call sites rather than none.
+ */
+export async function openStreamWithinBudget<S extends { cancel(): Promise<void> }>(
+  openFile: Promise<OpenableParquetFile<S>>,
+  streamOptions: Record<string, unknown>,
+  label: string
+): Promise<{ file: OpenableParquetFile<S>; stream: S }> {
+  const file = await withinBudget(openFile, label, (opened) => opened.free?.());
+  try {
+    const stream = await withinBudget(file.stream(streamOptions), label, (opened) => {
+      void opened.cancel();
+    });
+    return { file, stream };
+  } catch (error) {
+    file.free?.();
+    throw error;
+  }
+}

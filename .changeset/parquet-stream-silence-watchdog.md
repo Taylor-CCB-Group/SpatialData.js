@@ -24,5 +24,13 @@ The same budget also bounds the steps that OPEN a stream (`ParquetFile.fromUrl()
 left running: a `ParquetFile` is freed, a `ReadableStream` cancelled. Otherwise every
 timeout would leak range work alongside the fallback it just triggered.
 
+The feature scan needed one more thing to make that true. It `yield*`s into the
+streaming reader with no guard, so a rejection propagated straight out of the generator
+past the byte-oriented path sitting directly below — and since that caller has no
+main-thread fallback, it surfaced in the UI instead. It now falls through, restarting
+from the first row group; already-yielded progress is re-counted, so a running total can
+step backwards before climbing again, but the terminal result is complete. An abort is
+re-thrown rather than retried, being the caller's own decision.
+
 `checkAbort` could not cover this: it runs between settled reads, and the read that
 matters never settles.

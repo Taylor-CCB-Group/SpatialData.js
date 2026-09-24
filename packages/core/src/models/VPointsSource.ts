@@ -5,7 +5,7 @@ import {
   decodeUnsignedIntStat,
   rowGroupColumnStats,
 } from '../parquetFooterStats.js';
-import { readBatchWithinBudget, withinBudget } from '../parquetStreamWatchdog.js';
+import { openStreamWithinBudget, readBatchWithinBudget } from '../parquetStreamWatchdog.js';
 import {
   buildFeatureCatalogFromColumns,
   featureCatalogFromCodeMap,
@@ -703,18 +703,13 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (filled >= maxRows) {
         break;
       }
-      const file = await withinBudget(
+      const { stream } = await openStreamWithinBudget(
         ParquetFile.fromUrl(url),
-        'opening the points preload',
-        (opened) => opened.free?.()
-      );
-      const stream = await withinBudget(
-        file.stream({
+        {
           columns: [...axisNames, featureKey],
           batchSize: PRELOAD_STREAM_BATCH_ROWS,
-        }),
-        'opening the points preload',
-        (opened) => void opened.cancel()
+        },
+        'opening the points preload'
       );
       const reader = stream.getReader();
       try {
@@ -1530,18 +1525,13 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (matchedRows >= options.memoryCap) {
         break;
       }
-      const file = await withinBudget(
+      const { stream } = await openStreamWithinBudget(
         ParquetFile.fromUrl(url),
-        'opening the feature scan',
-        (opened) => opened.free?.()
-      );
-      const stream = await withinBudget(
-        file.stream({
+        {
           columns: options.columnNames,
           batchSize: PRELOAD_STREAM_BATCH_ROWS,
-        }),
-        'opening the feature scan',
-        (opened) => void opened.cancel()
+        },
+        'opening the feature scan'
       );
       const reader = stream.getReader();
       try {
@@ -1669,24 +1659,49 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // `streamMatchingFeatureCodesByChunk`). Falls through to the byte-oriented
     // worker path below for stores it cannot serve — non-URL stores, and servers
     // that do not answer the range shapes the reader needs.
+    //
+    // Two ways it declines, and both must reach the fallback. `canStreamMatchingScan`
+    // answering false is the cheap one. The other is the stream FAILING once started:
+    // a refused range panics parquet-wasm, which the watchdog turns into a rejection,
+    // and an unguarded `yield*` propagated that straight out of the generator. This
+    // caller has no main-thread fallback of its own, so the rejection surfaced in the
+    // UI as "could not load the selected features" while a byte-oriented path that
+    // would have worked sat directly below, unreached.
     const streamablePartUrls = await this.canStreamMatchingScan(parquetPath);
     if (streamablePartUrls) {
-      return yield* this.streamMatchingFeatureCodesByChunk(
-        streamablePartUrls.urls,
-        streamablePartUrls.rowGroupCounts,
-        {
-          axisNames,
-          axisCount,
-          featureKey,
-          ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
-          featureCodes: options.featureCodes,
-          ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
-          columnNames,
-          memoryCap: options.memoryCap,
-          totalRowCount,
-          ...(options.abort ? { abort: options.abort } : {}),
+      try {
+        return yield* this.streamMatchingFeatureCodesByChunk(
+          streamablePartUrls.urls,
+          streamablePartUrls.rowGroupCounts,
+          {
+            axisNames,
+            axisCount,
+            featureKey,
+            ...(featureCodeColumnName ? { featureCodeColumnName } : {}),
+            featureCodes: options.featureCodes,
+            ...(options.featureCodeByName ? { featureCodeByName: options.featureCodeByName } : {}),
+            columnNames,
+            memoryCap: options.memoryCap,
+            totalRowCount,
+            ...(options.abort ? { abort: options.abort } : {}),
+          }
+        );
+      } catch (error) {
+        // An abort is the caller's own decision, not a reader failure: retrying the
+        // whole scan on the byte path would defeat the supersede it was signalling.
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
         }
-      );
+        console.warn(
+          `Streaming feature scan failed for ${elementPath}; falling back to the ` +
+            'byte-oriented reader.',
+          error
+        );
+        // Deliberately restarts from row group zero rather than resuming. Progress
+        // already yielded is therefore re-counted, so a consumer's running total can
+        // step backwards before climbing again; the terminal result is complete either
+        // way, and a complete answer with an ugly progress curve beats no answer.
+      }
     }
 
     let matchedRows = 0;
@@ -2273,18 +2288,13 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const stall = createStallGuard(FEATURE_STREAM_STALL_TIMEOUT_MS);
     const scanAllParts = async () => {
       for (const url of partUrls) {
-        const file = await withinBudget(
+        const { stream } = await openStreamWithinBudget(
           ParquetFile.fromUrl(url),
-          'opening the feature catalog scan',
-          (opened) => opened.free?.()
-        );
-        const stream = await withinBudget(
-          file.stream({
+          {
             columns: columnNames,
             batchSize: FEATURE_STREAM_BATCH_ROWS,
-          }),
-          'opening the feature catalog scan',
-          (opened) => void opened.cancel()
+          },
+          'opening the feature catalog scan'
         );
         const reader = stream.getReader();
         try {
