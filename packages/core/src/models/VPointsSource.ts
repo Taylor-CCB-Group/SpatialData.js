@@ -2879,6 +2879,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const {
       Float32PointBuffer,
       Int32PointBuffer,
+      PASSTHROUGH_REJECTION_EXPLANATIONS,
       resolvePassthroughColumns,
       scanMortonTableInBounds,
     } = await import('../workers/pointsScan.js');
@@ -2970,7 +2971,8 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
         passthrough = resolved.columns;
         for (const rejection of resolved.rejected) {
           console.warn(
-            `Points tile passthrough column "${rejection.name}" not served (${rejection.reason}).`
+            `Points tile passthrough column "${rejection.name}" not served: ` +
+              `${PASSTHROUGH_REJECTION_EXPLANATIONS[rejection.reason]} (${rejection.reason}).`
           );
         }
       }

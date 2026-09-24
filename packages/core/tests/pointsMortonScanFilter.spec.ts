@@ -1,4 +1,13 @@
-import { Float16, makeData, makeVector, Table, tableFromArrays } from 'apache-arrow';
+import {
+  DataType,
+  Float16,
+  makeData,
+  makeVector,
+  Table,
+  tableFromArrays,
+  Utf8,
+  vectorFromArray,
+} from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import {
   Float32PointBuffer,
@@ -80,15 +89,27 @@ describe('morton scan — passthrough columns', () => {
     y: Float32Array.from([0, 100, 2, 3]),
     morton: Int32Array.from([10, 11, 12, 13]),
     qv: Float32Array.from([40, 41, 42, 43]),
-    cell_id: ['a', 'b', 'c', 'd'],
     transcript_id: BigInt64Array.from([1n, 2n, 3n, 4n]),
   };
+
+  /**
+   * `cell_id` is assigned as a plain `Utf8` rather than passed to `tableFromArrays`,
+   * which infers `Dictionary<Int32, Utf8>` for a string array. It has to be plain here:
+   * a dictionary field would trip the `after-dictionary` guard and this fixture is about
+   * the TYPE guards, so `cell_id` would stop testing `not-numeric` and `transcript_id`,
+   * which follows it, would stop testing `precision`. The boundary has its own test.
+   */
+  function fixtureTable() {
+    return tableFromArrays(table as never).assign(
+      new Table({ cell_id: vectorFromArray(['a', 'b', 'c', 'd'], new Utf8()) })
+    );
+  }
 
   function scanWithPassthrough(
     requested: string[],
     bounds = { minX: -1, minY: -1, maxX: 10, maxY: 10 }
   ) {
-    const arrow = tableFromArrays(table as never);
+    const arrow = fixtureTable();
     const resolved = resolvePassthroughColumns(arrow, requested, {
       axisNames: ['x', 'y'],
       mortonCodeColumnName: 'morton',
@@ -179,6 +200,44 @@ describe('morton scan — passthrough columns', () => {
 
     expect(Array.from(xs.toArray())).toEqual([0, 1, 2, 3]);
     expect(Array.from(resolved.columns[0]?.buffer.toArray() ?? [])).toEqual([10, 11, 22, 33]);
+  });
+
+  /**
+   * `readParquetRowGroup` — the reader this whole path uses — silently mis-decodes every
+   * field at or AFTER the first dictionary-typed one, not just the dictionary column
+   * itself. Measured on row group 3 of the real `transcripts_morton` element: fields 0-9
+   * correct, then `null`/`""`/`-1` for the rest, `nullCount === 0`, nothing thrown. A
+   * plain `Float32` written after a categorical comes back `NaN` the same way, which is
+   * what this asserts: `qv` is an ordinary column and is refused anyway, because its
+   * POSITION is what makes it unreadable.
+   *
+   * Nothing served today crosses the boundary — `qv` really is field 6 in the real file,
+   * ahead of `feature_name` at 10 — so this guards a column order we do not control.
+   */
+  it('refuses a column at or after a dictionary field, whose values would be wrong', () => {
+    const arrow = tableFromArrays({
+      x: Float32Array.from([0, 1]),
+      y: Float32Array.from([0, 1]),
+      morton: Int32Array.from([10, 11]),
+      nucleus_distance: Float32Array.from([5, 6]),
+      feature_name: ['ARFGEF3', 'MET'],
+      qv: Float32Array.from([40, 41]),
+    } as never);
+    // `tableFromArrays` infers a dictionary for a string array, which is exactly the
+    // pandas-categorical shape the real file has; assert it rather than assume it.
+    expect(DataType.isDictionary(arrow.schema.fields[4]?.type as DataType)).toBe(true);
+
+    const resolved = resolvePassthroughColumns(
+      arrow,
+      ['nucleus_distance', 'feature_name', 'qv'],
+      { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' }
+    );
+
+    expect(resolved.columns.map((column) => column.name)).toEqual(['nucleus_distance']);
+    expect(resolved.rejected).toEqual([
+      { name: 'feature_name', reason: 'after-dictionary' },
+      { name: 'qv', reason: 'after-dictionary' },
+    ]);
   });
 
   it('carries a Bool column as 0/1 rather than NaN', () => {

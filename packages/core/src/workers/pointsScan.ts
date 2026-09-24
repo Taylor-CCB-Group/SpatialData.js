@@ -421,12 +421,16 @@ function numericColumnValues(column: Vector | null | undefined): ArrayLike<numbe
 /**
  * A numeric column carried through the tiled scan alongside the geometry.
  *
- * These cost nothing on the wire, and nothing to decode. parquet-wasm cannot fetch an
- * individual column chunk, and `{ columns }` is inert in the vendored build
+ * These cost nothing on the wire, and nothing to decode — a property of the reader THIS
+ * path uses, not of parquet-wasm. `readParquetRowGroup` takes the contiguous bytes of a
+ * whole row group, and `{ columns }` is inert in the vendored build
  * (`docs/parquet-wasm-limitations.md`), so the tiled path already range-reads AND
  * decodes every column of every row group it touches, then discards most of them —
  * `qv`, `nucleus_distance` and `overlaps_nucleus` are paid for on every tile whether or
- * not anyone asks for them. Asking adds one buffer and one transfer.
+ * not anyone asks for them. Asking adds one buffer and one transfer. `ParquetFile.read`
+ * is the reader that WOULD project — so an extra column costs bytes again if this path
+ * ever moves there, but not before published parquet-wasm 0.8.0, where a projected read
+ * first becomes parseable.
  *
  * Float, bool and integers up to 32 bits, all of which a `Float64Array` carries
  * exactly. A 64-bit identifier does not, so {@link resolvePassthroughColumns} refuses
@@ -447,8 +451,27 @@ export interface PassthroughColumn {
 /** Why a requested passthrough column could not be served. */
 export interface PassthroughColumnRejection {
   name: string;
-  reason: 'missing' | 'not-numeric' | 'precision';
+  reason: 'missing' | 'not-numeric' | 'precision' | 'after-dictionary';
 }
+
+/**
+ * What to tell the caller about a rejection, beyond its tag.
+ *
+ * "unsupported type" would read as a shrug. Every reason here is a case where the column
+ * could have come back at the right length, in lockstep with the geometry, and WRONG —
+ * which is the only thing that makes refusing it worth a warning.
+ */
+export const PASSTHROUGH_REJECTION_EXPLANATIONS: Record<
+  PassthroughColumnRejection['reason'],
+  string
+> = {
+  missing: 'not present in the row group',
+  'not-numeric': 'not a numeric type — a string column decodes to a full-length NaN array',
+  precision: 'wider than 32 bits — the f64 lane would round it silently',
+  'after-dictionary':
+    'at or after a dictionary-typed column, which this reader mis-decodes — its values ' +
+    'would be wrong rather than missing',
+};
 
 export interface ResolvedPassthroughColumns {
   columns: PassthroughColumn[];
@@ -507,6 +530,33 @@ function isReservedScanColumn(
 }
 
 /**
+ * The index of the first dictionary-typed field, or -1 if the schema has none.
+ *
+ * A tripwire for the `readParquetRowGroup` path specifically. That reader silently
+ * mis-decodes every field at or AFTER the first dictionary-typed one, not just the
+ * dictionary column itself. Measured on row group 3 of the 12.17M-row
+ * `transcripts_morton` element: `x` … `morton_code_2d` (fields 0–9) decode correctly,
+ * then `feature_name` comes back `null`, `cell_id` and `fov_name` `""`, and
+ * `__index_level_0__` `-1` — with `nullCount === 0` throughout and nothing thrown.
+ * Verified against `pyarrow.read_row_group`, which returns the real values.
+ *
+ * It is not a string-only fault: a `Float32` column written after a pandas categorical
+ * decodes as `NaN` (and an `Int32` as `-1`), from a `toArray()` 31 elements long against
+ * a `length` of 1000. So a schema check is the only safe one — the values look like data.
+ *
+ * The SCHEMA survives intact, which is what makes a field-index comparison sufficient.
+ *
+ * Nothing served today is refused by this: `overlaps_nucleus` (3), `qv` (6) and
+ * `nucleus_distance` (7) all precede `feature_name` (10). It guards the column order we
+ * do not control — `cell_id` is the next column this work wants, and it sits on the far
+ * side of the boundary. Drop the guard if the tiled path moves to `ParquetFile`, whose
+ * reads decode dictionaries correctly (`parquetWasmLoader.ts`).
+ */
+function firstDictionaryFieldIndex(table: Table): number {
+  return table.schema.fields.findIndex((field) => DataType.isDictionary(field.type));
+}
+
+/**
  * Decide which requested columns the scan can serve, from the arrow SCHEMA.
  *
  * Never from the decoded values: `numericColumnValues` answers a boxed read of a string
@@ -525,6 +575,7 @@ export function resolvePassthroughColumns(
 ): ResolvedPassthroughColumns {
   const columns: PassthroughColumn[] = [];
   const rejected: PassthroughColumnRejection[] = [];
+  const dictionaryBoundary = firstDictionaryFieldIndex(table);
   for (const name of requested ?? []) {
     if (isReservedScanColumn(name, context)) {
       continue;
@@ -532,6 +583,15 @@ export function resolvePassthroughColumns(
     const column = table.getChild(name);
     if (!column) {
       rejected.push({ name, reason: 'missing' });
+      continue;
+    }
+    // Before the type checks: this is the reason that would still apply if the type
+    // were fine, and the one that explains why a perfectly ordinary `qv` is refused.
+    if (
+      dictionaryBoundary >= 0 &&
+      table.schema.fields.findIndex((field) => field.name === name) >= dictionaryBoundary
+    ) {
+      rejected.push({ name, reason: 'after-dictionary' });
       continue;
     }
     const type = column.type;

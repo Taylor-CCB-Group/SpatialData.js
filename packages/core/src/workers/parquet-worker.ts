@@ -26,6 +26,7 @@ import {
   Float32PointBuffer,
   histogramToSortedArrays,
   Int32PointBuffer,
+  PASSTHROUGH_REJECTION_EXPLANATIONS,
   type PassthroughColumn,
   resolvePassthroughColumns,
   scanFeatureCatalogFromPayload,
@@ -527,7 +528,8 @@ async function handleScanMortonRowGroupsInBounds(
       for (const rejection of resolved.rejected) {
         // Silence here would look like a column of zeros in the caller's analysis.
         console.warn(
-          `Points tile passthrough column "${rejection.name}" not served (${rejection.reason}).`
+          `Points tile passthrough column "${rejection.name}" not served: ` +
+            `${PASSTHROUGH_REJECTION_EXPLANATIONS[rejection.reason]} (${rejection.reason}).`
         );
       }
     }
