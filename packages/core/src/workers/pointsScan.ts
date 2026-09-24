@@ -1,4 +1,4 @@
-import { DataType, type Table, tableFromIPC, type Vector } from 'apache-arrow';
+import { DataType, Precision, type Table, tableFromIPC, type Vector } from 'apache-arrow';
 import {
   accumulateFeatureCatalogFromTable,
   buildFeatureCatalogFromColumns,
@@ -456,19 +456,35 @@ export interface ResolvedPassthroughColumns {
 /**
  * Values for one passthrough column, read from the table about to be scanned.
  *
- * Bool is converted here rather than in `numericColumnValues`: that helper's boxed
- * path keeps only `typeof value === 'number'`, so an Arrow Bool column would come back
- * as a full-length array of `NaN` — the same silently-aligned, silently-meaningless
- * result that a string column produced before the type guard was added.
+ * Two arrow types need decoding rather than the fast `toArray()` path that
+ * `numericColumnValues` takes, and both fail quietly if they do not get it:
+ *
+ * * **Bool** — that helper's boxed path keeps only `typeof value === 'number'`, so a
+ *   Bool column comes back as a full-length array of `NaN`.
+ * * **Float16** — arrow stores it as `Uint16Array`, which IS an `ArrayBuffer` view, so
+ *   the null-free fast path returns the raw **bit patterns**: Float16 `1` arrives as
+ *   `15360`. `get()` converts properly. A nullable Float16 fixture would not catch
+ *   this, because nulls force the boxed path that is already correct.
+ *
+ * Both are the same failure the string guard exists for — right length, right
+ * alignment, wrong numbers.
  */
+function decodeBoxed(column: Vector, convert: (value: unknown) => number): Float64Array {
+  const out = new Float64Array(column.length);
+  for (let index = 0; index < column.length; index += 1) {
+    const value = column.get(index);
+    out[index] = value === null || value === undefined ? Number.NaN : convert(value);
+  }
+  return out;
+}
+
 function passthroughValues(column: Vector): ArrayLike<number> | null {
-  if (DataType.isBool(column.type)) {
-    const out = new Float64Array(column.length);
-    for (let index = 0; index < column.length; index += 1) {
-      const value = column.get(index);
-      out[index] = value === null || value === undefined ? Number.NaN : value ? 1 : 0;
-    }
-    return out;
+  const type = column.type;
+  if (DataType.isBool(type)) {
+    return decodeBoxed(column, (value) => (value ? 1 : 0));
+  }
+  if (DataType.isFloat(type) && type.precision === Precision.HALF) {
+    return decodeBoxed(column, (value) => Number(value));
   }
   return numericColumnValues(column);
 }

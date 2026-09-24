@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readBatchWithinBudget } from '../src/parquetStreamWatchdog.js';
+import { readBatchWithinBudget, withinBudget } from '../src/parquetStreamWatchdog.js';
 import { setParquetWorkerRequestTimeout } from '../src/workers/parquetWorkerClient.js';
 
 /**
@@ -62,5 +62,63 @@ describe('readBatchWithinBudget', () => {
     // turning the timeout off would change which reads are allowed to be slow.
     expect(settled).not.toHaveBeenCalled();
     expect(reader.cancel).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `Promise.race` does not cancel its loser. A slow `ParquetFile.fromUrl()` or
+ * `file.stream()` therefore keeps going after the watchdog has sent the caller to the
+ * byte-oriented reader — a wasm handle that is never freed, or a stream that keeps
+ * issuing range requests alongside the fallback that replaced it.
+ */
+describe('withinBudget', () => {
+  it('passes a value straight through', async () => {
+    await expect(withinBudget(Promise.resolve('opened'), 'testing')).resolves.toBe('opened');
+  });
+
+  it('rejects when the open never settles', async () => {
+    setParquetWorkerRequestTimeout(20);
+    await expect(withinBudget(new Promise<never>(() => {}), 'opening it')).rejects.toThrow(
+      /went quiet for 20ms while opening it/
+    );
+  });
+
+  it('releases a result that arrives after the timeout', async () => {
+    setParquetWorkerRequestTimeout(20);
+    const dispose = vi.fn();
+    let settle: ((value: string) => void) | undefined;
+    const slow = new Promise<string>((resolve) => {
+      settle = resolve;
+    });
+
+    await expect(withinBudget(slow, 'opening it', dispose)).rejects.toThrow();
+    expect(dispose).not.toHaveBeenCalled();
+
+    // The open finally succeeds, long after the caller gave up on it.
+    settle?.('a parquet file nobody asked for any more');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dispose).toHaveBeenCalledWith('a parquet file nobody asked for any more');
+  });
+
+  it('does not release a result that arrives in time', async () => {
+    const dispose = vi.fn();
+    await expect(withinBudget(Promise.resolve('opened'), 'testing', dispose)).resolves.toBe(
+      'opened'
+    );
+    await Promise.resolve();
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it('survives a late rejection without reporting it', async () => {
+    setParquetWorkerRequestTimeout(20);
+    const slow = new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error('the open failed, eventually')), 60);
+    });
+
+    await expect(withinBudget(slow, 'opening it')).rejects.toThrow(/went quiet/);
+    // An unhandled rejection here would fail the run.
+    await new Promise((resolve) => setTimeout(resolve, 80));
   });
 });

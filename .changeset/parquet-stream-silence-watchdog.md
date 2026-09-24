@@ -18,5 +18,11 @@ expiry the stream is cancelled so it stops fetching, and the read rejects with w
 stage stalled — a rejection every one of these callers already handles by falling back
 to the byte-oriented reader, the path that serves stores the streaming one cannot.
 
+The same budget also bounds the steps that OPEN a stream (`ParquetFile.fromUrl()` and
+`file.stream()`), since the panic can land there too, before there is a reader to guard.
+`Promise.race` does not cancel its loser, so a late-arriving open is released rather than
+left running: a `ParquetFile` is freed, a `ReadableStream` cancelled. Otherwise every
+timeout would leak range work alongside the fallback it just triggered.
+
 `checkAbort` could not cover this: it runs between settled reads, and the read that
 matters never settles.

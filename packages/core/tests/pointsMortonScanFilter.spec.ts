@@ -1,4 +1,4 @@
-import { tableFromArrays } from 'apache-arrow';
+import { Float16, makeData, makeVector, tableFromArrays, vectorFromArray } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import {
   Float32PointBuffer,
@@ -206,6 +206,50 @@ describe('morton scan — passthrough columns', () => {
 
     expect(resolved.rejected).toEqual([]);
     expect(Array.from(resolved.columns[0]?.buffer.toArray() ?? [])).toEqual([1, 0]);
+  });
+
+  /**
+   * Arrow stores Float16 as `Uint16Array`, which IS an ArrayBuffer view, so the
+   * null-free fast path in `numericColumnValues` hands back raw bit patterns: Float16
+   * `1` arrives as `15360`. A NULLABLE fixture would pass without the fix, because
+   * nulls force the boxed path that was already correct — so this one has no nulls.
+   */
+  it('decodes a null-free Float16 column instead of returning bit patterns', () => {
+    // 15360 and 16384 are the Float16 bit patterns for 1 and 2. Built through
+    // `makeData` so the vector really carries the Float16 TYPE over Uint16 storage —
+    // `makeVector(new Uint16Array(...))` would infer Uint16 and prove nothing.
+    const half = makeVector(
+      makeData({ type: new Float16(), data: new Uint16Array([15360, 16384, 15360]) })
+    );
+    const arrow = tableFromArrays({
+      x: Float32Array.from([0, 1, 2]),
+      y: Float32Array.from([0, 1, 2]),
+      morton: Int32Array.from([10, 11, 12]),
+    } as never).assign(tableFromArrays({ pad: Int32Array.from([0, 0, 0]) } as never));
+    const withHalf = arrow.assign(
+      new (arrow.constructor as never as typeof arrow)({ qv: half } as never)
+    );
+    expect(withHalf.getChild('qv')?.nullCount).toBe(0);
+    expect(withHalf.getChild('qv')?.type).toBeInstanceOf(Float16);
+
+    const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
+    const resolved = resolvePassthroughColumns(withHalf, ['qv'], context);
+    const xs = new Float32PointBuffer();
+    const ys = new Float32PointBuffer();
+    const zs = new Float32PointBuffer();
+    scanMortonTableInBounds({
+      table: withHalf,
+      rowGroupIndex: 1,
+      bounds: { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 },
+      ...context,
+      xs,
+      ys,
+      zs,
+      passthrough: resolved.columns,
+    } as never);
+
+    expect(resolved.rejected).toEqual([]);
+    expect(Array.from(resolved.columns[0]?.buffer.toArray() ?? [])).toEqual([1, 2, 1]);
   });
 
   it('keeps an Int32 above the Float32 integer limit exact', () => {

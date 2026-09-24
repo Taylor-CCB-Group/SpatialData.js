@@ -26,6 +26,11 @@ the lane, and a string column such as `cell_id` would otherwise have come back a
 correctly-sized, correctly-aligned array of `NaN`. A string column wants codes plus a
 catalog, the shape `featureCodes` already uses; that is not built yet.
 
+Bool and Float16 are decoded through `get()` rather than the `toArray()` fast path:
+both are stored as typed arrays that pass an `ArrayBuffer.isView` check, so the fast
+path would return `NaN` for every Bool and raw bit patterns for every Float16 — a
+Float16 `1` arriving as `15360`.
+
 Values are re-read from each row group as it is scanned. They are deliberately not
 cached alongside the accumulating buffer: a tile spanning two row groups would
 otherwise pair the second group's points with the first group's values, one value per

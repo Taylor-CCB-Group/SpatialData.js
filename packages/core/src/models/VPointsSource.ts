@@ -703,13 +703,18 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (filled >= maxRows) {
         break;
       }
-      const file = await withinBudget(ParquetFile.fromUrl(url), 'opening the points preload');
+      const file = await withinBudget(
+        ParquetFile.fromUrl(url),
+        'opening the points preload',
+        (opened) => opened.free?.()
+      );
       const stream = await withinBudget(
         file.stream({
           columns: [...axisNames, featureKey],
           batchSize: PRELOAD_STREAM_BATCH_ROWS,
         }),
-        'opening the points preload'
+        'opening the points preload',
+        (opened) => void opened.cancel()
       );
       const reader = stream.getReader();
       try {
@@ -1525,13 +1530,18 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (matchedRows >= options.memoryCap) {
         break;
       }
-      const file = await withinBudget(ParquetFile.fromUrl(url), 'opening the feature scan');
+      const file = await withinBudget(
+        ParquetFile.fromUrl(url),
+        'opening the feature scan',
+        (opened) => opened.free?.()
+      );
       const stream = await withinBudget(
         file.stream({
           columns: options.columnNames,
           batchSize: PRELOAD_STREAM_BATCH_ROWS,
         }),
-        'opening the feature scan'
+        'opening the feature scan',
+        (opened) => void opened.cancel()
       );
       const reader = stream.getReader();
       try {
@@ -2265,14 +2275,16 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       for (const url of partUrls) {
         const file = await withinBudget(
           ParquetFile.fromUrl(url),
-          'opening the feature catalog scan'
+          'opening the feature catalog scan',
+          (opened) => opened.free?.()
         );
         const stream = await withinBudget(
           file.stream({
             columns: columnNames,
             batchSize: FEATURE_STREAM_BATCH_ROWS,
           }),
-          'opening the feature catalog scan'
+          'opening the feature catalog scan',
+          (opened) => void opened.cancel()
         );
         const reader = stream.getReader();
         try {

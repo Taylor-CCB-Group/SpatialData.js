@@ -45,6 +45,12 @@ export interface ParquetStreamOptions extends ParquetRowGroupReadOptions {
 export interface ParquetWasmFile {
   metadata(): ParquetWasmMetadata;
   stream(options?: ParquetStreamOptions): Promise<ReadableStream<ParquetWasmTableLike>>;
+  /**
+   * Release the wasm-side handle. Optional because it is a wasm-bindgen detail rather
+   * than part of the reader's contract, but it is what lets a caller drop a file it
+   * opened and then abandoned — see `withinBudget` in `parquetStreamWatchdog.ts`.
+   */
+  free?(): void;
 }
 
 export interface ParquetWasmFileConstructor {
