@@ -29,12 +29,31 @@ The normalized surface we rely on (`ParquetModule` in `parquetWasmLoader.ts`):
 
 **There is no way to fetch or decode an individual column chunk.** Consequences:
 
-1. **No projected *fetch*.** Column projection (`{ columns }`) happens only
-   *during decode*; the bytes handed to `readParquet` / `readParquetRowGroup`
-   must be the **whole file** or the **whole row group** — i.e. *all* columns.
-   For a 14-column Xenium `transcripts` file, building the feature catalog or the
-   per-row feature codes (which need one string column) still downloads every
-   column's bytes.
+1. **No projected *fetch*.** The bytes handed to `readParquet` /
+   `readParquetRowGroup` must be the **whole file** or the **whole row group** —
+   i.e. *all* columns. For a 14-column Xenium `transcripts` file, building the
+   feature catalog or the per-row feature codes (which need one string column)
+   still downloads every column's bytes.
+
+   **Correction, measured 2026-09-24: `{ columns }` is inert in the vendored
+   build — there is no projected *decode* either.** This section used to say
+   projection "happens only during decode". It does not happen at all. Decoding
+   row group 1 of the 12.17M-point `transcripts_morton` element to an IPC stream:
+
+   | projection passed | IPC bytes |
+   |---|---|
+   | no options | 4,036,104 |
+   | `['x']` | 4,036,104 |
+   | `['x','y','morton_code_2d']` | 4,036,104 |
+   | `['x','nope']` (a column that does not exist) | 4,036,104 |
+
+   Identical, and the returned schema carries all 14 fields in every case. `limit`
+   *is* honoured, so the options object is being read — `columns` specifically is
+   ignored. Two consequences worth holding: every `{ columns }` in this repo is
+   currently decorative, so the decode cost is always the full 14 columns; and an
+   absent column name cannot fail a read, which is why the passthrough resolver
+   reports a missing column rather than the decode throwing. Getting projection to
+   work is an unclaimed decode win, separate from items (1)–(4) below.
 2. **No column-chunk offsets in the metadata.** `ParquetWasmRowGroupMetadata`
    does not expose per-`ColumnChunk` `file_offset` / `total_compressed_size` /
    `data_page_offset` / `dictionary_page_offset`. Without those we cannot compute
