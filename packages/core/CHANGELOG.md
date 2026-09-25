@@ -1,5 +1,59 @@
 # @spatialdata/core
 
+## 0.11.0
+
+### Minor Changes
+
+- [#192](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/192) [`be8009f`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/be8009fda98cd0e434b9426934b411c45d63efac) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Restart the parquet worker after a crash instead of switching it off for the page
+  
+  A worker that crashed on a refused HTTP range was indistinguishable from one that never
+  loaded, so points stayed dead until a page reload. A worker that has loaded is now
+  replaced when it crashes, bounded to 3 restarts. The same panic on the **main thread**
+  still stalls to the request timeout.
+
+- [#192](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/192) [`be8009f`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/be8009fda98cd0e434b9426934b411c45d63efac) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Return extra numeric columns from a tiled points load
+  
+  `PointsInBoundsOptions.columns` is now honoured on the Morton tiled path, returning each
+  named column in `PointsInBoundsResponse.columns` — one value per point, in lockstep with
+  the geometry — so `qv`, `nucleus_distance` and `overlaps_nucleus` are reachable from a
+  tiled element. Float (including float64), bool, and integers up to 32 bits; a column that
+  is missing, non-numeric or a 64-bit integer is refused with a warning rather than served
+  wrong.
+
+### Patch Changes
+
+- [#196](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/196) [`0434be4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/0434be46e5c4d345a8bd6c165a60ae16fe03e89a) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Fetch each parquet part once per points load, not once per concurrent step; a non-Morton
+  points layer made ~20 requests where it now makes a handful.
+  
+  `part.N.parquet` enumeration is capped at 512 parts and throws past that, instead of
+  walking forever against a server that answers every part path.
+
+- [#192](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/192) [`be8009f`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/be8009fda98cd0e434b9426934b411c45d63efac) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Bound main-thread parquet stream reads, so a stalled reader fails over instead of hanging
+  
+  A refused HTTP range left the points preload, the feature scan and the in-bounds stream
+  awaiting a promise that never settles. All three now expire on the worker's silence budget
+  (`setParquetWorkerRequestTimeout`, 30s) and fall back to the byte-oriented reader. The
+  feature scan's fallback restarts from the first row group, so a running progress total can
+  step backwards before climbing again.
+
+- [#195](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/195) [`e1b30c6`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/e1b30c632bed8b180d5a840773b385eac922e326) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Say what happened when a parquet worker payload's bytes have already been transferred
+
+- [#195](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/195) [`e1b30c6`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/e1b30c632bed8b180d5a840773b385eac922e326) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Load points elements whose coordinates are 64-bit integers
+
+- [#192](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/192) [`be8009f`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/be8009fda98cd0e434b9426934b411c45d63efac) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Refuse a passthrough column that sits after a dictionary column
+  
+  `readParquetRowGroup` silently mis-decodes every field at or after the first arrow
+  dictionary-typed one, so such a column is now rejected (`after-dictionary`) rather than
+  served as plausible-looking garbage. Nothing served today crosses that boundary; details
+  in [docs/parquet-wasm-limitations.md](../docs/parquet-wasm-limitations.md).
+
+- [#192](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/192) [`be8009f`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/be8009fda98cd0e434b9426934b411c45d63efac) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Choose parquet column encodings per column in the Python points writer
+  
+  No runtime change in this package; it changes the artifacts `spatialdata-js-util`
+  produces, which the tiled reader consumes. Choosing encodings from the data instead of
+  pyarrow's dictionary-by-default takes a 200k-row Xenium-shaped frame from 8.54 MB and
+  22 ms to **4.98 MB and 12 ms**.
+
 ## 0.10.0
 
 ### Minor Changes
