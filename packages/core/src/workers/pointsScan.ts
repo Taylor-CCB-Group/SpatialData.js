@@ -140,6 +140,13 @@ export function extractGeometryColumnar(
   if (!xColumn || !yColumn) {
     throw new Error(`Geometry columns not found in parquet table`);
   }
+  // Nulls are not preserved on this path. `toArray()` returns arrow's data buffer
+  // without its validity bitmap, so a null coordinate reads as whatever the writer
+  // left there — `0` in practice — and renders at the origin. `numericColumnValues`,
+  // which the tiled scan uses, boxes a nullable column instead and writes NaN, so the
+  // SAME column is a point at (0, 0) here and a dropped row there. True of every
+  // numeric type, not only the widened ones, and true of the two main-thread
+  // fallbacks in `VPointsSource` that read columns the same way.
   const xs = Float32Array.from(toNumberValues(xColumn.toArray()));
   const ys = Float32Array.from(toNumberValues(yColumn.toArray()));
   const hasZ = axisNames.includes('z');
