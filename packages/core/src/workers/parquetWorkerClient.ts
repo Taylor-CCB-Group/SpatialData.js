@@ -346,12 +346,73 @@ function postRequest<T>(
     attachAbort(id, entry, signal);
     armTimeout(id);
     const message: ParquetWorkerMessage = { id, direction: 'request', request };
-    if (transferables.length > 0) {
-      activeWorker.postMessage(message, transferables);
-    } else {
-      activeWorker.postMessage(message);
+    try {
+      if (transferables.length > 0) {
+        activeWorker.postMessage(message, transferables);
+      } else {
+        activeWorker.postMessage(message);
+      }
+    } catch (error) {
+      // The request never left, so the entry registered a line ago describes
+      // nothing: without this it sits in `pending` with an armed watchdog, and
+      // `attachAbort`'s listener stays on the caller's signal for its lifetime.
+      // A restart counts `pending` as its in-flight set, so a phantom entry also
+      // makes the worker look busier than it is.
+      settlePending(id);
+      reject(describePostFailure(error, request, transferables));
     }
   });
+}
+
+/**
+ * Whether a transferable has already been given away.
+ *
+ * `ArrayBuffer.prototype.detached` is ES2024 and this package's `lib` is ES2022, so
+ * it is read through a structural type rather than by widening the whole package for
+ * one diagnostic. Where it is missing, a detached buffer still reports `byteLength`
+ * 0 — which an empty buffer does too, but an empty one would not have failed the
+ * post that brought us here.
+ */
+function isDetachedBuffer(value: Transferable): boolean {
+  if (!(value instanceof ArrayBuffer)) {
+    return false;
+  }
+  const buffer: { detached?: boolean; byteLength: number } = value;
+  return buffer.detached ?? buffer.byteLength === 0;
+}
+
+/**
+ * Say what a refused `postMessage` means, because the browser will not.
+ *
+ * A payload whose buffers a previous request already TRANSFERRED fails here with
+ * `DataCloneError: ArrayBuffer at index 0 is already detached` — no request type, no
+ * path, and phrased as if the worker were at fault. Callers turn that into "worker
+ * decode failed; falling back to the main thread", which is the wrong place to look:
+ * the bytes were spent before the post, by whoever handed them over twice.
+ *
+ * Detaching is what makes the transfer worth having, so the fix is ownership, not
+ * copying — `VShapesSource.loadFlatShapeGeometry` copies precisely because its bytes
+ * come from a CACHE it must not empty, and
+ * `VTableSource.readParquetRowGroupBytesByGroupIndex` copies its footer for the same
+ * reason. Part bytes are whole files (100MB+ on a points element), so that path
+ * cannot defend itself the same way; it has to be handed bytes nobody else holds,
+ * and this names the failure when it is not.
+ */
+function describePostFailure(
+  error: unknown,
+  request: ParquetWorkerRequest,
+  transferables: Transferable[]
+): Error {
+  const detached = transferables.some(isDetachedBuffer);
+  if (!detached) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  return new Error(
+    `Cannot post ${request.type} to the parquet worker: its bytes were already ` +
+      'transferred by an earlier request, so nothing is left to send. The payload ' +
+      'has to be re-read rather than reused.',
+    { cause: error }
+  );
 }
 
 /**

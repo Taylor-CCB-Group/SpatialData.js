@@ -1,5 +1,6 @@
 import type { Data, Table, Vector } from 'apache-arrow';
 import { Type } from 'apache-arrow';
+import { toNumberValues } from './arrowNumbers.js';
 import {
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
@@ -284,7 +285,19 @@ export function resolveRowFeatureCodesFromTable(
 ): ArrayLike<number> | undefined {
   const nameColumn = table.getChild(featureKey);
   if (featureCodeColumnName) {
-    return table.getChild(featureCodeColumnName)?.toArray();
+    const codeColumn = table.getChild(featureCodeColumnName);
+    // `int64` codes arrive as a `BigInt64Array`, which reads as a typed array of
+    // numbers everywhere downstream and is not one — see `toNumberValues`.
+    //
+    // A NULL code does not survive this branch, and the failure is the quiet kind.
+    // Arrow keeps nulls in a validity bitmap rather than in the data buffer, and
+    // `toArray()` returns the buffer alone, so an unassigned row reads as `0` — a
+    // VALID code, indistinguishable from a real assignment, which colours the row as
+    // whichever feature holds code 0. The branch below, deriving codes from the name
+    // column, spells the same thing `-1` (`writeChunkFeatureCodes`), so one function
+    // answers the same question two ways depending on which column it was given.
+    // Reading validity here would settle it; nothing does today.
+    return codeColumn ? toNumberValues(codeColumn.toArray()) : undefined;
   }
   if (!nameColumn) {
     return undefined;

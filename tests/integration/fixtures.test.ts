@@ -100,6 +100,34 @@ describe.each(FIXTURE_VERSIONS)('Integration Tests - spatialdata v%s (file store
     expect(str).toContain('[store instance]');
   }, 30000);
 
+  it('should load point geometry as plain numbers, whatever the writer chose', async () => {
+    // spatialdata writes `blobs_points` with `x: int64, y: int64`, which arrow
+    // surfaces as a `BigInt64Array`. Nothing downstream — bounds, the accumulators,
+    // deck's attribute builder — can do arithmetic on that, and a whole release
+    // shipped unable to draw this element because every reader here assumed a float
+    // lane. The synthetic fixtures are float64 throughout, so only a real writer's
+    // output catches it; `packages/core/tests/pointsInt64Geometry.spec.ts` is the
+    // cheap pin that holds when the writers move again.
+    const sdata = await readZarr(fixtureStore);
+    const points = sdata.points ? Object.values(sdata.points)[0] : undefined;
+
+    if (!points) {
+      console.warn(`Skipping points integration test for ${version} - no points found`);
+      return;
+    }
+
+    const result = await points.loadPoints({ includeFeatureCodes: true });
+    const [xs, ys] = result.data;
+    expect(result.shape[1]).toBeGreaterThan(0);
+    expect(xs).toHaveLength(result.shape[1]);
+    for (const axis of [xs, ys]) {
+      for (let index = 0; index < axis.length; index += 1) {
+        // `typeof` rather than `Number.isFinite`, which coerces a bigint happily.
+        expect(typeof axis[index]).toBe('number');
+      }
+    }
+  }, 60000);
+
   it('should load tables through anndata.js from a prefixed store', async () => {
     const sdata = await readZarr(fixtureStore);
     const table = sdata.tables ? Object.values(sdata.tables)[0] : undefined;
