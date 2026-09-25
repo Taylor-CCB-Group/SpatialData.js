@@ -467,7 +467,7 @@ export const PASSTHROUGH_REJECTION_EXPLANATIONS: Record<
 > = {
   missing: 'not present in the row group',
   'not-numeric': 'not a numeric type — a string column decodes to a full-length NaN array',
-  precision: 'wider than 32 bits — the f64 lane would round it silently',
+  precision: 'an integer wider than 32 bits — the f64 lane would round it silently',
   'after-dictionary':
     'at or after a dictionary-typed column, which this reader mis-decodes — its values ' +
     'would be wrong rather than missing',
