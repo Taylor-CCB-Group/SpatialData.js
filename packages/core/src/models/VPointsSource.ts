@@ -1,4 +1,5 @@
 import type { Vector } from 'apache-arrow';
+import { toNumberValues } from '../arrowNumbers.js';
 import { drainStream } from '../asyncStream.js';
 import {
   decodeIntStat,
@@ -735,7 +736,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
             if (!column) {
               continue;
             }
-            const values = column.toArray() as ArrayLike<number>;
+            const values = toNumberValues(column.toArray());
             for (let row = 0; row < rows; row += 1) {
               axisBuffers[axis][filled + row] = values[row];
             }
@@ -1285,7 +1286,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (!column) {
         throw new Error(`Column "${name}" not found in the arrow table.`);
       }
-      return column.toArray();
+      return toNumberValues(column.toArray());
     });
 
     let featureCodes: ArrayLike<number> | undefined;
@@ -2530,7 +2531,12 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     if (!xs || !ys || !codes) {
       return true;
     }
-    const { checked, matched } = mortonBoundsAgreeWithCodes(xs, ys, codes, bounds);
+    const { checked, matched } = mortonBoundsAgreeWithCodes(
+      toNumberValues(xs),
+      toNumberValues(ys),
+      toNumberValues(codes),
+      bounds
+    );
     return checked === 0 || matched * 2 > checked;
   }
 
@@ -2775,7 +2781,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       if (!column) {
         throw new Error(`Column "${name}" not found in the arrow table.`);
       }
-      return column.toArray();
+      return toNumberValues(column.toArray());
     });
     const featureCodes = needsFeatureFilter
       ? resolveRowFeatureCodesFromTable(

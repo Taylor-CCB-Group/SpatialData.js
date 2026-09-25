@@ -1,5 +1,6 @@
 import type { Data, Table, Vector } from 'apache-arrow';
 import { Type } from 'apache-arrow';
+import { toNumberValues } from './arrowNumbers.js';
 import {
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
@@ -284,7 +285,10 @@ export function resolveRowFeatureCodesFromTable(
 ): ArrayLike<number> | undefined {
   const nameColumn = table.getChild(featureKey);
   if (featureCodeColumnName) {
-    return table.getChild(featureCodeColumnName)?.toArray();
+    const codeColumn = table.getChild(featureCodeColumnName);
+    // `int64` codes arrive as a `BigInt64Array`, which reads as a typed array of
+    // numbers everywhere downstream and is not one — see `toNumberValues`.
+    return codeColumn ? toNumberValues(codeColumn.toArray()) : undefined;
   }
   if (!nameColumn) {
     return undefined;

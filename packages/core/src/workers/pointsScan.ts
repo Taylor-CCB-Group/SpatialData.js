@@ -1,4 +1,5 @@
 import { DataType, Precision, type Table, tableFromIPC, type Vector } from 'apache-arrow';
+import { type BigIntLane, toNumberValues } from '../arrowNumbers.js';
 import {
   accumulateFeatureCatalogFromTable,
   buildFeatureCatalogFromColumns,
@@ -139,11 +140,11 @@ export function extractGeometryColumnar(
   if (!xColumn || !yColumn) {
     throw new Error(`Geometry columns not found in parquet table`);
   }
-  const xs = Float32Array.from(xColumn.toArray() as ArrayLike<number>);
-  const ys = Float32Array.from(yColumn.toArray() as ArrayLike<number>);
+  const xs = Float32Array.from(toNumberValues(xColumn.toArray()));
+  const ys = Float32Array.from(toNumberValues(yColumn.toArray()));
   const hasZ = axisNames.includes('z');
   const zColumn = hasZ ? table.getChild('z') : null;
-  const zs = zColumn ? Float32Array.from(zColumn.toArray() as ArrayLike<number>) : undefined;
+  const zs = zColumn ? Float32Array.from(toNumberValues(zColumn.toArray())) : undefined;
   const shape = zs ? [3, xs.length] : [2, xs.length];
   return { shape, xs, ys, ...(zs ? { zs } : {}) };
 }
@@ -405,14 +406,28 @@ function numericColumnValues(column: Vector | null | undefined): ArrayLike<numbe
     return null;
   }
   if (column.nullCount === 0) {
-    const values = column.toArray();
-    if (ArrayBuffer.isView(values)) {
-      return values as unknown as ArrayLike<number>;
+    // `Vector.toArray()` is typed `any`, so this annotation is where arrow's actual
+    // contract gets stated: a typed lane for a primitive column, a plain array
+    // otherwise. Ruling out the plain array is what leaves a lane `toNumberValues`
+    // can take, and it is the same test as the `ArrayBuffer.isView` it replaces —
+    // only the typed lanes can be handed back without boxing.
+    const values: ArrayLike<number> | BigIntLane | unknown[] = column.toArray();
+    if (!Array.isArray(values)) {
+      return toNumberValues(values);
     }
   }
   const out = new Float64Array(column.length);
   for (let index = 0; index < column.length; index += 1) {
     const value = column.get(index);
+    // `bigint` for the same reason the fast path above converts: a NULLABLE int64
+    // column takes this branch instead, and reading it as "not a number" would turn
+    // every coordinate into NaN rather than throwing — the silent version of the
+    // same bug. A 64-bit *identifier* never reaches here; `resolvePassthroughColumns`
+    // refuses one on its type before the column is read at all.
+    if (typeof value === 'bigint') {
+      out[index] = Number(value);
+      continue;
+    }
     out[index] = typeof value === 'number' ? value : Number.NaN;
   }
   return out;

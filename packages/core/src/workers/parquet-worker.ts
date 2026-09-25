@@ -1,4 +1,5 @@
 import { tableFromIPC, tableToIPC } from 'apache-arrow';
+import { toNumberValues } from '../arrowNumbers.js';
 import {
   getParquetModule,
   type ParquetModule,
@@ -736,7 +737,7 @@ async function handleStreamGeometryWithFeatures(
           const column = table.getChild(axisNames[axis]);
           axes.push(
             column
-              ? axisBatchValues(column.toArray() as ArrayLike<number>, rows)
+              ? axisBatchValues(toNumberValues(column.toArray()), rows)
               : new Float32Array(rows)
           );
         }
