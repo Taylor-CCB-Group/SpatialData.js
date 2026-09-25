@@ -26,6 +26,9 @@ import {
   Float32PointBuffer,
   histogramToSortedArrays,
   Int32PointBuffer,
+  PASSTHROUGH_REJECTION_EXPLANATIONS,
+  type PassthroughColumn,
+  resolvePassthroughColumns,
   scanFeatureCatalogFromPayload,
   scanMortonTableInBounds,
   scanTableByFeatureCodes,
@@ -484,12 +487,14 @@ async function handleScanMortonRowGroupsInBounds(
     };
   }
   const hasZ = request.axisNames.includes('z');
+  const requestedPassthrough = request.passthroughColumns ?? [];
   const columns = [
     'x',
     'y',
     ...(hasZ ? ['z'] : []),
     request.mortonCodeColumnName,
     ...(request.featureCodeColumnName ? [request.featureCodeColumnName] : []),
+    ...requestedPassthrough,
   ];
   const xs = new Float32PointBuffer();
   const ys = new Float32PointBuffer();
@@ -499,6 +504,10 @@ async function handleScanMortonRowGroupsInBounds(
   // needs. Gating this on `request.featureCodes` (the filter) would leave the
   // default view flat.
   const codes = request.featureCodeColumnName ? new Int32PointBuffer() : undefined;
+  // Resolved against the FIRST row group's table and reused for the rest: every row
+  // group shares the file's schema, so a column that resolves once resolves always,
+  // and re-resolving per chunk would hand each one its own buffer.
+  let passthrough: PassthroughColumn[] | undefined;
   for (const chunk of request.rowGroups) {
     const table = tableFromIPC(
       parquetModule
@@ -507,6 +516,23 @@ async function handleScanMortonRowGroupsInBounds(
         })
         .intoIPCStream()
     );
+    if (!passthrough) {
+      const resolved = resolvePassthroughColumns(table, requestedPassthrough, {
+        axisNames: request.axisNames,
+        mortonCodeColumnName: request.mortonCodeColumnName,
+        ...(request.featureCodeColumnName
+          ? { featureCodeColumnName: request.featureCodeColumnName }
+          : {}),
+      });
+      passthrough = resolved.columns;
+      for (const rejection of resolved.rejected) {
+        // Silence here would look like a column of zeros in the caller's analysis.
+        console.warn(
+          `Points tile passthrough column "${rejection.name}" not served: ` +
+            `${PASSTHROUGH_REJECTION_EXPLANATIONS[rejection.reason]} (${rejection.reason}).`
+        );
+      }
+    }
     scanMortonTableInBounds({
       table,
       rowGroupIndex: chunk.globalRowGroupIndex ?? chunk.rowGroupIndex,
@@ -519,12 +545,22 @@ async function handleScanMortonRowGroupsInBounds(
       ys,
       zs,
       ...(codes ? { codes } : {}),
+      ...(passthrough.length ? { passthrough } : {}),
     });
   }
   const outX = xs.toArray();
   const outY = ys.toArray();
   const outZ = hasZ ? zs.toArray() : undefined;
   const outCodes = codes?.toArray();
+  // Same "short is worse than absent" rule as the codes: a short passthrough column
+  // would silently realign against the wrong points.
+  const outPassthrough = passthrough?.length
+    ? Object.fromEntries(
+        passthrough
+          .map((extra) => [extra.name, extra.buffer.toArray()] as const)
+          .filter(([, values]) => values.length === outX.length)
+      )
+    : undefined;
   const shape = outZ ? [3, outX.length] : [2, outX.length];
   return {
     ok: true,
@@ -538,6 +574,7 @@ async function handleScanMortonRowGroupsInBounds(
       // read code 0 — a VALID feature — and be confidently mis-coloured. Ship them
       // only when there is exactly one per point.
       ...(outCodes && outCodes.length === outX.length ? { featureCodes: outCodes } : {}),
+      ...(outPassthrough ? { columns: outPassthrough } : {}),
     },
   };
 }
@@ -854,6 +891,14 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
           if (response.result.featureCodes) {
             transferables.push(response.result.featureCodes.buffer);
           }
+          if ('columns' in response.result && response.result.columns) {
+            // Passthrough columns are the same shape of payload as the geometry — one
+            // f64 lane per point — so leaving them out of this list quietly structured-
+            // CLONED them, which is the copy the whole transfer list exists to avoid.
+            for (const values of Object.values(response.result.columns)) {
+              transferables.push(values.buffer);
+            }
+          }
         } else if (response.result.kind === 'geometryWithFeatures') {
           transferables.push(response.result.xs.buffer, response.result.ys.buffer);
           if (response.result.zs) {
@@ -901,3 +946,13 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
       }
     });
 };
+
+// Announce that the bundle evaluated. The client uses this, not "has it answered a
+// request yet?", to decide whether a later `error` event means "never loaded" (a
+// wiring mistake to give up on) or "loaded, then crashed" (restartable). Posted last
+// so it cannot arrive before `self.onmessage` is installed and a request racing it
+// gets dropped.
+{
+  const ready: ParquetWorkerMessage = { id: -1, direction: 'ready' };
+  self.postMessage(ready);
+}

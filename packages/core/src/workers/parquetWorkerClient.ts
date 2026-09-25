@@ -62,6 +62,19 @@ export function setParquetWorkerRequestTimeout(ms: number) {
   requestTimeoutMs = ms;
 }
 
+/**
+ * The same silence budget, for readers that are not the worker.
+ *
+ * `ParquetFile.stream()` can also be driven on the main thread, where it has exactly
+ * the failure this budget exists to catch: parquet-wasm answers a refused HTTP range by
+ * panicking and leaving its promise unsettled. Sharing the knob keeps one meaning —
+ * "catch a reader that has gone silent, not one that is slow" — and one thing for a
+ * host to tune.
+ */
+export function parquetRequestTimeoutMs(): number {
+  return requestTimeoutMs;
+}
+
 /** Remove a pending request, clearing its timeout, and return its callbacks. */
 function settlePending(id: number) {
   const entry = pending.get(id);
@@ -143,6 +156,33 @@ function cancelWorkerStream(streamRequestId: number) {
  */
 let workerHasAnswered = false;
 /**
+ * Set by the worker's unsolicited `ready` message, i.e. its bundle evaluated.
+ *
+ * This is the signal that tells a wiring mistake from a crash, and it is deliberately
+ * NOT {@link workerHasAnswered}: parquet-wasm answers a refused HTTP range by panicking
+ * with `RuntimeError: unreachable` and leaving its promise unsettled, so a perfectly
+ * well-wired worker can die before it ever replies to anything. Keying on "has it
+ * answered?" read that as "it never loaded" and switched the worker off for the rest of
+ * the page.
+ */
+let workerLoaded = false;
+/**
+ * Options the live worker was started with, so a crash can be recovered by starting an
+ * identical one. Without this a restart would have to re-derive the URL and would get
+ * the default rather than the host's.
+ */
+let activeOptions: EnableParquetWorkerOptions = {};
+/**
+ * Restarts left for the current worker. Bounded because the crash may be deterministic —
+ * a store whose every request panics would otherwise respawn forever, turning one broken
+ * element into an unbounded loop of worker construction. Replenished by
+ * {@link RESTART_BUDGET} when a request it was waiting for comes back SUCCESSFUL, so a
+ * long session that hits an occasional bad range keeps recovering, while a worker that
+ * only ever errors or crashes runs the budget down and stops.
+ */
+let restartsRemaining = 0;
+const RESTART_BUDGET = 3;
+/**
  * Latch: the worker failed to load, so `ensureParquetWorker` should stop rebuilding
  * it. An explicit `enableParquetWorker()` clears it — the caller is presumably
  * passing a different `workerUrl`.
@@ -164,6 +204,10 @@ function ensureWorkerListener() {
   }
   worker.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
     const message = event.data;
+    if (message.direction === 'ready') {
+      workerLoaded = true;
+      return;
+    }
     if (message.direction === 'stream') {
       workerHasAnswered = true;
       // Deliberately `pending.get`, not `settlePending`: an interim message must
@@ -199,6 +243,14 @@ function ensureWorkerListener() {
       return;
     }
     if (message.response.ok) {
+      // Only a SUCCESSFUL answer to a request we were waiting for counts as recovery.
+      // Refilling on any response let two weaker things vouch for the worker: an
+      // `ok: false`, which says it is responsive but not that it is working, and a
+      // reply landing on an unknown id — which every `cancelParquetStream` ack does,
+      // by design. A worker that errors and then crashes on each attempt would have
+      // refilled its own budget indefinitely, which is the unbounded respawn the
+      // budget exists to stop.
+      restartsRemaining = RESTART_BUDGET;
       entry.resolve(message.response.result);
     } else {
       entry.reject(new Error(message.response.error));
@@ -206,10 +258,15 @@ function ensureWorkerListener() {
   };
   worker.onerror = (event) => {
     const detail = event.message || 'Parquet worker error';
-    if (workerHasAnswered) {
-      // A live worker threw: reject what is in flight (every `*InWorker` helper
-      // falls back on rejection) and let the next request try again.
-      rejectAllPending(new Error(detail));
+    if (workerLoaded || workerHasAnswered) {
+      // Loaded, then died — the parquet-wasm panic case. Answering first does NOT make
+      // it survivable: a panic poisons the wasm instance, so a worker that served the
+      // metadata and catalog requests and then hit a refused range is just as dead as
+      // one that never spoke. Gating recovery on "has not answered yet" made this, the
+      // common case, unrecoverable, and left a dead worker installed with
+      // `isParquetWorkerEnabled()` still true so every later request waited out
+      // `armTimeout`. Nothing is wrong with the wiring, so replace it.
+      restartAfterCrash(detail);
       return;
     }
     // Never answered, so it never loaded — usually a `workerUrl` that does not
@@ -491,6 +548,43 @@ export function isParquetWorkerEnabled(): boolean {
 }
 
 /**
+ * Replace a worker that loaded and then crashed, keeping the feature available.
+ *
+ * In-flight requests cannot be carried over — their transferables were neutered by the
+ * post that killed the worker — so they are rejected with a reason that says recovery
+ * happened. That is the honest outcome: the caller's retry runs against a live worker
+ * instead of a permanently disabled one, which is the difference between a UI "Retry"
+ * button that works and one that cannot ever succeed.
+ */
+function restartAfterCrash(detail: string) {
+  if (restartsRemaining <= 0) {
+    disableParquetWorker(
+      new Error(`Parquet worker crashed repeatedly (${detail}); continuing on the main thread.`)
+    );
+    startupFailed = true; // After the disable, which clears it.
+    console.warn(
+      `[@spatialdata/core] parquet worker crashed ${RESTART_BUDGET} times without ` +
+        `recovering (${detail}); continuing on the main thread.`
+    );
+    return;
+  }
+  const remaining = restartsRemaining - 1;
+  const options = activeOptions;
+  console.warn(
+    `[@spatialdata/core] parquet worker crashed (${detail}); restarting it ` +
+      `(${remaining} restart${remaining === 1 ? '' : 's'} left before giving up).`
+  );
+  // Reject before the rebuild so the reason names the crash: `enableParquetWorker`
+  // tears the old worker down, and its generic "disabled" reason would otherwise be
+  // what the caller reports for a worker that is already coming back.
+  rejectAllPending(
+    new Error(`Parquet worker crashed (${detail}) and was restarted; retry the request.`)
+  );
+  enableParquetWorker(options);
+  restartsRemaining = remaining;
+}
+
+/**
  * Start the parquet worker, moving parquet decodes and scans off the main thread.
  *
  * A bundled application passes `workerUrl`, and the import that produces it is what
@@ -519,6 +613,9 @@ export function enableParquetWorker(options: EnableParquetWorkerOptions = {}) {
   // A fresh attempt, even after a dead worker latched `ensureParquetWorker` off.
   startupFailed = false;
   workerHasAnswered = false;
+  workerLoaded = false;
+  activeOptions = options;
+  restartsRemaining = RESTART_BUDGET;
   // Constructing a Worker can throw synchronously — a `createWorker` factory is host
   // code, and `new Worker` itself throws on a URL the browser rejects or a CSP that
   // forbids it. Everything else here treats a bad worker as a performance cost rather
@@ -569,6 +666,7 @@ export function disableParquetWorker(reason?: Error) {
   // Teardown forgets what was learned about the worker that just went away.
   startupFailed = false;
   workerHasAnswered = false;
+  workerLoaded = false;
   if (worker) {
     worker.terminate();
     worker = undefined;
@@ -1019,6 +1117,7 @@ export type ScanMortonRowGroupsInBoundsInput = {
   mortonCodeColumnName: string;
   featureCodeColumnName?: string;
   featureCodes?: readonly number[];
+  passthroughColumns?: readonly string[];
 };
 
 export async function scanMortonRowGroupsInBoundsInWorker(

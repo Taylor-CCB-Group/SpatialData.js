@@ -1,4 +1,4 @@
-import { type Table, tableFromIPC, type Vector } from 'apache-arrow';
+import { DataType, Precision, type Table, tableFromIPC, type Vector } from 'apache-arrow';
 import {
   accumulateFeatureCatalogFromTable,
   buildFeatureCatalogFromColumns,
@@ -170,9 +170,10 @@ export type DecodeGeometryWithFeaturesResult = {
  * This is the off-thread half of the codes-with-geometry preload: the caller
  * fetches whole row-group (or part) bytes via async range reads and hands them
  * here (in the worker) so the CPU-heavy parquet decode never touches the main
- * thread. Column projection still runs during decode, but the *bytes* are whole
- * row groups (all columns) — parquet-wasm cannot fetch individual column chunks
- * (see docs/parquet-wasm-limitations.md). Mirrors the main-thread derivation in
+ * thread. The *bytes* are whole row groups (all columns) — parquet-wasm cannot fetch
+ * individual column chunks — and `{ columns }` is inert in the vendored build, so the
+ * decode is the full column set too (see docs/parquet-wasm-limitations.md). Mirrors
+ * the main-thread derivation in
  * `VPointsSource.loadPoints` so both paths produce identical codes + catalog.
  */
 export async function decodeGeometryWithFeaturesFromPayload(
@@ -308,7 +309,7 @@ export async function scanFeatureCatalogFromPayload(
  * is decoded, so pushes never reallocate. Growth is still handled, because a wrong
  * or absent hint must stay correct rather than corrupt the output.
  */
-class TypedPointBuffer<T extends Float32Array | Int32Array> {
+class TypedPointBuffer<T extends Float32Array | Float64Array | Int32Array> {
   private buffer: T;
   private count = 0;
 
@@ -365,6 +366,12 @@ export class Float32PointBuffer extends TypedPointBuffer<Float32Array> {
   }
 }
 
+export class Float64PointBuffer extends TypedPointBuffer<Float64Array> {
+  constructor(initialCapacity = 0) {
+    super((length) => new Float64Array(length), initialCapacity);
+  }
+}
+
 export class Int32PointBuffer extends TypedPointBuffer<Int32Array> {
   constructor(initialCapacity = 0) {
     super((length) => new Int32Array(length), initialCapacity);
@@ -411,6 +418,205 @@ function numericColumnValues(column: Vector | null | undefined): ArrayLike<numbe
   return out;
 }
 
+/**
+ * A numeric column carried through the tiled scan alongside the geometry.
+ *
+ * These cost nothing on the wire, and nothing to decode — a property of the reader THIS
+ * path uses, not of parquet-wasm. `readParquetRowGroup` takes the contiguous bytes of a
+ * whole row group, and `{ columns }` is inert in the vendored build
+ * (`docs/parquet-wasm-limitations.md`), so the tiled path already range-reads AND
+ * decodes every column of every row group it touches, then discards most of them —
+ * `qv`, `nucleus_distance` and `overlaps_nucleus` are paid for on every tile whether or
+ * not anyone asks for them. Asking adds one buffer and one transfer. `ParquetFile.read`
+ * is the reader that WOULD project — so an extra column costs bytes again if this path
+ * ever moves there, but not before published parquet-wasm 0.8.0, where a projected read
+ * first becomes parseable.
+ *
+ * Float, bool and integers up to 32 bits, all of which a `Float64Array` carries
+ * exactly. A 64-bit identifier does not, so {@link resolvePassthroughColumns} refuses
+ * one rather than returning it quietly rounded. String columns (`cell_id`) want codes
+ * plus a catalog, the shape `featureCodes` already uses, and are not served here.
+ */
+export interface PassthroughColumn {
+  name: string;
+  /**
+   * Accumulates across row groups. Deliberately the ONLY state carried between
+   * tables: the values are re-read from each table as it is scanned, because a tile
+   * spanning two row groups would otherwise pair the second group's points with the
+   * first group's values — one value per point, so no length check could catch it.
+   */
+  buffer: Float64PointBuffer;
+}
+
+/** Why a requested passthrough column could not be served. */
+export interface PassthroughColumnRejection {
+  name: string;
+  reason: 'missing' | 'not-numeric' | 'precision' | 'after-dictionary';
+}
+
+/**
+ * What to tell the caller about a rejection, beyond its tag.
+ *
+ * "unsupported type" would read as a shrug. Every reason here is a case where the column
+ * could have come back at the right length, in lockstep with the geometry, and WRONG —
+ * which is the only thing that makes refusing it worth a warning.
+ */
+export const PASSTHROUGH_REJECTION_EXPLANATIONS: Record<
+  PassthroughColumnRejection['reason'],
+  string
+> = {
+  missing: 'not present in the row group',
+  'not-numeric': 'not a numeric type — a string column decodes to a full-length NaN array',
+  precision: 'an integer wider than 32 bits — the f64 lane would round it silently',
+  'after-dictionary':
+    'at or after a dictionary-typed column, which this reader mis-decodes — its values ' +
+    'would be wrong rather than missing',
+};
+
+export interface ResolvedPassthroughColumns {
+  columns: PassthroughColumn[];
+  rejected: PassthroughColumnRejection[];
+}
+
+/**
+ * Values for one passthrough column, read from the table about to be scanned.
+ *
+ * Two arrow types need decoding rather than the fast `toArray()` path that
+ * `numericColumnValues` takes, and both fail quietly if they do not get it:
+ *
+ * * **Bool** — that helper's boxed path keeps only `typeof value === 'number'`, so a
+ *   Bool column comes back as a full-length array of `NaN`.
+ * * **Float16** — arrow stores it as `Uint16Array`, which IS an `ArrayBuffer` view, so
+ *   the null-free fast path returns the raw **bit patterns**: Float16 `1` arrives as
+ *   `15360`. `get()` converts properly. A nullable Float16 fixture would not catch
+ *   this, because nulls force the boxed path that is already correct.
+ *
+ * Both are the same failure the string guard exists for — right length, right
+ * alignment, wrong numbers.
+ */
+function decodeBoxed(column: Vector, convert: (value: unknown) => number): Float64Array {
+  const out = new Float64Array(column.length);
+  for (let index = 0; index < column.length; index += 1) {
+    const value = column.get(index);
+    out[index] = value === null || value === undefined ? Number.NaN : convert(value);
+  }
+  return out;
+}
+
+function passthroughValues(column: Vector): ArrayLike<number> | null {
+  const type = column.type;
+  if (DataType.isBool(type)) {
+    return decodeBoxed(column, (value) => (value ? 1 : 0));
+  }
+  if (DataType.isFloat(type) && type.precision === Precision.HALF) {
+    return decodeBoxed(column, (value) => Number(value));
+  }
+  return numericColumnValues(column);
+}
+
+/** Columns the scan supplies itself; requesting one again would duplicate it. */
+function isReservedScanColumn(
+  name: string,
+  input: { axisNames: string[]; mortonCodeColumnName: string; featureCodeColumnName?: string }
+): boolean {
+  return (
+    name === 'x' ||
+    name === 'y' ||
+    name === 'z' ||
+    input.axisNames.includes(name) ||
+    name === input.mortonCodeColumnName ||
+    name === input.featureCodeColumnName
+  );
+}
+
+/**
+ * The index of the first dictionary-typed field, or -1 if the schema has none.
+ *
+ * A tripwire for the `readParquetRowGroup` path specifically. That reader silently
+ * mis-decodes every field at or AFTER the first dictionary-typed one, not just the
+ * dictionary column itself. Measured on row group 3 of the 12.17M-row
+ * `transcripts_morton` element: `x` … `morton_code_2d` (fields 0–9) decode correctly,
+ * then `feature_name` comes back `null`, `cell_id` and `fov_name` `""`, and
+ * `__index_level_0__` `-1` — with `nullCount === 0` throughout and nothing thrown.
+ * Verified against `pyarrow.read_row_group`, which returns the real values.
+ *
+ * It is not a string-only fault: a `Float32` column written after a pandas categorical
+ * decodes as `NaN` (and an `Int32` as `-1`), from a `toArray()` 31 elements long against
+ * a `length` of 1000. So a schema check is the only safe one — the values look like data.
+ *
+ * The SCHEMA survives intact, which is what makes a field-index comparison sufficient.
+ *
+ * Nothing served today is refused by this: `overlaps_nucleus` (3), `qv` (6) and
+ * `nucleus_distance` (7) all precede `feature_name` (10). It guards the column order we
+ * do not control — `cell_id` is the next column this work wants, and it sits on the far
+ * side of the boundary. Drop the guard if the tiled path moves to `ParquetFile`, whose
+ * reads decode dictionaries correctly (`parquetWasmLoader.ts`).
+ */
+function firstDictionaryFieldIndex(table: Table): number {
+  return table.schema.fields.findIndex((field) => DataType.isDictionary(field.type));
+}
+
+/**
+ * Decide which requested columns the scan can serve, from the arrow SCHEMA.
+ *
+ * Never from the decoded values: `numericColumnValues` answers a boxed read of a string
+ * column with `Number.NaN` rather than null, so trusting it would hand back a `cell_id`
+ * column of the right length, in lockstep, and entirely meaningless.
+ *
+ * Accepts float, bool, and integers up to 32 bits — every one of which a `Float64Array`
+ * represents exactly. A 64-bit integer does not, so it is refused rather than returned
+ * quietly rounded; a string column wants codes plus a catalog, the shape `featureCodes`
+ * already uses, and is not served here.
+ */
+export function resolvePassthroughColumns(
+  table: Table,
+  requested: readonly string[] | undefined,
+  context: { axisNames: string[]; mortonCodeColumnName: string; featureCodeColumnName?: string }
+): ResolvedPassthroughColumns {
+  const columns: PassthroughColumn[] = [];
+  const rejected: PassthroughColumnRejection[] = [];
+  const dictionaryBoundary = firstDictionaryFieldIndex(table);
+  for (const name of requested ?? []) {
+    if (isReservedScanColumn(name, context)) {
+      continue;
+    }
+    const column = table.getChild(name);
+    if (!column) {
+      rejected.push({ name, reason: 'missing' });
+      continue;
+    }
+    // Before the type checks: this is the reason that would still apply if the type
+    // were fine, and the one that explains why a perfectly ordinary `qv` is refused.
+    if (
+      dictionaryBoundary >= 0 &&
+      table.schema.fields.findIndex((field) => field.name === name) >= dictionaryBoundary
+    ) {
+      rejected.push({ name, reason: 'after-dictionary' });
+      continue;
+    }
+    const type = column.type;
+    if (DataType.isInt(type)) {
+      // `bitWidth` is on the Int type; anything wider than 32 bits cannot survive the
+      // f64 lane exactly, so refuse it rather than round `transcript_id`.
+      if (type.bitWidth > 32) {
+        rejected.push({ name, reason: 'precision' });
+        continue;
+      }
+    } else if (!DataType.isFloat(type) && !DataType.isBool(type)) {
+      rejected.push({ name, reason: 'not-numeric' });
+      continue;
+    }
+    // Schema only. Calling `passthroughValues` here to prove the column decodes would
+    // materialise every value of every requested column at resolve time, and the scan
+    // decodes it again per row group anyway — the checks above are the decision, and
+    // `scanMortonTableInBounds` drops a column that cannot be read when it gets there.
+    columns.push({ name, buffer: new Float64PointBuffer() });
+  }
+  return { columns, rejected };
+}
+
+const EMPTY_PASSTHROUGH: readonly PassthroughColumn[] = [];
+
 export function scanMortonTableInBounds(input: {
   table: Table;
   rowGroupIndex: number;
@@ -429,6 +635,14 @@ export function scanMortonTableInBounds(input: {
    * a push must skip all four buffers together.
    */
   codes?: Int32PointBuffer;
+  /**
+   * Extra numeric columns to carry through, in lockstep with the geometry. Same
+   * contract as {@link codes}: index i belongs to point i, so every `continue`
+   * above a push must skip these too. Build them with
+   * {@link resolvePassthroughColumns} so the reserved and unrepresentable names
+   * are filtered out before they get here.
+   */
+  passthrough?: readonly PassthroughColumn[];
 }): void {
   const allowedFeatureCodes = featureCodeAllowSet(input.featureCodes);
   const filterByFeature = allowedFeatureCodes !== null;
@@ -478,6 +692,22 @@ export function scanMortonTableInBounds(input: {
   if (input.codes) {
     input.codes.reserve(numRows);
   }
+  // Bound to THIS table, every call. The columns were resolved once (by name, against
+  // the file's schema, which every row group shares) but their values must come from
+  // the row group being scanned — `rowIndex` restarts at zero for each one.
+  const passthrough: Array<{ values: ArrayLike<number>; buffer: Float64PointBuffer }> = [];
+  for (const extra of input.passthrough ?? EMPTY_PASSTHROUGH) {
+    const column = input.table.getChild(extra.name);
+    const values = column ? passthroughValues(column) : null;
+    if (!values) {
+      // Present when resolved, absent now: scanning on would silently shorten this
+      // column against the geometry. Drop it here and the caller's length check drops
+      // it from the result.
+      continue;
+    }
+    extra.buffer.reserve(numRows);
+    passthrough.push({ values, buffer: extra.buffer });
+  }
   for (let rowIndex = 0; rowIndex < numRows; rowIndex += 1) {
     // Sentinels only ever occupy the first rows of the first row group, so this
     // stays on the (rare) boxed read rather than materialising the whole column.
@@ -515,6 +745,11 @@ export function scanMortonTableInBounds(input: {
     if (zValues) {
       const z = zValues[rowIndex];
       input.zs.push(Number.isFinite(z) ? z : 0);
+    }
+    for (const extra of passthrough) {
+      // NaN is kept rather than coerced: unlike a feature code, a missing `qv` or
+      // `nucleus_distance` has no in-band sentinel, and 0 is a plausible reading.
+      extra.buffer.push(extra.values[rowIndex]);
     }
     if (collectCodes) {
       const code = (featureCodeValues as ArrayLike<number>)[rowIndex];

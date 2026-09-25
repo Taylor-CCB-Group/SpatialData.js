@@ -134,6 +134,12 @@ export type ParquetWorkerRequest =
       mortonCodeColumnName: string;
       featureCodeColumnName?: string;
       featureCodes?: readonly number[];
+      /**
+       * Extra numeric columns to return alongside the geometry. Free on the wire —
+       * the row group's bytes are fetched whole either way — so this is a decode
+       * cost only. See `resolvePassthroughColumns`.
+       */
+      passthroughColumns?: readonly string[];
     }
   | {
       /**
@@ -235,6 +241,17 @@ export type ParquetWorkerColumnarResult = {
   ys: Float32Array;
   zs?: Float32Array;
   featureCodes?: Int32Array;
+  /**
+   * Requested passthrough columns that the scan could serve, one value per point,
+   * in lockstep with `xs`/`ys`. A requested name is absent here when the column is
+   * missing, non-numeric, or 64-bit — the worker warns rather than returning values
+   * the caller cannot trust.
+   *
+   * `Float64Array` because it is the one lane that carries every accepted source type
+   * exactly: int32, float32, float64 and bool all round-trip, where `Float32Array`
+   * would quietly round an Int32 above 2^24.
+   */
+  columns?: Record<string, Float64Array>;
 };
 
 export type ParquetWorkerScanResult = Omit<ParquetWorkerColumnarResult, 'kind'> & {
@@ -303,6 +320,20 @@ export type ParquetWorkerMessage = {
    * reader that ignores this direction still behaves correctly for them.
    */
   | { direction: 'stream'; chunk: ParquetWorkerStreamChunk }
+  /**
+   * Posted once, as the worker module finishes evaluating, before any request.
+   *
+   * It exists to tell two failures apart that otherwise look identical from the
+   * client: a worker whose bundle never loaded (a wiring mistake — give up), and
+   * a worker that loaded and later crashed (recoverable — restart it). Answering
+   * that with "has it replied to a request yet?" misreads the second as the
+   * first whenever the crash beats the first response, which is exactly what a
+   * `RuntimeError: unreachable` out of parquet-wasm does.
+   *
+   * It carries no `id`, being unsolicited; {@link ParquetWorkerMessage} pairs it
+   * with a sentinel so the envelope stays one shape.
+   */
+  | { direction: 'ready' }
 );
 
 export function columnarDataFromWorkerResult(
@@ -310,5 +341,11 @@ export function columnarDataFromWorkerResult(
 ): PointsColumnarData {
   const data = result.zs ? [result.xs, result.ys, result.zs] : [result.xs, result.ys];
   const featureCodes = 'featureCodes' in result ? result.featureCodes : undefined;
-  return { shape: result.shape, data, ...(featureCodes ? { featureCodes } : {}) };
+  const columns = 'columns' in result ? result.columns : undefined;
+  return {
+    shape: result.shape,
+    data,
+    ...(featureCodes ? { featureCodes } : {}),
+    ...(columns ? { columns } : {}),
+  };
 }

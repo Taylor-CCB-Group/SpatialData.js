@@ -5,10 +5,16 @@ import json
 import pandas as pd
 import pyarrow.parquet as pq
 
+import numpy as np
+import pyarrow as pa
+import pytest
+
 from spatialdata_js_util import (
     MORTON_CODE_2D_COLUMN,
+    MORTON_COARSE_COLUMN,
     build_spatialdata_multiscale_metadata,
     morton_sort_points,
+    plan_column_encodings,
     write_morton_points_parquet,
     write_multiscale_points_parquet,
 )
@@ -119,3 +125,200 @@ def test_write_multiscale_points_parquet_stores_metadata(tmp_path) -> None:
     stored = json.loads(schema_metadata[b"spatialdata_multiscale"])
     assert stored["format"] == "spatialdata_multiscale_points"
     assert stored["bounding_box"]["min"] == [0.0, 3.0]
+
+
+def _encodings_by_column(path) -> dict[str, tuple[str, ...]]:
+    row_group = pq.ParquetFile(path).metadata.row_group(0)
+    return {
+        row_group.column(i).path_in_schema: tuple(row_group.column(i).encodings)
+        for i in range(row_group.num_columns)
+    }
+
+
+def _points_frame(rows: int = 400) -> pd.DataFrame:
+    rng = np.random.default_rng(0)
+    return pd.DataFrame(
+        {
+            "x": rng.uniform(0, 1000, rows).astype("float32"),
+            "y": rng.uniform(0, 1000, rows).astype("float32"),
+            "z": rng.uniform(0, 30, rows).astype("float32"),
+            "transcript_id": rng.integers(0, 2**62, rows).astype("uint64"),
+            "feature_name": pd.Categorical(
+                [f"gene{i % 17}" for i in range(rows)]
+            ),
+        }
+    )
+
+
+def test_plan_column_encodings_drops_the_dictionary_only_where_it_loses() -> None:
+    rows = 2000
+    rng = np.random.default_rng(1)
+    table = pa.table(
+        {
+            "coord": pa.array(rng.uniform(0, 1, rows).astype(np.float32)),
+            "sorted_id": pa.array(np.sort(rng.integers(0, 2**31, rows)).astype(np.uint32)),
+            "random_id": pa.array(rng.integers(0, 2**62, rows).astype(np.uint64)),
+            "code": pa.array(rng.integers(0, 20, rows).astype(np.int32)),
+            "name": pa.array([f"g{i % 11}" for i in range(rows)]),
+        }
+    )
+
+    plan = plan_column_encodings(table)
+
+    assert plan.column_encoding == {
+        "coord": "BYTE_STREAM_SPLIT",
+        "sorted_id": "DELTA_BINARY_PACKED",
+        "random_id": "PLAIN",
+    }
+    # Low-cardinality codes and strings are what the dictionary is for.
+    assert sorted(plan.use_dictionary) == ["code", "name"]
+
+
+def test_write_morton_points_parquet_encodes_coordinates_without_a_dictionary(
+    tmp_path,
+) -> None:
+    output = tmp_path / "points.parquet"
+    write_morton_points_parquet(_points_frame(), output, feature_key="feature_name")
+
+    encodings = _encodings_by_column(output)
+    for column in ("x", "y", "z"):
+        assert "BYTE_STREAM_SPLIT" in encodings[column]
+        assert "RLE_DICTIONARY" not in encodings[column]
+    assert "DELTA_BINARY_PACKED" in encodings[MORTON_CODE_2D_COLUMN]
+    assert "PLAIN" in encodings["transcript_id"]
+    assert "RLE_DICTIONARY" not in encodings["transcript_id"]
+    # 17 genes over 400 rows: the dictionary still earns its place here.
+    assert "RLE_DICTIONARY" in encodings["feature_name_codes"]
+
+
+def test_write_morton_points_parquet_is_smaller_than_the_pyarrow_defaults(
+    tmp_path,
+) -> None:
+    df = _points_frame(rows=20_000)
+    tuned = tmp_path / "tuned.parquet"
+    default = tmp_path / "default.parquet"
+    write_morton_points_parquet(df, tuned, feature_key="feature_name")
+    write_morton_points_parquet(
+        df, default, feature_key="feature_name", encodings="pyarrow-default"
+    )
+
+    assert tuned.stat().st_size < default.stat().st_size
+
+
+def test_write_morton_points_parquet_writes_a_page_index(tmp_path) -> None:
+    output = tmp_path / "points.parquet"
+    write_morton_points_parquet(_points_frame(), output, feature_key="feature_name")
+
+    row_group = pq.ParquetFile(output).metadata.row_group(0)
+    assert all(row_group.column(i).has_offset_index for i in range(row_group.num_columns))
+
+
+def test_write_morton_points_parquet_declares_a_sort_order_it_honours(tmp_path) -> None:
+    morton_primary = tmp_path / "morton.parquet"
+    feature_primary = tmp_path / "feature.parquet"
+    df = _points_frame()
+    write_morton_points_parquet(df, morton_primary, feature_key="feature_name")
+    write_morton_points_parquet(
+        df,
+        feature_primary,
+        feature_key="feature_name",
+        sort_order=["feature_name_codes", MORTON_CODE_2D_COLUMN],
+    )
+
+    declared = pq.ParquetFile(morton_primary).metadata.row_group(0).sorting_columns
+    assert [column.column_index for column in declared] == [
+        pq.ParquetFile(morton_primary).schema_arrow.names.index(MORTON_CODE_2D_COLUMN)
+    ]
+    # The sentinel rows carry their own feature codes, so a feature-primary file
+    # does not ascend in that column and must not claim to.
+    assert not pq.ParquetFile(feature_primary).metadata.row_group(0).sorting_columns
+
+
+def test_morton_coarsening_groups_features_within_a_spatial_bucket(tmp_path) -> None:
+    output = tmp_path / "points.parquet"
+    sorted_df = write_morton_points_parquet(
+        _points_frame(rows=2000),
+        output,
+        feature_key="feature_name",
+        sort_order=[MORTON_COARSE_COLUMN, "feature_name_codes", MORTON_CODE_2D_COLUMN],
+        morton_coarsen_levels=6,
+    )
+
+    # The key is transient: recoverable by shifting, so it never reaches the wire.
+    assert MORTON_COARSE_COLUMN not in sorted_df.columns
+    assert MORTON_COARSE_COLUMN not in pq.ParquetFile(output).schema_arrow.names
+
+    body = sorted_df.iloc[4:]
+    coarse = body[MORTON_CODE_2D_COLUMN].to_numpy() >> 12
+    codes = body["feature_name_codes"].to_numpy()
+    # Within each bucket the feature codes ascend: that contiguity is the whole
+    # point of the condition.
+    for bucket in np.unique(coarse):
+        bucket_codes = codes[coarse == bucket]
+        assert np.all(bucket_codes[1:] >= bucket_codes[:-1])
+
+
+@pytest.mark.parametrize("levels", [0, 16])
+def test_morton_sort_points_rejects_out_of_range_coarsening(levels: int) -> None:
+    with pytest.raises(ValueError, match="morton_coarsen_levels"):
+        morton_sort_points(_points_frame(rows=8), morton_coarsen_levels=levels)
+
+
+def test_write_morton_points_parquet_rejects_an_unknown_encoding_policy(tmp_path) -> None:
+    # A CLI or TUI string sails past the type hint; a typo used to write pyarrow
+    # defaults and report them as the tuned plan.
+    with pytest.raises(ValueError, match="Unknown encoding policy"):
+        write_morton_points_parquet(
+            _points_frame(rows=8),
+            tmp_path / "points.parquet",
+            feature_key="feature_name",
+            encodings="Auto",  # type: ignore[arg-type]
+        )
+
+
+def test_pyarrow_default_records_no_plan_rather_than_an_empty_one(tmp_path) -> None:
+    from spatialdata_js_util.points import ENCODING_PLAN_ATTR
+
+    tuned = write_morton_points_parquet(
+        _points_frame(rows=64), tmp_path / "a.parquet", feature_key="feature_name"
+    )
+    default = write_morton_points_parquet(
+        _points_frame(rows=64),
+        tmp_path / "b.parquet",
+        feature_key="feature_name",
+        encodings="pyarrow-default",
+    )
+
+    assert tuned.attrs[ENCODING_PLAN_ATTR] is not None
+    # An empty plan would serialise as "no column uses a dictionary", the opposite of
+    # what pyarrow's default actually does.
+    assert default.attrs[ENCODING_PLAN_ATTR] is None
+
+
+def test_morton_sort_points_keeps_a_callers_coarse_named_column(tmp_path) -> None:
+    df = _points_frame(rows=16)
+    df[MORTON_COARSE_COLUMN] = np.arange(len(df))
+
+    # No coarsening requested, so that column is the caller's and must survive.
+    out = morton_sort_points(df, feature_key="feature_name")
+
+    assert MORTON_COARSE_COLUMN in out.columns
+
+
+def test_morton_sort_points_refuses_to_overwrite_a_reserved_coarse_column() -> None:
+    df = _points_frame(rows=16)
+    df[MORTON_COARSE_COLUMN] = np.arange(len(df))
+
+    with pytest.raises(ValueError, match="reserved for the coarsened Morton sort key"):
+        morton_sort_points(df, feature_key="feature_name", morton_coarsen_levels=4)
+
+
+def test_explicit_zero_row_group_size_reaches_the_writer_validation(tmp_path) -> None:
+    # `or` used to swallow it and substitute the default, hiding a caller error.
+    with pytest.raises(ValueError, match="row_group_size must be positive"):
+        write_morton_points_parquet(
+            _points_frame(rows=8),
+            tmp_path / "points.parquet",
+            feature_key="feature_name",
+            row_group_size=0,
+        )

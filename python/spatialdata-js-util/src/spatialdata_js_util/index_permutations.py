@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-from .points import MORTON_CODE_2D_COLUMN, write_morton_points_parquet
+from .points import (
+    ENCODING_PLAN_ATTR,
+    MORTON_CODE_2D_COLUMN,
+    MORTON_COARSE_COLUMN,
+    ColumnEncodingPlan,
+    EncodingPolicy,
+    write_morton_points_parquet,
+)
 from .store import (
     list_points_keys,
     points_parquet_path,
@@ -23,6 +30,16 @@ class IndexCondition:
     element_suffix: str
     sort_order: tuple[str, ...] | None
     tiling_kind: str | None
+    #: Row-group size for this condition, overriding the call's default.
+    #: **This is the feature-selectivity knob.** A reader skips row groups, never
+    #: pages — parquet-wasm exposes no column-chunk offsets and cannot decode a
+    #: relocated subset of a row group (`docs/parquet-wasm-limitations.md`) — so
+    #: how nearly single-feature a row group is decides what a feature selection
+    #: can avoid fetching. At 50k rows and 541 features it can avoid nothing.
+    row_group_size: int | None = None
+    #: Quadtree levels of Morton coarsening for the leading sort key. See
+    #: {@link spatialdata_js_util.points.morton_sort_points}.
+    morton_coarsen_levels: int | None = None
 
 
 DEFAULT_CONDITIONS: tuple[IndexCondition, ...] = (
@@ -41,6 +58,44 @@ DEFAULT_CONDITIONS: tuple[IndexCondition, ...] = (
         "experimental",
     ),
 )
+"""The four landed conditions. `morton-then-feature` is measurably degenerate —
+Morton is 16 bits per axis, so at 12.17M points only ~0.14% of rows share a code
+and the secondary key is almost never consulted. It is kept because the store's
+element keys are a published contract and because it is the worked example of a
+*harmless* secondary key (`points-morton-tiled-viewport-loading.md`)."""
+
+
+def _coarsened_condition(levels: int, row_group_size: int) -> IndexCondition:
+    return IndexCondition(
+        id=f"morton-k{levels}-then-feature-rg{row_group_size}",
+        element_suffix=f"_morton_k{levels}_then_feature_rg{row_group_size}",
+        sort_order=(MORTON_COARSE_COLUMN, "feature_name_codes", MORTON_CODE_2D_COLUMN),
+        tiling_kind="experimental",
+        row_group_size=row_group_size,
+        morton_coarsen_levels=levels,
+    )
+
+
+FEATURE_SELECTIVITY_CONDITIONS: tuple[IndexCondition, ...] = (
+    IndexCondition(
+        "feature-then-morton-rg5000",
+        "_feature_then_morton_rg5000",
+        ("feature_name_codes", MORTON_CODE_2D_COLUMN),
+        "experimental",
+        row_group_size=5_000,
+    ),
+    _coarsened_condition(levels=4, row_group_size=5_000),
+    _coarsened_condition(levels=6, row_group_size=5_000),
+    _coarsened_condition(levels=6, row_group_size=25_000),
+)
+"""The sweep decision 11's cost model needs in order to have a crossover to find.
+
+Two axes, deliberately crossed rather than chosen: how coarse the spatial bucket
+is (`levels`) and how many rows a row group holds. Coarsening trades spatial
+selectivity for feature selectivity — at `levels=6` a bucket is 4096 leaf cells
+wide — and the row-group size decides whether that feature contiguity is fine
+enough for the reader to act on. Both ends matter and neither is guessable, which
+is why these are written and measured rather than reasoned about."""
 
 
 def _resolve_feature_code_column(feature_key: str | None) -> str:
@@ -122,6 +177,8 @@ def write_index_permutations(
     overwrite: bool = False,
     row_group_size: int = 50_000,
     compression: str = "zstd",
+    encodings: EncodingPolicy = "auto",
+    write_page_index: bool = True,
 ) -> dict[str, Any]:
     source_path = Path(source_zarr)
     dest_path = Path(dest_zarr)
@@ -172,16 +229,31 @@ def write_index_permutations(
                 df.to_parquet(output_parquet, index=False)
             else:
                 _copy_canonical_parquet(source_parquet, output_parquet)
+            condition_row_group_size = None
+            encoding_plan = None
         else:
             sort_order = _condition_sort_order(condition, feature_key)
-            write_morton_points_parquet(
+            # `is None`, not `or`: an explicit 0 is a caller error and belongs in
+            # the writer's "row_group_size must be positive", not silently replaced
+            # by the default.
+            condition_row_group_size = (
+                row_group_size
+                if condition.row_group_size is None
+                else condition.row_group_size
+            )
+            written = write_morton_points_parquet(
                 df,
                 output_parquet,
                 feature_key=feature_key,
                 sort_order=sort_order,
-                row_group_size=row_group_size,
+                row_group_size=condition_row_group_size,
                 compression=compression,
+                encodings=encodings,
+                write_page_index=write_page_index,
+                morton_coarsen_levels=condition.morton_coarsen_levels,
             )
+            plan = written.attrs.get(ENCODING_PLAN_ATTR)
+            encoding_plan = plan.as_manifest() if isinstance(plan, ColumnEncodingPlan) else None
 
         manifest_conditions.append(
             {
@@ -189,6 +261,14 @@ def write_index_permutations(
                 "element_path": f"points/{element_key}",
                 "sort_order": list(condition.sort_order) if condition.sort_order else None,
                 "tiling_kind": condition.tiling_kind,
+                "row_group_size": condition_row_group_size,
+                "morton_coarsen_levels": condition.morton_coarsen_levels,
+                # The policy NAME as well as the resolved plan: under
+                # `pyarrow-default` there is no plan to record, and without the name a
+                # reader cannot tell an old-encoding baseline from a tuned artifact.
+                "encoding_policy": encodings if condition.sort_order else None,
+                "encodings": encoding_plan,
+                "page_index": write_page_index if condition.sort_order else None,
             }
         )
 
