@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
 import SpatialDataTableSource, { MAX_PARQUET_PARTS } from '../src/models/VTableSource.js';
 
@@ -14,6 +14,19 @@ const ELEMENT_PATH = 'points/blobs_points';
 const PARQUET_DIR = `${ELEMENT_PATH}/points.parquet`;
 const PART_0 = `${PARQUET_DIR}/part.0.parquet`;
 const ROWS = 5000;
+
+/**
+ * `parquetModulePromise` is a static shared by every source, so a test that stubs it
+ * has to restore it or it silently breaks whatever runs next in this file.
+ */
+function stubParquetModuleForThisDescribe() {
+  const real = SpatialDataTableSource.parquetModulePromise;
+  // biome-ignore lint/suspicious/noExplicitAny: test double for the WASM module surface
+  SpatialDataTableSource.parquetModulePromise = Promise.resolve({} as any);
+  return () => {
+    SpatialDataTableSource.parquetModulePromise = real;
+  };
+}
 
 type StoreCall = { op: 'GET' | 'RANGE'; path: string };
 
@@ -183,6 +196,12 @@ describe('part enumeration is bounded when every part.N path answers', () => {
     };
   }
 
+  let restore: (() => void) | undefined;
+  afterEach(() => {
+    restore?.();
+    restore = undefined;
+  });
+
   it('throws instead of looping forever', async () => {
     const parquetBytes = new Uint8Array([
       0x50, 0x41, 0x52, 0x31, 0x00, 0x00, 0x00, 0x00, 0x50, 0x41, 0x52, 0x31,
@@ -195,12 +214,110 @@ describe('part enumeration is bounded when every part.N path answers', () => {
     });
     // No `readMetadata`/`getRange`, so the layout question falls to the whole-file
     // probe — the expensive walk of the two.
-    // biome-ignore lint/suspicious/noExplicitAny: test double for the WASM module surface
-    SpatialDataTableSource.parquetModulePromise = Promise.resolve({} as any);
+    restore = stubParquetModuleForThisDescribe();
 
+    // Specifically the cap, not any earlier load failure — a broader pattern would
+    // let a store that simply failed to read satisfy this test.
     await expect(source.loadParquetTable(PARQUET_DIR)).rejects.toThrow(
-      /exceeded 512 parts|Failed to load parquet/
+      `exceeded ${MAX_PARQUET_PARTS} parts`
     );
     expect(calls.length).toBeLessThanOrEqual(MAX_PARQUET_PARTS + 4);
   });
+});
+
+/**
+ * Worker payloads are TRANSFERRED, not copied (`transferablesForParquetPayload`), so
+ * whoever produces part bytes must hand over bytes nobody else holds. Serving them
+ * from the shared byte cache detaches that cache entry on the first post, and every
+ * later read of it comes back detached — surfacing far away as
+ * "DataCloneError: ArrayBuffer at index 0 is already detached".
+ */
+describe('whole-part reads hand out unshared bytes', () => {
+  let fixtureRoot: string;
+  let source: SpatialDataPointsSource;
+
+  beforeAll(async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), 'part-ownership-'));
+    await writeNonMortonPointsFixture(fixtureRoot);
+    source = new SpatialDataPointsSource({
+      // biome-ignore lint/suspicious/noExplicitAny: minimal zarr.Readable test double
+      store: createCountingStore(fixtureRoot, []) as any,
+      fileType: '.zarr',
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('survives a consumer transferring the buffer away', async () => {
+    const internals = source as unknown as {
+      readParquetDatasetBytesCapped: (
+        path: string,
+        maxRows: number
+      ) => Promise<{ parts: Uint8Array[] }>;
+    };
+
+    const first = await internals.readParquetDatasetBytesCapped(PARQUET_DIR, 1_000_000);
+    expect(first.parts.length).toBeGreaterThan(0);
+
+    // Exactly what posting to the parquet worker does.
+    const buffer = first.parts[0].buffer as ArrayBuffer;
+    structuredClone(buffer, { transfer: [buffer] });
+    expect(buffer.detached).toBe(true);
+
+    const second = await internals.readParquetDatasetBytesCapped(PARQUET_DIR, 1_000_000);
+    expect(second.parts[0]?.buffer.detached).toBe(false);
+    expect(second.parts[0]?.length).toBeGreaterThan(0);
+
+    // And the main-thread cached path is still usable afterwards.
+    const table = await source.loadParquetTable(PARQUET_DIR);
+    expect(table.numRows).toBe(ROWS);
+  }, 120_000);
+});
+
+/** A dataset of exactly MAX_PARQUET_PARTS parts is legal; the cap is for one part MORE. */
+describe('the part cap is exclusive of a legal maximum-size dataset', () => {
+  function storeServingParts(count: number, bytes: Uint8Array) {
+    return {
+      async get(path: string) {
+        const match = /part\.(\d+)\.parquet$/.exec(path);
+        if (!match) return null;
+        return Number(match[1]) < count ? bytes : null;
+      },
+    };
+  }
+
+  const parquetBytes = new Uint8Array([
+    0x50, 0x41, 0x52, 0x31, 0x00, 0x00, 0x00, 0x00, 0x50, 0x41, 0x52, 0x31,
+  ]);
+
+  function sourceFor(count: number) {
+    return new SpatialDataTableSource({
+      // biome-ignore lint/suspicious/noExplicitAny: minimal zarr.Readable test double
+      store: storeServingParts(count, parquetBytes) as any,
+      fileType: '.zarr',
+    }) as unknown as {
+      discoverMultipartPartPaths: (path: string) => Promise<string[]>;
+    };
+  }
+
+  let restore: (() => void) | undefined;
+  afterEach(() => {
+    restore?.();
+    restore = undefined;
+  });
+
+  it(`discovers exactly ${MAX_PARQUET_PARTS} parts without tripping the cap`, async () => {
+    restore = stubParquetModuleForThisDescribe();
+    const paths = await sourceFor(MAX_PARQUET_PARTS).discoverMultipartPartPaths(PARQUET_DIR);
+    expect(paths).toHaveLength(MAX_PARQUET_PARTS);
+  }, 60_000);
+
+  it('throws on the first part past the cap', async () => {
+    restore = stubParquetModuleForThisDescribe();
+    await expect(
+      sourceFor(MAX_PARQUET_PARTS + 1).discoverMultipartPartPaths(PARQUET_DIR)
+    ).rejects.toThrow(`exceeded ${MAX_PARQUET_PARTS} parts`);
+  }, 60_000);
 });

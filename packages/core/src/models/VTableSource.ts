@@ -887,21 +887,23 @@ export default class SpatialDataTableSource extends AnnDataSource {
       parts.push(directPart);
     } else {
       for (let partIndex = 0; ; partIndex++) {
-        // See MAX_PARQUET_PARTS: a server that answers every `part.N` path makes
-        // this walk unbounded, so it is capped — and the cap is an error, not a
-        // silent truncation of the element.
-        if (partIndex >= MAX_PARQUET_PARTS) {
-          throw new Error(
-            `Parquet part enumeration for ${parquetPath} exceeded ${MAX_PARQUET_PARTS} parts. ` +
-              'The store is answering every part.N.parquet path, which usually means the ' +
-              'server resolves any path under the directory onto the same file.'
-          );
-        }
         const part = await this.probeParquetPartMetadata(
           `${parquetPath}/part.${partIndex}.parquet`
         );
         if (!part) {
           break;
+        }
+        // See MAX_PARQUET_PARTS: a server that answers every `part.N` path makes this
+        // walk unbounded, so it is capped — and the cap is an error, not a silent
+        // truncation. Checked only once a part has actually been FOUND, so a dataset
+        // of exactly MAX_PARQUET_PARTS parts loads rather than tripping the limit on
+        // the absent part that ends it.
+        if (parts.length >= MAX_PARQUET_PARTS) {
+          throw new Error(
+            `Parquet part enumeration for ${parquetPath} exceeded ${MAX_PARQUET_PARTS} parts. ` +
+              'The store is answering every part.N.parquet path, which usually means the ' +
+              'server resolves any path under the directory onto the same file.'
+          );
         }
         parts.push(part);
       }
@@ -1411,20 +1413,20 @@ export default class SpatialDataTableSource extends AnnDataSource {
     const promise = (async () => {
       const partPaths: string[] = [];
       for (let partIndex = 0; ; partIndex += 1) {
-        // Bounded for the same reason as the metadata walk above, and it matters
-        // more here: this probe pulls WHOLE FILES, so an unbounded walk is an
-        // unbounded number of full-size downloads.
-        if (partIndex >= MAX_PARQUET_PARTS) {
+        const partPath = `${parquetPath}/part.${partIndex}.parquet`;
+        const bytes = await this.loadParquetFileBytesAtPath(partPath);
+        if (!bytes) {
+          break;
+        }
+        // Bounded like the metadata walk above, and it matters more here: this probe
+        // pulls WHOLE FILES, so an unbounded walk is an unbounded number of full-size
+        // downloads. Same ordering — only a part that EXISTS past the cap is an error.
+        if (partPaths.length >= MAX_PARQUET_PARTS) {
           throw new Error(
             `Parquet part enumeration for ${parquetPath} exceeded ${MAX_PARQUET_PARTS} parts. ` +
               'The store is answering every part.N.parquet path, which usually means the ' +
               'server resolves any path under the directory onto the same file.'
           );
-        }
-        const partPath = `${parquetPath}/part.${partIndex}.parquet`;
-        const bytes = await this.loadParquetFileBytesAtPath(partPath);
-        if (!bytes) {
-          break;
         }
         partPaths.push(partPath);
       }
@@ -1680,8 +1682,30 @@ export default class SpatialDataTableSource extends AnnDataSource {
     return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
   }
 
-  protected loadParquetFileBytesAtPath(path: string): Promise<Uint8Array | null> {
-    return this.readParquetFileBytesShared(path);
+  /**
+   * Read one whole parquet file, ALWAYS freshly, never from the shared cache.
+   *
+   * Deliberately not routed through {@link readParquetFileBytesShared}, unlike its
+   * sibling {@link loadParquetBytes}. These bytes reach `readParquetDatasetBytesCapped`
+   * and from there the worker payload, whose buffers `transferablesForParquetPayload`
+   * TRANSFERS — handing over a cached buffer would detach the cache entry and every
+   * later read of it. `VShapesSource.loadFlatShapeGeometry` defends itself by copying
+   * what `loadParquetBytes` gave it, but part bytes are whole files (100MB+ on a points
+   * element), so this path takes the other half of that contract: it hands out bytes
+   * nobody else holds. That also rules out sharing an in-flight promise here, since two
+   * awaiters would receive the same buffer.
+   */
+  protected async loadParquetFileBytesAtPath(path: string): Promise<Uint8Array | null> {
+    try {
+      const parquetBytes = await this.storeRoot.store.get(`/${path}`);
+      const normalizedBytes = toUint8Array(parquetBytes);
+      if (!normalizedBytes || !isParquetFileBytes(normalizedBytes)) {
+        return null;
+      }
+      return normalizedBytes;
+    } catch {
+      return null;
+    }
   }
 
   private async resolveParquetTableColumns(
