@@ -34,3 +34,34 @@ joining work on this repository.
   the compiler cannot prove it.
 - Worktrees share `.git` but not working state. Documents intended to outlive
   the current branch must land on `main`.
+
+## Writing
+
+Applies to PR descriptions, changesets, commit messages, and docs
+(including `docs/plans` and ADRs).
+
+Say it once, in the right place, for the person who'll read it there.
+
+- Lead with the point. Stop when the reader has what they need.
+- Length scales with how surprising the change is, not how big the diff is.
+- Don't restate what the reader already has: the diff, CI results, file lists.
+- Raise alternatives only if a reader would plausibly ask. One line each.
+- No headings, tables, or bold unless the text is long enough to need them.
+- Say an explanation once, in the place it'll be needed longest: a code
+  comment beats a doc, a doc beats a PR body. Link, don't copy.
+
+**PR descriptions** are for a reviewer who'll read the diff. Give what
+changed and why in a sentence or two, then bullets for anything needing
+attention: risk, behaviour changes, uncertainty, follow-ups.
+
+**Changesets** are for consumers reading a changelog. Say what changes for
+someone using the package, and how to migrate if it breaks something.
+Internal mechanics (build config, overrides, refactors) go in a code
+comment or the commit, not here. Usually 1–3 sentences.
+
+**Commit messages**: a subject line, and a body only for the why when the
+subject isn't enough.
+
+**Docs and plans**: state the current position. Cut history,
+"we considered", and anything that belongs as a code comment. Revise
+docs in place rather than appending.
