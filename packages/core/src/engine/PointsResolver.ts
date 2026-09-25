@@ -313,6 +313,26 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return entry;
   }
 
+  /**
+   * Whether `slot` has already failed for exactly `key`.
+   *
+   * Every planning gate below asks "do we have X?", and a FAILED slot answers no
+   * exactly as a slot that never ran does. Without this clause `plan()` re-emits
+   * the task on every reconcile, the store has no memory of settled tasks so it
+   * re-dispatches, the failure notifies, the notify re-commits — and the element
+   * refetches forever at whatever rate the loader can fail. (The tiling gate gets
+   * this for free through `isTilingSettled`, which counts `failed` as settled; the
+   * catalog spells it out in {@link shouldPlanCatalog}.)
+   *
+   * Scoped to the KEY rather than the slot, because a slot is per-element while
+   * its requests are per-cap/per-selection: a cap raise or a changed selection is
+   * a genuinely different request and must dispatch even though the previous one
+   * failed. {@link retry} is the deliberate way back for the same key.
+   */
+  private hasFailedAt<K>(slot: { readonly failedKey: K | undefined } | undefined, key: K): boolean {
+    return slot?.failedKey !== undefined && Object.is(slot.failedKey, key);
+  }
+
   // --- ResourceResolver -------------------------------------------------------
 
   /**
@@ -342,7 +362,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     if (probeMetadata) {
       tasks.push({ id: `${key}#tiling`, resource: 'tiling' });
     }
-    if (preloadFullTable) {
+    if (preloadFullTable && !this.hasFailedAt(this.entries.get(key)?.preload, cap)) {
       // The cap IS in the id: a cap change must supersede, not dedup. (R3 is the
       // matching path making exactly this mistake.)
       tasks.push({ id: `${key}#preload:${cap}`, resource: 'preload', payload: { memoryCap: cap } });
@@ -397,7 +417,12 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // misaligned and asks then. A first load — no codes at all — never waits.
     const preloadInFlight = this.entries.get(key)?.preload.isLoading === true;
     const deferToPreload = this.hasRowFeatureCodes(key) && preloadInFlight;
-    if (needsRowCodes && !this.hasRowFeatureCodesAtCap(key, rowCodesCap) && !deferToPreload) {
+    if (
+      needsRowCodes &&
+      !this.hasRowFeatureCodesAtCap(key, rowCodesCap) &&
+      !deferToPreload &&
+      !this.hasFailedAt(this.entries.get(key)?.rowCodes, rowCodesCap)
+    ) {
       tasks.push({ id: `${key}#rowCodes:${rowCodesCap}`, resource: 'rowCodes' });
     }
 
@@ -409,7 +434,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     // would — instantly, with no I/O. Scanning anyway re-read the entire file and
     // showed "Loading selected features… 0 points so far" for a selection whose
     // points were already in memory.
-    if (selectionActive && this.supportsFeatureScan(key) && !this.isResidentComplete(key)) {
+    if (
+      selectionActive &&
+      this.supportsFeatureScan(key) &&
+      !this.isResidentComplete(key) &&
+      !this.hasFailedAt(
+        this.entries.get(key)?.matching,
+        PointsResolver.matchingKey(PointsResolver.matchingSignature(selection), cap)
+      )
+    ) {
       const signature = PointsResolver.matchingSignature(selection);
       tasks.push({
         id: `${key}#matching:${signature}:${cap}`,

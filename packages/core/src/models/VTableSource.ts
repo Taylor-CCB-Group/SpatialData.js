@@ -1,6 +1,7 @@
 // this is a direct copy of the Vitessce implementation, with changes mostly to make it more normal TypeScript.
 
 import { type Table as ArrowTable, tableFromIPC } from 'apache-arrow';
+import type { Readable } from 'zarrita';
 import { ByteLruCache } from '../memory/byteLruCache.js';
 import {
   getParquetModule,
@@ -81,6 +82,9 @@ function parquetColumnValueToNumber(value: unknown): number | null {
   }
   return null;
 }
+
+/** A store's range reader, once it is known to exist. */
+type StoreRangeReader = NonNullable<Readable['getRange']>;
 
 export interface ParquetPartMetadata {
   path: string;
@@ -469,6 +473,48 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   /**
+   * Set once a range read came back LONGER than it asked for, which can only mean
+   * the server ignored the `Range` header and sent the whole body.
+   *
+   * A store exposing `getRange` is a capability of the STORE, not a promise about
+   * the server behind it, and the two disagreeing is the worse failure: every
+   * range-based path stays "available" while silently reading the wrong window.
+   * Collapsing onto the no-range path the moment a server proves it ignores
+   * `Range` turns that into the fallback this class already supports (whole-file
+   * reads), and is why the flag is sticky rather than re-tested per file.
+   */
+  private rangeReadsIgnored = false;
+
+  /**
+   * The store's range reader, or `null` when range reads are unavailable — either
+   * because the store has none (in-memory, prefixed, custom stores) or because the
+   * server behind it has been caught ignoring `Range` (see {@link rangeReadsIgnored}).
+   *
+   * THE capability check for every range-based path in this class; nothing should
+   * test `store.getRange` directly, or a server-side failure would only take out
+   * some of them.
+   */
+  protected rangeReader(): StoreRangeReader | null {
+    if (this.rangeReadsIgnored) {
+      return null;
+    }
+    const { store } = this.storeRoot;
+    const { getRange } = store;
+    return getRange ? getRange.bind(store) : null;
+  }
+
+  private noteRangeReadsIgnored(): void {
+    if (this.rangeReadsIgnored) {
+      return;
+    }
+    this.rangeReadsIgnored = true;
+    console.warn(
+      'Server returned a full body for a ranged request; treating this source as ' +
+        'range-incapable and falling back to whole-file parquet reads.'
+    );
+  }
+
+  /**
    * Read one whole parquet FILE, at most once per concurrent wave.
    *
    * The single door every whole-file read goes through, so the two spellings of
@@ -557,8 +603,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * or null if the store does not support getRange.
    */
   async loadParquetSchemaBytes(parquetPath: string) {
-    const { store } = this.storeRoot;
-    if (store.getRange) {
+    if (this.rangeReader()) {
       // An ALREADY-resolved layout carries each part's footer bytes — exactly what
       // this returns. Reuse them rather than re-walking the candidate paths: that
       // walk probes the DIRECTORY path first every time, and this runs on every
@@ -593,6 +638,16 @@ export default class SpatialDataTableSource extends AnnDataSource {
         }
       }
 
+      // The walk itself may have DISCOVERED that this server ignores `Range` (see
+      // `loadParquetFooterBytesForPath`). Re-check rather than trusting the answer
+      // from before the walk: from here on the source is range-incapable, and the
+      // contract for that is `null` — "ask the whole-file path" — not a throw.
+      // Throwing is what took down every caller that reads a schema, which is most
+      // of a points load.
+      if (!this.rangeReader()) {
+        return null;
+      }
+
       throw lastError ?? new Error(`Failed to load parquet footerLength for ${parquetPath}`);
     }
     // Store does not support getRange.
@@ -600,16 +655,30 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   private async loadParquetFooterBytesForPath(path: string): Promise<Uint8Array | null> {
-    const { store } = this.storeRoot;
-    if (!store.getRange) {
+    const getRange = this.rangeReader();
+    if (!getRange) {
       return null;
     }
     const tailLength = 8;
-    const tailBytes = await store.getRange(`/${path}`, {
+    const tailBytes = await getRange(`/${path}`, {
       suffixLength: tailLength,
     });
     const normalizedTailBytes = toUint8Array(tailBytes);
     if (!normalizedTailBytes || !hasParquetTailMagic(normalizedTailBytes)) {
+      return null;
+    }
+    // A response LONGER than the range asked for means the server ignored `Range`
+    // and sent the whole body — and a whole parquet file still passes the magic
+    // check above, because its last four bytes really are `PAR1`. Left undetected,
+    // the footer length below would be read from the file's FIRST four bytes, which
+    // are `PAR1` too: ~1.2e9, and a follow-up read that can never satisfy it.
+    //
+    // Deliberately AFTER the magic check, not before. `parquetPath` is a directory
+    // as often as a file, and a directory read returns an HTML listing that is also
+    // "longer than we asked for" — on a server whose ranges work perfectly. Only a
+    // response that is genuinely a parquet file says anything about `Range`.
+    if (normalizedTailBytes.byteLength > tailLength) {
+      this.noteRangeReadsIgnored();
       return null;
     }
 
@@ -619,7 +688,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
       normalizedTailBytes.byteLength
     ).getInt32(0, true);
 
-    const footerBytes = await store.getRange(`/${path}`, {
+    const footerBytes = await getRange(`/${path}`, {
       suffixLength: footerLength + tailLength,
     });
     const normalizedFooterBytes = toUint8Array(footerBytes);
@@ -876,8 +945,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
     parquetPath: string
   ): Promise<ParquetDatasetMetadata | null> {
     const { readMetadata } = await SpatialDataTableSource.parquetModulePromise;
-    const { store } = this.storeRoot;
-    if (!readMetadata || !store.getRange) {
+    if (!readMetadata || !this.rangeReader()) {
       return null;
     }
 
@@ -1065,8 +1133,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
     rowGroupIndex: number;
     globalRowGroupIndex: number;
   } | null> {
-    const { store } = this.storeRoot;
-    if (!store.getRange) {
+    const getRange = this.rangeReader();
+    if (!getRange) {
       return null;
     }
     const dataset = await this.loadParquetDatasetMetadata(parquetPath);
@@ -1085,7 +1153,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
       const rowGroup = part.metadata.rowGroup(relativeRowGroupIndex);
       const offset = toSafeNumber(rowGroup.fileOffset(), 'row-group file offset');
       const length = toSafeNumber(rowGroup.compressedSize(), 'row-group compressed size');
-      const bytes = await store.getRange(`/${part.path}`, { offset, length });
+      const bytes = await getRange(`/${part.path}`, { offset, length });
       const rowGroupBytes = toUint8Array(bytes);
       if (!rowGroupBytes) {
         return null;
