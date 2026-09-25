@@ -29,7 +29,12 @@ class FakeWorker {
   }
   postMessage(message: unknown, transfer?: Transferable[]) {
     for (const item of transfer ?? []) {
-      if (item instanceof ArrayBuffer && item.detached) {
+      // A spent buffer carries no bytes, which is the part of `detached` that is
+      // safe to lean on here: `ArrayBuffer.prototype.detached` is ES2024, this
+      // package's `lib` is ES2022, and the tsconfig does not cover `tests/` — so a
+      // reference to it is unchecked, and on a runtime without it the fake would
+      // quietly accept the post and the test would assert nothing.
+      if (item instanceof ArrayBuffer && item.byteLength === 0) {
         throw new DOMException(
           "Failed to execute 'postMessage' on 'Worker': ArrayBuffer at index 0 is already detached.",
           'DataCloneError'
