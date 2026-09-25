@@ -29,6 +29,27 @@ export const DEFAULT_PARQUET_ENCODED_MAX_BYTES = 128 * 1024 * 1024;
 export const DEFAULT_PARQUET_DECODED_MAX_BYTES = 256 * 1024 * 1024;
 
 /**
+ * Ceiling on `part.N.parquet` enumeration.
+ *
+ * Both ways of answering "how many parts are there" (see
+ * {@link SpatialDataTableSource.loadParquetDatasetMetadata} and
+ * `discoverMultipartPartPaths`) walk N upwards until a part fails to read. That
+ * termination condition assumes the server 404s a part that does not exist —
+ * which not every server does. A proxy that path-prefix-matches a request under
+ * `points.parquet/` onto the real `part.0.parquet` answers EVERY N with valid
+ * parquet bytes, and the walk never ends: the reported symptom was >22,000
+ * requests for one element, on a server that also answered `HEAD` on the
+ * `points.parquet` DIRECTORY with 200 rather than 404 — the same "everything
+ * under this prefix exists" behaviour seen from the other end.
+ *
+ * So the walk is bounded. Exceeding the bound THROWS rather than truncating: a
+ * dataset silently missing its later parts is a correctness bug with no symptom,
+ * whereas an error names the element and the likely server misconfiguration.
+ * 512 parts is far past anything `write_to_dataset` produces in practice.
+ */
+export const MAX_PARQUET_PARTS = 512;
+
+/**
  * A decoded-table cache entry.
  *
  * The promise is cached before it settles — that is the in-flight dedup — so the
@@ -213,6 +234,9 @@ export default class SpatialDataTableSource extends AnnDataSource {
   rootAttrs: { softwareVersion: string; formatVersion: string } | null;
   // biome-ignore lint/suspicious/noExplicitAny: elementAttrs type should be a tree-ish thing
   elementAttrs: Record<string, any>;
+  /** In-flight {@link loadSpatialDataElementAttrs} reads — see the note there. */
+  // biome-ignore lint/suspicious/noExplicitAny: mirrors the elementAttrs value type
+  private elementAttrsInFlight: Map<string, Promise<any>>;
   /**
    * Cache of compressed parquet file bytes — the encoded tier.
    *
@@ -235,6 +259,31 @@ export default class SpatialDataTableSource extends AnnDataSource {
    * can be told the real number.
    */
   parquetTableCache: ByteLruCache<CachedParquetTable>;
+  /**
+   * Whole-file parquet reads that have been STARTED but have not settled, keyed
+   * by the concrete store path.
+   *
+   * {@link parquetTableBytes} holds the settled value, which dedups nothing while
+   * a read is in flight — and a points load runs its independent steps (geometry
+   * preload, feature catalog, per-row codes, tiling probe) CONCURRENTLY, so they
+   * all miss the cache together and each pulls the whole part down. That is where
+   * "one layer, fifteen GETs of the same 13 MB file" came from. Same rule as
+   * {@link rowGroupColumnExtentCache}: cache the promise, not the answer.
+   *
+   * Entries are removed once settled — the bytes live on in the byte-bounded
+   * {@link parquetTableBytes}, and a `null` (a probe that found nothing) must not
+   * become a permanent "no such file".
+   */
+  private parquetFileBytesInFlight: Map<string, Promise<Uint8Array | null>>;
+  /**
+   * The concrete file a parquet request path resolved to — `points.parquet` for a
+   * single file, `points.parquet/part.0.parquet` for a directory.
+   *
+   * Keeping the alias separate from {@link parquetTableBytes} is what lets both
+   * spellings share ONE cached copy: caching the bytes under both keys would
+   * charge the byte-bounded tier twice for the same buffer.
+   */
+  private parquetResolvedFilePaths: Map<string, string>;
   /**
    * Remembers parquet part layout per path — single file vs. `part.N.parquet`
    * directory, and the per-part metadata — so the probe sequence (see
@@ -277,6 +326,7 @@ export default class SpatialDataTableSource extends AnnDataSource {
      * This is a map of element paths to their attributes.
      */
     this.elementAttrs = {};
+    this.elementAttrsInFlight = new Map();
 
     // TODO: change to column-specific storage.
     this.parquetTableBytes = new ByteLruCache({
@@ -287,6 +337,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
       maxBytes: params.parquetCacheLimits?.decodedMaxBytes ?? DEFAULT_PARQUET_DECODED_MAX_BYTES,
       sizeOf: (entry) => entry.byteLength,
     });
+    this.parquetFileBytesInFlight = new Map();
+    this.parquetResolvedFilePaths = new Map();
     this.parquetDatasetMetadataCache = new Map();
     this.parquetPartPathsCache = new Map();
     this.rowGroupColumnExtentCache = new Map();
@@ -331,6 +383,29 @@ export default class SpatialDataTableSource extends AnnDataSource {
     if (this.elementAttrs[elementPath]) {
       return this.elementAttrs[elementPath];
     }
+    // Settled-value caching dedups nothing while the read is in flight, and every
+    // independent step of a points load starts by asking for these attrs at the
+    // same moment — four concurrent callers meant four `.zattrs` walks, each of
+    // which probes `.zattrs`, `.zarray`, `.zgroup` and `zarr.json`. Share the
+    // promise; `elementAttrs` still holds the settled value so nothing observing
+    // that field changes.
+    const inFlight = this.elementAttrsInFlight.get(elementPath);
+    if (inFlight) {
+      return inFlight;
+    }
+    const pending = this.loadSpatialDataElementAttrsUncached(elementPath);
+    this.elementAttrsInFlight.set(elementPath, pending);
+    // Both handlers, so this bookkeeping branch never becomes an unhandled
+    // rejection of its own — the caller still sees `pending` reject.
+    const evict = () => {
+      this.evictIfCurrent(this.elementAttrsInFlight, elementPath, pending);
+    };
+    pending.then(evict, evict);
+    return pending;
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: matches the elementAttrs field type
+  private async loadSpatialDataElementAttrsUncached(elementPath: string): Promise<any> {
     // TODO: normalize the elementPath to always end without a slash?
     // TODO: ensure that elementPath is a valid spatial element path?
     const v0_4_0_attrs = await this.getJson(`${elementPath}/.zattrs`);
@@ -393,27 +468,74 @@ export default class SpatialDataTableSource extends AnnDataSource {
     return getParquetCandidatePaths(parquetPath);
   }
 
-  async loadParquetBytes(parquetPath: string) {
-    const cachedBytes = this.parquetTableBytes.get(parquetPath);
+  /**
+   * Read one whole parquet FILE, at most once per concurrent wave.
+   *
+   * The single door every whole-file read goes through, so the two spellings of
+   * "fetch this part" — {@link loadParquetBytes} (probes candidate paths) and
+   * {@link loadParquetFileBytesAtPath} (already knows the path) — share one cache
+   * AND one in-flight request. They did not before: the second bypassed the cache
+   * entirely, and neither deduped concurrent callers.
+   *
+   * Never rejects. Both callers treated a throw and "not parquet bytes" the same
+   * way (try the next candidate / give up), and a rejection here would have to be
+   * re-caught by every awaiter of a shared promise.
+   */
+  private readParquetFileBytesShared(path: string): Promise<Uint8Array | null> {
+    const cachedBytes = this.parquetTableBytes.get(path);
     if (cachedBytes) {
-      // Return the cached bytes.
-      return cachedBytes;
+      return Promise.resolve(cachedBytes);
+    }
+    const inFlight = this.parquetFileBytesInFlight.get(path);
+    if (inFlight) {
+      return inFlight;
+    }
+    const pending = (async () => {
+      try {
+        const parquetBytes = await this.storeRoot.store.get(`/${path}`);
+        // Some servers return an HTML directory listing for multipart parquet
+        // directories, so validate the bytes before caching or parsing them.
+        const normalizedBytes = toUint8Array(parquetBytes);
+        if (!normalizedBytes || !isParquetFileBytes(normalizedBytes)) {
+          return null;
+        }
+        this.parquetTableBytes.set(path, normalizedBytes);
+        return normalizedBytes;
+      } catch {
+        return null;
+      }
+    })();
+    this.parquetFileBytesInFlight.set(path, pending);
+    // Only the IN-FLIGHT entry is dropped; a successful read stays resident in the
+    // byte-bounded tier above. A miss is deliberately not remembered, so a
+    // transient failure never turns into a permanent "no such part".
+    const evict = () => {
+      this.evictIfCurrent(this.parquetFileBytesInFlight, path, pending);
+    };
+    pending.then(evict, evict);
+    return pending;
+  }
+
+  async loadParquetBytes(parquetPath: string) {
+    // A resolved alias skips the candidate walk entirely — including the probe of
+    // the DIRECTORY path, which on a static server is an HTML listing to be thrown
+    // away and on MDV is a 500.
+    const resolvedPath = this.parquetResolvedFilePaths.get(parquetPath);
+    if (resolvedPath) {
+      const resolvedBytes = await this.readParquetFileBytesShared(resolvedPath);
+      if (resolvedBytes) {
+        return resolvedBytes;
+      }
+      // The layout answer went stale (or that read failed): re-probe rather than
+      // reporting the element as missing.
+      this.parquetResolvedFilePaths.delete(parquetPath);
     }
 
     for (const candidatePath of await this.orderedParquetCandidatePaths(parquetPath)) {
-      try {
-        // Some servers return an HTML directory listing for multipart parquet
-        // directories, so validate the bytes before caching or parsing them.
-        const parquetBytes = await this.storeRoot.store.get(`/${candidatePath}`);
-        const normalizedBytes = toUint8Array(parquetBytes);
-        if (!normalizedBytes || !isParquetFileBytes(normalizedBytes)) {
-          continue;
-        }
-        // Cache the parquet bytes.
-        this.parquetTableBytes.set(parquetPath, normalizedBytes);
-        return normalizedBytes;
-      } catch {
-        // Keep probing candidate parquet paths.
+      const parquetBytes = await this.readParquetFileBytesShared(candidatePath);
+      if (parquetBytes) {
+        this.parquetResolvedFilePaths.set(parquetPath, candidatePath);
+        return parquetBytes;
       }
     }
     return null;
@@ -765,6 +887,16 @@ export default class SpatialDataTableSource extends AnnDataSource {
       parts.push(directPart);
     } else {
       for (let partIndex = 0; ; partIndex++) {
+        // See MAX_PARQUET_PARTS: a server that answers every `part.N` path makes
+        // this walk unbounded, so it is capped — and the cap is an error, not a
+        // silent truncation of the element.
+        if (partIndex >= MAX_PARQUET_PARTS) {
+          throw new Error(
+            `Parquet part enumeration for ${parquetPath} exceeded ${MAX_PARQUET_PARTS} parts. ` +
+              'The store is answering every part.N.parquet path, which usually means the ' +
+              'server resolves any path under the directory onto the same file.'
+          );
+        }
         const part = await this.probeParquetPartMetadata(
           `${parquetPath}/part.${partIndex}.parquet`
         );
@@ -1279,6 +1411,16 @@ export default class SpatialDataTableSource extends AnnDataSource {
     const promise = (async () => {
       const partPaths: string[] = [];
       for (let partIndex = 0; ; partIndex += 1) {
+        // Bounded for the same reason as the metadata walk above, and it matters
+        // more here: this probe pulls WHOLE FILES, so an unbounded walk is an
+        // unbounded number of full-size downloads.
+        if (partIndex >= MAX_PARQUET_PARTS) {
+          throw new Error(
+            `Parquet part enumeration for ${parquetPath} exceeded ${MAX_PARQUET_PARTS} parts. ` +
+              'The store is answering every part.N.parquet path, which usually means the ' +
+              'server resolves any path under the directory onto the same file.'
+          );
+        }
         const partPath = `${parquetPath}/part.${partIndex}.parquet`;
         const bytes = await this.loadParquetFileBytesAtPath(partPath);
         if (!bytes) {
@@ -1538,17 +1680,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
     return tables.slice(1).reduce((merged, part) => merged.concat(part), tables[0]);
   }
 
-  protected async loadParquetFileBytesAtPath(path: string): Promise<Uint8Array | null> {
-    try {
-      const parquetBytes = await this.storeRoot.store.get(`/${path}`);
-      const normalizedBytes = toUint8Array(parquetBytes);
-      if (!normalizedBytes || !isParquetFileBytes(normalizedBytes)) {
-        return null;
-      }
-      return normalizedBytes;
-    } catch {
-      return null;
-    }
+  protected loadParquetFileBytesAtPath(path: string): Promise<Uint8Array | null> {
+    return this.readParquetFileBytesShared(path);
   }
 
   private async resolveParquetTableColumns(
