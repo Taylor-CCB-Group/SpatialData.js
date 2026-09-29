@@ -1,5 +1,13 @@
 # @spatialdata/core
 
+## 0.11.1
+
+### Patch Changes
+
+- [#199](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/199) [`8bae23d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/8bae23df056ec036eb32c1116b91ed5cabf5ebd4) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Load empty points tiles without reading the whole file
+  
+  A viewport tile with no points in it, common at a tissue edge, fell back to loading the entire points element. `loadPointsInBounds` now returns an empty result for it.
+
 ## 0.11.0
 
 ### Minor Changes
