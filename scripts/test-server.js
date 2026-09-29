@@ -8,8 +8,7 @@
 
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join, resolve } from 'node:path';
-import { dirname } from 'node:path';
+import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FIXTURE_SERVER_PORT } from './fixture-server-port.mjs';
 
@@ -86,6 +85,54 @@ function generateDirectoryListing(files, currentPath, basePath) {
 }
 
 /**
+ * Parse a single-range `Range` header against a known file size.
+ *
+ * Returns `null` when the header is absent or is a form we deliberately ignore
+ * (multiple ranges, a unit other than bytes) — the caller then serves a plain 200,
+ * which is what RFC 9110 allows for a range we choose not to honour.
+ * Returns `'unsatisfiable'` for a syntactically valid range that falls outside the
+ * file, which must be a 416 rather than a 200.
+ *
+ * Suffix ranges (`bytes=-N`) are the shape that matters most here: the parquet
+ * readers find the footer by asking for the last few bytes, and a server that
+ * answers those with the whole file makes them read a garbage footer length.
+ */
+function parseRange(rangeHeader, size) {
+  if (!rangeHeader) {
+    return null;
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match) {
+    return null;
+  }
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === '' && rawEnd === '') {
+    return null;
+  }
+
+  let start;
+  let end;
+  if (rawStart === '') {
+    // Suffix range: the last `rawEnd` bytes. Asking for more than the file holds
+    // is legal and means "the whole file".
+    const suffixLength = Number(rawEnd);
+    if (suffixLength === 0) {
+      return 'unsatisfiable';
+    }
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
+  }
+
+  if (start >= size || start > end) {
+    return 'unsatisfiable';
+  }
+  return { start, end };
+}
+
+/**
  * Handle HTTP request
  */
 async function handleRequest(req, res) {
@@ -151,11 +198,40 @@ async function handleRequest(req, res) {
     const mimeType = getMimeType(fullPath);
 
     // Add CORS headers for cross-origin requests
-    res.writeHead(200, {
+    const commonHeaders = {
       'Content-Type': mimeType,
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': 'Range',
+      'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+      'Accept-Ranges': 'bytes',
+    };
+
+    const range = parseRange(req.headers.range, content.length);
+
+    if (range === 'unsatisfiable') {
+      res.writeHead(416, {
+        ...commonHeaders,
+        'Content-Range': `bytes */${content.length}`,
+        'Content-Length': 0,
+      });
+      res.end();
+      return;
+    }
+
+    if (range) {
+      const body = content.subarray(range.start, range.end + 1);
+      res.writeHead(206, {
+        ...commonHeaders,
+        'Content-Range': `bytes ${range.start}-${range.end}/${content.length}`,
+        'Content-Length': body.length,
+      });
+      res.end(body);
+      return;
+    }
+
+    res.writeHead(200, {
+      ...commonHeaders,
       'Content-Length': content.length,
     });
 
