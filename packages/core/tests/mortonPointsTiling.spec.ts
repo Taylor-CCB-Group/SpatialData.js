@@ -346,6 +346,21 @@ describe('Morton points tiling (canonical parquet)', () => {
     expect(result.shape[1]).toBe(expected);
   });
 
+  // An empty tile is an answer, not a failure: falling back to the full-file load
+  // made each empty tile at a tissue edge cost ~15x a full one.
+  it('answers an empty tile from row groups, without falling back to the whole file', async () => {
+    const full = await source.loadPoints('points/transcripts');
+    const minX = Math.min(...full.data[0]);
+    const minY = Math.min(...full.data[1]);
+    // The fixture sits on an integer grid, so this box touches row groups but holds no point.
+    const bounds = { minX: minX + 10.2, maxX: minX + 10.8, minY: minY + 10.2, maxY: minY + 10.8 };
+
+    const result = await source.loadPointsInBounds('points/transcripts', { bounds });
+
+    expect(result.loadMode).toBe('row-groups');
+    expect(result.shape[1]).toBe(0);
+  });
+
   /**
    * Per-point feature codes ride the tile batch (D5 step 3).
    *

@@ -2871,14 +2871,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     checkAbort(options.signal);
     const intervals = mortonIntervalsForBounds(metadata.bounds, options.bounds);
-    const rowGroups = await this.selectRowGroupsForIntervals(metadata, intervals);
-    const totalRowsUpperBound = rowGroups.reduce(
-      (sum, rowGroup) => sum + rowGroupCountForIndex(metadata, rowGroup),
-      0
+    // No rows to read is an empty tile, not a reason to fall back to the whole file.
+    const rowGroups = (await this.selectRowGroupsForIntervals(metadata, intervals)).filter(
+      (rowGroup) => rowGroupCountForIndex(metadata, rowGroup) > 0
     );
-    if (totalRowsUpperBound === 0) {
-      return null;
-    }
 
     // Dynamic, like the call site below: keeps the worker scan module out of the
     // eager main-thread bundle. Hoisted above the loop so the buffers can be built.
@@ -2960,12 +2956,14 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // Resolved once, off the first row group's table: the schema is the file's, not
     // the row group's, so a later chunk cannot change the answer.
     let passthrough: Awaited<ReturnType<typeof resolvePassthroughColumns>>['columns'] | undefined;
+    let unreadRowGroup = false;
     for (const rowGroup of rowGroups) {
       checkAbort(options.signal);
       const table = await this.loadParquetRowGroupByGroupIndex(metadata.parquetPath, rowGroup, {
         columns: rowGroupColumns,
       });
       if (!table) {
+        unreadRowGroup = true;
         continue;
       }
       if (!passthrough) {
@@ -2998,7 +2996,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
       });
     }
 
-    if (xs.length === 0) {
+    // Only a read failure falls back. Every row group read and nothing in bounds is
+    // the answer, and a common one: most tiles at a tissue edge are empty.
+    if (xs.length === 0 && unreadRowGroup) {
       return null;
     }
 
