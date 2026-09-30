@@ -6,28 +6,42 @@
  * mode rejects. Layers from both panels live in one layer list; `layerFilter` routes
  * them to their view, and each view is bound to a canvas by `canvasId`.
  */
-import { Deck, type Layer, OrthographicView, type PickingInfo } from '@deck.gl/core';
+import {
+  Deck,
+  OrthographicView,
+  type OrthographicViewState,
+  type PickingInfo,
+} from '@deck.gl/core';
 import { MultiscaleImageLayer } from '@hms-dbmi/viv';
 import type { Device } from '@luma.gl/core';
 import { luma } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
 import { DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { LineLayer, PathLayer, ScatterplotLayer } from 'deck.gl';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { loadOmeZarrMultiscalesFromStore, type VivCompatiblePixelSource } from 'zarrextra';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 
-type PixelSource = {
-  shape: number[];
-  labels: string[];
-  getRaster: (o: { selection: Record<string, number> }) => Promise<{ data: ArrayLike<number> }>;
-};
+const INITIAL_VIEW_STATE: OrthographicViewState = { target: [256, 256, 0], zoom: -0.3 };
 
 const PANELS = [
   { view: 'left', canvas: 'mc-canvas-left', title: 'image + labels' },
   { view: 'right', canvas: 'mc-canvas-right', title: 'labels only' },
 ] as const;
+
+/** Viv's PixelSource, which it does not export by name. */
+type VivLoader = ConstructorParameters<typeof MultiscaleImageLayer>[0]['loader'];
+type PixelSource = VivLoader[number];
+
+/**
+ * zarrextra types raster `data` as `unknown` because a zarr chunk can also be a bigint,
+ * bool or string array, none of which Viv's `PixelSource` admits. The blobs fixture is
+ * numeric; the real fix is a narrower type in zarrextra.
+ */
+function asVivLoader(sources: VivCompatiblePixelSource[]): PixelSource[] {
+  return sources as PixelSource[];
+}
 
 async function channelRange(level: PixelSource, c: number): Promise<[number, number]> {
   const { data } = await level.getRaster({ selection: { c } });
@@ -56,9 +70,12 @@ function useBlobsSources(): Sources | null {
     if (!image || !labels) return;
     let cancelled = false;
     (async () => {
-      const load = (el: typeof image | typeof labels) =>
-        loadOmeZarrMultiscalesData({ store: el.getStore(), url: el.url }) as Promise<PixelSource[]>;
-      const [imageLoader, labelsLoader] = await Promise.all([load(image), load(labels)]);
+      const [imageLoader, labelsLoader] = (
+        await Promise.all([
+          loadOmeZarrMultiscalesFromStore(image.getStore()),
+          loadOmeZarrMultiscalesFromStore(labels.getStore()),
+        ])
+      ).map(asVivLoader);
       const coarsest = imageLoader[imageLoader.length - 1];
       const channels = coarsest.shape[coarsest.labels.indexOf('c')] ?? 1;
       const contrastLimits = await Promise.all(
@@ -96,8 +113,10 @@ const GRID_POINTS: [number, number][] = Array.from({ length: 256 }, (_, k) => [
  * The picked tile's extent. `info.sourceLayer` is the TileLayer, not the per-tile
  * sublayer, so this reads the tile deck attaches to the pick instead.
  */
-function tileBoundsOf(info: PickingInfo): number[] | undefined {
-  const bbox = (info as PickingInfo & { tile?: { bbox?: Record<string, number> } }).tile?.bbox;
+function tileBoundsOf(
+  info: PickingInfo & { tile?: { bbox?: Record<string, number> } }
+): number[] | undefined {
+  const bbox = info.tile?.bbox;
   if (!bbox || !('left' in bbox)) return undefined;
   return [bbox.left, bbox.bottom, bbox.right, bbox.top];
 }
@@ -113,79 +132,72 @@ function tileOutline(bounds: number[]): [number, number][] {
   ];
 }
 
-function hoverLayers(hovered: Hovered | null): Layer[] {
+function hoverLayers(hovered: Hovered | null) {
   if (!hovered) return [];
-  const { view } = hovered;
-  const layers: Layer[] = [];
-  if (hovered.tileBounds) {
-    layers.push(
+  const { view, tileBounds, pointer, pickedPoint } = hovered;
+  // Lines long enough to cross any orthographic view of this data.
+  const reach = 1e6;
+  return [
+    tileBounds &&
       new PathLayer({
         id: `hover-tile@${view}`,
-        data: [tileOutline(hovered.tileBounds)],
-        getPath: (d: [number, number][]) => d,
+        data: [tileOutline(tileBounds)],
+        getPath: (d) => d,
         getColor: [255, 255, 255, 200],
         getWidth: 2,
         widthUnits: 'pixels',
-      }) as unknown as Layer
-    );
-  }
-  if (hovered.pointer) {
-    // Lines long enough to cross any orthographic view of this data.
-    const [x, y] = hovered.pointer;
-    const reach = 1e6;
-    layers.push(
+      }),
+    pointer &&
       new LineLayer({
         id: `hover-crosshair@${view}`,
         data: [
           [
-            [x - reach, y],
-            [x + reach, y],
+            [pointer[0] - reach, pointer[1]],
+            [pointer[0] + reach, pointer[1]],
           ],
           [
-            [x, y - reach],
-            [x, y + reach],
+            [pointer[0], pointer[1] - reach],
+            [pointer[0], pointer[1] + reach],
           ],
-        ],
-        getSourcePosition: (d: [number, number][]) => d[0],
-        getTargetPosition: (d: [number, number][]) => d[1],
+        ] satisfies [number, number][][],
+        getSourcePosition: (d) => d[0],
+        getTargetPosition: (d) => d[1],
         getColor: [0, 255, 0, 200],
         getWidth: 1,
         widthUnits: 'pixels',
-      }) as unknown as Layer
-    );
-  }
-  const markers = hovered.pickedPoint
-    ? [{ position: hovered.pickedPoint, color: [255, 60, 60, 255] }]
-    : [];
-  if (markers.length) {
-    layers.push(
+      }),
+    pickedPoint &&
       new ScatterplotLayer({
-        id: `hover-markers@${view}`,
-        data: markers,
-        getPosition: (d: (typeof markers)[number]) => d.position,
-        getFillColor: (d: (typeof markers)[number]) => d.color as [number, number, number, number],
+        id: `hover-picked@${view}`,
+        data: [pickedPoint],
+        getPosition: (d) => d,
+        getFillColor: [255, 60, 60, 255],
         getRadius: 4,
         radiusUnits: 'pixels',
-      }) as unknown as Layer
-    );
-  }
-  return layers;
+      }),
+  ];
 }
 
-function buildLayers(sources: Sources, hovered: Hovered | null): Layer[] {
+function buildLayers(sources: Sources, hovered: Hovered | null) {
   const channels = sources.contrastLimits.length;
-  const vivLayer = new MultiscaleImageLayer({
-    id: 'image@left',
-    loader: sources.image,
-    selections: Array.from({ length: channels }, (_, c) => ({ c })),
-    contrastLimits: sources.contrastLimits,
+  // ColorPaletteExtension's props are missing from Viv's layer types; a spread is not
+  // excess-property checked, so they ride along without an assertion.
+  const paletteProps = {
     colors: [
       [255, 0, 255],
       [0, 255, 0],
       [0, 128, 255],
     ].slice(0, channels),
+  };
+  const vivLayer = new MultiscaleImageLayer({
+    ...paletteProps,
+    id: 'image@left',
+    loader: sources.image,
+    dtype: sources.image[0].dtype,
+    selections: Array.from({ length: channels }, (_, c) => ({ c })),
+    contrastLimits: sources.contrastLimits,
     channelsVisible: Array.from({ length: channels }, () => true),
-  }) as unknown as Layer;
+  });
   // Same element in both views, so a label picked in either canvas lights up in both.
   const labels = (view: string) =>
     new LabelsLayer({
@@ -195,23 +207,23 @@ function buildLayers(sources: Sources, hovered: Hovered | null): Layer[] {
       channelOpacities: [0.25],
       highlightedLabelId: hovered?.labelId ?? -1,
       highlightColor: [255, 0, 0, 200],
-    }) as unknown as Layer;
+    });
   return [
-    new DeviceAdaptiveImageLayer({ id: 'image-device@left', vivLayer }) as unknown as Layer,
+    new DeviceAdaptiveImageLayer({ id: 'image-device@left', vivLayer }),
     labels('left'),
     labels('right'),
     new ScatterplotLayer({
       id: 'grid@left',
       data: GRID_POINTS,
-      getPosition: (d: [number, number]) => d,
+      getPosition: (d) => d,
       getRadius: 6,
       radiusUnits: 'common',
       getFillColor: [255, 255, 255, 50],
       pickable: true,
       autoHighlight: true,
       highlightColor: [0, 255, 255, 255],
-    }) as unknown as Layer,
-    ...hoverLayers(hovered),
+    }),
+    hoverLayers(hovered),
   ];
 }
 
@@ -219,7 +231,7 @@ function MultiCanvasViewer() {
   const sources = useBlobsSources();
   const [status, setStatus] = useState('Creating WebGPU device…');
   const [hovered, setHovered] = useState<Hovered | null>(null);
-  const deckRef = useRef<Deck | null>(null);
+  const deckRef = useRef<Deck<OrthographicView[]> | null>(null);
   const deviceRef = useRef<Device | null>(null);
   const [device, setDevice] = useState<Device | null>(null);
 
@@ -258,16 +270,15 @@ function MultiCanvasViewer() {
 
   useEffect(() => {
     if (!device || !layers) return;
-    if (!deckRef.current) {
-      deckRef.current = new Deck({
+    const deck =
+      deckRef.current ??
+      new Deck({
         device,
         _canvases: PANELS.map((p) => p.canvas),
         views: PANELS.map(
           (p) => new OrthographicView({ id: p.view, canvasId: p.canvas, controller: true })
         ),
-        initialViewState: Object.fromEntries(
-          PANELS.map((p) => [p.view, { target: [256, 256, 0], zoom: -0.3 }])
-        ),
+        initialViewState: Object.fromEntries(PANELS.map((p) => [p.view, INITIAL_VIEW_STATE])),
         layerFilter: ({ layer, viewport }) => layer.id.endsWith(`@${viewport.id}`),
         onHover: (info: PickingInfo) => {
           const viewport = info.viewport;
@@ -275,23 +286,25 @@ function MultiCanvasViewer() {
             setHovered(null);
             return;
           }
-          const object = info.object as { labelId?: number } | [number, number] | null | undefined;
-          const pointer = viewport.unproject([info.x, info.y]) as [number, number];
+          // `info.object` is untyped (`any`): a grid point is a position array, a
+          // labels pick is `{labelId}`.
+          const { object } = info;
+          const [px, py] = viewport.unproject([info.x, info.y]);
           // Ignore our own overlay layers; they are not pickable, but be explicit.
           const hit = info.layer && !info.layer.id.startsWith('hover-') ? info.layer : null;
           setHovered({
             view: viewport.id,
             layerId: hit?.id,
-            labelId: object && !Array.isArray(object) ? object.labelId : undefined,
+            labelId: typeof object?.labelId === 'number' ? object.labelId : undefined,
             tileBounds: hit ? tileBoundsOf(info) : undefined,
-            pickedPoint: Array.isArray(object) ? object : undefined,
-            pointer: [pointer[0], pointer[1]],
+            pickedPoint: Array.isArray(object) ? [object[0], object[1]] : undefined,
+            pointer: [px, py],
           });
         },
         onError: (e: Error) => setStatus(`deck error: ${e.message}`),
       });
-    }
-    deckRef.current.setProps({ layers });
+    deckRef.current = deck;
+    deck.setProps({ layers });
   }, [device, layers]);
 
   return (
