@@ -14,7 +14,7 @@ import { webgpuAdapter } from '@luma.gl/webgpu';
 import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
 import { DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
-import { PathLayer, ScatterplotLayer } from 'deck.gl';
+import { LineLayer, PathLayer, ScatterplotLayer } from 'deck.gl';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 
@@ -129,10 +129,34 @@ function hoverLayers(hovered: Hovered | null): Layer[] {
       }) as unknown as Layer
     );
   }
-  const markers = [
-    hovered.pointer && { position: hovered.pointer, color: [0, 255, 0, 255] },
-    hovered.pickedPoint && { position: hovered.pickedPoint, color: [255, 60, 60, 255] },
-  ].filter(Boolean) as { position: [number, number]; color: number[] }[];
+  if (hovered.pointer) {
+    // Lines long enough to cross any orthographic view of this data.
+    const [x, y] = hovered.pointer;
+    const reach = 1e6;
+    layers.push(
+      new LineLayer({
+        id: `hover-crosshair@${view}`,
+        data: [
+          [
+            [x - reach, y],
+            [x + reach, y],
+          ],
+          [
+            [x, y - reach],
+            [x, y + reach],
+          ],
+        ],
+        getSourcePosition: (d: [number, number][]) => d[0],
+        getTargetPosition: (d: [number, number][]) => d[1],
+        getColor: [0, 255, 0, 200],
+        getWidth: 1,
+        widthUnits: 'pixels',
+      }) as unknown as Layer
+    );
+  }
+  const markers = hovered.pickedPoint
+    ? [{ position: hovered.pickedPoint, color: [255, 60, 60, 255] }]
+    : [];
   if (markers.length) {
     layers.push(
       new ScatterplotLayer({
@@ -280,8 +304,8 @@ function MultiCanvasViewer() {
             (hovered.pickedPoint ? ` · picked point (${hovered.pickedPoint.join(', ')})` : '')
           : '—'}
         <div style={{ color: '#888', marginTop: 4 }}>
-          green dot = pointer · red dot = picked grid point (cyan = deck autoHighlight) · white box
-          = picked tile · red label = picked label (both views)
+          green crosshair = pointer · red dot = picked grid point (cyan = deck autoHighlight) ·
+          white box = picked tile · red label = picked label (both views)
         </div>
       </div>
       <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 8, padding: 8 }}>
