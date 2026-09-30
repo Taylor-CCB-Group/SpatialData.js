@@ -14,6 +14,7 @@ import { webgpuAdapter } from '@luma.gl/webgpu';
 import { loadOmeZarrMultiscalesData } from '@spatialdata/avivatorish';
 import { DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
+import { PathLayer, ScatterplotLayer } from 'deck.gl';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 
@@ -72,7 +73,82 @@ function useBlobsSources(): Sources | null {
   return sources;
 }
 
-function buildLayers(sources: Sources): Layer[] {
+/** What the last hover pick returned, kept to draw it back into the views. */
+type Hovered = {
+  view: string;
+  layerId?: string;
+  labelId?: number;
+  /** Bounds `[left, bottom, right, top]` of the primitive tile layer that was hit. */
+  tileBounds?: number[];
+  /** Position of a picked scatter point. */
+  pickedPoint?: [number, number];
+  /** Where the pointer really is, unprojected by us rather than taken from the pick. */
+  pointer?: [number, number];
+};
+
+// A stock deck layer alongside ours, so deck's own autoHighlight shows where picks land.
+const GRID_POINTS: [number, number][] = Array.from({ length: 256 }, (_, k) => [
+  (k % 16) * 32 + 16,
+  Math.floor(k / 16) * 32 + 16,
+]);
+
+/**
+ * The picked tile's extent. `info.sourceLayer` is the TileLayer, not the per-tile
+ * sublayer, so this reads the tile deck attaches to the pick instead.
+ */
+function tileBoundsOf(info: PickingInfo): number[] | undefined {
+  const bbox = (info as PickingInfo & { tile?: { bbox?: Record<string, number> } }).tile?.bbox;
+  if (!bbox || !('left' in bbox)) return undefined;
+  return [bbox.left, bbox.bottom, bbox.right, bbox.top];
+}
+
+function tileOutline(bounds: number[]): [number, number][] {
+  const [l, b, r, t] = bounds;
+  return [
+    [l, t],
+    [r, t],
+    [r, b],
+    [l, b],
+    [l, t],
+  ];
+}
+
+function hoverLayers(hovered: Hovered | null): Layer[] {
+  if (!hovered) return [];
+  const { view } = hovered;
+  const layers: Layer[] = [];
+  if (hovered.tileBounds) {
+    layers.push(
+      new PathLayer({
+        id: `hover-tile@${view}`,
+        data: [tileOutline(hovered.tileBounds)],
+        getPath: (d: [number, number][]) => d,
+        getColor: [255, 255, 255, 200],
+        getWidth: 2,
+        widthUnits: 'pixels',
+      }) as unknown as Layer
+    );
+  }
+  const markers = [
+    hovered.pointer && { position: hovered.pointer, color: [0, 255, 0, 255] },
+    hovered.pickedPoint && { position: hovered.pickedPoint, color: [255, 60, 60, 255] },
+  ].filter(Boolean) as { position: [number, number]; color: number[] }[];
+  if (markers.length) {
+    layers.push(
+      new ScatterplotLayer({
+        id: `hover-markers@${view}`,
+        data: markers,
+        getPosition: (d: (typeof markers)[number]) => d.position,
+        getFillColor: (d: (typeof markers)[number]) => d.color as [number, number, number, number],
+        getRadius: 4,
+        radiusUnits: 'pixels',
+      }) as unknown as Layer
+    );
+  }
+  return layers;
+}
+
+function buildLayers(sources: Sources, hovered: Hovered | null): Layer[] {
   const channels = sources.contrastLimits.length;
   const vivLayer = new MultiscaleImageLayer({
     id: 'image@left',
@@ -86,26 +162,42 @@ function buildLayers(sources: Sources): Layer[] {
     ].slice(0, channels),
     channelsVisible: Array.from({ length: channels }, () => true),
   }) as unknown as Layer;
+  // Same element in both views, so a label picked in either canvas lights up in both.
   const labels = (view: string) =>
     new LabelsLayer({
       id: `labels@${view}`,
       loader: sources.labels,
       channelColors: [[255, 200, 0]],
       channelOpacities: [0.25],
+      highlightedLabelId: hovered?.labelId ?? -1,
+      highlightColor: [255, 0, 0, 200],
     }) as unknown as Layer;
   return [
     new DeviceAdaptiveImageLayer({ id: 'image-device@left', vivLayer }) as unknown as Layer,
     labels('left'),
     labels('right'),
+    new ScatterplotLayer({
+      id: 'grid@left',
+      data: GRID_POINTS,
+      getPosition: (d: [number, number]) => d,
+      getRadius: 6,
+      radiusUnits: 'common',
+      getFillColor: [255, 255, 255, 50],
+      pickable: true,
+      autoHighlight: true,
+      highlightColor: [0, 255, 255, 255],
+    }) as unknown as Layer,
+    ...hoverLayers(hovered),
   ];
 }
 
 function MultiCanvasViewer() {
   const sources = useBlobsSources();
   const [status, setStatus] = useState('Creating WebGPU device…');
-  const [hover, setHover] = useState<string>('');
+  const [hovered, setHovered] = useState<Hovered | null>(null);
   const deckRef = useRef<Deck | null>(null);
   const deviceRef = useRef<Device | null>(null);
+  const [device, setDevice] = useState<Device | null>(null);
 
   // App-owned device. Multi-canvas mode needs its default context to be offscreen.
   useEffect(() => {
@@ -122,6 +214,7 @@ function MultiCanvasViewer() {
           return;
         }
         deviceRef.current = device;
+        setDevice(device);
         setStatus(`device: ${device.type} (${device.info.gpu ?? 'unknown gpu'})`);
       })
       .catch((e: unknown) => setStatus(`device creation failed: ${String(e)}`));
@@ -134,10 +227,12 @@ function MultiCanvasViewer() {
     };
   }, []);
 
-  const layers = useMemo(() => (sources ? buildLayers(sources) : null), [sources]);
+  const layers = useMemo(
+    () => (sources ? buildLayers(sources, hovered) : null),
+    [sources, hovered]
+  );
 
   useEffect(() => {
-    const device = deviceRef.current;
     if (!device || !layers) return;
     if (!deckRef.current) {
       deckRef.current = new Deck({
@@ -151,23 +246,43 @@ function MultiCanvasViewer() {
         ),
         layerFilter: ({ layer, viewport }) => layer.id.endsWith(`@${viewport.id}`),
         onHover: (info: PickingInfo) => {
-          const object = info.object as { labelId?: number } | null | undefined;
-          setHover(
-            info.layer
-              ? `${info.viewport?.id}: ${info.layer.id}${object?.labelId ? ` label ${object.labelId}` : ''}`
-              : ''
-          );
+          const viewport = info.viewport;
+          if (!viewport || info.x < 0) {
+            setHovered(null);
+            return;
+          }
+          const object = info.object as { labelId?: number } | [number, number] | null | undefined;
+          const pointer = viewport.unproject([info.x, info.y]) as [number, number];
+          // Ignore our own overlay layers; they are not pickable, but be explicit.
+          const hit = info.layer && !info.layer.id.startsWith('hover-') ? info.layer : null;
+          setHovered({
+            view: viewport.id,
+            layerId: hit?.id,
+            labelId: object && !Array.isArray(object) ? object.labelId : undefined,
+            tileBounds: hit ? tileBoundsOf(info) : undefined,
+            pickedPoint: Array.isArray(object) ? object : undefined,
+            pointer: [pointer[0], pointer[1]],
+          });
         },
         onError: (e: Error) => setStatus(`deck error: ${e.message}`),
       });
     }
     deckRef.current.setProps({ layers });
-  }, [layers, status]);
+  }, [device, layers]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ padding: '8px 12px', fontSize: 12, borderBottom: '1px solid #333' }}>
-        {status} · {sources ? 'data loaded' : 'loading data…'} · hover: {hover || '—'}
+        {status} · {sources ? 'data loaded' : 'loading data…'} · hover:{' '}
+        {hovered
+          ? `${hovered.view} → ${hovered.layerId ?? 'nothing'}${hovered.labelId ? ` label ${hovered.labelId}` : ''}` +
+            ` · pointer (${hovered.pointer?.map((v) => v.toFixed(0)).join(', ')})` +
+            (hovered.pickedPoint ? ` · picked point (${hovered.pickedPoint.join(', ')})` : '')
+          : '—'}
+        <div style={{ color: '#888', marginTop: 4 }}>
+          green dot = pointer · red dot = picked grid point (cyan = deck autoHighlight) · white box
+          = picked tile · red label = picked label (both views)
+        </div>
       </div>
       <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 8, padding: 8 }}>
         {PANELS.map((p) => (
