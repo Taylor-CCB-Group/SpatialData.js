@@ -3,8 +3,9 @@ import Sketch from '../../src/Sketch';
 import HeadlessBlobsDemo from './HeadlessBlobsDemo';
 
 const CodecFixtureDemo = lazy(() => import('./CodecFixtureDemo'));
+const MultiCanvasDemo = lazy(() => import('./MultiCanvasDemo'));
 
-type DemoRoute = 'sketch' | 'headless' | 'codec';
+type DemoRoute = 'sketch' | 'headless' | 'codec' | 'multicanvas';
 
 function getDemoRoute(): DemoRoute {
   if (typeof window === 'undefined') {
@@ -13,6 +14,7 @@ function getDemoRoute(): DemoRoute {
   const pathname = window.location.pathname.replace(/\/+$/, '');
   if (pathname.endsWith('/headless')) return 'headless';
   if (pathname.endsWith('/codec')) return 'codec';
+  if (pathname.endsWith('/multicanvas')) return 'multicanvas';
   return 'sketch';
 }
 
@@ -35,6 +37,9 @@ function DemoNav({ route }: { route: DemoRoute }) {
       <a href="/codec" style={linkStyle(route === 'codec')}>
         Codec fixture
       </a>
+      <a href="/multicanvas" style={linkStyle(route === 'multicanvas')}>
+        Multi-canvas (WebGPU)
+      </a>
     </nav>
   );
 }
@@ -51,6 +56,10 @@ function App() {
       <main className="app-main">
         {route === 'headless' ? (
           <HeadlessBlobsDemo />
+        ) : route === 'multicanvas' ? (
+          <Suspense fallback={null}>
+            <MultiCanvasDemo />
+          </Suspense>
         ) : route === 'codec' ? (
           <Suspense
             fallback={<div style={{ padding: 16, color: '#888' }}>Loading codec demo...</div>}

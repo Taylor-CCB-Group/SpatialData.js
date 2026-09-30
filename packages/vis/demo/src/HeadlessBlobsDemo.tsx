@@ -1,3 +1,4 @@
+import { webgpuAdapter } from '@luma.gl/webgpu';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -9,6 +10,12 @@ import {
 import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
+
+// `?webgpu` runs deck on WebGPU. Only images and labels have WGSL layers so far, so
+// the other element types are hidden rather than left to throw.
+const useWebGPU = new URLSearchParams(window.location.search).has('webgpu');
+const WEBGPU_ELEMENT_TYPES = new Set(['image', 'labels']);
+const webgpuDeckProps = { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } } as const;
 
 const panelStyle = {
   flexShrink: 0,
@@ -97,11 +104,13 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
     const stack = buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem);
     setRenderStack({
       ...stack,
-      entries: stack.entries.map((entry) =>
-        entry.kind === 'spatial' && entry.source.elementType === 'labels'
-          ? { ...entry, visible: false }
-          : entry
-      ),
+      entries: stack.entries.flatMap((entry) => {
+        if (entry.kind !== 'spatial') return [entry];
+        if (useWebGPU) {
+          return WEBGPU_ELEMENT_TYPES.has(entry.source.elementType) ? [entry] : [];
+        }
+        return [entry.source.elementType === 'labels' ? { ...entry, visible: false } : entry];
+      }),
     });
     setViewState(null);
   }, [spatialData, coordinateSystem]);
@@ -302,6 +311,7 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             viewState={viewState}
             onViewStateChange={setViewState}
             renderTooltip={false}
+            deckProps={useWebGPU ? webgpuDeckProps : undefined}
             vivImageExtensions={vivImageExtensions}
             vivImageExtensionResolver={vivImageExtensionResolver}
             vivImagePropsResolver={vivImagePropsResolver}
