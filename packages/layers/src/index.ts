@@ -197,3 +197,4 @@ export {
   type ShapeTooltipRuntimeData,
   type SpatialShapesRuntimeSublayer,
 } from './shapesLayer';
+export { DeviceAdaptiveImageLayer, RasterTileLayer } from './webgpu/index';

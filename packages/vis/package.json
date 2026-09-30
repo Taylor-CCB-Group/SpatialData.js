@@ -60,6 +60,7 @@
     "@types/react-dom": "catalog:",
     "@typescript/native": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "@luma.gl/webgpu": "catalog:",
     "@vivjs/constants": "catalog:",
     "babel-plugin-react-compiler": "catalog:",
     "jsdom": "catalog:",
