@@ -2,10 +2,18 @@ import { expect, type Page, test } from '@playwright/test';
 import { type LabelsPickWebGPUState, WEBGPU_SAMPLE_POINTS } from './labelsPickWebGPUContract';
 
 // WebGPU is behind a flag in headless Chromium; the default config only sets up
-// SwiftShader's WebGL path.
+// SwiftShader's WebGL path. On Linux (CI) SwiftShader's WebGPU device is created and
+// draws one frame, then stalls without Vulkan-backed SwiftShader for presentation.
 test.use({
   launchOptions: {
-    args: ['--enable-unsafe-webgpu', '--use-gl=angle', '--use-angle=swiftshader'],
+    args: [
+      '--enable-unsafe-webgpu',
+      '--use-gl=angle',
+      '--use-angle=swiftshader',
+      ...(process.platform === 'linux'
+        ? ['--enable-features=Vulkan', '--use-vulkan=swiftshader']
+        : []),
+    ],
   },
 });
 
@@ -23,9 +31,9 @@ async function expectLabelsPickable(page: Page, fix: boolean) {
 
   const adapter = await page.evaluate(async () => {
     const found = await navigator.gpu?.requestAdapter();
-    return found
-      ? `${found.info.vendor} ${found.info.architecture} ${found.info.description}`
-      : null;
+    if (!found) return null;
+    const { vendor, architecture, description } = found.info;
+    return `${vendor} ${architecture} ${description}`.trim();
   });
   test.skip(!adapter, 'No WebGPU adapter in this browser');
   test.info().annotations.push({ type: 'webgpu adapter', description: adapter ?? '' });
