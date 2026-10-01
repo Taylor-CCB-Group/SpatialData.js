@@ -38,8 +38,7 @@ export function buildDemoPageHref(
 }
 
 /**
- * `?webgpu` (any value but `0`/`false`) runs the demo's deck on WebGPU. Experimental:
- * points are still WebGL-only.
+ * `?webgpu` (any value but `0`/`false`) runs the demo's deck on WebGPU (experimental).
  */
 export function isWebGPURequested(searchParams: URLSearchParams): boolean {
   if (!searchParams.has('webgpu')) return false;

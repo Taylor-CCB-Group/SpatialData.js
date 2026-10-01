@@ -11,10 +11,8 @@ import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLaye
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
 
-// `?webgpu` runs deck on WebGPU. Points have no WGSL layer yet, so they are hidden
-// rather than left to throw.
+// `?webgpu` runs deck on WebGPU.
 const useWebGPU = new URLSearchParams(window.location.search).has('webgpu');
-const WEBGPU_ELEMENT_TYPES = new Set(['image', 'labels', 'shapes']);
 const webgpuDeckProps = { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } } as const;
 
 const panelStyle = {
@@ -104,13 +102,11 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
     const stack = buildHeadlessRenderStackForCoordinateSystem(spatialData, coordinateSystem);
     setRenderStack({
       ...stack,
-      entries: stack.entries.flatMap((entry) => {
-        if (entry.kind !== 'spatial') return [entry];
-        if (useWebGPU) {
-          return WEBGPU_ELEMENT_TYPES.has(entry.source.elementType) ? [entry] : [];
-        }
-        return [entry.source.elementType === 'labels' ? { ...entry, visible: false } : entry];
-      }),
+      entries: stack.entries.map((entry) =>
+        entry.kind === 'spatial' && entry.source.elementType === 'labels'
+          ? { ...entry, visible: false }
+          : entry
+      ),
     });
     setViewState(null);
   }, [spatialData, coordinateSystem]);

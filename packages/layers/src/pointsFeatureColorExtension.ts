@@ -34,8 +34,57 @@ const PFC_COLOR_MODULE = {
       float paletteWidth;
     } pfcColor;
   `,
+  // WGSL bindings for the same uniforms + palette; the colour code itself is spliced
+  // into deck's scatterplot WGSL by `injectPointsFeatureColorWGSL`, since deck 9.4
+  // registers no WGSL shader hooks for an extension to inject into.
+  source: /* wgsl */ `
+    struct PfcColorUniforms {
+      highlightCode: f32,
+      paletteWidth: f32,
+    };
+    @group(0) @binding(auto) var<uniform> pfcColor: PfcColorUniforms;
+    @group(0) @binding(auto) var pfcPalette: texture_2d<f32>;
+  `,
   uniformTypes: { highlightCode: 'f32' as const, paletteWidth: 'f32' as const },
 };
+
+/**
+ * The places in deck 9.4's scatterplot WGSL (`scatterplot-layer.wgsl.ts`) that the
+ * colour code attaches to. Exact text: if a deck upgrade moves either, injection
+ * throws rather than silently drawing every point in the flat colour.
+ */
+const WGSL_ATTRIBUTE_ANCHOR = '  @location(7) instancePixelOffset: vec2<f32>,\n';
+const WGSL_FILL_COLOR_ANCHOR =
+  '  varyings.vFillColor = vec4<f32>(attributes.instanceFillColors.rgb, attributes.instanceFillColors.a * layer.opacity);\n';
+
+/** WGSL twin of the GLSL `vs:#main-end` injection below. */
+const WGSL_FEATURE_COLOR = /* wgsl */ `
+  if (attributes.featureCode >= 0.0) {
+    let pfcIdx = clamp(i32(attributes.featureCode + 0.5), 0, i32(pfcColor.paletteWidth) - 1);
+    var pfcRgb = textureLoad(pfcPalette, vec2<i32>(pfcIdx, 0), 0).rgb;
+    if (pfcColor.highlightCode > 0.5 && abs(attributes.featureCode - (pfcColor.highlightCode - 1.0)) > 0.5) {
+      let pfcLum = dot(pfcRgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+      pfcRgb = mix(vec3<f32>(pfcLum), pfcRgb, 0.2) * 0.55;
+    }
+    varyings.vFillColor = vec4<f32>(pfcRgb, varyings.vFillColor.a);
+  }
+`;
+
+/**
+ * Add the per-point feature colour to deck's scatterplot WGSL: a `featureCode`
+ * instance attribute and the palette lookup after the fill colour is computed.
+ * Location 9 sits past deck's own (0–7, and 8 for `rowIndexes`).
+ */
+export function injectPointsFeatureColorWGSL(source: string): string {
+  if (!source.includes(WGSL_ATTRIBUTE_ANCHOR) || !source.includes(WGSL_FILL_COLOR_ANCHOR)) {
+    throw new Error(
+      'PointsFeatureColorExtension: deck.gl scatterplot WGSL changed shape; update the injection anchors.'
+    );
+  }
+  return source
+    .replace(WGSL_ATTRIBUTE_ANCHOR, `${WGSL_ATTRIBUTE_ANCHOR}  @location(9) featureCode: f32,\n`)
+    .replace(WGSL_FILL_COLOR_ANCHOR, `${WGSL_FILL_COLOR_ANCHOR}${WGSL_FEATURE_COLOR}`);
+}
 
 /**
  * Dispose a luma texture across the two method names different versions expose.
@@ -108,9 +157,15 @@ export class PointsFeatureColorExtension extends LayerExtension {
   getShaders(this: Layer, extension: this) {
     // The base returns null, and the module list may be absent — guard both.
     const shaders = (super.getShaders(extension) ?? {}) as { modules?: unknown[] };
+    const modules = [...(shaders.modules ?? []), PFC_COLOR_MODULE];
+    if (this.context?.device?.type === 'webgpu') {
+      // GLSL injections would be spliced into the WGSL; the colour code goes in via
+      // `PointsScatterplotLayer` instead.
+      return { ...shaders, modules };
+    }
     return {
       ...shaders,
-      modules: [...(shaders.modules ?? []), PFC_COLOR_MODULE],
+      modules,
       inject: {
         'vs:#decl': /* glsl */ `
           in float featureCode;

@@ -1,7 +1,11 @@
+import type { Accessor } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import { ScatterplotLayer } from 'deck.gl';
 import type { FeatureColorOverrides } from './pointsFeatureColor.js';
-import { PointsFeatureColorExtension } from './pointsFeatureColorExtension.js';
+import {
+  injectPointsFeatureColorWGSL,
+  PointsFeatureColorExtension,
+} from './pointsFeatureColorExtension.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
 import { buildPointsAttributes, buildPointsDeckData } from './pointsRenderAttributes.js';
 
@@ -75,6 +79,30 @@ export interface PointsScatterStyleProps {
   highlightFeatureCode?: number;
 }
 
+/** Props `PointsFeatureColorExtension` reads (see its `defaultProps`). */
+type PointsFeatureColorProps<DataT> = {
+  getFeatureCode?: Accessor<DataT, number>;
+  highlightFeatureCode?: number;
+  featureCodeSpaceSize?: number;
+  featureColorOverrides?: FeatureColorOverrides | null;
+};
+
+/**
+ * deck's ScatterplotLayer with the feature-colour lookup added to its WGSL. The GLSL
+ * path is untouched (the extension injects there), so this class serves both backends.
+ */
+export class PointsScatterplotLayer<DataT = unknown> extends ScatterplotLayer<
+  DataT,
+  PointsFeatureColorProps<DataT>
+> {
+  static layerName = 'PointsScatterplotLayer';
+
+  getShaders() {
+    const shaders = super.getShaders();
+    return { ...shaders, source: injectPointsFeatureColorWGSL(shaders.source) };
+  }
+}
+
 // One shared extension instance: it is stateless, so every scatter layer that
 // opts into colour-by-feature can reuse it (deck keys shader compilation by the
 // extension's identity + props).
@@ -123,7 +151,7 @@ export function renderColumnarScatterLayer(
   // highlight modes) will hang off richer config.
   const colorByFeature = props.colorByFeature !== false && attributes.featureCodes !== undefined;
 
-  return new ScatterplotLayer({
+  return new PointsScatterplotLayer({
     id,
     coordinateSystem: 'cartesian',
     // Memoized per (batch, use3d, colorByFeature): deck compares `data` by

@@ -925,7 +925,7 @@ export interface SpatialCanvasProps {
   hoverTooltipMode?: HoverTooltipMode;
   /**
    * Extra deck.gl props for the underlying viewer, e.g. `deviceProps` to run on
-   * WebGPU (experimental: points are still WebGL-only).
+   * WebGPU (experimental).
    */
   deckProps?: Partial<DeckGLProps>;
 }

@@ -134,7 +134,7 @@ export default function Sketch() {
         <section style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 360 }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>
             SpatialCanvas
-            {device.kind === 'webgpu' ? ' (WebGPU, experimental: points not yet supported)' : ''}
+            {device.kind === 'webgpu' ? ' (WebGPU, experimental)' : ''}
           </h3>
           <div style={{ flex: 1, minHeight: 0 }}>
             {device.kind === 'webgl' ? <SpatialCanvas /> : null}
