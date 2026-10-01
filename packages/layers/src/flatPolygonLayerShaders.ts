@@ -305,6 +305,11 @@ fn fragmentMain(input: Varyings) -> @location(0) vec4<f32> {
     return vec4<f32>(input.pickingColor, 1.0);
   }
 
+  // Anti-alias the silhouette: fade the last pixel inside a boundary edge by its
+  // approximate coverage. WebGL gets this from the canvas's MSAA; deck renders WebGPU
+  // without multisampling. After the picking return, so picks keep the full shape.
+  color.a = color.a * clamp(d / worldPerPx + 0.5, 0.0, 1.0);
+
   // Hover highlight, as deck's own WGSL polygon layer does it.
   if (picking.isHighlightActive > 0.5) {
     let highlightedObjectColor = picking_normalizeColor(picking.highlightedObjectColor);
