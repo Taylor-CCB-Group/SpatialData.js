@@ -17,5 +17,9 @@ export interface LabelsPickWebGPUState {
   deviceType: string | null;
   /** True once the labels raster has a WebGPU tile layer to pick from. */
   ready: boolean;
+  /** Frames deck has drawn, and whether the loader was asked for the raster — so a
+   *  readiness timeout says which of device, render loop or load stalled. */
+  frames: number;
+  rasterRequested: boolean;
   errors: string[];
 }

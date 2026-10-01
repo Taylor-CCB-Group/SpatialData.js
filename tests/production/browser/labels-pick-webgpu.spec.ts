@@ -11,18 +11,38 @@ test.use({
 
 async function expectLabelsPickable(page: Page, fix: boolean) {
   const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
 
   await page.goto(`/?scenario=labels-pick-webgpu${fix ? '&fix=1' : ''}`, {
     waitUntil: 'networkidle',
   });
 
-  const hasWebGPU = await page.evaluate(async () => !!(await navigator.gpu?.requestAdapter()));
-  test.skip(!hasWebGPU, 'No WebGPU adapter in this browser');
+  const adapter = await page.evaluate(async () => {
+    const found = await navigator.gpu?.requestAdapter();
+    return found
+      ? `${found.info.vendor} ${found.info.architecture} ${found.info.description}`
+      : null;
+  });
+  test.skip(!adapter, 'No WebGPU adapter in this browser');
+  test.info().annotations.push({ type: 'webgpu adapter', description: adapter ?? '' });
 
   await expect
-    .poll(() => page.evaluate(() => window.labelsPickWebGPU?.ready ?? false), { timeout: 15_000 })
-    .toBe(true);
+    .poll(() => page.evaluate(() => window.labelsPickWebGPU?.ready ?? false), {
+      timeout: 15_000,
+      message: 'labels raster never became pickable',
+    })
+    .toBe(true)
+    .catch(async (error: Error) => {
+      const state = await page.evaluate(() => window.labelsPickWebGPU);
+      throw new Error(
+        `${error.message}\nadapter: ${adapter}\nstate: ${JSON.stringify(state)}\n` +
+          `page errors: ${JSON.stringify(pageErrors)}\nconsole errors: ${JSON.stringify(consoleErrors)}`
+      );
+    });
   const state = await page.evaluate<LabelsPickWebGPUState>(() => window.labelsPickWebGPU);
   // A silent fallback to WebGL would pass for the wrong reason.
   expect(state.deviceType).toBe('webgpu');

@@ -41,6 +41,7 @@ let framesSinceRaster = -1;
 
 const syntheticLoader = {
   getRaster: async () => {
+    window.labelsPickWebGPU.rasterRequested = true;
     framesSinceRaster = Math.max(framesSinceRaster, 0);
     return syntheticRaster;
   },
@@ -54,7 +55,13 @@ declare global {
   }
 }
 
-window.labelsPickWebGPU = { deviceType: null, ready: false, errors: [] };
+window.labelsPickWebGPU = {
+  deviceType: null,
+  ready: false,
+  frames: 0,
+  rasterRequested: false,
+  errors: [],
+};
 window.labelsPickWebGPUAt = null;
 
 function buildLayer() {
@@ -94,6 +101,7 @@ export function LabelsPickWebGPUConsumer() {
         window.labelsPickWebGPU.deviceType = device.type;
       },
       onAfterRender: () => {
+        window.labelsPickWebGPU.frames += 1;
         // A few frames after the raster arrives, its tile layer has been built and drawn.
         if (framesSinceRaster >= 0) framesSinceRaster += 1;
         window.labelsPickWebGPU.ready = framesSinceRaster >= 3;
