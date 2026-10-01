@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { LabelsColorByConsumer } from './labelsColorByScenario';
+import { LabelsPickWebGPUConsumer } from './labelsPickWebGPUScenario';
 import { ParquetWorkerConsumer } from './parquetWorkerScenario';
 import { PolygonFixtureConsumer } from './polygonShapesScenario';
 
@@ -13,6 +14,7 @@ import { PolygonFixtureConsumer } from './polygonShapesScenario';
 const scenarios = {
   'polygon-shapes': PolygonFixtureConsumer,
   'labels-color-by': LabelsColorByConsumer,
+  'labels-pick-webgpu': LabelsPickWebGPUConsumer,
   'parquet-worker': ParquetWorkerConsumer,
 } as const;
 
