@@ -63,14 +63,16 @@ export const vs = `#version 300 es
 in vec2 texCoords;
 in vec3 positions;
 in vec3 positions64Low;
-in vec3 instancePickingColors;
 
 out vec2 vTexCoord;
 
 void main(void) {
   geometry.worldPosition = positions;
   geometry.uv = texCoords;
-  geometry.pickingColor = instancePickingColors;
+  // One object per tile: the label id is resolved on the CPU in getPickingInfo.
+  // deck 9.4 no longer supplies an \`instancePickingColors\` attribute, so an
+  // unbound one reads as zero and the layer silently drops out of picking.
+  geometry.pickingColor = picking_getPickingColorFromIndex(0.0);
   gl_Position = project_position_to_clipspace(positions, positions64Low, vec3(0.0), geometry.position);
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
   vTexCoord = texCoords;

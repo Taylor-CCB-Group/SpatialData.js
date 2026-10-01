@@ -12,6 +12,14 @@ export const LABEL_2_COLOR = [0, 128, 255, 255] as const;
 /** Deliberately neither feature colour, so a fallback to it is unmistakable. */
 export const CHANNEL_COLOR = [255, 255, 255] as const;
 
+export const CANVAS_SIZE = 512;
+
+/** Band centres, far enough from the label boundary to be unambiguous interior. */
+export const SAMPLE_POINTS = {
+  label1: [CANVAS_SIZE * 0.25, CANVAS_SIZE * 0.5],
+  label2: [CANVAS_SIZE * 0.75, CANVAS_SIZE * 0.5],
+} as const;
+
 export type SampledPixel = [number, number, number, number];
 
 export interface LabelsColorBySamples {
