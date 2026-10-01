@@ -4,6 +4,7 @@ import {
   LABEL_1_COLOR,
   LABEL_2_COLOR,
   type LabelsColorBySamples,
+  SAMPLE_POINTS,
 } from './labelsColorByContract';
 
 /**
@@ -76,4 +77,31 @@ test('labels feature colouring reaches the GPU in the built layers artifact', as
 
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test('labels are pickable in the built layers artifact', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await page.goto('/?scenario=labels-color-by', { waitUntil: 'networkidle' });
+  // Picking before the raster has drawn would find nothing for the wrong reason.
+  await expect
+    .poll(() => page.evaluate(() => window.labelsColorBySamples?.label1[3] ?? 0), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0);
+
+  const picks = await page.evaluate(
+    ([label1, label2]) => ({
+      label1: window.labelsColorByPick?.(label1[0], label1[1]) ?? null,
+      label2: window.labelsColorByPick?.(label2[0], label2[1]) ?? null,
+    }),
+    [SAMPLE_POINTS.label1, SAMPLE_POINTS.label2] as const
+  );
+
+  // `null` for both is the deck 9.4 regression: the shader read a picking-colour
+  // attribute deck no longer supplies, so the layer never registered in the pick
+  // pass and hover, highlight and tooltips all went dead.
+  expect(picks).toEqual({ label1: 1, label2: 2 });
+  expect(pageErrors).toEqual([]);
 });

@@ -2,10 +2,12 @@ import { Deck, OrthographicView } from '@deck.gl/core';
 import { type LabelFeatureState, LabelsLayer } from '@spatialdata/layers';
 import { useEffect, useRef } from 'react';
 import {
+  CANVAS_SIZE,
   CHANNEL_COLOR,
   LABEL_1_COLOR,
   LABEL_2_COLOR,
   type LabelsColorBySamples,
+  SAMPLE_POINTS,
   type SampledPixel,
 } from './labelsColorByContract';
 
@@ -26,7 +28,6 @@ import {
  */
 
 const RASTER_SIZE = 64;
-const CANVAS_SIZE = 512;
 
 /** Left half is label 1, right half is label 2; label 0 (background) is never drawn. */
 function buildSyntheticLabels(): Uint32Array {
@@ -61,23 +62,20 @@ const featureState: LabelFeatureState = {
   },
 };
 
-/** Band centres, far enough from the label boundary to be unambiguous interior. */
-const samplePoints = {
-  label1: [CANVAS_SIZE * 0.25, CANVAS_SIZE * 0.5],
-  label2: [CANVAS_SIZE * 0.75, CANVAS_SIZE * 0.5],
-} as const;
-
 declare global {
   interface Window {
     labelsColorByDeckErrors: string[];
     labelsColorByRenderFrames: number;
     labelsColorBySamples: LabelsColorBySamples | null;
+    /** The label id deck's pick pass finds at a canvas pixel, or `null` for none. */
+    labelsColorByPick: ((x: number, y: number) => number | null) | null;
   }
 }
 
 window.labelsColorByDeckErrors = [];
 window.labelsColorByRenderFrames = 0;
 window.labelsColorBySamples = null;
+window.labelsColorByPick = null;
 
 /**
  * Sample the drawing buffer.
@@ -97,7 +95,7 @@ function sampleCanvas(canvas: HTMLCanvasElement): LabelsColorBySamples | null {
     const { data } = context.getImageData(Math.round(x), Math.round(y), 1, 1);
     return [data[0], data[1], data[2], data[3]];
   };
-  return { label1: at(samplePoints.label1), label2: at(samplePoints.label2) };
+  return { label1: at(SAMPLE_POINTS.label1), label2: at(SAMPLE_POINTS.label2) };
 }
 
 function buildLayer() {
@@ -154,6 +152,13 @@ export function LabelsColorByConsumer() {
       },
     });
 
+    // The same pick hover and click go through: a GPU pick pass to find the tile,
+    // then `getPickingInfo` to read the label id under the pointer.
+    window.labelsColorByPick = (x, y) => {
+      const labelId = deck.pickObject({ x, y })?.object?.labelId;
+      return typeof labelId === 'number' ? labelId : null;
+    };
+
     // The raster arrives asynchronously and deck only draws when it has a reason
     // to. Nudging it keeps frames coming after the load settles, so the sample
     // above is taken from a steady frame rather than whichever one happened last.
@@ -161,6 +166,7 @@ export function LabelsColorByConsumer() {
 
     return () => {
       window.clearInterval(interval);
+      window.labelsColorByPick = null;
       deck.finalize();
     };
   }, []);
