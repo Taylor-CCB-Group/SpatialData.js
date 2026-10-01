@@ -14,6 +14,7 @@ import { DetailView } from '@hms-dbmi/viv';
 import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import { DeckGL } from 'deck.gl';
 import { type RefObject, useCallback, useId, useMemo } from 'react';
+import { withWebGPUPickingFix } from './deckDevice';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import VivSpatialViewer, { normalizeVivLayers } from './VivSpatialViewer';
@@ -194,6 +195,7 @@ function SpatialViewerSimple({
       layers={composedLayers}
       onHover={onHover}
       onClick={onClick}
+      onDeviceInitialized={withWebGPUPickingFix(deckProps?.onDeviceInitialized)}
       controller={deckProps?.controller ?? true}
       getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
       style={{ backgroundColor: '#111', ...deckProps?.style }}

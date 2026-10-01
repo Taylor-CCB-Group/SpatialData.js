@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { type LabelsPickWebGPUState, WEBGPU_SAMPLE_POINTS } from './labelsPickWebGPUContract';
 
 // WebGPU is behind a flag in headless Chromium; the default config only sets up
@@ -9,16 +9,13 @@ test.use({
   },
 });
 
-test('labels are pickable on a WebGPU deck in the built layers artifact', async ({ page }) => {
-  // deck 9.4's pick path converts the pointer to WebGL's bottom-left origin
-  // (`cssToDevicePixels(…, true)` in deck-picker) on WebGPU too, whose textures are
-  // top-left, so every pick reads the vertically mirrored pixel. Remove once fixed:
-  // Playwright then reports this as an unexpected pass.
-  test.fail();
+async function expectLabelsPickable(page: Page, fix: boolean) {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
-  await page.goto('/?scenario=labels-pick-webgpu', { waitUntil: 'networkidle' });
+  await page.goto(`/?scenario=labels-pick-webgpu${fix ? '&fix=1' : ''}`, {
+    waitUntil: 'networkidle',
+  });
 
   const hasWebGPU = await page.evaluate(async () => !!(await navigator.gpu?.requestAdapter()));
   test.skip(!hasWebGPU, 'No WebGPU adapter in this browser');
@@ -45,4 +42,18 @@ test('labels are pickable on a WebGPU deck in the built layers artifact', async 
   expect(picks).toEqual({ label1: 1, label2: 2, background: null });
   expect(state.errors).toEqual([]);
   expect(pageErrors).toEqual([]);
+}
+
+test('labels are pickable on WebGPU with applyWebGPUPickingFix', async ({ page }) => {
+  await expectLabelsPickable(page, true);
+});
+
+test('deck alone picks WebGPU labels at the mirrored pixel', async ({ page }) => {
+  // deck 9.4's pick path converts the pointer to WebGL's bottom-left origin
+  // (`cssToDevicePixels(…, true)` in deck-picker) on WebGPU too, whose textures are
+  // top-left, so every pick reads the vertically mirrored pixel. Once deck is fixed
+  // Playwright reports an unexpected pass here: delete this test and
+  // `applyWebGPUPickingFix`.
+  test.fail();
+  await expectLabelsPickable(page, false);
 });

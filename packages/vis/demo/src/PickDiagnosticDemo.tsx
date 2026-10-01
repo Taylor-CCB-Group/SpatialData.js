@@ -8,12 +8,12 @@
  * A scan reads that frame back, picks a grid of points, and classifies each one.
  *
  * `?device=webgl` switches backends (default webgpu); `?element=multiscale` picks
- * `blobs_multiscale_labels` instead of `blobs_labels`.
+ * `blobs_multiscale_labels` instead of `blobs_labels`; `?fix=0` leaves deck's WebGPU
+ * pick path unpatched (see `applyWebGPUPickingFix`).
  */
 import { Deck, OrthographicView, type OrthographicViewState } from '@deck.gl/core';
-import type { CanvasContext } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { type LabelFeatureState, LabelsLayer } from '@spatialdata/layers';
+import { applyWebGPUPickingFix, type LabelFeatureState, LabelsLayer } from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadOmeZarrMultiscalesFromStore, type VivCompatiblePixelSource } from 'zarrextra';
@@ -22,6 +22,7 @@ import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 const params = new URLSearchParams(window.location.search);
 const DEVICE: 'webgl' | 'webgpu' = params.get('device') === 'webgl' ? 'webgl' : 'webgpu';
 const ELEMENT = params.get('element') === 'multiscale' ? 'blobs_multiscale_labels' : 'blobs_labels';
+const FIX = params.get('fix') !== '0';
 
 const CANVAS_SIZE = 600;
 const GRID = 40;
@@ -73,28 +74,6 @@ const MARK_COLORS: Record<Outcome, string> = {
   ambiguous: 'rgba(120,120,120,0.6)',
 };
 
-/**
- * deck 9.4 converts pick points to WebGL's bottom-left origin on WebGPU too
- * (`cssToDevicePixels(…, true)` in deck-picker). Toggling this undoes that, so a
- * scan can separate the flip from anything else.
- */
-function setWebGPUPickYFix(context: CanvasContext, enabled: boolean): void {
-  const proto: {
-    cssToDevicePixels: CanvasContext['cssToDevicePixels'];
-    __unfixedCssToDevicePixels?: CanvasContext['cssToDevicePixels'];
-  } = Object.getPrototypeOf(context);
-  if (enabled && !proto.__unfixedCssToDevicePixels) {
-    const original = proto.cssToDevicePixels;
-    proto.__unfixedCssToDevicePixels = original;
-    proto.cssToDevicePixels = function (point, _yInvert) {
-      return original.call(this, point, false);
-    };
-  } else if (!enabled && proto.__unfixedCssToDevicePixels) {
-    proto.cssToDevicePixels = proto.__unfixedCssToDevicePixels;
-    delete proto.__unfixedCssToDevicePixels;
-  }
-}
-
 function PickDiagnostic() {
   const { spatialData } = useSpatialData();
   const container = useRef<HTMLDivElement>(null);
@@ -104,7 +83,6 @@ function PickDiagnostic() {
   const [loader, setLoader] = useState<VivCompatiblePixelSource[] | null>(null);
   const [featureState, setFeatureState] = useState<LabelFeatureState | null>(null);
   const [status, setStatus] = useState('loading…');
-  const [yFix, setYFix] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
 
   useEffect(() => {
@@ -163,6 +141,9 @@ function PickDiagnostic() {
         : {}),
       views: new OrthographicView({ id: 'diag', controller: true }),
       initialViewState: INITIAL_VIEW_STATE,
+      onDeviceInitialized: (device) => {
+        if (FIX) applyWebGPUPickingFix(device);
+      },
       onAfterRender: () => {
         // The drawing buffer is only readable inside the frame that drew it.
         const capture = captureRef.current;
@@ -240,16 +221,6 @@ function PickDiagnostic() {
     setStatus('done');
   }, []);
 
-  const toggleYFix = useCallback((enabled: boolean) => {
-    const deck = deckRef.current;
-    // The default canvas context is what deck-picker converts through.
-    const context = deck?.getCanvasContext?.('diag');
-    if (context && DEVICE === 'webgpu') {
-      setWebGPUPickYFix(context, enabled);
-      setYFix(enabled);
-    }
-  }, []);
-
   useEffect(() => {
     const canvas = overlay.current;
     const context = canvas?.getContext('2d');
@@ -265,12 +236,16 @@ function PickDiagnostic() {
   }, [result]);
 
   const links = (['webgpu', 'webgl'] as const).flatMap((device) =>
-    (['single', 'multiscale'] as const).map((element) => ({
-      href: `?device=${device}&element=${element}`,
-      label: `${device} / ${element}`,
-      active:
-        device === DEVICE && (element === 'multiscale') === (ELEMENT === 'blobs_multiscale_labels'),
-    }))
+    (['single', 'multiscale'] as const).flatMap((element) =>
+      (device === 'webgpu' ? [true, false] : [true]).map((fix) => ({
+        href: `?device=${device}&element=${element}${fix ? '' : '&fix=0'}`,
+        label: `${device} / ${element}${device === 'webgpu' && !fix ? ' / unpatched' : ''}`,
+        active:
+          device === DEVICE &&
+          (element === 'multiscale') === (ELEMENT === 'blobs_multiscale_labels') &&
+          (device !== 'webgpu' || fix === FIX),
+      }))
+    )
   );
 
   return (
@@ -287,12 +262,6 @@ function PickDiagnostic() {
         <button type="button" onClick={scan}>
           scan
         </button>{' '}
-        {DEVICE === 'webgpu' ? (
-          <label>
-            <input type="checkbox" checked={yFix} onChange={(e) => toggleYFix(e.target.checked)} />{' '}
-            undo deck's WebGL y-inversion when picking
-          </label>
-        ) : null}
       </div>
       {result ? (
         <div style={{ marginBottom: 8, fontFamily: 'monospace' }}>

@@ -1,6 +1,6 @@
 import { Deck, OrthographicView } from '@deck.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { LabelsLayer } from '@spatialdata/layers';
+import { applyWebGPUPickingFix, LabelsLayer } from '@spatialdata/layers';
 import { useEffect, useRef } from 'react';
 import { type LabelsPickWebGPUState, WEBGPU_CANVAS_SIZE } from './labelsPickWebGPUContract';
 
@@ -9,8 +9,11 @@ import { type LabelsPickWebGPUState, WEBGPU_CANVAS_SIZE } from './labelsPickWebG
  * `RasterTileLayer` rather than the GLSL bitmask layer.
  *
  * Picks go through `pickObjectAsync`, as hover does on WebGPU: the synchronous
- * pick reads pixels back and throws there.
+ * pick reads pixels back and throws there. `&fix=1` applies `applyWebGPUPickingFix`
+ * as a consumer would; without it deck's own (y-flipped) pick path is exercised.
  */
+
+const applyFix = new URLSearchParams(window.location.search).get('fix') === '1';
 
 const RASTER_SIZE = 64;
 
@@ -87,6 +90,7 @@ export function LabelsPickWebGPUConsumer() {
       controller: false,
       layers: [buildLayer()],
       onDeviceInitialized: (device) => {
+        if (applyFix) applyWebGPUPickingFix(device);
         window.labelsPickWebGPU.deviceType = device.type;
       },
       onAfterRender: () => {

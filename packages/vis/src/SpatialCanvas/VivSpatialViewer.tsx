@@ -27,6 +27,7 @@ import type {
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
+import { withWebGPUPickingFix } from './deckDevice';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -506,6 +507,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
         onHover={onHover}
         onClick={onClick}
+        onDeviceInitialized={withWebGPUPickingFix(deckProps?.onDeviceInitialized)}
         style={{ backgroundColor: '#111', ...deckProps?.style }}
       />
     );
