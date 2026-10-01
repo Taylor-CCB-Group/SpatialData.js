@@ -80,6 +80,40 @@ interface ShapesEntry {
   boundsTransform?: unknown;
 }
 
+type ShapesLoadError = ReturnType<typeof toSpatialEntryError>;
+
+function beginResolutionLoad<T>(
+  current: Resolution<T>,
+  update: (resolution: Resolution<T>) => void
+): {
+  restore: () => void;
+  fail: (error: ShapesLoadError) => void;
+} {
+  const stale = Resolution.lastGood(current);
+  update(Resolution.loading(stale === undefined ? {} : { stale }));
+  return {
+    restore: () => update(current),
+    fail: (error) => update(Resolution.failed(error, stale)),
+  };
+}
+
+function beginShapesLoad(entry: ShapesEntry, slot: 'geometry' | 'tooltip' | 'fillColor') {
+  switch (slot) {
+    case 'geometry':
+      return beginResolutionLoad(entry.geometry, (resolution) => {
+        entry.geometry = resolution;
+      });
+    case 'tooltip':
+      return beginResolutionLoad(entry.tooltip, (resolution) => {
+        entry.tooltip = resolution;
+      });
+    case 'fillColor':
+      return beginResolutionLoad(entry.fillColor, (resolution) => {
+        entry.fillColor = resolution;
+      });
+  }
+}
+
 const tooltipSignature = (fields: string[] | undefined): string => (fields ?? []).join('');
 
 export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, ShapesElement> {
@@ -194,10 +228,9 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     // Capture the exact pre-load resolution. On cancellation we restore it — an
     // initial load that is aborted must fall back to `idle`, or `plan()` (which
     // only schedules idle geometry) never reschedules it and the entry hangs.
-    const prior = entry[slot];
     // Retain the last good value across the refine, so a reload keeps drawing.
-    const stale = Resolution.lastGood(entry[slot] as Resolution<never>);
-    entry[slot] = Resolution.loading(stale !== undefined ? { stale } : {}) as never;
+    // The helper narrows each heterogeneous slot before updating its resolution.
+    const load = beginShapesLoad(entry, slot);
     this.callbacks.onStatus?.(ctx.entryId, slot, 'loading');
     this.notify();
 
@@ -234,7 +267,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       // painting an error for one would be a visible regression. Restore the exact
       // pre-load resolution so a cancelled slot never hangs in `loading`.
       if (isCancellation(cause)) {
-        entry[slot] = prior as never;
+        load.restore();
         return;
       }
       const error = toSpatialEntryError(cause, {
@@ -245,7 +278,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         // decode failure; a tooltip/table read that throws is a load failure.
         fallback: slot === 'geometry' ? 'decode-failed' : 'load-failed',
       });
-      entry[slot] = Resolution.failed(error, stale) as never;
+      load.fail(error);
       this.callbacks.onStatus?.(ctx.entryId, slot, 'error');
     } finally {
       this.notify();
