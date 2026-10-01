@@ -39,7 +39,7 @@ export function buildDemoPageHref(
 
 /**
  * `?webgpu` (any value but `0`/`false`) runs the demo's deck on WebGPU. Experimental:
- * images and labels have WGSL layers; shapes and points are still WebGL-only.
+ * points are still WebGL-only.
  */
 export function isWebGPURequested(searchParams: URLSearchParams): boolean {
   if (!searchParams.has('webgpu')) return false;

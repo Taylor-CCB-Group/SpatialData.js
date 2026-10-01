@@ -25,10 +25,32 @@ uniform flatPolygonUniforms {
 } flatPolygon;
 `;
 
+/**
+ * WGSL bindings. Float data (ring positions, feature scale) arrives as u32 bit
+ * patterns: WebGPU only binds `rg32float`/`r32float` for sampling with the optional
+ * `float32-filterable` feature, and luma declares every `texture_2d<f32>` filterable.
+ */
+const flatPolygonUniformBlockWGSL = /* wgsl */ `\
+struct FlatPolygonUniforms {
+  strokeWidthPixels: f32,
+  opacity: f32,
+  ringPosTexWidth: f32,
+  triDataTexWidth: f32,
+  featureTexWidth: f32,
+};
+
+@group(0) @binding(auto) var<uniform> flatPolygon: FlatPolygonUniforms;
+@group(0) @binding(auto) var ringPositions: texture_2d<u32>;
+@group(0) @binding(auto) var triangleData: texture_2d<u32>;
+@group(0) @binding(auto) var featureColorTexture: texture_2d<f32>;
+@group(0) @binding(auto) var featureScaleTexture: texture_2d<u32>;
+`;
+
 export const flatPolygonUniforms = {
   name: 'flatPolygon',
   vs: flatPolygonUniformBlock,
   fs: flatPolygonUniformBlock,
+  source: flatPolygonUniformBlockWGSL,
   uniformTypes: {
     strokeWidthPixels: 'f32',
     opacity: 'f32',
@@ -173,5 +195,131 @@ void main(void) {
 
   fragColor = picking_filterHighlightColor(fragColor);
   fragColor = picking_filterPickingColor(fragColor);
+}
+`;
+
+/** WGSL twin of `vs`/`fs` above; same geometry, outline and colour rules. */
+export const source = /* wgsl */ `\
+const STROKE_LIGHTEN: f32 = 0.55;
+const STROKE_ALPHA_LIFT: f32 = 0.35;
+const STROKE_MAX_FRACTION: f32 = 0.28;
+const OUTLINE_FADE_LO: f32 = 1.5;
+const OUTLINE_FADE_HI: f32 = 4.0;
+
+struct Varyings {
+  @builtin(position) position: vec4<f32>,
+  @location(0) edgeDistance: vec3<f32>,
+  @location(1) @interpolate(flat) fillColor: vec4<f32>,
+  @location(2) @interpolate(flat) shapeScale: f32,
+  @location(3) @interpolate(flat) pickingColor: vec3<f32>,
+};
+
+fn flatPolygon_texCoord(index: u32, width: f32) -> vec2<i32> {
+  let w = u32(width);
+  return vec2<i32>(i32(index % w), i32(index / w));
+}
+
+fn flatPolygon_ring(index: u32) -> vec2<f32> {
+  let raw = textureLoad(ringPositions, flatPolygon_texCoord(index, flatPolygon.ringPosTexWidth), 0);
+  return vec2<f32>(bitcast<f32>(raw.x), bitcast<f32>(raw.y));
+}
+
+@vertex
+fn vertexMain(@builtin(vertex_index) vid: u32) -> Varyings {
+  let tri = vid / 3u;
+  let corner = vid - tri * 3u;
+
+  let td = textureLoad(triangleData, flatPolygon_texCoord(tri, flatPolygon.triDataTexWidth), 0);
+  let feature = td.w >> 3u;
+  let flags = td.w & 7u;
+
+  let A = flatPolygon_ring(td.x);
+  let B = flatPolygon_ring(td.y);
+  let C = flatPolygon_ring(td.z);
+  var p = C;
+  if (corner == 0u) {
+    p = A;
+  } else if (corner == 1u) {
+    p = B;
+  }
+
+  // Boundary edge-distance, as in the GLSL vertex shader.
+  let crossMag = abs((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x));
+  let lenBC = distance(B, C);
+  let lenCA = distance(C, A);
+  let lenAB = distance(A, B);
+  let hA = select(0.0, crossMag / lenBC, lenBC > 0.0);
+  let hB = select(0.0, crossMag / lenCA, lenCA > 0.0);
+  let hC = select(0.0, crossMag / lenAB, lenAB > 0.0);
+  let large = max(hA, max(hB, hC)) * 8.0 + 1.0;
+  let bd0 = (flags & 1u) != 0u;
+  let bd1 = (flags & 2u) != 0u;
+  let bd2 = (flags & 4u) != 0u;
+  var edge: vec3<f32>;
+  if (corner == 0u) {
+    edge = vec3<f32>(select(large, hA, bd0), select(large, 0.0, bd1), select(large, 0.0, bd2));
+  } else if (corner == 1u) {
+    edge = vec3<f32>(select(large, 0.0, bd0), select(large, hB, bd1), select(large, 0.0, bd2));
+  } else {
+    edge = vec3<f32>(select(large, 0.0, bd0), select(large, 0.0, bd1), select(large, hC, bd2));
+  }
+
+  var output: Varyings;
+  output.position = project_position_to_clipspace(vec3<f32>(p, 0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+  output.edgeDistance = edge;
+  let featureTexel = flatPolygon_texCoord(feature, flatPolygon.featureTexWidth);
+  output.fillColor = textureLoad(featureColorTexture, featureTexel, 0);
+  output.shapeScale = bitcast<f32>(textureLoad(featureScaleTexture, featureTexel, 0).r);
+  output.pickingColor = picking_getPickingColorFromIndex(feature);
+  return output;
+}
+
+@fragment
+fn fragmentMain(input: Varyings) -> @location(0) vec4<f32> {
+  // Derivatives before any discard: WGSL requires uniform control flow for fwidth.
+  let d = min(input.edgeDistance.x, min(input.edgeDistance.y, input.edgeDistance.z));
+  let worldPerPx = max(fwidth(d), 1e-20);
+
+  let fill = input.fillColor;
+  if (fill.a == 0.0) {
+    discard;
+  }
+
+  let shapePx = input.shapeScale / worldPerPx;
+  let strokePx = min(flatPolygon.strokeWidthPixels, shapePx * STROKE_MAX_FRACTION);
+  let aa = max(worldPerPx * strokePx, 1e-20);
+  let edge = (1.0 - smoothstep(0.0, aa, d)) * smoothstep(OUTLINE_FADE_LO, OUTLINE_FADE_HI, shapePx);
+
+  let strokeRgb = mix(fill.rgb, vec3<f32>(1.0), STROKE_LIGHTEN);
+  let strokeA = min(1.0, fill.a + STROKE_ALPHA_LIFT);
+  var color = mix(fill, vec4<f32>(strokeRgb, strokeA), edge);
+  color.a = color.a * flatPolygon.opacity;
+  if (color.a == 0.0) {
+    discard;
+  }
+
+  if (picking.isActive > 0.5) {
+    if (!picking_isColorValid(input.pickingColor)) {
+      discard;
+    }
+    return vec4<f32>(input.pickingColor, 1.0);
+  }
+
+  // Hover highlight, as deck's own WGSL polygon layer does it.
+  if (picking.isHighlightActive > 0.5) {
+    let highlightedObjectColor = picking_normalizeColor(picking.highlightedObjectColor);
+    if (picking_isColorZero(abs(input.pickingColor - highlightedObjectColor))) {
+      let highLightAlpha = picking.highlightColor.a;
+      let blendedAlpha = highLightAlpha + color.a * (1.0 - highLightAlpha);
+      if (blendedAlpha > 0.0) {
+        color = vec4<f32>(
+          mix(color.rgb, picking.highlightColor.rgb, highLightAlpha / blendedAlpha),
+          blendedAlpha
+        );
+      }
+    }
+  }
+
+  return deckgl_premultiplied_alpha(color);
 }
 `;

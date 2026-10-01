@@ -11,10 +11,10 @@ import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLaye
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
 
-// `?webgpu` runs deck on WebGPU. Only images and labels have WGSL layers so far, so
-// the other element types are hidden rather than left to throw.
+// `?webgpu` runs deck on WebGPU. Points have no WGSL layer yet, so they are hidden
+// rather than left to throw.
 const useWebGPU = new URLSearchParams(window.location.search).has('webgpu');
-const WEBGPU_ELEMENT_TYPES = new Set(['image', 'labels']);
+const WEBGPU_ELEMENT_TYPES = new Set(['image', 'labels', 'shapes']);
 const webgpuDeckProps = { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } } as const;
 
 const panelStyle = {
