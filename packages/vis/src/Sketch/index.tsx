@@ -8,6 +8,7 @@ import {
   buildDemoPageHref,
   DEFAULT_DEMO_SPATIALDATA_URL,
   getSpatialDataUrlFromSearchParams,
+  isAntialiasDisabled,
   isWebGPURequested,
 } from './demoUrl';
 
@@ -71,24 +72,31 @@ function DataSource({ children }: React.PropsWithChildren) {
 }
 
 type DemoDevice =
-  | { kind: 'webgl' }
+  | { kind: 'webgl'; deckProps?: Partial<DeckGLProps> }
   | { kind: 'loading' }
   | { kind: 'webgpu'; deckProps: Partial<DeckGLProps> }
   | { kind: 'unavailable' };
 
+const NO_MSAA_DECK_PROPS: Partial<DeckGLProps> = {
+  deviceProps: { webgl: { antialias: false } },
+};
+
+function getDemoSearchParams(): URLSearchParams {
+  return new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+}
+
 /**
  * `?webgpu` opts the demo into deck's WebGPU device. The adapter is imported only
  * then, and the canvas waits for it: deck picks its device once, at creation.
+ * `?antialias=0` drops WebGL's MSAA (WebGPU has none to drop).
  */
 function useDemoDevice(): DemoDevice {
-  const [requested] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      isWebGPURequested(new URLSearchParams(window.location.search))
-  );
+  const [requested] = useState(() => isWebGPURequested(getDemoSearchParams()));
   const [device, setDevice] = useState<DemoDevice>(() =>
     !requested
-      ? { kind: 'webgl' }
+      ? isAntialiasDisabled(getDemoSearchParams())
+        ? { kind: 'webgl', deckProps: NO_MSAA_DECK_PROPS }
+        : { kind: 'webgl' }
       : 'gpu' in navigator
         ? { kind: 'loading' }
         : { kind: 'unavailable' }
@@ -135,9 +143,10 @@ export default function Sketch() {
           <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>
             SpatialCanvas
             {device.kind === 'webgpu' ? ' (WebGPU, experimental)' : ''}
+            {device.kind === 'webgl' && device.deckProps ? ' (WebGL, MSAA off)' : ''}
           </h3>
           <div style={{ flex: 1, minHeight: 0 }}>
-            {device.kind === 'webgl' ? <SpatialCanvas /> : null}
+            {device.kind === 'webgl' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
             {device.kind === 'webgpu' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
             {device.kind === 'loading' ? 'Loading WebGPU…' : null}
             {device.kind === 'unavailable'
