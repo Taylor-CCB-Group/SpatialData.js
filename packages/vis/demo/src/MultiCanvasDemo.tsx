@@ -16,10 +16,10 @@ import { MultiscaleImageLayer } from '@hms-dbmi/viv';
 import type { Device } from '@luma.gl/core';
 import { luma } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
+import { applyWebGPUPickingFix, DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { LineLayer, PathLayer, ScatterplotLayer } from 'deck.gl';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadOmeZarrMultiscalesFromStore, type VivCompatiblePixelSource } from 'zarrextra';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 
@@ -231,13 +231,14 @@ function MultiCanvasViewer() {
   const sources = useBlobsSources();
   const [status, setStatus] = useState('Creating WebGPU device…');
   const [hovered, setHovered] = useState<Hovered | null>(null);
-  const deckRef = useRef<Deck<OrthographicView[]> | null>(null);
-  const deviceRef = useRef<Device | null>(null);
-  const [device, setDevice] = useState<Device | null>(null);
+  const [deck, setDeck] = useState<Deck<OrthographicView[]> | null>(null);
 
-  // App-owned device. Multi-canvas mode needs its default context to be offscreen.
+  // App-owned device, and the Deck on it, created and torn down together so a Fast
+  // Refresh (which re-runs effects) never leaves a Deck on a destroyed device.
+  // Multi-canvas mode needs the device's default context to be offscreen.
   useEffect(() => {
     let cancelled = false;
+    let created: { device: Device; deck: Deck<OrthographicView[]> } | null = null;
     luma
       .createDevice({
         type: 'webgpu',
@@ -249,17 +250,28 @@ function MultiCanvasViewer() {
           device.destroy();
           return;
         }
-        deviceRef.current = device;
-        setDevice(device);
+        // Before the Deck, so the per-canvas presentation contexts it creates are covered.
+        applyWebGPUPickingFix(device);
+        const deck = new Deck({
+          device,
+          _canvases: PANELS.map((p) => p.canvas),
+          views: PANELS.map(
+            (p) => new OrthographicView({ id: p.view, canvasId: p.canvas, controller: true })
+          ),
+          initialViewState: Object.fromEntries(PANELS.map((p) => [p.view, INITIAL_VIEW_STATE])),
+          layerFilter: ({ layer, viewport }) => layer.id.endsWith(`@${viewport.id}`),
+          onError: (e: Error) => setStatus(`deck error: ${e.message}`),
+        });
+        created = { device, deck };
+        setDeck(deck);
         setStatus(`device: ${device.type} (${device.info.gpu ?? 'unknown gpu'})`);
       })
       .catch((e: unknown) => setStatus(`device creation failed: ${String(e)}`));
     return () => {
       cancelled = true;
-      deckRef.current?.finalize();
-      deckRef.current = null;
-      deviceRef.current?.destroy();
-      deviceRef.current = null;
+      created?.deck.finalize();
+      created?.device.destroy();
+      setDeck(null);
     };
   }, []);
 
@@ -268,44 +280,38 @@ function MultiCanvasViewer() {
     [sources, hovered]
   );
 
+  const handleHover = useCallback((info: PickingInfo) => {
+    const viewport = info.viewport;
+    if (!viewport || info.x < 0) {
+      setHovered(null);
+      return;
+    }
+    // `info.object` is untyped (`any`): a grid point is a position array, a
+    // labels pick is `{labelId}`.
+    const { object } = info;
+    const [px, py] = viewport.unproject([info.x, info.y]);
+    // Ignore our own overlay layers; they are not pickable, but be explicit.
+    const hit = info.layer && !info.layer.id.startsWith('hover-') ? info.layer : null;
+    if (hit) {
+      console.log(info);
+    }
+    setHovered({
+      view: viewport.id,
+      layerId: hit?.id,
+      labelId: typeof object?.labelId === 'number' ? object.labelId : undefined,
+      tileBounds: hit ? tileBoundsOf(info) : undefined,
+      pickedPoint: Array.isArray(object) ? [object[0], object[1]] : undefined,
+      pointer: [px, py],
+    });
+  }, []);
+
+  // Handlers go through setProps on every change rather than being captured once at
+  // construction: otherwise the Deck keeps calling the closure from whichever module
+  // version created it, and edits (and DevTools breakpoints in them) never run.
   useEffect(() => {
-    if (!device || !layers) return;
-    const deck =
-      deckRef.current ??
-      new Deck({
-        device,
-        _canvases: PANELS.map((p) => p.canvas),
-        views: PANELS.map(
-          (p) => new OrthographicView({ id: p.view, canvasId: p.canvas, controller: true })
-        ),
-        initialViewState: Object.fromEntries(PANELS.map((p) => [p.view, INITIAL_VIEW_STATE])),
-        layerFilter: ({ layer, viewport }) => layer.id.endsWith(`@${viewport.id}`),
-        onHover: (info: PickingInfo) => {
-          const viewport = info.viewport;
-          if (!viewport || info.x < 0) {
-            setHovered(null);
-            return;
-          }
-          // `info.object` is untyped (`any`): a grid point is a position array, a
-          // labels pick is `{labelId}`.
-          const { object } = info;
-          const [px, py] = viewport.unproject([info.x, info.y]);
-          // Ignore our own overlay layers; they are not pickable, but be explicit.
-          const hit = info.layer && !info.layer.id.startsWith('hover-') ? info.layer : null;
-          setHovered({
-            view: viewport.id,
-            layerId: hit?.id,
-            labelId: typeof object?.labelId === 'number' ? object.labelId : undefined,
-            tileBounds: hit ? tileBoundsOf(info) : undefined,
-            pickedPoint: Array.isArray(object) ? [object[0], object[1]] : undefined,
-            pointer: [px, py],
-          });
-        },
-        onError: (e: Error) => setStatus(`deck error: ${e.message}`),
-      });
-    deckRef.current = deck;
-    deck.setProps({ layers });
-  }, [device, layers]);
+    if (!deck || !layers) return;
+    deck.setProps({ layers, onHover: handleHover });
+  }, [deck, layers, handleHover]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
