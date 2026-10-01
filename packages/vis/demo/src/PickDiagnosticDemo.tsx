@@ -216,8 +216,10 @@ function PickDiagnostic() {
     let explainedByMirror = 0;
     for (let j = 0; j < GRID; j++) {
       for (let i = 0; i < GRID; i++) {
-        const x = (CANVAS_SIZE * (i + 0.5)) / GRID;
-        const y = (CANVAS_SIZE * (j + 0.5)) / GRID;
+        // Whole pixels: luma maps a pick point to a device pixel with Math.round, the
+        // readback below with floor, and the two disagree by one pixel at x.5.
+        const x = Math.floor((CANVAS_SIZE * (i + 0.5)) / GRID);
+        const y = Math.floor((CANVAS_SIZE * (j + 0.5)) / GRID);
         const drawn = drawnAt(x, y);
         const info = await deck.pickObjectAsync({ x, y, radius: 0 });
         const labelId = info?.object?.labelId;
@@ -228,7 +230,7 @@ function PickDiagnostic() {
         else if (picked === 0) outcome = 'missed';
         else outcome = picked === drawn ? 'correct' : 'wrongId';
         if (outcome === 'wrongId' || outcome === 'missed' || outcome === 'spurious') {
-          if (drawnAt(x, CANVAS_SIZE - y) === picked) explainedByMirror += 1;
+          if (drawnAt(x, CANVAS_SIZE - 1 - y) === picked) explainedByMirror += 1;
         }
         counts[outcome] += 1;
         marks.push({ x, y, outcome });
