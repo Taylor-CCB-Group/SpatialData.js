@@ -10,6 +10,10 @@ function jsonBytes(value: unknown): Uint8Array {
 
 type OmeAxisSpec = { name: string; type?: string; unit?: string };
 
+function asyncReadable(store: Map<string, Uint8Array>): zarr.AsyncReadable {
+  return { get: async (key) => store.get(key) };
+}
+
 function createRawArrayMetadata(shape: number[], chunkShape: number[]) {
   return {
     zarr_format: 3,
@@ -34,7 +38,7 @@ function createOmeZarrGroupStore(
   axes: OmeAxisSpec[],
   arrayMetadata: Record<string, unknown>,
   chunks: Map<string, Uint8Array>
-): Map<string, Uint8Array> {
+): zarr.AsyncReadable {
   const store = new Map<string, Uint8Array>([
     [
       '/zarr.json',
@@ -64,10 +68,10 @@ function createOmeZarrGroupStore(
   for (const [path, bytes] of chunks) {
     store.set(path, bytes);
   }
-  return store;
+  return asyncReadable(store);
 }
 
-function createOmeZarrStore(): Map<string, Uint8Array> {
+function createOmeZarrStore(): zarr.AsyncReadable {
   return createOmeZarrGroupStore(
     [
       { name: 't', type: 'time' },
@@ -88,7 +92,7 @@ function indexedVolumeValue(t: number, c: number, z: number, y: number, x: numbe
   return t * 100 + c * 10 + z + y * 4 + x;
 }
 
-function createMultiTzOmeZarrStore(): Map<string, Uint8Array> {
+function createMultiTzOmeZarrStore(): zarr.AsyncReadable {
   const shape = [2, 1, 3, 4, 4];
   const chunkShape = [1, 1, 1, 4, 4];
   const chunks = new Map<string, Uint8Array>();
@@ -118,7 +122,7 @@ function createMultiTzOmeZarrStore(): Map<string, Uint8Array> {
   );
 }
 
-function createZcyxOmeZarrStore(): Map<string, Uint8Array> {
+function createZcyxOmeZarrStore(): zarr.AsyncReadable {
   const shape = [3, 2, 8, 8];
   const chunkShape = [1, 1, 8, 8];
   const plane = new Uint8Array(8 * 8);
@@ -156,7 +160,7 @@ describe('OME-Zarr store loader', () => {
     });
 
     try {
-      const [source] = await loadOmeZarrMultiscalesFromStore(createOmeZarrStore() as zarr.Readable);
+      const [source] = await loadOmeZarrMultiscalesFromStore(createOmeZarrStore());
       expect(source.labels).toEqual(['t', 'c', 'z', 'y', 'x']);
       expect(source.shape).toEqual([1, 1, 1, 2, 2]);
       expect(source.dtype).toBe('Uint8');
@@ -164,7 +168,7 @@ describe('OME-Zarr store loader', () => {
       const tile = await source.getTile({ x: 0, y: 0, selection: { t: 0, c: 0, z: 0 } });
       expect(tile.width).toBe(2);
       expect(tile.height).toBe(2);
-      expect(Array.from(tile.data as Uint8Array)).toEqual([1, 2, 3, 4]);
+      expect(Array.from(tile.data)).toEqual([1, 2, 3, 4]);
     } finally {
       if (previous) {
         zarr.registry.set('imagecodecs_jpeg2k', previous);
@@ -174,9 +178,20 @@ describe('OME-Zarr store loader', () => {
     }
   });
 
+  it('rejects non-numeric dtypes that Viv cannot use', async () => {
+    const store = createOmeZarrGroupStore(
+      [{ name: 'y', type: 'space' }, { name: 'x', type: 'space' }],
+      { ...createRawArrayMetadata([2, 2], [2, 2]), data_type: 'bool' },
+      new Map()
+    );
+    await expect(loadOmeZarrMultiscalesFromStore(store)).rejects.toThrow(
+      /dtype 'bool' is not supported as a Viv pixel source/
+    );
+  });
+
   it('returns distinct tiles for different z and t selections', async () => {
     const [source] = await loadOmeZarrMultiscalesFromStore(
-      createMultiTzOmeZarrStore() as zarr.Readable
+      createMultiTzOmeZarrStore()
     );
     expect(source.shape).toEqual([2, 1, 3, 4, 4]);
 
@@ -185,31 +200,31 @@ describe('OME-Zarr store loader', () => {
 
     expect(tileTz0.width).toBe(4);
     expect(tileTz0.height).toBe(4);
-    expect((tileTz0.data as Uint8Array)[0]).toBe(indexedVolumeValue(0, 0, 0, 0, 0));
-    expect((tileTz1.data as Uint8Array)[0]).toBe(indexedVolumeValue(1, 0, 2, 0, 0));
-    expect((tileTz0.data as Uint8Array)[0]).not.toBe((tileTz1.data as Uint8Array)[0]);
+    expect(tileTz0.data[0]).toBe(indexedVolumeValue(0, 0, 0, 0, 0));
+    expect(tileTz1.data[0]).toBe(indexedVolumeValue(1, 0, 2, 0, 0));
+    expect(tileTz0.data[0]).not.toBe(tileTz1.data[0]);
   });
 
   it('defaults missing z/t selection axes to index 0', async () => {
     const [source] = await loadOmeZarrMultiscalesFromStore(
-      createMultiTzOmeZarrStore() as zarr.Readable
+      createMultiTzOmeZarrStore()
     );
 
     const explicit = await source.getTile({ x: 0, y: 0, selection: { t: 0, c: 0, z: 0 } });
     const defaulted = await source.getTile({ x: 0, y: 0, selection: { c: 0 } });
 
-    expect((defaulted.data as Uint8Array)[0]).toBe((explicit.data as Uint8Array)[0]);
+    expect(defaulted.data[0]).toBe(explicit.data[0]);
   });
 
   it('resolves spatial axes from labels for non-canonical axis order', async () => {
-    const [source] = await loadOmeZarrMultiscalesFromStore(createZcyxOmeZarrStore() as zarr.Readable);
+    const [source] = await loadOmeZarrMultiscalesFromStore(createZcyxOmeZarrStore());
     expect(source.labels).toEqual(['z', 'c', 'y', 'x']);
     expect(source.shape).toEqual([3, 2, 8, 8]);
 
     const tile = await source.getTile({ x: 0, y: 0, selection: { z: 1, c: 0 } });
     expect(tile.width).toBe(8);
     expect(tile.height).toBe(8);
-    expect((tile.data as Uint8Array)[0]).toBe(0);
-    expect((tile.data as Uint8Array)[7]).toBe(7);
+    expect(tile.data[0]).toBe(0);
+    expect(tile.data[7]).toBe(7);
   });
 });

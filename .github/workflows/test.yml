@@ -121,6 +121,9 @@ jobs:
       - name: Typecheck docs site
         run: pnpm --filter docs typecheck
 
+      - name: Typecheck visualization demo
+        run: pnpm --filter @spatialdata/vis typecheck:demo
+
       # Catches what the typecheck cannot: broken MDX, dead internal links, and
       # Docusaurus config/plugin regressions. Kept after the typecheck so the
       # cheap check reports first. Same order as the Docs workflow's Build job.

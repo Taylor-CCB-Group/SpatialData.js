@@ -22,6 +22,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node ../../scripts/dev-stop.mjs",
     "dev:demo": "vite --config vite.config.demo.ts",
+    "typecheck:demo": "tsc --project demo/tsconfig.json",
     "watch": "vite build --watch",
     "test": "vitest run",
     "test:watch": "vitest",

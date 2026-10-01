@@ -2,15 +2,49 @@ import * as zarr from 'zarrita';
 import { getZarrChunk } from './chunkDecode';
 
 export type RasterSelection = Record<string, number> | number[];
+export type VivDtype =
+  | 'Uint8'
+  | 'Uint16'
+  | 'Uint32'
+  | 'Int8'
+  | 'Int16'
+  | 'Int32'
+  | 'Float32'
+  | 'Float64';
+type VivTypedArray =
+  | Int8Array
+  | Uint8Array
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array
+  | Float32Array
+  | Float64Array;
+
+function requireVivTypedArray(data: unknown): VivTypedArray {
+  if (
+    data instanceof Int8Array ||
+    data instanceof Uint8Array ||
+    data instanceof Int16Array ||
+    data instanceof Uint16Array ||
+    data instanceof Int32Array ||
+    data instanceof Uint32Array ||
+    data instanceof Float32Array ||
+    data instanceof Float64Array
+  ) {
+    return data;
+  }
+  throw new Error('OME-Zarr pixel sources only support numeric typed-array chunks.');
+}
 
 export interface VivCompatiblePixelSource {
   labels: string[];
   tileSize: number;
   shape: number[];
-  dtype: string;
+  dtype: VivDtype;
   meta?: { physicalSizes?: { x?: { size: number; unit: string } } };
   getRaster(props: { selection: RasterSelection; signal?: AbortSignal }): Promise<{
-    data: unknown;
+    data: VivTypedArray;
     width: number;
     height: number;
   }>;
@@ -20,7 +54,7 @@ export interface VivCompatiblePixelSource {
     selection: RasterSelection;
     signal?: AbortSignal;
   }): Promise<{
-    data: unknown;
+    data: VivTypedArray;
     width: number;
     height: number;
   }>;
@@ -151,8 +185,8 @@ function labelsFromAxes(axes: OmeMultiscaleAttrs['axes'] | undefined): string[] 
   return axes.map((axis) => (typeof axis === 'string' ? axis : axis.name));
 }
 
-function normalizeDtype(dtype: string): string {
-  const lookup: Record<string, string> = {
+function normalizeDtype(dtype: string): VivDtype {
+  const lookup: Record<string, VivDtype> = {
     u1: 'Uint8',
     u2: 'Uint16',
     u4: 'Uint32',
@@ -170,7 +204,13 @@ function normalizeDtype(dtype: string): string {
     float32: 'Float32',
     float64: 'Float64',
   };
-  return lookup[dtype.toLowerCase()] ?? dtype.charAt(0).toUpperCase() + dtype.slice(1);
+  const normalized = lookup[dtype.toLowerCase()];
+  if (!normalized) {
+    throw new Error(
+      `OME-Zarr dtype '${dtype}' is not supported as a Viv pixel source; use an 8/16/32-bit integer or 32/64-bit float.`
+    );
+  }
+  return normalized;
 }
 
 function getIndexer(labels: string[]) {
@@ -198,6 +238,7 @@ class BoundsCheckError extends Error {}
 
 class ZarrPixelSource implements VivCompatiblePixelSource {
   private readonly indexer: ReturnType<typeof getIndexer>;
+  private readonly normalizedDtype: VivDtype;
 
   constructor(
     private readonly data: zarr.Array<zarr.DataType>,
@@ -205,6 +246,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     public readonly tileSize: number
   ) {
     this.indexer = getIndexer(labels);
+    this.normalizedDtype = normalizeDtype(data.dtype);
   }
 
   get shape() {
@@ -212,7 +254,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
   }
 
   get dtype() {
-    return normalizeDtype(this.data.dtype);
+    return this.normalizedDtype;
   }
 
   private chunkIndex(
@@ -254,7 +296,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     const sel = this.chunkIndex(selection, { x: null, y: null });
     const result = await this.getRaw(sel, signal);
     const [height, width] = spatialDimensionsFromChunk(result.shape, this.data.shape, this.labels);
-    return { data: result.data, width, height };
+    return { data: requireVivTypedArray(result.data), width, height };
   }
 
   async getTile({
@@ -272,7 +314,7 @@ class ZarrPixelSource implements VivCompatiblePixelSource {
     const sel = this.chunkIndex(selection, { x: xSlice, y: ySlice });
     const result = await this.getRaw(sel, signal);
     const [height, width] = spatialDimensionsFromChunk(result.shape, this.data.shape, this.labels);
-    return { data: result.data, width, height };
+    return { data: requireVivTypedArray(result.data), width, height };
   }
 
   onTileError(err: Error) {
