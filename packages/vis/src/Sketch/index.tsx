@@ -75,7 +75,7 @@ type DemoDevice =
   | { kind: 'webgl'; deckProps?: Partial<DeckGLProps> }
   | { kind: 'loading' }
   | { kind: 'webgpu'; deckProps: Partial<DeckGLProps> }
-  | { kind: 'unavailable' };
+  | { kind: 'unavailable'; reason: string };
 
 const NO_MSAA_DECK_PROPS: Partial<DeckGLProps> = {
   deviceProps: { webgl: { antialias: false } },
@@ -99,18 +99,23 @@ function useDemoDevice(): DemoDevice {
         : { kind: 'webgl' }
       : 'gpu' in navigator
         ? { kind: 'loading' }
-        : { kind: 'unavailable' }
+        : { kind: 'unavailable', reason: 'WebGPU was requested but this browser has none.' }
   );
   useEffect(() => {
     if (device.kind !== 'loading') return;
     let cancelled = false;
-    import('@luma.gl/webgpu').then(({ webgpuAdapter }) => {
-      if (cancelled) return;
-      setDevice({
-        kind: 'webgpu',
-        deckProps: { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } },
+    import('@luma.gl/webgpu')
+      .then(({ webgpuAdapter }) => {
+        if (cancelled) return;
+        setDevice({
+          kind: 'webgpu',
+          deckProps: { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } },
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setDevice({ kind: 'unavailable', reason: `Could not load WebGPU support: ${error}` });
       });
-    });
     return () => {
       cancelled = true;
     };
@@ -149,9 +154,7 @@ export default function Sketch() {
             {device.kind === 'webgl' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
             {device.kind === 'webgpu' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
             {device.kind === 'loading' ? 'Loading WebGPU…' : null}
-            {device.kind === 'unavailable'
-              ? 'WebGPU was requested but this browser has none.'
-              : null}
+            {device.kind === 'unavailable' ? device.reason : null}
           </div>
         </section>
 

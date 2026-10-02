@@ -66,7 +66,6 @@ export function resolveHoveredLabel(
 export interface PickMultipleObjectsCapable {
   props?: {
     layers?: unknown;
-    deviceProps?: { type?: string };
   };
   pickMultipleObjects(opts: {
     x: number;
@@ -214,8 +213,8 @@ function collectPicks(
     deck &&
     // Synchronous multi-picking reads pixels back and throws on WebGPU; fall back to
     // deck's own (async) hover pick there until this moves to pickObjectsAsync.
-    // `Deck.device` is protected, so this reads the requested type (misses 'best-available').
-    deck.props?.deviceProps?.type !== 'webgpu' &&
+    // The picked layer's context holds the device deck actually initialised.
+    info.layer?.context?.device?.type !== 'webgpu' &&
     typeof deck.pickMultipleObjects === 'function' &&
     typeof info.x === 'number' &&
     typeof info.y === 'number'

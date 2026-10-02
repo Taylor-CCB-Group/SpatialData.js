@@ -7,12 +7,13 @@ import {
   type SpatialFeaturePickEvent,
   type ViewState,
 } from '../../src/index';
+import { isWebGPURequested } from '../../src/Sketch/demoUrl';
 import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
 
 // `?webgpu` runs deck on WebGPU.
-const useWebGPU = new URLSearchParams(window.location.search).has('webgpu');
+const useWebGPU = isWebGPURequested(new URLSearchParams(window.location.search));
 const webgpuDeckProps = { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } } as const;
 
 const panelStyle = {

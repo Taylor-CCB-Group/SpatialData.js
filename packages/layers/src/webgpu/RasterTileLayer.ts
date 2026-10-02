@@ -1,5 +1,6 @@
 import type { GetPickingInfoParams, PickingInfo } from '@deck.gl/core';
 import { color, Layer, picking, project32 } from '@deck.gl/core';
+import { MAX_CHANNELS } from '@hms-dbmi/viv';
 import type { Texture, TextureFormat } from '@luma.gl/core';
 import { Model } from '@luma.gl/engine';
 import { resolveLabelPickingInfo } from '../LabelsBitmaskTileLayer';
@@ -9,7 +10,7 @@ import {
   type LabelColorLut,
   resolveHighlightedLabel,
 } from '../labelColorEncoding';
-import { RASTER_MAX_CHANNELS, rasterUniforms, source } from './rasterTileLayerShaders';
+import { rasterUniforms, source } from './rasterTileLayerShaders';
 
 type Rgb = readonly number[];
 type ChannelData = { data: ArrayLike<number>[]; width: number; height: number };
@@ -140,7 +141,7 @@ export class RasterTileLayer extends (Layer as any) {
     this.state.texture?.destroy();
     this.state.texture = null;
     const channelData = this.props.channelData as ChannelData | null;
-    const data = channelData?.data?.slice(0, RASTER_MAX_CHANNELS);
+    const data = channelData?.data?.slice(0, MAX_CHANNELS);
     if (!channelData || !data?.length || !channelData.width || !channelData.height) {
       return;
     }
@@ -171,10 +172,16 @@ export class RasterTileLayer extends (Layer as any) {
     const opacity = p.opacity ?? 1;
     const mode = p.mode === 'labels' ? 1 : 0;
 
-    const colors = Array.from({ length: RASTER_MAX_CHANNELS }, (_, i) =>
+    const colors = Array.from({ length: MAX_CHANNELS }, (_, i) =>
       rgba(p.colors?.[i], i < this.state.numChannels && (p.channelsVisible?.[i] ?? true) ? 1 : 0)
     );
-    const limit = (i: number): [number, number] => p.contrastLimits?.[i] ?? [0, 1];
+    const limits = Array.from(
+      { length: MAX_CHANNELS },
+      (_, i): [number, number, number, number] => {
+        const [min, max] = p.contrastLimits?.[i] ?? [0, 1];
+        return [min, max, 0, 0];
+      }
+    );
     const lut = p.featureColorLut as LabelColorLut | null;
     const useLut = lut && p.featureColorTexture ? 1 : 0;
     const highlight = (p.highlightColor as number[] | undefined) ?? DEFAULT_LABEL_HIGHLIGHT_COLOR;
@@ -183,15 +190,8 @@ export class RasterTileLayer extends (Layer as any) {
     model.shaderInputs.setProps({
       raster: {
         bounds: p.bounds,
-        color0: colors[0],
-        color1: colors[1],
-        color2: colors[2],
-        color3: colors[3],
-        color4: colors[4],
-        color5: colors[5],
-        limits01: [...limit(0), ...limit(1)],
-        limits23: [...limit(2), ...limit(3)],
-        limits45: [...limit(4), ...limit(5)],
+        colors,
+        limits,
         labelColor: rgba(p.channelColors?.[0], 1),
         highlightColor: rgba(highlight, (highlight[3] ?? 255) / 255),
         mode,

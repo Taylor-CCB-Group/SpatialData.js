@@ -1,10 +1,5 @@
+import { MAX_CHANNELS } from '@hms-dbmi/viv';
 import type { Texture } from '@luma.gl/core';
-
-/**
- * Channels one raster tile can composite. Viv allows 10; six keeps the uniform
- * block small for the spike and covers every fixture we render.
- */
-export const RASTER_MAX_CHANNELS = 6;
 
 /**
  * Raw samples live in one `texture_2d_array<u32>`, one layer per channel, read with
@@ -17,15 +12,10 @@ export const RASTER_MAX_CHANNELS = 6;
 const uniformBlock = /* wgsl */ `\
 struct RasterUniforms {
   bounds: vec4<f32>,
-  color0: vec4<f32>,
-  color1: vec4<f32>,
-  color2: vec4<f32>,
-  color3: vec4<f32>,
-  color4: vec4<f32>,
-  color5: vec4<f32>,
-  limits01: vec4<f32>,
-  limits23: vec4<f32>,
-  limits45: vec4<f32>,
+  // Viv's channel limit, so UIs that cap channels at MAX_CHANNELS fit. Limits are
+  // vec4 (.xy used) because uniform array elements are 16-byte aligned anyway.
+  colors: array<vec4<f32>, ${MAX_CHANNELS}>,
+  limits: array<vec4<f32>, ${MAX_CHANNELS}>,
   labelColor: vec4<f32>,
   highlightColor: vec4<f32>,
   mode: f32,
@@ -51,15 +41,8 @@ type Vec4 = [number, number, number, number];
 
 export type RasterUniformProps = {
   bounds: Vec4;
-  color0: Vec4;
-  color1: Vec4;
-  color2: Vec4;
-  color3: Vec4;
-  color4: Vec4;
-  color5: Vec4;
-  limits01: Vec4;
-  limits23: Vec4;
-  limits45: Vec4;
+  colors: Vec4[];
+  limits: Vec4[];
   labelColor: Vec4;
   highlightColor: Vec4;
   mode: number;
@@ -84,15 +67,8 @@ export const rasterUniforms = {
   // Order must match the WGSL struct: luma lays the buffer out from this table.
   uniformTypes: {
     bounds: 'vec4<f32>',
-    color0: 'vec4<f32>',
-    color1: 'vec4<f32>',
-    color2: 'vec4<f32>',
-    color3: 'vec4<f32>',
-    color4: 'vec4<f32>',
-    color5: 'vec4<f32>',
-    limits01: 'vec4<f32>',
-    limits23: 'vec4<f32>',
-    limits45: 'vec4<f32>',
+    colors: ['vec4<f32>', MAX_CHANNELS],
+    limits: ['vec4<f32>', MAX_CHANNELS],
     labelColor: 'vec4<f32>',
     highlightColor: 'vec4<f32>',
     mode: 'f32',
@@ -163,25 +139,18 @@ fn raster_sample(texelPosition: vec2<f32>, size: vec2<i32>, channel: i32) -> f32
 }
 
 fn raster_image(texelPosition: vec2<f32>, size: vec2<i32>) -> vec4<f32> {
-  var colors = array<vec4<f32>, ${RASTER_MAX_CHANNELS}>(
-    raster.color0, raster.color1, raster.color2, raster.color3, raster.color4, raster.color5
-  );
-  var limits = array<vec2<f32>, ${RASTER_MAX_CHANNELS}>(
-    raster.limits01.xy, raster.limits01.zw,
-    raster.limits23.xy, raster.limits23.zw,
-    raster.limits45.xy, raster.limits45.zw
-  );
   var rgb = vec3<f32>(0.0);
-  let count = min(i32(raster.numChannels), ${RASTER_MAX_CHANNELS});
+  let count = min(i32(raster.numChannels), ${MAX_CHANNELS});
   for (var i = 0; i < count; i = i + 1) {
+    let color = raster.colors[i];
     // colour.a carries channel visibility.
-    if (colors[i].a < 0.5) {
+    if (color.a < 0.5) {
       continue;
     }
-    let range = limits[i];
+    let range = raster.limits[i].xy;
     let value = raster_sample(texelPosition, size, i);
     let intensity = clamp((value - range.x) / max(range.y - range.x, 1e-20), 0.0, 1.0);
-    rgb = rgb + colors[i].rgb * intensity;
+    rgb = rgb + color.rgb * intensity;
   }
   return vec4<f32>(min(rgb, vec3<f32>(1.0)), raster.opacity);
 }

@@ -61,9 +61,10 @@ type Sources = {
   contrastLimits: [number, number][];
 };
 
-function useBlobsSources(): Sources | null {
+function useBlobsSources(): { sources: Sources | null; loadError: string | null } {
   const { spatialData } = useSpatialData();
   const [sources, setSources] = useState<Sources | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     const image = spatialData?.images?.blobs_multiscale_image;
     const labels = spatialData?.labels?.blobs_multiscale_labels;
@@ -82,12 +83,14 @@ function useBlobsSources(): Sources | null {
         Array.from({ length: channels }, (_, c) => channelRange(coarsest, c))
       );
       if (!cancelled) setSources({ image: imageLoader, labels: labelsLoader, contrastLimits });
-    })();
+    })().catch((error: unknown) => {
+      if (!cancelled) setLoadError(String(error));
+    });
     return () => {
       cancelled = true;
     };
   }, [spatialData]);
-  return sources;
+  return { sources, loadError };
 }
 
 /** What the last hover pick returned, kept to draw it back into the views. */
@@ -228,7 +231,7 @@ function buildLayers(sources: Sources, hovered: Hovered | null) {
 }
 
 function MultiCanvasViewer() {
-  const sources = useBlobsSources();
+  const { sources, loadError } = useBlobsSources();
   const [status, setStatus] = useState('Creating WebGPU device…');
   const [hovered, setHovered] = useState<Hovered | null>(null);
   const [deck, setDeck] = useState<Deck<OrthographicView[]> | null>(null);
@@ -316,7 +319,9 @@ function MultiCanvasViewer() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ padding: '8px 12px', fontSize: 12, borderBottom: '1px solid #333' }}>
-        {status} · {sources ? 'data loaded' : 'loading data…'} · hover:{' '}
+        {status} ·{' '}
+        {loadError ? `load failed: ${loadError}` : sources ? 'data loaded' : 'loading data…'} ·
+        hover:{' '}
         {hovered
           ? `${hovered.view} → ${hovered.layerId ?? 'nothing'}${hovered.labelId ? ` label ${hovered.labelId}` : ''}` +
             ` · pointer (${hovered.pointer?.map((v) => v.toFixed(0)).join(', ')})` +

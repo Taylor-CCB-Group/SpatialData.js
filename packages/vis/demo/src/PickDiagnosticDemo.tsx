@@ -99,7 +99,9 @@ function PickDiagnostic() {
       setLoader(levels);
       setFeatureState({ fillColorByFeatureId });
       setStatus(`${ELEMENT}: ${levels.length} level(s), ${ids.size} labels`);
-    })();
+    })().catch((error: unknown) => {
+      if (!cancelled) setStatus(`load failed: ${error}`);
+    });
     return () => {
       cancelled = true;
     };

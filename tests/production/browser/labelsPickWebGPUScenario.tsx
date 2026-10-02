@@ -1,6 +1,6 @@
-import { Deck, OrthographicView } from '@deck.gl/core';
+import { CompositeLayer, Deck, OrthographicView } from '@deck.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { applyWebGPUPickingFix, LabelsLayer } from '@spatialdata/layers';
+import { applyWebGPUPickingFix, LabelsLayer, RasterTileLayer } from '@spatialdata/layers';
 import { useEffect, useRef } from 'react';
 import { type LabelsPickWebGPUState, WEBGPU_CANVAS_SIZE } from './labelsPickWebGPUContract';
 
@@ -36,13 +36,9 @@ const syntheticRaster = {
   height: RASTER_SIZE,
 };
 
-/** Frames drawn since the loader handed the raster over; `-1` until it has. */
-let framesSinceRaster = -1;
-
 const syntheticLoader = {
   getRaster: async () => {
     window.labelsPickWebGPU.rasterRequested = true;
-    framesSinceRaster = Math.max(framesSinceRaster, 0);
     return syntheticRaster;
   },
 };
@@ -63,6 +59,15 @@ window.labelsPickWebGPU = {
   errors: [],
 };
 window.labelsPickWebGPUAt = null;
+
+function hasRasterTileLayer(layers: readonly unknown[] | undefined): boolean {
+  return (layers ?? []).some(
+    (layer) =>
+      layer instanceof RasterTileLayer ||
+      (Array.isArray(layer) && hasRasterTileLayer(layer)) ||
+      (layer instanceof CompositeLayer && hasRasterTileLayer(layer.getSubLayers()))
+  );
+}
 
 function buildLayer() {
   return new LabelsLayer({
@@ -102,9 +107,8 @@ export function LabelsPickWebGPUConsumer() {
       },
       onAfterRender: () => {
         window.labelsPickWebGPU.frames += 1;
-        // A few frames after the raster arrives, its tile layer has been built and drawn.
-        if (framesSinceRaster >= 0) framesSinceRaster += 1;
-        window.labelsPickWebGPU.ready = framesSinceRaster >= 3;
+        // The frame just drawn included the WGSL tile layer, so it can be picked.
+        if (hasRasterTileLayer(deck.props.layers)) window.labelsPickWebGPU.ready = true;
       },
       onError: (error) => {
         window.labelsPickWebGPU.errors.push(error.message);
