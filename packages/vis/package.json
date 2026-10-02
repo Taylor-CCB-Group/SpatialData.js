@@ -37,6 +37,7 @@
     "@deck.gl/core": "catalog:",
     "@hms-dbmi/viv": "catalog:",
     "@luma.gl/core": "catalog:",
+    "@luma.gl/webgpu": "catalog:",
     "@math.gl/core": "catalog:",
     "@spatialdata/avivatorish": "workspace:*",
     "@spatialdata/core": "workspace:*",

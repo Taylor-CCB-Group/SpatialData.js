@@ -211,6 +211,10 @@ function collectPicks(
   if (
     aggregate &&
     deck &&
+    // Synchronous multi-picking reads pixels back and throws on WebGPU; fall back to
+    // deck's own (async) hover pick there until this moves to pickObjectsAsync.
+    // The picked layer's context holds the device deck actually initialised.
+    info.layer?.context?.device?.type !== 'webgpu' &&
     typeof deck.pickMultipleObjects === 'function' &&
     typeof info.x === 'number' &&
     typeof info.y === 'number'

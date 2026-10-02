@@ -36,3 +36,21 @@ export function buildDemoPageHref(
   page.searchParams.set('url', spatialDataUrl);
   return page.href;
 }
+
+/**
+ * `?webgpu` (any value but `0`/`false`) runs the demo's deck on WebGPU (experimental).
+ */
+export function isWebGPURequested(searchParams: URLSearchParams): boolean {
+  if (!searchParams.has('webgpu')) return false;
+  const value = searchParams.get('webgpu')?.trim().toLowerCase();
+  return value !== '0' && value !== 'false';
+}
+
+/**
+ * `?antialias=0` (or `false`) turns off the WebGL canvas's MSAA, so WebGL can be
+ * compared with WebGPU, which deck renders without multisampling.
+ */
+export function isAntialiasDisabled(searchParams: URLSearchParams): boolean {
+  const value = searchParams.get('antialias')?.trim().toLowerCase();
+  return value === '0' || value === 'false';
+}

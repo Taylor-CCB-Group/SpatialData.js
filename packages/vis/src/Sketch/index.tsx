@@ -1,4 +1,5 @@
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
+import type { DeckGLProps } from 'deck.gl';
 import { type CSSProperties, useEffect, useState } from 'react';
 import SpatialCanvas from '../SpatialCanvas';
 import Transforms from '../Transforms';
@@ -7,6 +8,8 @@ import {
   buildDemoPageHref,
   DEFAULT_DEMO_SPATIALDATA_URL,
   getSpatialDataUrlFromSearchParams,
+  isAntialiasDisabled,
+  isWebGPURequested,
 } from './demoUrl';
 
 const dataSourceBarStyle: CSSProperties = {
@@ -68,6 +71,58 @@ function DataSource({ children }: React.PropsWithChildren) {
   );
 }
 
+type DemoDevice =
+  | { kind: 'webgl'; deckProps?: Partial<DeckGLProps> }
+  | { kind: 'loading' }
+  | { kind: 'webgpu'; deckProps: Partial<DeckGLProps> }
+  | { kind: 'unavailable'; reason: string };
+
+const NO_MSAA_DECK_PROPS: Partial<DeckGLProps> = {
+  deviceProps: { webgl: { antialias: false } },
+};
+
+function getDemoSearchParams(): URLSearchParams {
+  return new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+}
+
+/**
+ * `?webgpu` opts the demo into deck's WebGPU device. The adapter is imported only
+ * then, and the canvas waits for it: deck picks its device once, at creation.
+ * `?antialias=0` drops WebGL's MSAA (WebGPU has none to drop).
+ */
+function useDemoDevice(): DemoDevice {
+  const [requested] = useState(() => isWebGPURequested(getDemoSearchParams()));
+  const [device, setDevice] = useState<DemoDevice>(() =>
+    !requested
+      ? isAntialiasDisabled(getDemoSearchParams())
+        ? { kind: 'webgl', deckProps: NO_MSAA_DECK_PROPS }
+        : { kind: 'webgl' }
+      : 'gpu' in navigator
+        ? { kind: 'loading' }
+        : { kind: 'unavailable', reason: 'WebGPU was requested but this browser has none.' }
+  );
+  useEffect(() => {
+    if (device.kind !== 'loading') return;
+    let cancelled = false;
+    import('@luma.gl/webgpu')
+      .then(({ webgpuAdapter }) => {
+        if (cancelled) return;
+        setDevice({
+          kind: 'webgpu',
+          deckProps: { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } },
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setDevice({ kind: 'unavailable', reason: `Could not load WebGPU support: ${error}` });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [device.kind]);
+  return device;
+}
+
 // biome-ignore lint/correctness/noUnusedVariables: dev-only debug view, toggled via the commented <Repr /> usage below.
 function Repr() {
   const { spatialData } = useSpatialData();
@@ -75,6 +130,7 @@ function Repr() {
 }
 
 export default function Sketch() {
+  const device = useDemoDevice();
   return (
     <DataSource>
       <div
@@ -89,9 +145,16 @@ export default function Sketch() {
         {/* <Repr /> */}
 
         <section style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 360 }}>
-          <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>SpatialCanvas</h3>
+          <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>
+            SpatialCanvas
+            {device.kind === 'webgpu' ? ' (WebGPU, experimental)' : ''}
+            {device.kind === 'webgl' && device.deckProps ? ' (WebGL, MSAA off)' : ''}
+          </h3>
           <div style={{ flex: 1, minHeight: 0 }}>
-            <SpatialCanvas />
+            {device.kind === 'webgl' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
+            {device.kind === 'webgpu' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
+            {device.kind === 'loading' ? 'Loading WebGPU…' : null}
+            {device.kind === 'unavailable' ? device.reason : null}
           </div>
         </section>
 

@@ -13,6 +13,7 @@
  */
 
 import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
+import { DeviceAdaptiveImageLayer } from '@spatialdata/layers';
 import { DetailView, ScaleBarView } from '@vivjs/views';
 import type {
   DeckGLProps,
@@ -26,6 +27,7 @@ import type {
 import { DeckGL } from 'deck.gl';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
+import { withWebGPUPickingFix } from './deckDevice';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -456,8 +458,10 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         }
 
         // Viv uses generic source-based ids here, so overlays need a stable per-image suffix.
+        const vivLayer = layer.clone({ id: `${layer.id}-${imageLayerProps.id}` });
         orderedLayers.push({
-          layer: layer.clone({ id: `${layer.id}-${imageLayerProps.id}` }),
+          // Swaps Viv's GLSL tiles for WGSL ones when deck is on WebGPU.
+          layer: new DeviceAdaptiveImageLayer({ id: `${vivLayer.id}-device`, vivLayer }),
           orderId: imageLayerProps.id,
         });
       }
@@ -503,6 +507,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
         onHover={onHover}
         onClick={onClick}
+        onDeviceInitialized={withWebGPUPickingFix(deckProps?.onDeviceInitialized)}
         style={{ backgroundColor: '#111', ...deckProps?.style }}
       />
     );

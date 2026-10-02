@@ -75,6 +75,64 @@ function getLabelAtPixel(
   return { labelId: labelValue, selection: selections?.[0] };
 }
 
+/**
+ * Resolve the label under a pick from the tile's own CPU-side plane.
+ *
+ * Deck's picking colour only says which tile was hit; the label id comes from
+ * `channelData`, so the GLSL and WGSL labels layers share this.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: labels tile props are Viv-shaped and untyped.
+export function resolveLabelPickingInfo(info: PickingInfo, props: any): PickingInfo {
+  const localCoordinate = getLabelCoordinate(
+    info.coordinate as number[] | undefined,
+    props.modelMatrix
+  );
+  const { bounds, channelData } = props;
+  const width = channelData?.width;
+  const height = channelData?.height;
+
+  if (
+    !localCoordinate ||
+    !bounds ||
+    !width ||
+    !height ||
+    !Number.isFinite(bounds[0]) ||
+    !Number.isFinite(bounds[1]) ||
+    !Number.isFinite(bounds[2]) ||
+    !Number.isFinite(bounds[3])
+  ) {
+    return info;
+  }
+
+  const xDenominator = bounds[2] - bounds[0];
+  const yDenominator = bounds[1] - bounds[3];
+  if (xDenominator === 0 || yDenominator === 0) {
+    return info;
+  }
+
+  const u = (localCoordinate[0] - bounds[0]) / xDenominator;
+  const v = (localCoordinate[1] - bounds[3]) / yDenominator;
+  if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) {
+    return info;
+  }
+
+  const pixelX = Math.max(0, Math.min(width - 1, Math.floor(u * width)));
+  const pixelY = Math.max(0, Math.min(height - 1, Math.floor(v * height)));
+  const pickedLabel = getLabelAtPixel(props, pixelX, pixelY);
+  if (!pickedLabel) {
+    info.object = null;
+    return info;
+  }
+
+  info.object = {
+    ...pickedLabel,
+    channelIndex: 0,
+    pixel: [pixelX, pixelY] as const,
+  };
+  info.index = 0;
+  return info;
+}
+
 const UntypedXRLayer = XRLayer as any;
 
 export class LabelsBitmaskTileLayer extends UntypedXRLayer {
@@ -123,55 +181,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
   }
 
   getPickingInfo(params: GetPickingInfoParams): PickingInfo {
-    const info = super.getPickingInfo(params);
-    const localCoordinate = getLabelCoordinate(
-      info.coordinate as number[] | undefined,
-      this.props.modelMatrix
-    );
-    const { bounds, channelData } = this.props;
-    const width = channelData?.width;
-    const height = channelData?.height;
-
-    if (
-      !localCoordinate ||
-      !bounds ||
-      !width ||
-      !height ||
-      !Number.isFinite(bounds[0]) ||
-      !Number.isFinite(bounds[1]) ||
-      !Number.isFinite(bounds[2]) ||
-      !Number.isFinite(bounds[3])
-    ) {
-      return info;
-    }
-
-    const xDenominator = bounds[2] - bounds[0];
-    const yDenominator = bounds[1] - bounds[3];
-    if (xDenominator === 0 || yDenominator === 0) {
-      return info;
-    }
-
-    const u = (localCoordinate[0] - bounds[0]) / xDenominator;
-    const v = (localCoordinate[1] - bounds[3]) / yDenominator;
-    if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) {
-      return info;
-    }
-
-    const pixelX = Math.max(0, Math.min(width - 1, Math.floor(u * width)));
-    const pixelY = Math.max(0, Math.min(height - 1, Math.floor(v * height)));
-    const pickedLabel = getLabelAtPixel(this.props, pixelX, pixelY);
-    if (!pickedLabel) {
-      info.object = null;
-      return info;
-    }
-
-    info.object = {
-      ...pickedLabel,
-      channelIndex: 0,
-      pixel: [pixelX, pixelY] as const,
-    };
-    info.index = 0;
-    return info;
+    return resolveLabelPickingInfo(super.getPickingInfo(params), this.props);
   }
 
   dataToTexture(data: unknown, width: number, height: number) {

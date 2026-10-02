@@ -17,14 +17,13 @@
  * picking module. Picking colours are computed in-shader from the feature index.
  *
  * Hand-rolled luma `Model` — the lowest-level deck extension surface, kept to this
- * file plus its shaders. The `Model`/texture/uniform-block API is backend-agnostic;
- * a WebGPU port needs only a WGSL variant of the shaders (and can use storage buffers
- * instead of texture-packing).
+ * file plus its shaders. Runs on WebGL (GLSL) and WebGPU (WGSL); the only backend
+ * difference on this side is that float textures are uploaded as u32 on WebGPU.
  */
 
-import { Layer, type LayerProps, picking, project32 } from '@deck.gl/core';
+import { color, Layer, type LayerProps, picking, project32 } from '@deck.gl/core';
 import { Model } from '@luma.gl/engine';
-import { flatPolygonUniforms, fs, vs } from './flatPolygonLayerShaders';
+import { flatPolygonUniforms, fs, source, vs } from './flatPolygonLayerShaders';
 
 /** Data-texture width (texel columns). 2048 keeps heights well under the WebGL2 max
  *  texture size for our largest elements. The shader computes texel coords from this. */
@@ -83,7 +82,8 @@ export class FlatPolygonLayer extends (Layer as any) {
     return super.getShaders({
       vs,
       fs,
-      modules: [project32, picking, flatPolygonUniforms],
+      source,
+      modules: [color, project32, picking, flatPolygonUniforms],
       // The draw is a non-instanced triangle list with no vertex attributes; the
       // shader reads everything from textures via gl_VertexID.
       defines: { NON_INSTANCED_MODEL: 1 },
@@ -144,10 +144,12 @@ export class FlatPolygonLayer extends (Layer as any) {
   }
 
   /** Upload the shared ring positions (`rg32float`) and per-triangle topology
-   *  (`rgba32uint`). Static — rebuilt only when the geometry changes. */
+   *  (`rgba32uint`). Static — rebuilt only when the geometry changes. On WebGPU the
+   *  float textures carry the same bytes as u32 (see `flatPolygonUniforms`). */
   _updateGeometryTextures(): void {
     const { ringPositions, ringVertexCount, triangleData, triangleCount } = this.props;
     const device = this.context.device;
+    const floatsAsUint = device.type === 'webgpu';
 
     const ringHeight = Math.max(1, Math.ceil(ringVertexCount / TEX_WIDTH));
     const ringData = new Float32Array(TEX_WIDTH * ringHeight * 2);
@@ -156,8 +158,8 @@ export class FlatPolygonLayer extends (Layer as any) {
     this.state.ringPosTexture = device.createTexture({
       width: TEX_WIDTH,
       height: ringHeight,
-      format: 'rg32float',
-      data: ringData,
+      format: floatsAsUint ? 'rg32uint' : 'rg32float',
+      data: floatsAsUint ? new Uint32Array(ringData.buffer) : ringData,
       mipmaps: false,
       sampler: { minFilter: 'nearest', magFilter: 'nearest' },
     });
@@ -185,8 +187,8 @@ export class FlatPolygonLayer extends (Layer as any) {
     this.state.featureScaleTexture = device.createTexture({
       width: TEX_WIDTH,
       height: scaleHeight,
-      format: 'r32float',
-      data: scaleData,
+      format: floatsAsUint ? 'r32uint' : 'r32float',
+      data: floatsAsUint ? new Uint32Array(scaleData.buffer) : scaleData,
       mipmaps: false,
       sampler: { minFilter: 'nearest', magFilter: 'nearest' },
     });

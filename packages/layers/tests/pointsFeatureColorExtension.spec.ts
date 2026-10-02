@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PointsFeatureColorExtension } from '../src/pointsFeatureColorExtension.js';
+import {
+  injectPointsFeatureColorWGSL,
+  PointsFeatureColorExtension,
+} from '../src/pointsFeatureColorExtension.js';
+import { PointsScatterplotLayer } from '../src/pointsScatterLayer.js';
 
 // These assert the deck-specific invariants that were load-bearing and easy to
 // get subtly wrong (each cost real debugging). They guard the shader wiring, not
@@ -54,5 +58,36 @@ describe('PointsFeatureColorExtension', () => {
     expect(PointsFeatureColorExtension.defaultProps.featureColorOverrides).toMatchObject({
       type: 'object',
     });
+  });
+
+  it('adds no GLSL injections on WebGPU, only the WGSL uniforms + palette', () => {
+    // GLSL text spliced into WGSL would fail to compile; on WebGPU the colour code
+    // goes in through PointsScatterplotLayer instead.
+    const host = { getShaders: () => ({}), context: { device: { type: 'webgpu' } } };
+    const webgpu = ext.getShaders.call(host as never, ext) as {
+      inject?: unknown;
+      modules: Array<{ name: string; source?: string }>;
+    };
+    expect(webgpu.inject).toBeUndefined();
+    const paletteModule = webgpu.modules.find((module) => module.name === 'pfcColor');
+    expect(paletteModule?.source).toContain('var pfcPalette: texture_2d<f32>');
+  });
+});
+
+describe('PointsScatterplotLayer WGSL', () => {
+  it("finds its injection anchors in the installed deck's scatterplot WGSL", () => {
+    // Pins the deck version: an upgrade that reshapes the shader throws here rather
+    // than drawing every point in the flat colour.
+    // getShaders reads only the device type and deck's default modules before mount.
+    const layer = Object.assign(new PointsScatterplotLayer({ id: 'probe', data: [] }), {
+      context: { device: { type: 'webgpu' }, defaultShaderModules: [] },
+    });
+    const source: string = layer.getShaders().source;
+    expect(source).toContain('@location(9) featureCode: f32,');
+    expect(source).toContain('textureLoad(pfcPalette');
+  });
+
+  it('refuses a scatterplot WGSL without the anchors', () => {
+    expect(() => injectPointsFeatureColorWGSL('fn vertexMain() {}')).toThrow(/anchors/);
   });
 });

@@ -10,7 +10,7 @@
 import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
-import type { DeckGLRef, Layer, PickingInfo } from 'deck.gl';
+import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import {
   type CSSProperties,
   type ReactNode,
@@ -224,6 +224,7 @@ interface ViewerSectionProps {
   onHover?: (info: PickingInfo, event?: HoverPointerEvent) => void;
   coordinateSystem: string | null;
   deckRef: React.RefObject<DeckGLRef | null>;
+  deckProps?: Partial<DeckGLProps>;
 }
 
 function ViewerSection({
@@ -240,6 +241,7 @@ function ViewerSection({
   onHover,
   coordinateSystem,
   deckRef,
+  deckProps,
 }: ViewerSectionProps) {
   const viewState = useSpatialCanvasStore((s) => s.viewState);
   const actions = useSpatialCanvasActions();
@@ -305,6 +307,7 @@ function ViewerSection({
         vivLayerProps={vivLayerProps.length > 0 ? vivLayerProps : undefined}
         onHover={onHover}
         deckRef={deckRef}
+        deckProps={deckProps}
       />
       {isBlocking && (
         <div
@@ -370,12 +373,14 @@ interface SpatialCanvasInnerProps {
    * exposes a selector to change it live; this sets the starting value.
    */
   hoverTooltipMode?: HoverTooltipMode;
+  deckProps?: Partial<DeckGLProps>;
 }
 
 function SpatialCanvasInner({
   tooltipContainer,
   renderTooltip,
   hoverTooltipMode = DEFAULT_HOVER_TOOLTIP_MODE,
+  deckProps,
 }: SpatialCanvasInnerProps) {
   // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
   // subscribes to the engine via useSyncExternalStore), so this component no
@@ -717,6 +722,7 @@ function SpatialCanvasInner({
               onHover={tooltipMode === 'off' ? undefined : handleHover}
               coordinateSystem={coordinateSystem}
               deckRef={deckRef}
+              deckProps={deckProps}
             />
           </div>
 
@@ -917,6 +923,11 @@ export interface SpatialCanvasProps {
    * The canvas UI exposes a selector to change it live. See {@link HoverTooltipMode}.
    */
   hoverTooltipMode?: HoverTooltipMode;
+  /**
+   * Extra deck.gl props for the underlying viewer, e.g. `deviceProps` to run on
+   * WebGPU (experimental).
+   */
+  deckProps?: Partial<DeckGLProps>;
 }
 
 /**
@@ -972,6 +983,7 @@ export default function SpatialCanvas({
   tooltipContainer,
   renderTooltip,
   hoverTooltipMode,
+  deckProps,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -980,6 +992,7 @@ export default function SpatialCanvas({
           tooltipContainer={tooltipContainer}
           renderTooltip={renderTooltip}
           hoverTooltipMode={hoverTooltipMode}
+          deckProps={deckProps}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

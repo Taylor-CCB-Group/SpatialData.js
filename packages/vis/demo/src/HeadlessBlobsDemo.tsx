@@ -1,3 +1,4 @@
+import { webgpuAdapter } from '@luma.gl/webgpu';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -6,9 +7,14 @@ import {
   type SpatialFeaturePickEvent,
   type ViewState,
 } from '../../src/index';
+import { isWebGPURequested } from '../../src/Sketch/demoUrl';
 import { buildHeadlessRenderStackForCoordinateSystem } from './buildHeadlessLayers';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';
 import { createMdvStyleVivImageExtensions } from './vivImageExtensions';
+
+// `?webgpu` runs deck on WebGPU.
+const useWebGPU = isWebGPURequested(new URLSearchParams(window.location.search));
+const webgpuDeckProps = { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } } as const;
 
 const panelStyle = {
   flexShrink: 0,
@@ -302,6 +308,7 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
             viewState={viewState}
             onViewStateChange={setViewState}
             renderTooltip={false}
+            deckProps={useWebGPU ? webgpuDeckProps : undefined}
             vivImageExtensions={vivImageExtensions}
             vivImageExtensionResolver={vivImageExtensionResolver}
             vivImagePropsResolver={vivImagePropsResolver}

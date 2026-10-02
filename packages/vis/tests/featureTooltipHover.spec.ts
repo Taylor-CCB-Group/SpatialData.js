@@ -124,6 +124,34 @@ describe('featureTooltipHover', () => {
     });
   });
 
+  it('falls back to the hover pick on a WebGPU device, where sync multi-picking throws', () => {
+    const getFeatureTooltip = vi.fn((layerId: string) => ({
+      elementKey: layerId,
+      elementType: 'shapes' as const,
+      layerId,
+      items: [{ label: 'element', value: layerId }],
+    }));
+    const pickMultipleObjects = vi.fn(() => {
+      throw new Error('readPixelsToArrayWebGL');
+    });
+
+    const result = resolveHoverFeatureTooltip(
+      {
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: { id: 'shapes:cells', context: { device: { type: 'webgpu' } } },
+        index: 1,
+        object: {},
+      },
+      getFeatureTooltip,
+      { deck: { pickMultipleObjects } }
+    );
+
+    expect(pickMultipleObjects).not.toHaveBeenCalled();
+    expect(result?.layerId).toBe('shapes:cells');
+  });
+
   it('resolves logical pick layer ids to Viv-suffixed deck layer ids', () => {
     expect(
       resolveDeckPickLayerIds(

@@ -47,6 +47,7 @@
     "@biomejs/biome": "^2.5.3",
     "@changesets/changelog-github": "^1.0.0",
     "@changesets/cli": "^3.0.1",
+    "@luma.gl/webgpu": "catalog:",
     "@playwright/test": "^1.62.0",
     "@rolldown/plugin-babel": "catalog:",
     "@typescript-eslint/parser": "^8.62.0",

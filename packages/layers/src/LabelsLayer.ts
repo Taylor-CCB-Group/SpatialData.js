@@ -20,6 +20,7 @@ import {
   type LabelRgbColor,
   NO_HIGHLIGHTED_LABEL,
 } from './labelColorEncoding';
+import { RasterTileLayer } from './webgpu/RasterTileLayer';
 
 /** One instance-ID raster per labels element (see `LabelsBitmaskTileLayer`). */
 export const MAX_LABEL_CHANNELS = 1 as const;
@@ -127,6 +128,16 @@ function resolveFeatureColorLut(
 const VIV_SIGNAL_ABORTED = '__vivSignalAborted';
 const UntypedTileLayer = TileLayer as any;
 
+/** The labels tile class for this device: WGSL on WebGPU, the Viv-based GLSL one otherwise. */
+// biome-ignore lint/suspicious/noExplicitAny: both classes take Viv-shaped untyped props.
+function labelsTileLayerClass(context: { device?: { type: string } } | undefined): any {
+  return isWebGPU(context) ? RasterTileLayer : LabelsBitmaskTileLayer;
+}
+
+function isWebGPU(context: { device?: { type: string } } | undefined): boolean {
+  return context?.device?.type === 'webgpu';
+}
+
 function isMultiscaleLoader(loader: unknown): loader is unknown[] {
   return Array.isArray(loader) && loader.length > 1;
 }
@@ -218,7 +229,8 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
 
     const bounds = [0, height, width, 0] as const;
 
-    return new LabelsBitmaskTileLayer(
+    const TileClass = labelsTileLayerClass(this.context);
+    return new TileClass(
       this.getSubLayerProps({
         id: 'single-scale-labels-bitmask',
         pickable: true,
@@ -226,6 +238,7 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
         ...(typeof onHover === 'function' ? { onHover } : {}),
       }),
       {
+        mode: 'labels',
         channelData: { data, height, width },
         channelColors,
         channelsVisible,
@@ -312,6 +325,7 @@ class MultiscaleLabelsTileLayer extends UntypedTileLayer {
 }
 
 function renderSubBitmaskLayers(props: any) {
+  const TileClass = props.useWebGPULabels ? RasterTileLayer : LabelsBitmaskTileLayer;
   const {
     bbox: { left, top, right, bottom },
     index: { x, y, z },
@@ -343,7 +357,8 @@ function renderSubBitmaskLayers(props: any) {
     top,
   ];
 
-  return new LabelsBitmaskTileLayer(props, {
+  return new TileClass(props, {
+    mode: 'labels',
     channelData: data,
     bounds,
     id: `sub-layer-${z}-${x}-${y}-${bounds}-${id}`,
@@ -529,6 +544,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
           refinementStrategy: 'best-available',
           onTileError: baseLoader.onTileError,
           renderSubLayers: renderSubBitmaskLayers,
+          useWebGPULabels: isWebGPU(this.context),
         } as any
       ) as unknown as Layer;
     }
