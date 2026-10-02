@@ -1,5 +1,12 @@
 # @spatialdata/avivatorish
 
+## 0.12.0
+
+### Patch Changes
+
+- Updated dependencies [[`30ea984`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/30ea9844dd7ca51a1375123723bd91cd1a186344)]:
+  - zarrextra@0.5.1
+
 ## 0.11.1
 
 ## 0.11.0

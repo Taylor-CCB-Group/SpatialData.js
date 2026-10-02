@@ -1,5 +1,21 @@
 # @spatialdata/layers
 
+## 0.12.0
+
+### Minor Changes
+
+- [#206](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/206) [`9aba2a1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/9aba2a1c603d46767df45e07b10b8639da0215f5) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `deck.gl` is no longer a dependency or peer, so installing these packages no longer pulls in the ArcGIS, CARTO, Google Maps and Mapbox integrations. Instead, install `@deck.gl/core`, `@deck.gl/layers`, `@deck.gl/geo-layers`, `@deck.gl/react` and `@deck.gl/widgets` (~9.4). The last two are needed by Viv.
+
+- [#204](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/204) [`bb7b60a`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/bb7b60a51f63ca62d376ec28abbad6879a46d2c4) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental WebGPU support: images, labels, shapes and points now render when deck runs on a WebGPU device (`SpatialCanvas` takes `deckProps`, e.g. `{ deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } }`). deck.gl 9.4 picks the vertically mirrored pixel on WebGPU; the SpatialCanvas viewers correct this, and a Deck of your own needs `applyWebGPUPickingFix(device)` from `onDeviceInitialized`.
+
+### Patch Changes
+
+- [#201](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/201) [`918cc0e`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/918cc0ef436bd19d18d768c8f836c4619897e7ff) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Make labels pickable again on deck.gl 9.4
+  
+  Hovering or clicking a label stopped returning it after the deck.gl 9.4 update, so the hover highlight and tooltips did nothing.
+- Updated dependencies []:
+  - @spatialdata/core@0.12.0
+
 ## 0.11.1
 
 ### Patch Changes
