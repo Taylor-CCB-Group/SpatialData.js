@@ -1,5 +1,11 @@
 # zarrextra
 
+## 0.5.1
+
+### Patch Changes
+
+- [#203](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/203) [`30ea984`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/30ea9844dd7ca51a1375123723bd91cd1a186344) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Worker chunk decoding now uses `@fideus-labs/fizarrita` 3, which decodes sharded arrays one inner chunk at a time instead of whole shards.
+
 ## 0.5.0
 
 ### Minor Changes
