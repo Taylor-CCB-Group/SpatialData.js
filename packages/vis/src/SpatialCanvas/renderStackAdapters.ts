@@ -1,9 +1,9 @@
+import type { Layer } from '@deck.gl/core';
 import type {
   RenderStack,
   RenderStackHostEntry,
   RenderStackSpatialEntry,
 } from '@spatialdata/layers';
-import type { Layer } from 'deck.gl';
 import { layerConfig } from './layerConfig';
 import type { LayerConfig } from './types';
 

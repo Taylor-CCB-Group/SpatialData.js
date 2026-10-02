@@ -1,14 +1,14 @@
-import { getImageSize } from '@hms-dbmi/viv';
-import type { Texture } from '@luma.gl/core';
-import type { Matrix4 } from '@math.gl/core';
 import {
   CompositeLayer,
   type CompositeLayerProps,
   type Layer,
   type LayersList,
-  TileLayer,
   type UpdateParameters,
-} from 'deck.gl';
+} from '@deck.gl/core';
+import { TileLayer } from '@deck.gl/geo-layers';
+import { getImageSize } from '@hms-dbmi/viv';
+import type { Texture } from '@luma.gl/core';
+import type { Matrix4 } from '@math.gl/core';
 import { LabelsBitmaskTileLayer } from './LabelsBitmaskTileLayer';
 import {
   buildLabelColorLut,

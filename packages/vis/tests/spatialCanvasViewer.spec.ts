@@ -1,5 +1,5 @@
+import { ScatterplotLayer } from '@deck.gl/layers';
 import { renderStackSchema } from '@spatialdata/layers';
-import { ScatterplotLayer } from 'deck.gl';
 import { describe, expect, it } from 'vitest';
 import {
   renderStackOrder,

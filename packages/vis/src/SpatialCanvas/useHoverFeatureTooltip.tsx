@@ -19,7 +19,8 @@
  * guard, which they call.
  */
 
-import type { DeckGLRef, PickingInfo } from 'deck.gl';
+import type { PickingInfo } from '@deck.gl/core';
+import type { DeckGLRef } from '@deck.gl/react';
 import { type ReactNode, type RefObject, useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {

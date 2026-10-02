@@ -17,7 +17,6 @@ const baseConfig = defineViteConfig({
     /^@vivjs\/.+$/,
     '@hms-dbmi/viv',
     '@math.gl/core',
-    'deck.gl',
     'anndata.js',
     'zarrita',
     /^zarrextra(?:\/.*)?$/,

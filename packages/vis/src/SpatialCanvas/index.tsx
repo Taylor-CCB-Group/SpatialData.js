@@ -7,10 +7,11 @@
  * - Viewing overlaid spatial data with pan/zoom
  */
 
+import type { Layer, PickingInfo } from '@deck.gl/core';
+import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
 import { viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
-import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import {
   type CSSProperties,
   type ReactNode,

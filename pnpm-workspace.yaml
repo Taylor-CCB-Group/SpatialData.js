@@ -14,7 +14,6 @@ allowBuilds:
   # never reproduce it. If we ever do need the fallback, declare @swc/wasm as a real
   # dependency rather than re-enabling this script.
   '@swc/core': false
-  '@vaadin/vaadin-usage-statistics': false
   core-js: false
   core-js-pure: false
 
@@ -83,13 +82,10 @@ catalog:
   '@rolldown/plugin-babel': ^0.2.3
   babel-plugin-react-compiler: ^1.0.0
   '@deck.gl/aggregation-layers': ~9.4.0
-  '@deck.gl/arcgis': ~9.4.0
   '@deck.gl/core': ~9.4.0
   '@deck.gl/extensions': ~9.4.0
   '@deck.gl/geo-layers': ~9.4.0
-  '@deck.gl/google-maps': ~9.4.0
   '@deck.gl/layers': ~9.4.0
-  '@deck.gl/mapbox': ~9.4.0
   '@deck.gl/mesh-layers': ~9.4.0
   '@deck.gl/react': ~9.4.0
   '@deck.gl/widgets': ~9.4.0
@@ -110,7 +106,6 @@ catalog:
   '@vivjs/views': 0.23.0
   anndata.js: ^0.0.2
   apache-arrow: ^21.2.0
-  deck.gl: ~9.4.0
   react: ^19.2.1
   react-dom: ^19.2.1
   # TypeScript 7.0 (the native port) ships no JS API, so tools that use the compiler

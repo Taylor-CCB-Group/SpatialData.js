@@ -6,6 +6,7 @@
  * layer contract while the rest of the viewer migrates.
  */
 
+import type { Layer } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import type { ShapesElement, ShapesRenderData, SpatialFeatureTooltipData } from '@spatialdata/core';
 import {
@@ -20,7 +21,6 @@ import {
   type ShapeStrokeWidthUnits,
   type ShapesPrebuiltData,
 } from '@spatialdata/layers';
-import type { Layer } from 'deck.gl';
 
 export type ShapeTooltipDatum = SpatialFeatureTooltipData;
 

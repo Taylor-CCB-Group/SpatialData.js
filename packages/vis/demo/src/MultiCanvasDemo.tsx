@@ -12,13 +12,13 @@ import {
   type OrthographicViewState,
   type PickingInfo,
 } from '@deck.gl/core';
+import { LineLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { MultiscaleImageLayer } from '@hms-dbmi/viv';
 import type { Device } from '@luma.gl/core';
 import { luma } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
 import { applyWebGPUPickingFix, DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
-import { LineLayer, PathLayer, ScatterplotLayer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadOmeZarrMultiscalesFromStore, type VivCompatiblePixelSource } from 'zarrextra';
 import { getLocalBlobsFixtureUrl } from './fixtureUrls';

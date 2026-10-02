@@ -1,4 +1,4 @@
-import type { Layer, LayersList } from 'deck.gl';
+import type { Layer, LayersList } from '@deck.gl/core';
 import type { PointsRenderStrategy } from './pointsRenderStrategies.js';
 
 export const geoArrowBinaryStrategy: PointsRenderStrategy = {

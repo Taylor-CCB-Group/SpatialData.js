@@ -1,6 +1,7 @@
+import type { PickingInfo } from '@deck.gl/core';
+import type { DeckGLRef } from '@deck.gl/react';
 import { mergeSpatialFeatureTooltips, type SpatialFeatureTooltipData } from '@spatialdata/core';
 import { parseLabelId } from '@spatialdata/layers';
-import type { DeckGLRef, PickingInfo } from 'deck.gl';
 
 const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;

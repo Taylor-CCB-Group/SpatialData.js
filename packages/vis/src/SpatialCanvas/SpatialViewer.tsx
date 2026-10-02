@@ -10,9 +10,10 @@
  * - Otherwise: uses simplified functional component with DetailView
  */
 
+import type { Layer, PickingInfo } from '@deck.gl/core';
+import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
+import { DeckGL } from '@deck.gl/react';
 import { DetailView } from '@hms-dbmi/viv';
-import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
-import { DeckGL } from 'deck.gl';
 import { type RefObject, useCallback, useId, useMemo } from 'react';
 import { withWebGPUPickingFix } from './deckDevice';
 import type { ViewState } from './types';

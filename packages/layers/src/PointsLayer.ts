@@ -1,8 +1,7 @@
-import type { UpdateParameters } from '@deck.gl/core';
+import type { Layer, LayersList, UpdateParameters } from '@deck.gl/core';
+import { CompositeLayer } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import { applyRenderCapToColumnar, filterColumnarByFeatureCodesInWorker } from '@spatialdata/core';
-import type { Layer, LayersList } from 'deck.gl';
-import { CompositeLayer } from 'deck.gl';
 import {
   featureFilterAwaitingRowCodes,
   filterBatchSignature,
