@@ -3,6 +3,61 @@ import { CompositeLayer } from '@deck.gl/core';
 import { ImageLayer } from '@hms-dbmi/viv';
 import { RasterTileLayer } from './RasterTileLayer';
 
+const RGB_PROPS = {
+  colors: [
+    [255, 0, 0],
+    [0, 255, 0],
+    [0, 0, 255],
+  ],
+  channelsVisible: [true, true, true],
+};
+
+type RgbPlanes = ReturnType<typeof splitRgb>;
+
+/** Keyed by the source array, so re-renders keep the same planes and skip re-uploads. */
+const rgbCache = new WeakMap<Uint8Array | Uint16Array, RgbPlanes>();
+
+/**
+ * Viv hands interleaved RGB(A) images (last dimension 3 or 4) over as one typed array
+ * where it would otherwise give one plane per channel; Viv draws them with a GLSL
+ * BitmapLayer. Here they are split into R, G and B planes and composited additively,
+ * which reproduces the colour. Alpha, and photometric interpretations other than RGB
+ * (Viv's `photometricInterpretation` shader), are not handled.
+ */
+function deinterleaveRgb(data: unknown, width: number, height: number): RgbPlanes {
+  if (!(data instanceof Uint8Array || data instanceof Uint16Array)) {
+    return null;
+  }
+  let planes = rgbCache.get(data);
+  if (planes === undefined) {
+    planes = splitRgb(data, width, height);
+    rgbCache.set(data, planes);
+  }
+  return planes;
+}
+
+function splitRgb(data: Uint8Array | Uint16Array, width: number, height: number) {
+  const pixels = width * height;
+  const components = Math.round(data.length / pixels);
+  if (components < 3) {
+    return null;
+  }
+  const makePlane = () =>
+    data instanceof Uint16Array ? new Uint16Array(pixels) : new Uint8Array(pixels);
+  const planes = [makePlane(), makePlane(), makePlane()];
+  for (let i = 0; i < pixels; i++) {
+    for (let c = 0; c < 3; c++) {
+      planes[c][i] = data[i * components + c];
+    }
+  }
+  const max = data instanceof Uint16Array ? 65535 : 255;
+  return {
+    channelData: { data: planes, width, height },
+    contrastLimits: planes.map(() => [0, max]),
+    ...RGB_PROPS,
+  };
+}
+
 /**
  * Replacement for Viv's MultiscaleImageLayer `renderSubLayers` on WebGPU.
  *
@@ -20,8 +75,8 @@ export function renderRasterImageTile(props: any): Layer | null {
   if ([left, top].some((v: number) => v < 0) || !data || !data.width || !data.height) {
     return null;
   }
-  if (!Array.isArray(data.data)) {
-    // Interleaved RGB tiles arrive as one array. Not handled by the spike.
+  const rgb = Array.isArray(data.data) ? null : deinterleaveRgb(data.data, data.width, data.height);
+  if (!Array.isArray(data.data) && !rgb) {
     return null;
   }
   const scale = 2 ** Math.round(-z);
@@ -29,6 +84,7 @@ export function renderRasterImageTile(props: any): Layer | null {
   return new RasterTileLayer(props, {
     mode: 'image',
     channelData: data,
+    ...rgb,
     bounds,
     id: `tile-sub-layer-${bounds}-${id}`,
     tileId: { x, y, z },
@@ -55,14 +111,18 @@ export class RasterImageLayer extends UntypedImageLayer {
 
   renderLayers(): Layer | null {
     const { width, height, data } = this.state;
-    if (!(width && height) || !Array.isArray(data)) {
-      // Interleaved RGB arrives as one array; not handled by the spike.
+    if (!(width && height)) {
+      return null;
+    }
+    const rgb = Array.isArray(data) ? null : deinterleaveRgb(data, width, height);
+    if (!Array.isArray(data) && !rgb) {
       return null;
     }
     const bounds = [0, height, width, 0];
     return new RasterTileLayer(this.props, {
       mode: 'image',
       channelData: { data, width, height },
+      ...rgb,
       bounds,
       id: `image-sub-layer-${bounds}-${this.props.id}`,
       extensions: [],
