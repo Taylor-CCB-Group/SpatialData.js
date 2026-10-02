@@ -5,6 +5,7 @@
  * loading state for each layer.
  */
 
+import type { Layer } from '@deck.gl/core';
 import { getImageSize } from '@hms-dbmi/viv';
 import type { Matrix4 } from '@math.gl/core';
 import { clampVivSelectionsToAxes } from '@spatialdata/avivatorish';
@@ -52,7 +53,6 @@ import {
   type ShapeFeatureStateRuntime,
   type TileDebugStore,
 } from '@spatialdata/layers';
-import type { Layer } from 'deck.gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createFeatureColorStabilizer, type FeatureColorResolver } from './featureColorResolver';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';

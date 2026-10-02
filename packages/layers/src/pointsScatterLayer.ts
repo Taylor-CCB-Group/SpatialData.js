@@ -1,6 +1,6 @@
 import type { Accessor } from '@deck.gl/core';
+import { ScatterplotLayer } from '@deck.gl/layers';
 import type { Matrix4 } from '@math.gl/core';
-import { ScatterplotLayer } from 'deck.gl';
 import type { FeatureColorOverrides } from './pointsFeatureColor.js';
 import {
   injectPointsFeatureColorWGSL,

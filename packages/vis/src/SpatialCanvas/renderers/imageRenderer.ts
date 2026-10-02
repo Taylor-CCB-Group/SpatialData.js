@@ -5,13 +5,13 @@
  * OME-Zarr and other multiscale image formats.
  */
 
+import type { Layer } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import {
   loadOmeZarrMultiscalesData,
   type OmeZarrMultiscalesSource,
 } from '@spatialdata/avivatorish';
 import type { ImageElement, LabelsElement } from '@spatialdata/core';
-import type { Layer } from 'deck.gl';
 
 export interface ImageLayerRenderConfig {
   /** The image element to render */

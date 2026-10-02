@@ -1,4 +1,4 @@
-import type { Layer, LayersList } from 'deck.gl';
+import type { Layer, LayersList } from '@deck.gl/core';
 import {
   geoArrowBinaryStrategy,
   geoArrowTiledStrategy,

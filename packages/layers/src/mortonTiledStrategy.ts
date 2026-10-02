@@ -1,7 +1,8 @@
+import type { Layer, LayersList } from '@deck.gl/core';
 import { COORDINATE_SYSTEM } from '@deck.gl/core';
+import { TileLayer } from '@deck.gl/geo-layers';
+import { PolygonLayer } from '@deck.gl/layers';
 import { DEFAULT_POINTS_MEMORY_CAP, mortonTileGrid } from '@spatialdata/core';
-import type { Layer, LayersList } from 'deck.gl';
-import { PolygonLayer, TileLayer } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
 import {
   boundsFromTileBbox,

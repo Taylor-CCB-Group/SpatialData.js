@@ -24,10 +24,13 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "deck.gl": "catalog:"
+    "@deck.gl/core": "catalog:",
+    "@deck.gl/geo-layers": "catalog:",
+    "@deck.gl/layers": "catalog:",
+    "@deck.gl/react": "catalog:",
+    "@deck.gl/widgets": "catalog:"
   },
   "dependencies": {
-    "@deck.gl/core": "catalog:",
     "@hms-dbmi/viv": "catalog:",
     "@math.gl/core": "catalog:",
     "@spatialdata/core": "workspace:*",
@@ -37,12 +40,15 @@
   },
   "devDependencies": {
     "@deck.gl/core": "catalog:",
+    "@deck.gl/geo-layers": "catalog:",
+    "@deck.gl/layers": "catalog:",
+    "@deck.gl/react": "catalog:",
+    "@deck.gl/widgets": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vitest": "catalog:",
-    "deck.gl": "catalog:"
+    "vitest": "catalog:"
   },
   "license": "MIT",
   "repository": {

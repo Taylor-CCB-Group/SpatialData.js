@@ -32,7 +32,6 @@ updates:
       # cleanly but breaks at runtime on mismatched GL context internals.
       deckgl-stack:
         patterns:
-          - 'deck.gl'
           - '@deck.gl/*'
           - '@luma.gl/*'
           - '@loaders.gl/*'
@@ -91,7 +90,6 @@ updates:
           - patch
         exclude-patterns:
           # deckgl-stack
-          - 'deck.gl'
           - '@deck.gl/*'
           - '@luma.gl/*'
           - '@loaders.gl/*'
@@ -109,7 +107,6 @@ updates:
           - patch
         exclude-patterns:
           # deckgl-stack
-          - 'deck.gl'
           - '@deck.gl/*'
           - '@luma.gl/*'
           - '@loaders.gl/*'

@@ -1,5 +1,5 @@
+import type { Layer, LayersList } from '@deck.gl/core';
 import { applyRenderCapToColumnar } from '@spatialdata/core';
-import type { Layer, LayersList } from 'deck.gl';
 import type { PointsLayer } from './PointsLayer.js';
 import {
   featureCodesSignature,

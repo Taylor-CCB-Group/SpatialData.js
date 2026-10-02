@@ -1,7 +1,8 @@
+import type { Layer, PickingInfo } from '@deck.gl/core';
+import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
 import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
 import type { RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
-import type { DeckGLProps, DeckGLRef, Layer, PickingInfo } from 'deck.gl';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ensureCodecWorkers } from '../codecWorkers';
 import type { FeatureColorResolver } from './featureColorResolver';

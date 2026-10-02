@@ -12,19 +12,18 @@
  * Structured to allow gradual refactoring to hooks in the future.
  */
 
-import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
-import { DeviceAdaptiveImageLayer } from '@spatialdata/layers';
-import { DetailView, ScaleBarView } from '@vivjs/views';
 import type {
-  DeckGLProps,
-  DeckGLRef,
   Layer,
   LayersList,
   OrbitViewState,
   OrthographicViewState,
   PickingInfo,
-} from 'deck.gl';
-import { DeckGL } from 'deck.gl';
+} from '@deck.gl/core';
+import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
+import { DeckGL } from '@deck.gl/react';
+import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
+import { DeviceAdaptiveImageLayer } from '@spatialdata/layers';
+import { DetailView, ScaleBarView } from '@vivjs/views';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
 import { withWebGPUPickingFix } from './deckDevice';

@@ -44,7 +44,6 @@ export default defineConfig({
         /^@spatialdata\/[^/]+$/,
         /^@vivjs\/.+$/,
         '@hms-dbmi/viv',
-        'deck.gl',
         'zod',
       ],
     },

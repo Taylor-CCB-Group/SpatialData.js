@@ -1,5 +1,6 @@
+import type { PickingInfo } from '@deck.gl/core';
+import type { DeckGLRef } from '@deck.gl/react';
 import { act, renderHook } from '@testing-library/react';
-import type { DeckGLRef, PickingInfo } from 'deck.gl';
 import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SpatialFeatureTooltipData } from '../src/SpatialCanvas/SpatialFeatureTooltip.js';

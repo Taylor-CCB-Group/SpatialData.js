@@ -1,5 +1,5 @@
+import type { DeckGLProps } from '@deck.gl/react';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
-import type { DeckGLProps } from 'deck.gl';
 import { type CSSProperties, useEffect, useState } from 'react';
 import SpatialCanvas from '../SpatialCanvas';
 import Transforms from '../Transforms';
