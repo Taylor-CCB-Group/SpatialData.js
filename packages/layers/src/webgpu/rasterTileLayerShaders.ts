@@ -140,6 +140,8 @@ fn raster_sample(texelPosition: vec2<f32>, size: vec2<i32>, channel: i32) -> f32
 
 fn raster_image(texelPosition: vec2<f32>, size: vec2<i32>) -> vec4<f32> {
   var rgb = vec3<f32>(0.0);
+  // Runtime bound: unused channels are never sampled. A per-count source (Viv's
+  // NUM_CHANNELS) would only add unrolling; luma's WGSL path substitutes no defines.
   let count = min(i32(raster.numChannels), ${MAX_CHANNELS});
   for (var i = 0; i < count; i = i + 1) {
     let color = raster.colors[i];
