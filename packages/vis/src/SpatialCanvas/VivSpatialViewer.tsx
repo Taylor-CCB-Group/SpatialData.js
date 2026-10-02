@@ -224,6 +224,10 @@ function getScaleBarLoader(vivLayerProps: ImageLayerConfig[]): VivLoader[] | und
   return undefined;
 }
 
+function findLayerWithLoader(vivLayerProps: ImageLayerConfig[]): ImageLayerConfig | undefined {
+  return vivLayerProps.find((layerProps) => layerProps.loader);
+}
+
 class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpatialViewerState> {
   private detailView: DetailView;
   private viewId: string;
@@ -259,7 +263,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   }
 
   private getDefaultViewState(): VivViewState {
-    const firstLayerWithLoader = this.props.vivLayerProps.find((layerProps) => layerProps.loader);
+    const firstLayerWithLoader = findLayerWithLoader(this.props.vivLayerProps);
 
     // If we have a loader, use Viv's default initial view state
     if (
@@ -337,6 +341,18 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
         height,
       } as unknown as VivViewState;
       nextViewStates[this.scaleBarViewId] = this.getScaleBarViewState();
+      viewStatesChanged = true;
+    }
+
+    // Without a host view state, frame the first image loader to arrive. The
+    // viewer stays mounted across image layers coming and going, so this can't
+    // rely on the constructor.
+    if (
+      !viewState &&
+      !findLayerWithLoader(prevProps.vivLayerProps) &&
+      findLayerWithLoader(this.props.vivLayerProps)
+    ) {
+      nextViewStates[this.viewId] = this.getDefaultViewState();
       viewStatesChanged = true;
     }
 
@@ -488,9 +504,14 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
     const layers = this._renderLayers();
     const scaleBarView = this.getScaleBarView();
+    // Viv's detail view hardcodes `controller: true`, and deck only applies a
+    // top-level `controller` prop when it is truthy, so `false` must go on the view.
+    const detailDeckView = this.detailView
+      .getDeckGlView()
+      .clone({ controller: deckProps?.controller ?? true });
     const deckGLViews = scaleBarView
-      ? [this.detailView.getDeckGlView(), scaleBarView.getDeckGlView()]
-      : this.detailView.getDeckGlView();
+      ? [detailDeckView, scaleBarView.getDeckGlView()]
+      : detailDeckView;
 
     return (
       <DeckGL

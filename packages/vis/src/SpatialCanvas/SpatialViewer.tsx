@@ -3,22 +3,17 @@
  *
  * This component handles the composition of Viv image layers with additional
  * deck.gl layers (shapes, points, etc.) following the pattern established in MDV.
- *
- * Uses a unified Viv-compatible pattern:
- * - Always uses Viv's DetailView (even without images)
- * - If image layers present: uses VivSpatialViewer class component
- * - Otherwise: uses simplified functional component with DetailView
  */
 
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
-import { DeckGL } from '@deck.gl/react';
-import { DetailView } from '@hms-dbmi/viv';
-import { type RefObject, useCallback, useId, useMemo } from 'react';
-import { withWebGPUPickingFix } from './deckDevice';
+import type { RefObject } from 'react';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
-import VivSpatialViewer, { normalizeVivLayers } from './VivSpatialViewer';
+import VivSpatialViewer from './VivSpatialViewer';
+
+// Stable so VivSpatialViewer (a PureComponent) doesn't see a new prop each render.
+const NO_IMAGE_LAYERS: ImageLayerConfig[] = [];
 
 export interface SpatialViewerProps {
   /** Viewport width */
@@ -48,9 +43,8 @@ export interface SpatialViewerProps {
 /**
  * SpatialViewer renders spatial data using deck.gl with Viv-compatible rendering.
  *
- * Uses unified Viv pattern:
- * - If image layers present: uses VivSpatialViewer (class component)
- * - Otherwise: uses DetailView with deck.gl layers (functional component)
+ * Always renders VivSpatialViewer, with or without image layers, so the Deck
+ * (and its GPU device) survives image layers being added, removed or hidden.
  */
 export function SpatialViewer({
   width,
@@ -65,141 +59,19 @@ export function SpatialViewer({
   deckProps,
   deckRef,
 }: SpatialViewerProps) {
-  const hasImageLayers = vivLayerProps && vivLayerProps.length > 0;
-
-  // If we have image layers, use VivSpatialViewer
-  if (hasImageLayers) {
-    return (
-      <VivSpatialViewer
-        width={width}
-        height={height}
-        viewState={viewState}
-        onViewStateChange={onViewStateChange}
-        vivLayerProps={vivLayerProps}
-        extraLayers={layers}
-        layerOrder={layerOrder}
-        onHover={onHover}
-        onClick={onClick}
-        deckProps={deckProps}
-        deckRef={deckRef}
-      />
-    );
-  }
-
-  // Otherwise, use simplified DetailView approach (for backward compatibility)
   return (
-    <SpatialViewerSimple
+    <VivSpatialViewer
       width={width}
       height={height}
       viewState={viewState}
       onViewStateChange={onViewStateChange}
-      layers={layers}
+      vivLayerProps={vivLayerProps ?? NO_IMAGE_LAYERS}
+      extraLayers={layers}
+      layerOrder={layerOrder}
       onHover={onHover}
       onClick={onClick}
       deckProps={deckProps}
       deckRef={deckRef}
-    />
-  );
-}
-
-/**
- * Simplified viewer for non-image layers (backward compatibility)
- */
-function SpatialViewerSimple({
-  width,
-  height,
-  viewState,
-  onViewStateChange,
-  layers,
-  onHover,
-  onClick,
-  deckProps,
-  deckRef,
-}: Omit<SpatialViewerProps, 'vivLayerProps' | 'layerOrder'>) {
-  const viewId = useId();
-  const detailViewId = useMemo(() => `spatial-${viewId}`, [viewId]);
-  type DeckDetailViewState = {
-    id: string;
-    target: [number, number, number];
-    zoom: number;
-    width: number;
-    height: number;
-  };
-
-  // Use DetailView for consistency with Viv pattern
-  const detailView = useMemo(() => {
-    return new DetailView({
-      id: detailViewId,
-      width,
-      height,
-    });
-  }, [detailViewId, width, height]);
-
-  // Convert our ViewState to deck.gl's expected format
-  const deckViewState = useMemo((): Record<string, DeckDetailViewState> => {
-    if (!viewState) {
-      return {
-        [detailViewId]: {
-          id: detailViewId,
-          target: [0, 0, 0],
-          zoom: 0,
-          width,
-          height,
-        },
-      };
-    }
-    const [x, y, z = 0] = viewState.target;
-    return {
-      [detailViewId]: {
-        id: detailViewId,
-        target: [x, y, z],
-        zoom: viewState.zoom,
-        width,
-        height,
-      },
-    };
-  }, [detailViewId, height, viewState, width]);
-
-  // Handle view state changes from deck.gl
-  const handleViewStateChange = useCallback(
-    ({ viewState: newVS }: { viewState: Record<string, unknown> }) => {
-      const target = newVS.target as [number, number, number];
-      onViewStateChange({
-        target: [target[0], target[1]],
-        zoom: newVS.zoom as number,
-      });
-    },
-    [onViewStateChange]
-  );
-
-  // Filter out any null/undefined layers
-  const composedLayers = useMemo(() => {
-    return [...layers.filter(Boolean), ...normalizeVivLayers(deckProps?.layers ?? [])];
-  }, [deckProps?.layers, layers]);
-
-  // Don't render if dimensions are invalid
-  if (width <= 0 || height <= 0) {
-    return null;
-  }
-
-  const deckGLView = detailView.getDeckGlView();
-
-  return (
-    <DeckGL
-      ref={deckRef}
-      {...(deckProps ?? {})}
-      width={width}
-      height={height}
-      views={deckGLView}
-      viewState={deckViewState}
-      onViewStateChange={handleViewStateChange}
-      layers={composedLayers}
-      onHover={onHover}
-      onClick={onClick}
-      onDeviceInitialized={withWebGPUPickingFix(deckProps?.onDeviceInitialized)}
-      controller={deckProps?.controller ?? true}
-      getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
-      style={{ backgroundColor: '#111', ...deckProps?.style }}
     />
   );
 }
