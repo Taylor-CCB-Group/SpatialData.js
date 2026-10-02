@@ -10,6 +10,12 @@ export function withWebGPUPickingFix(
 ): (device: Device) => void {
   return (device) => {
     applyWebGPUPickingFix(device);
-    onDeviceInitialized?.(device);
+    // A throw here escapes into deck's start-up and stops its render loop, leaving a
+    // blank canvas with only an unhandled rejection to show for it.
+    try {
+      onDeviceInitialized?.(device);
+    } catch (error) {
+      console.error('onDeviceInitialized threw:', error);
+    }
   };
 }
