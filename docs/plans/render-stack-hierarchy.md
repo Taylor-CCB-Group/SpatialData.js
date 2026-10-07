@@ -292,6 +292,11 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
 - A nested group gives the same picture in `normal` mode, to within 8-bit rounding.
 - With a picture-in-picture inset (`?views=2`), each view's group copy composites
   correctly in its own view, with the same values as the main view.
+- Viv image layers work as group members (`?image=1`), built as `VivSpatialViewer`
+  builds them: `DetailView.getLayers`, wrapped in `DeviceAdaptiveImageLayer`. That
+  covers Viv's GLSL layer on WebGL and our `RasterTileLayer` on WebGPU, with blend
+  modes, nesting and the inset. The loader is synthetic: one level, one uint8 tile,
+  loaded asynchronously.
 - Picking still reaches children inside a group.
 - No console errors or warnings.
 
@@ -345,7 +350,8 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
     computed for WebGL's bottom-left origin. This is the same family as the picking
     y-flip that `applyWebGPUPickingFix` works around.
 - **Not yet tried:**
-  - Viv image layers and tiled layers (`PointsLayer`, labels) as children;
+  - a real multiscale image, where tiles from several levels load as the view moves;
+  - tiled points and labels as members;
   - a device pixel ratio above 1.
 
 ## Phase 1 deliverables

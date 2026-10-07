@@ -15,16 +15,25 @@
  * the view id in every layer id, and deck's `layerFilter` matches on it. So each view
  * has its own group instance, and with it its own offscreen target. `?group=0` draws
  * the right-hand circles ungrouped, as a control.
+ *
+ * `?image=1` adds a Viv image under the circles, inside the group. It is built the way
+ * `VivSpatialViewer` builds image layers (`DetailView.getLayers`, wrapped in
+ * `DeviceAdaptiveImageLayer`), from a synthetic in-memory loader: one uint8 channel of
+ * constant value, so the expected pixels can be worked out.
  */
 
 import { Deck, Layer, OrthographicView } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
+import { ScaleBarLayer } from '@hms-dbmi/viv';
 import { webgpuAdapter } from '@luma.gl/webgpu';
+import { Matrix4 } from '@math.gl/core';
 import {
+  DeviceAdaptiveImageLayer,
   type GroupBlendMode,
   getIsolatedGroupMember,
   IsolatedGroupLayer,
 } from '@spatialdata/layers';
+import { DetailView } from '@vivjs/views';
 import { useEffect, useRef, useState } from 'react';
 
 const WIDTH = 640;
@@ -43,6 +52,7 @@ const VIEWS = params.get('views') === '2';
  */
 const CLEAR_INSET = params.get('clear') !== '0';
 const GROUPED = params.get('group') !== '0';
+const IMAGE = params.get('image') === '1';
 
 type ViewId = 'main' | 'inset';
 const INSET = { x: 400, y: 200, width: 220, height: 140 };
@@ -74,6 +84,51 @@ function flatChildren(group: IsolatedGroupLayer): Layer[] {
   return group.props.layers.filter((layer): layer is Layer => layer instanceof Layer);
 }
 
+const IMAGE_SIZE = 256;
+const IMAGE_VALUE = 200;
+/** World placement of the image: x 60..316, y -128..128, under the group's circles. */
+const IMAGE_ORIGIN: [number, number, number] = [60, -128, 0];
+
+/** A one-level, one-channel uint8 Viv pixel source filled with `IMAGE_VALUE`. */
+function syntheticImageLoader() {
+  const filled = () => new Uint8Array(IMAGE_SIZE * IMAGE_SIZE).fill(IMAGE_VALUE);
+  return [
+    {
+      shape: [1, IMAGE_SIZE, IMAGE_SIZE],
+      labels: ['c', 'y', 'x'],
+      tileSize: IMAGE_SIZE,
+      dtype: 'Uint8',
+      meta: {},
+      getTile: async () => ({ data: filled(), width: IMAGE_SIZE, height: IMAGE_SIZE }),
+      getRaster: async () => ({ data: filled(), width: IMAGE_SIZE, height: IMAGE_SIZE }),
+      onTileError: (error: unknown) => console.error(error),
+    },
+  ];
+}
+
+const imageLoader = IMAGE ? syntheticImageLoader() : null;
+
+function imageLayers(view: ViewId): Layer[] {
+  if (!imageLoader) return [];
+  const detail = new DetailView({ id: `image-${view}`, width: WIDTH, height: HEIGHT });
+  const result: unknown = detail.getLayers({
+    props: {
+      loader: imageLoader,
+      colors: [[255, 255, 255]],
+      contrastLimits: [[0, 255]],
+      channelsVisible: [true],
+      selections: [{ c: 0 }],
+      modelMatrix: new Matrix4().translate(IMAGE_ORIGIN),
+    },
+  });
+  const vivLayers = (Array.isArray(result) ? result.flat(Infinity) : [result]).filter(
+    (layer): layer is Layer => layer instanceof Layer && !(layer instanceof ScaleBarLayer)
+  );
+  return vivLayers.map(
+    (vivLayer) => new DeviceAdaptiveImageLayer({ id: `${vivLayer.id}-device@${view}`, vivLayer })
+  );
+}
+
 function buildLayers(view: ViewId): Layer[] {
   const tag = (id: string) => `${id}@${view}`;
   const backdrop = circles(
@@ -93,6 +148,7 @@ function buildLayers(view: ViewId): Layer[] {
     opacity: 0.5,
     blendMode: BLEND,
     layers: [
+      ...imageLayers(view),
       circles(tag('iso-red'), [{ position: [120, 0], radius: 70, color: RED }], 1),
       circles(tag('iso-green'), [{ position: [200, 0], radius: 70, color: GREEN }], 1),
     ],
@@ -127,6 +183,7 @@ const WORLD_SAMPLES: Array<[string, ViewId, [number, number]]> = [
   ['iso overlap', 'main', [160, 0]],
   ['iso red only', 'main', [85, 0]],
   ['iso backdrop only (empty group)', 'main', [160, 110]],
+  ['iso image only', 'main', [250, 110]],
   ['outside everything', 'main', [0, 170]],
   ['inset iso overlap', 'inset', [160, 0]],
   ['inset iso red only', 'inset', [85, 0]],
@@ -219,6 +276,8 @@ export default function GroupBlendDemo() {
       blend: BLEND,
       ...(NESTED ? { nested: '1' } : {}),
       ...(VIEWS ? { views: '2' } : {}),
+      ...(IMAGE ? { image: '1' } : {}),
+      ...(GROUPED ? {} : { group: '0' }),
       ...query,
     });
     return (
@@ -235,7 +294,9 @@ export default function GroupBlendDemo() {
         {link('webgl', { device: 'webgl' })} | blend:{' '}
         {BLEND_MODES.map((mode) => link(mode, { blend: mode }))} |{' '}
         {link(NESTED ? 'unnest' : 'nest', { nested: NESTED ? '0' : '1' })}{' '}
-        {link(VIEWS ? 'one view' : 'inset view', { views: VIEWS ? '1' : '2' })}
+        {link(VIEWS ? 'one view' : 'inset view', { views: VIEWS ? '1' : '2' })}{' '}
+        {link(IMAGE ? 'no image' : 'viv image', { image: IMAGE ? '0' : '1' })}{' '}
+        {link(GROUPED ? 'ungroup' : 'group', { group: GROUPED ? '0' : '1' })}
       </div>
       <div
         ref={container}
