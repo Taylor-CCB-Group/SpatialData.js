@@ -289,7 +289,9 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
 - All six blend modes match their predicted values exactly, and agree between
   backends.
 - Pixels the group leaves empty keep the backdrop in every mode.
-- A nested group gives the same picture, to within 8-bit rounding.
+- A nested group gives the same picture in `normal` mode, to within 8-bit rounding.
+- With a picture-in-picture inset (`?views=2`), each view's group copy composites
+  correctly in its own view, with the same values as the main view.
 - Picking still reaches children inside a group.
 - No console errors or warnings.
 
@@ -300,24 +302,43 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
   premultiplied form.
 - `min` composites the target over white first; otherwise empty pixels would darken
   the backdrop.
+- A blend mode inside an isolated group blends against the group's own empty
+  backdrop, not against the canvas. For example, `multiply` inside a nested isolated
+  group comes out dark. That is what isolation means, and it is why pass-through is
+  the default.
 
 **Integration work it surfaced:**
 - **Picking reports the outermost group.** `info.layer` becomes the outermost group,
   and `info.sourceLayer` is that group's direct child, not the leaf. The viewer
   routes hover and tooltips by `info.layer.id` (`featureTooltipHover.ts`,
   `SpatialCanvasViewer.tsx`). It needs to resolve the entry-level layer instead.
-- **Viv's viewport filter drops grouped layers.** `VivSpatialViewer` filters layers by
-  matching root layer ids against the Viv viewport id. A Viv layer inside a group
-  has the group as its root, so it would be filtered out.
+- **Groups must be built where `VivSpatialViewer` composes layers.** Viv assigns
+  layers to views through deck's `layerFilter`, by matching the view id against each
+  top-level layer's id. deck's `View` has no layer list of its own, so this filter is
+  the only per-view routing hook.
+  - `VivSpatialViewer` already adds the view's token to every top-level layer id
+    (`withVivId`). A group assembled at that step gets the token like any other
+    layer, and its children are never checked against it.
+  - The group must therefore be built after Viv has produced the image layers, not
+    upstream of the viewer.
+  - With several views, such as a picture-in-picture overview, each view needs its own
+    group instance and therefore its own target.
 - **Private deck API.** The effect is registered through `deck._addDefaultEffect` and
   renders with `_LayersPass`. Both are underscore APIs, the same ones deck's
   `MaskExtension` uses.
 - **No caching yet.** The subtree redraws into its target every frame, which costs
   one extra full-screen pass over drawing the children directly. Caching when
   nothing changed is ADR 0003's FBO caching, and it belongs here.
+- **deck 9.4 bugs with several views on WebGPU.** These happen with no groups at
+  all (`?group=0`).
+  - A view with `clear: true` never draws. deck begins the clear pass while the
+    main pass is still open. Viv's `OverviewView` sets `clear: true`, so Viv's
+    picture-in-picture is broken on WebGPU.
+  - A view smaller than the canvas is drawn upside down: its viewport y is
+    computed for WebGL's bottom-left origin. This is the same family as the picking
+    y-flip that `applyWebGPUPickingFix` works around.
 - **Not yet tried:**
   - Viv image layers and tiled layers (`PointsLayer`, labels) as children;
-  - multiple views;
   - a device pixel ratio above 1.
 
 ## Phase 1 deliverables
