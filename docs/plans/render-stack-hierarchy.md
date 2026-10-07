@@ -25,10 +25,10 @@ and draw what an operator computes from them. Typical cases:
    - Visibility, and opacity inherited by children.
    - Per-entry `blendMode` through deck `parameters` on WebGL and WebGPU.
    - Groups in the layer list UI.
-3. **Isolated groups.** Children render to a screen-space target, which is
+3. **Isolated groups.** Children render to a screen-aligned target, which is
    composited with any blend mode, including ones fixed-function blending cannot do.
-   This is also the substrate ADR 0003's FBO caching asks for. Build it on WebGPU
-   first.
+   This is also the substrate ADR 0003's FBO caching asks for. WebGPU only; see
+   [Backend support](#backend-support).
 4. **Derived Entries.**
    - Operator registry and a world-space input grid.
    - Rasteriser variants for each element kind.
@@ -37,6 +37,49 @@ and draw what an operator computes from them. Typical cases:
 
 Phases 3 and 4 share one primitive: render a set of layers into an offscreen target
 on a defined grid.
+
+## Backend support
+
+The Render Stack schema does not depend on the backend: one saved stack loads on
+both WebGL and WebGPU. What differs is what draws. Some features are planned for
+WebGPU only:
+
+| Feature | WebGPU | WebGL |
+|---|---|---|
+| Nested groups, inherited visibility and opacity (pass-through) | yes | yes |
+| Fixed-function `blendMode` on deck layers we own (shapes, points, labels) | yes | yes |
+| Fixed-function `blendMode` on image entries | yes: our `RasterTileLayer` | only if Viv honours `parameters`; unchecked |
+| Opacity and blend mode per image channel | to add in our WGSL composite | a local Viv extension, then upstream |
+| Isolated groups, and modes that need a composite shader | yes | not planned |
+| Derived Entries | yes | not planned |
+| Reduced-resolution targets | yes | follows isolation, so not planned |
+
+- **Per-channel blending sits below the stack.** An image entry's channels already
+  composite inside one shader. Today both our WGSL and Viv add channel colours
+  together and clamp the sum, with one opacity per layer.
+  - Per-channel opacity and blend mode, such as alpha-over or max as alternatives to
+    adding, work inside that shader on either backend. They need no offscreen pass.
+  - On WebGL, a local Viv extension in place of `ColorPaletteExtension` can do it
+    now. It goes through the existing `vivImageExtensions` passthrough. Offer it
+    upstream as well; see [WebGPU and Viv](webgpu-viv-upstream.md).
+  - Both backends should share one channel model, so it is the same feature on
+    each.
+- **Why derived entries are not planned for WebGL:**
+  - they need compute;
+  - they need additive blending into float targets, which WebGL2 only has through
+    `EXT_color_buffer_float` plus `EXT_float_blend`, and not everywhere;
+  - they need raw channel output, which Viv does not provide;
+  - the expected operators are WGSL, in intraspatial.
+- **Why isolated groups are not planned for WebGL:** WebGL can render to a target.
+  This would be reconsidered if the phase 1 spike shows deck's effect pre-pass gives
+  isolation on both backends at little cost.
+- **Unsupported features degrade; the stack never fails to parse.** On WebGL:
+  - an isolated group draws as pass-through, with the opacity approximation;
+  - an unsupported blend mode draws as `normal`;
+  - a derived entry is not drawn.
+
+  Each case raises a notice naming the backend requirement. Which channel those
+  notices use is for the ADR to settle.
 
 ## Where things stand
 
@@ -179,8 +222,8 @@ Field names are illustrative. The structure is the proposal.
     check rather than invent a second one.
 - **Rasterisers are render variants of the existing layers.** Splat variants of
   `PointsLayer` and of the shapes layer, and a raw-channel mode on the WebGPU
-  `RasterTileLayer`. Viv on WebGL has no raw-channel path, so derived entries are
-  WebGPU-first.
+  `RasterTileLayer`. Derived entries are WebGPU only; see
+  [Backend support](#backend-support).
 - **The input grid is world space.** It is the current window plus a margin the
   operator declares (its kernel radius), at a resolution the operator chooses. This
   differs from a group's screen-aligned target: kernels are sized in world units, and
@@ -261,7 +304,8 @@ question.
   Should the store hold a `RenderStack` outright? ADR 0001 rejects parallel
   `layerOrder` state. This is a phase 2 decision.
 - **Viv on WebGL.** Do Viv's image layers honour a `parameters` blend override?
-  Unchecked. If they don't, image blend modes are WebGPU-only in phase 2.
+  Unchecked. If they don't, image blend modes are WebGPU-only in phase 2. Check this
+  alongside the phase 1 spike.
 - **Host overlays.** Applying `blendMode` means cloning the host's layer with
   `parameters`, which may override parameters the host set itself.
 - **Shared channel maps.** The example repeats one map in two inputs. Should a
