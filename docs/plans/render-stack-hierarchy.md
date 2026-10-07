@@ -32,7 +32,7 @@ and draw what an operator computes from them. Typical cases:
 4. **Derived Entries.**
    - Operator registry and a world-space input grid.
    - Rasteriser variants for each element kind.
-   - Per-instance weights, including `X` columns.
+   - Per-instance weights, and channel maps over features or `X` columns.
    - Channel stacks keyed by name.
 
 Phases 3 and 4 share one primitive: render a set of layers into an offscreen target
@@ -101,14 +101,26 @@ consumed, not drawn.
       name: 'transcripts',
       source: { elementType: 'points', elementKey: 'transcripts' },
       raster: { method: 'kde', bandwidth: 20 },
-      channels: { by: 'feature', keys: ['EPCAM', 'PTPRC'] },
+      channels: {
+        by: 'feature',
+        map: {
+          epithelial: ['EPCAM', 'KRT8', { KRT18: 0.5 }],
+          PTPRC: 'PTPRC',
+        },
+      },
     },
     {
       name: 'expression',
       source: { elementType: 'shapes', elementKey: 'cell_boundaries' },
       raster: { method: 'centroid-kde', bandwidth: 20 },
-      weight: { table: 'table', var: true },
-      channels: { by: 'var', keys: ['EPCAM', 'PTPRC'] },
+      channels: {
+        by: 'var',
+        table: 'table',
+        map: {
+          epithelial: ['EPCAM', 'KRT8', { KRT18: 0.5 }],
+          PTPRC: 'PTPRC',
+        },
+      },
     },
   ],
   props: { blendMode: 'normal', opacity: 0.8 },
@@ -127,14 +139,39 @@ Field names are illustrative. The structure is the proposal.
     `centroid-kde` or `fill` (polygon coverage). Labels use `fill`. Images use
     `sample`, which reads raw intensities before colour mapping. Each method has its
     own parameters, such as kernel and bandwidth.
-  - **`weight`: an optional per-instance value.** It comes from a point attribute
-    column, or through the element's table association from an `obs` column or an
-    `X` column. Without a weight, the field is a count density.
-  - **`channels`: the input's output as a stack of channels, keyed by name.** The key
-    is a Points Feature for points, a `var` name for table weights, and a channel
-    name for images.
+  - **`weight`: an optional scalar per instance.** It comes from a point attribute
+    column, or through the element's table association from an `obs` column. It
+    multiplies every channel. Without it, each instance counts 1.
+  - **`channels`: a map from channel key to members.**
+    - A member is a Points Feature (`by: 'feature'`), a `var` name resolved through
+      the table association (`by: 'var'`), or an image channel.
+    - **Weights are optional.** A channel's value is one of:
+      - a name;
+      - an array of names and `{ name: weight }` objects;
+      - one `{ name: weight, … }` object.
+
+      A bare name has weight 1.
+    - The schema normalises all of these to `Record<key, Record<member, weight>>`,
+      so consumers see one shape.
+    - A member listed twice in one channel is a parse error, not a sum.
+    - A channel's value for an instance is the weighted sum over its members.
+      - For a point, that is the membership weight of the point's own feature.
+      - For a `var` channel, it is `Σ w_g · X[i, g]`, which is a gene-set score per
+        cell.
+    - Members may appear in several channels, because gene programs overlap.
+    - Channels are aligned by key, so object order matters only for packing them into
+      targets.
+      - JS orders integer-like keys first. A map keyed by cluster ids (`'0'`, `'1'`)
+        packs in numeric order. That is harmless, but don't rely on authoring order.
+    - Maps are saved by name, as points selections already are. They are resolved
+      to feature codes or `var` indices at runtime.
+    - For points, the splat reads a feature-code × channel weight lookup table,
+      using the same LUT pattern as colour-by-feature. The number of channels per
+      pass is bounded by render targets or texture-array layers; beyond that it takes
+      more passes.
 - **Operators align inputs by channel key, not by position.** That is what pairs
-  "EPCAM transcript density" with "EPCAM expression splatted from cells".
+  the "epithelial" transcript density with the "epithelial" expression score, when
+  both inputs use the same map.
   - Each channel also says what its values mean: count density, weighted density, or
     intensity. An operator comparing modalities needs that to normalise.
   - intraspatial checks channel-axis agreement when its ops combine fields
@@ -227,7 +264,11 @@ question.
   Unchecked. If they don't, image blend modes are WebGPU-only in phase 2.
 - **Host overlays.** Applying `blendMode` means cloning the host's layer with
   `parameters`, which may override parameters the host set itself.
-- **`X`-backed weights.** Per-instance weights from `X` need matrix-backed values
+- **Shared channel maps.** The example repeats one map in two inputs. Should a
+  derived entry define its maps once and have inputs refer to them by name? That
+  guarantees the keys agree. Maps might also be worth saving outside any one
+  entry, as named gene sets.
+- **`X`-backed channels.** `var` channels need matrix-backed values
   to resolve through table associations.
   - That is still open in [feature table associations](../docs/vis/feature-table-associations.mdx),
     checklist item 3.
