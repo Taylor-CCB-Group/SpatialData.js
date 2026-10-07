@@ -5,8 +5,9 @@ import HeadlessBlobsDemo from './HeadlessBlobsDemo';
 const CodecFixtureDemo = lazy(() => import('./CodecFixtureDemo'));
 const MultiCanvasDemo = lazy(() => import('./MultiCanvasDemo'));
 const PickDiagnosticDemo = lazy(() => import('./PickDiagnosticDemo'));
+const GroupBlendDemo = lazy(() => import('./GroupBlendDemo'));
 
-type DemoRoute = 'sketch' | 'headless' | 'codec' | 'multicanvas' | 'pickdiag';
+type DemoRoute = 'sketch' | 'headless' | 'codec' | 'multicanvas' | 'pickdiag' | 'groups';
 
 function getDemoRoute(): DemoRoute {
   if (typeof window === 'undefined') {
@@ -17,6 +18,7 @@ function getDemoRoute(): DemoRoute {
   if (pathname.endsWith('/codec')) return 'codec';
   if (pathname.endsWith('/multicanvas')) return 'multicanvas';
   if (pathname.endsWith('/pickdiag')) return 'pickdiag';
+  if (pathname.endsWith('/groups')) return 'groups';
   return 'sketch';
 }
 
@@ -45,6 +47,9 @@ function DemoNav({ route }: { route: DemoRoute }) {
       <a href="/pickdiag" style={linkStyle(route === 'pickdiag')}>
         Pick diagnostic
       </a>
+      <a href="/groups" style={linkStyle(route === 'groups')}>
+        Isolated groups
+      </a>
     </nav>
   );
 }
@@ -64,6 +69,10 @@ function App() {
         ) : route === 'pickdiag' ? (
           <Suspense fallback={null}>
             <PickDiagnosticDemo />
+          </Suspense>
+        ) : route === 'groups' ? (
+          <Suspense fallback={null}>
+            <GroupBlendDemo />
           </Suspense>
         ) : route === 'multicanvas' ? (
           <Suspense fallback={null}>

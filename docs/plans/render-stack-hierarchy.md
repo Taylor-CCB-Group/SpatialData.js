@@ -20,15 +20,15 @@ and draw what an operator computes from them. Typical cases:
 
 1. **Settle the model.** Write this plan, then an ADR. Make the schema v2 tree with
    a v1 migration, and have the adapters walk the tree with today's behaviour.
-   Deprecate `SpatialLayer`. Run the render-to-target spike.
+   Deprecate `SpatialLayer`.
 2. **Groups with no offscreen pass.**
    - Visibility, and opacity inherited by children.
    - Per-entry `blendMode` through deck `parameters` on WebGL and WebGPU.
    - Groups in the layer list UI.
 3. **Isolated groups.** Children render to a screen-aligned target, which is
    composited with any blend mode, including ones fixed-function blending cannot do.
-   This is also the substrate ADR 0003's FBO caching asks for. WebGPU only; see
-   [Backend support](#backend-support).
+   This is also the substrate ADR 0003's FBO caching asks for. Works on both
+   backends; see [Render-to-target spike](#render-to-target-spike).
 4. **Derived Entries.**
    - Operator registry and a world-space input grid.
    - Rasteriser variants for each element kind.
@@ -41,7 +41,7 @@ on a defined grid.
 ## Backend support
 
 The Render Stack schema does not depend on the backend: one saved stack loads on
-both WebGL and WebGPU. What differs is what draws. Some features are planned for
+both WebGL and WebGPU. What differs is what draws. Derived entries are planned for
 WebGPU only:
 
 | Feature | WebGPU | WebGL |
@@ -50,9 +50,9 @@ WebGPU only:
 | Fixed-function `blendMode` on deck layers we own (shapes, points, labels) | yes | yes |
 | Fixed-function `blendMode` on image entries | yes: our `RasterTileLayer` | only if Viv honours `parameters`; unchecked |
 | Opacity and blend mode per image channel | to add in our WGSL composite | a local Viv extension, then upstream |
-| Isolated groups, and modes that need a composite shader | yes | not planned |
+| Isolated groups, and modes that need a composite shader | yes | yes |
 | Derived Entries | yes | not planned |
-| Reduced-resolution targets | yes | follows isolation, so not planned |
+| Reduced-resolution targets | yes | yes |
 
 - **Per-channel blending sits below the stack.** An image entry's channels already
   composite inside one shader. Today both our WGSL and Viv add channel colours
@@ -70,11 +70,7 @@ WebGPU only:
     `EXT_color_buffer_float` plus `EXT_float_blend`, and not everywhere;
   - they need raw channel output, which Viv does not provide;
   - the expected operators are WGSL, in intraspatial.
-- **Why isolated groups are not planned for WebGL:** WebGL can render to a target.
-  This would be reconsidered if the phase 1 spike shows deck's effect pre-pass gives
-  isolation on both backends at little cost.
 - **Unsupported features degrade; the stack never fails to parse.** On WebGL:
-  - an isolated group draws as pass-through, with the opacity approximation;
   - an unsupported blend mode draws as `normal`;
   - a derived entry is not drawn.
 
@@ -275,6 +271,55 @@ question.
   warns against reserving kinds before the behaviour exists; that is why `group` sat
   inert.
 
+## Render-to-target spike
+
+Isolated groups work on deck 9.4, on both WebGL and WebGPU, without forking deck.
+The prototype is `packages/layers/src/groups/`, and its file comment describes the
+mechanism. In short:
+- An effect renders each group's subtree into the group's own framebuffer before the
+  main pass. This is the pattern deck's mask effect uses.
+- The group's `filterSubLayer` keeps its children out of the main pass.
+- A full-screen composite layer draws the target at the group's place in the order.
+
+The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
+
+**What was verified**, by pixel readback on both backends:
+- Group opacity removes the overlap bleed that per-child opacity shows. A green
+  circle over a red one inside a group at 50% reads as green only.
+- All six blend modes match their predicted values exactly, and agree between
+  backends.
+- Pixels the group leaves empty keep the backdrop in every mode.
+- A nested group gives the same picture, to within 8-bit rounding.
+- Picking still reaches children inside a group.
+- No console errors or warnings.
+
+**Behaviour to keep:**
+- Group opacity uses deck's `layer.opacity`, which deck gamma-adjusts (`opacity^(1/2.2)`).
+  A group at 0.5 therefore matches a lone layer at 0.5.
+- The target holds premultiplied colour on both backends, so each blend mode is its
+  premultiplied form.
+- `min` composites the target over white first; otherwise empty pixels would darken
+  the backdrop.
+
+**Integration work it surfaced:**
+- **Picking reports the outermost group.** `info.layer` becomes the outermost group,
+  and `info.sourceLayer` is that group's direct child, not the leaf. The viewer
+  routes hover and tooltips by `info.layer.id` (`featureTooltipHover.ts`,
+  `SpatialCanvasViewer.tsx`). It needs to resolve the entry-level layer instead.
+- **Viv's viewport filter drops grouped layers.** `VivSpatialViewer` filters layers by
+  matching root layer ids against the Viv viewport id. A Viv layer inside a group
+  has the group as its root, so it would be filtered out.
+- **Private deck API.** The effect is registered through `deck._addDefaultEffect` and
+  renders with `_LayersPass`. Both are underscore APIs, the same ones deck's
+  `MaskExtension` uses.
+- **No caching yet.** The subtree redraws into its target every frame, which costs
+  one extra full-screen pass over drawing the children directly. Caching when
+  nothing changed is ADR 0003's FBO caching, and it belongs here.
+- **Not yet tried:**
+  - Viv image layers and tiled layers (`PointsLayer`, labels) as children;
+  - multiple views;
+  - a device pixel ratio above 1.
+
 ## Phase 1 deliverables
 
 1. Agree the semantics above. Write ADR 0006, and update CONTEXT.md: revise Group
@@ -286,12 +331,6 @@ question.
 4. Deprecate `SpatialLayer`, `spatialLayerPropsSchema` and `migrateSpatialLayerProps`
    with a changeset, and fix the layers and avivatorish READMEs. Remove them in a
    later minor.
-5. **Spike: render to target inside a `CompositeLayer` on deck 9.4 WebGPU.**
-   - deck's mask and collision effects render chosen layers into a framebuffer in a
-     pre-pass, using the `operation` prop. Find out whether that works on WebGPU, and
-     whether a custom operation is reachable without private API.
-   - If not, the composite drives its own render pass.
-   - Record the result here. Phases 3 and 4 both depend on it.
 
 ## Open questions
 
