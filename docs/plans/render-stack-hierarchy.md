@@ -308,10 +308,17 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
   the default.
 
 **Integration work it surfaced:**
-- **Picking reports the outermost group.** `info.layer` becomes the outermost group,
-  and `info.sourceLayer` is that group's direct child, not the leaf. The viewer
-  routes hover and tooltips by `info.layer.id` (`featureTooltipHover.ts`,
-  `SpatialCanvasViewer.tsx`). It needs to resolve the entry-level layer instead.
+- **Picking through groups.** deck reports the outermost layer as `info.layer`, which
+  inside a group is the group.
+  - The innermost group records the member a pick came through, and
+    `getIsolatedGroupMember(info)` reads it back.
+  - The viewer resolves picks through `pickedLayerId` (`featureTooltipHover.ts`), so
+    tooltips, feature events and label highlighting find the member's config.
+  - deck hands hover highlighting to the root layer. A group forwards it only to the
+    picked member: forwarding to every member, as composites do, would light up the
+    same object index in sibling layers.
+  - Hosts that read `pickInfo.layer` from feature events, MDV among them, still see
+    the group, and need `getIsolatedGroupMember`.
 - **Groups must be built where `VivSpatialViewer` composes layers.** Viv assigns
   layers to views through deck's `layerFilter`, by matching the view id against each
   top-level layer's id. deck's `View` has no layer list of its own, so this filter is

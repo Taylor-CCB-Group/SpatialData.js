@@ -1,12 +1,54 @@
+import type { PickingInfo } from '@deck.gl/core';
+import { ScatterplotLayer } from '@deck.gl/layers';
+import { IsolatedGroupLayer } from '@spatialdata/layers';
 import { describe, expect, it, vi } from 'vitest';
 import {
   getAggregateHoverPickDepth,
   isHoverDuringDrag,
   normalizeDeckLayerId,
+  pickedLayerId,
   resolveDeckPickLayerIds,
   resolveHoveredLabel,
   resolveHoverFeatureTooltip,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
+
+/** A pick on `memberId` as deck reports it once it has bubbled up through a group:
+ *  `info.layer` names the group, and the group records the member. */
+function pickThroughGroup(memberId: string, object?: unknown): PickingInfo {
+  const member = new ScatterplotLayer({ id: memberId, data: [], getPosition: [0, 0] });
+  const group = new IsolatedGroupLayer({ id: 'group:a', layers: [member] });
+  const info: PickingInfo = {
+    color: null,
+    layer: group,
+    sourceLayer: member,
+    index: 0,
+    picked: true,
+    object,
+    x: 1,
+    y: 1,
+    pixelRatio: 1,
+  };
+  return group.getPickingInfo({ info, mode: 'hover', sourceLayer: member });
+}
+
+describe('pickedLayerId', () => {
+  it('is the picked layer’s id when no group is involved', () => {
+    expect(pickedLayerId({ layer: { id: 'shapes-cells' } })).toBe('shapes-cells');
+    expect(pickedLayerId({ layer: null })).toBe('');
+  });
+
+  it('looks through an isolated group to the member the pick came through', () => {
+    expect(pickedLayerId(pickThroughGroup('shapes-cells'))).toBe('shapes-cells');
+  });
+
+  it('lets a labels pick inside a group resolve its label', () => {
+    expect(
+      resolveHoveredLabel(pickThroughGroup('labels:cells', { labelId: 42 }), (id) =>
+        id.startsWith('labels:')
+      )
+    ).toEqual({ layerId: 'labels:cells', labelId: 42 });
+  });
+});
 
 describe('isHoverDuringDrag', () => {
   it('treats a hover with no held button as a normal hover', () => {

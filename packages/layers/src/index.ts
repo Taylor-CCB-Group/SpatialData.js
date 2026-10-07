@@ -65,7 +65,11 @@ export {
 // Experimental: isolated groups, from the render-to-target spike in
 // docs/plans/render-stack-hierarchy.md. Not yet a supported API.
 export type { GroupBlendMode } from './groups/groupBlend';
-export { IsolatedGroupLayer, type IsolatedGroupLayerProps } from './groups/IsolatedGroupLayer';
+export {
+  getIsolatedGroupMember,
+  IsolatedGroupLayer,
+  type IsolatedGroupLayerProps,
+} from './groups/IsolatedGroupLayer';
 export type { LabelsLayerProps, LabelsSelection } from './LabelsLayer';
 export { LabelsLayer, MAX_LABEL_CHANNELS } from './LabelsLayer';
 export type {

@@ -9,6 +9,8 @@ import type { FeatureColorResolver } from './featureColorResolver';
 import {
   type HoverPointerEvent,
   isHoverDuringDrag,
+  normalizeDeckLayerId,
+  pickedLayerId,
   resolveHoveredLabel,
 } from './featureTooltipHover';
 import { ImageLayerContextProvider } from './ImageLayerContext';
@@ -550,8 +552,7 @@ function SpatialCanvasViewerInner({
         resolveHoveredLabel(info, (layerId) => layerInputs.layers[layerId]?.type === 'labels')
       );
       if (info.picked && typeof info.x === 'number' && typeof info.y === 'number') {
-        const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
-        const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+        const normalizedLayerId = normalizeDeckLayerId(pickedLayerId(info));
         const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
           index: info.index,
           object: info.object,
@@ -597,8 +598,7 @@ function SpatialCanvasViewerInner({
       if (!info.picked) {
         return;
       }
-      const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
-      const normalizedLayerId = rawLayerId.replace(/-#.*#$/, '');
+      const normalizedLayerId = normalizeDeckLayerId(pickedLayerId(info));
       const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
         index: info.index,
         object: info.object,

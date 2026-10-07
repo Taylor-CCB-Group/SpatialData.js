@@ -1,7 +1,7 @@
 import type { PickingInfo } from '@deck.gl/core';
 import type { DeckGLRef } from '@deck.gl/react';
 import { mergeSpatialFeatureTooltips, type SpatialFeatureTooltipData } from '@spatialdata/core';
-import { parseLabelId } from '@spatialdata/layers';
+import { getIsolatedGroupMember, parseLabelId } from '@spatialdata/layers';
 
 const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;
@@ -48,7 +48,7 @@ export function resolveHoveredLabel(
   if (!info.picked || !info.object || typeof info.object !== 'object') {
     return null;
   }
-  const rawLayerId = typeof info.layer?.id === 'string' ? info.layer.id : '';
+  const rawLayerId = pickedLayerId(info);
   if (!rawLayerId) {
     return null;
   }
@@ -85,6 +85,16 @@ export function getDeckFromDeckGlRef(
     return null;
   }
   return deckGl.deck ?? null;
+}
+
+/**
+ * Id of the layer a pick belongs to. deck names the outermost layer in `info.layer`,
+ * which for anything inside an isolated group is the group; this looks through
+ * groups to the member the pick came through.
+ */
+export function pickedLayerId(info: { layer?: { id?: unknown } | null }): string {
+  const layer = getIsolatedGroupMember(info) ?? info.layer;
+  return typeof layer?.id === 'string' ? layer.id : '';
 }
 
 export function normalizeDeckLayerId(rawLayerId: string): string {
@@ -151,7 +161,7 @@ function collectCurrentDeckLayerIds(deck: PickMultipleObjectsCapable | null | un
 function getSeenLogicalLayerIds(picks: PickingInfo[], logicalLayerIds: string[]): Set<string> {
   const seen = new Set<string>();
   for (const pick of picks) {
-    const rawLayerId = typeof pick.layer?.id === 'string' ? pick.layer.id : '';
+    const rawLayerId = pickedLayerId(pick);
     const layerId = resolveLogicalLayerId(rawLayerId, logicalLayerIds);
     if (layerId) {
       seen.add(layerId);
@@ -287,7 +297,7 @@ export function resolveHoverFeatureTooltip(
     if (!pick.picked) {
       continue;
     }
-    const rawLayerId = typeof pick.layer?.id === 'string' ? pick.layer.id : '';
+    const rawLayerId = pickedLayerId(pick);
     const layerId = resolveLogicalLayerId(rawLayerId, options?.pickLayerIds);
     if (!layerId || seenLayerIds.has(layerId)) {
       continue;

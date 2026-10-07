@@ -20,7 +20,11 @@
 import { Deck, Layer, OrthographicView } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { type GroupBlendMode, IsolatedGroupLayer } from '@spatialdata/layers';
+import {
+  type GroupBlendMode,
+  getIsolatedGroupMember,
+  IsolatedGroupLayer,
+} from '@spatialdata/layers';
 import { useEffect, useRef, useState } from 'react';
 
 const WIDTH = 640;
@@ -58,6 +62,8 @@ function circles(id: string, data: Circle[], opacity: number): ScatterplotLayer<
     getFillColor: (d) => d.color,
     opacity,
     pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 255, 0, 255],
   });
 }
 
@@ -194,7 +200,9 @@ export default function GroupBlendDemo() {
       },
       onHover: (info) => {
         setHover(
-          info.layer ? `layer=${info.layer.id} sourceLayer=${info.sourceLayer?.id}` : 'none'
+          info.layer
+            ? `layer=${info.layer.id} member=${getIsolatedGroupMember(info)?.id ?? '-'} index=${info.index}`
+            : 'none'
         );
       },
       onError: (error) => setStatus(`deck error: ${error.message}`),

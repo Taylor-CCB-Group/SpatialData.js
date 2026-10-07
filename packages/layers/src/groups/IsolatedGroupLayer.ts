@@ -15,6 +15,10 @@
  *
  * Nested groups work because the effect renders deepest groups first, and a group
  * treats a pass belonging to one of its ancestors like the main pass.
+ *
+ * Picking: deck reports the outermost layer as `info.layer`, so a pick inside a group
+ * names the group. The innermost group records the child the pick came through, and
+ * `getIsolatedGroupMember` reads it back.
  */
 
 import {
@@ -22,9 +26,11 @@ import {
   type Effect,
   type EffectContext,
   type FilterContext,
-  type Layer,
+  type GetPickingInfoParams,
+  Layer,
   type LayersList,
   _LayersPass as LayersPass,
+  type PickingInfo,
   type PreRenderOptions,
 } from '@deck.gl/core';
 import type { Device, Framebuffer, Texture } from '@luma.gl/core';
@@ -33,6 +39,17 @@ import type { GroupBlendMode } from './groupBlend';
 import { groupBlendParameters } from './groupBlend';
 
 const ISOLATION_PASS_PREFIX = 'group-isolate:';
+const GROUP_MEMBER_KEY = 'isolatedGroupMember';
+
+/**
+ * The layer a pick resolves to when groups are looked through: the direct child of
+ * the innermost isolated group the pick passed through. Null when the pick did not
+ * pass through a group, in which case `info.layer` is already that layer.
+ */
+export function getIsolatedGroupMember(info: object): Layer | null {
+  const member: unknown = Reflect.get(info, GROUP_MEMBER_KEY);
+  return member instanceof Layer ? member : null;
+}
 
 function isolationPassName(groupId: string): string {
   return `${ISOLATION_PASS_PREFIX}${groupId}`;
@@ -104,6 +121,28 @@ export class IsolatedGroupLayer extends CompositeLayer<IsolatedGroupLayerProps> 
     }
     // The main pass, another pass, or an ancestor group's isolation pass.
     return isComposite;
+  }
+
+  /**
+   * deck walks a pick up the layer tree, setting `info.layer` to each ancestor in turn
+   * and passing the layer below as `sourceLayer`. The innermost group sees the member
+   * the pick came through; outer groups see a group, and leave the record alone.
+   */
+  getPickingInfo({ info, sourceLayer }: GetPickingInfoParams): PickingInfo {
+    if (!sourceLayer || sourceLayer instanceof IsolatedGroupLayer) return info;
+    return Object.assign(info, { [GROUP_MEMBER_KEY]: sourceLayer });
+  }
+
+  /**
+   * deck hands hover highlighting to the root layer, and a composite forwards it only
+   * when its own `autoHighlight` is on, and then to every sublayer. A group needs
+   * neither: it passes the pick to the member it came through, which applies its own
+   * `autoHighlight`. Forwarding to every member would light up the same object index
+   * in sibling layers. Nested groups need nothing extra, because the member is
+   * already the innermost one.
+   */
+  updateAutoHighlight(info: PickingInfo): void {
+    getIsolatedGroupMember(info)?.updateAutoHighlight(info);
   }
 
   _hasAncestor(id: string): boolean {
