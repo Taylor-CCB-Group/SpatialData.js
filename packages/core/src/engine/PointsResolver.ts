@@ -183,6 +183,8 @@ interface PointsEntry {
   bounds?: AxisAlignedBounds | null;
   boundsSource?: PointsTilingMetadata;
   boundsTransform?: unknown;
+  /** The element instance every slot above was loaded from. See {@link entryFor}. */
+  element?: PointsElement;
 }
 
 /** The tiling slot's only key. The element path is fixed, so one request exists. */
@@ -242,6 +244,36 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   constructor(callbacks: PointsResolverCallbacks = {}) {
     this.callbacks = callbacks;
   }
+
+  /**
+   * The entry for `target`, dropping a cached one that was loaded from a different
+   * element instance under the same key.
+   *
+   * The key is the element's name, and a host keeps this resolver across a dataset
+   * swap. A new store with a same-named element would otherwise be served the old
+   * store's preload, catalog and tiling answer, and never load its own.
+   */
+  private entryFor(target: { key: string; element: PointsElement }): PointsEntry {
+    if (this.isForeign(target.key, target.element)) {
+      this.evict(target.key);
+    }
+    const entry = this.ensureEntry(target.key);
+    entry.element = target.element;
+    return entry;
+  }
+
+  /**
+   * Whether `key`'s cached entry was loaded from a different element instance.
+   * `plan` and `snapshot` read by key, so they must treat such an entry as absent
+   * until a load replaces it.
+   */
+  private isForeign(key: string, element: PointsElement): boolean {
+    const owner = this.entries.get(key)?.element;
+    return owner !== undefined && owner !== element;
+  }
+
+  /** Idle snapshots for {@link isForeign} entries, kept identity-stable per entry. */
+  private readonly foreignSnapshots = new WeakMap<PointsElement, Map<string, EntryResources>>();
 
   /** Get the entry for `key`, creating it (with its slots) on first touch. */
   private ensureEntry(key: string): PointsEntry {
@@ -348,6 +380,15 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     const { elementKey: key, config } = ctx;
     const tasks: ResolveTask[] = [];
     const cap = config.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
+
+    // Everything below reads the cached entry. One from another element instance would
+    // read as already loaded and plan nothing, so plan this element's first load; the
+    // load replaces the entry, and the next pass plans normally.
+    if (this.isForeign(key, ctx.element)) {
+      return pointsTilingEnabled(config.pointsTiling)
+        ? [{ id: `${key}#tiling`, resource: 'tiling' }]
+        : [{ id: `${key}#preload:${cap}`, resource: 'preload', payload: { memoryCap: cap } }];
+    }
 
     // Probe for a Morton artifact BEFORE committing to a full-table preload. One
     // function decides both, so they cannot drift into preloading a table about to be
@@ -497,6 +538,9 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   snapshot(ctx: ResolveContext<PointsResolveConfig, PointsElement>): EntryResources {
     const key = ctx.elementKey;
+    if (this.isForeign(key, ctx.element)) {
+      return this.foreignSnapshot(ctx);
+    }
     // Key the memo by everything the snapshot embeds: the entry (several layers may
     // share one element), the selection (it drives the truncation notice), and
     // whether tiling is on (it decides which resources the entry even has, and a
@@ -989,7 +1033,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
   ): Promise<void> {
     const { key, layerId, element } = target;
-    const entry = this.ensureEntry(key);
+    const entry = this.entryFor(target);
     const slot = entry.preload;
     const resident = slot.lastGood;
 
@@ -1111,7 +1155,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     memoryCap: number = DEFAULT_POINTS_MEMORY_CAP
   ): Promise<void> {
     const { key, element } = target;
-    const entry = this.ensureEntry(key);
+    const entry = this.entryFor(target);
     const slot = entry.matching;
     const signature = PointsResolver.matchingSignature(featureCodes);
     const isCoveredBy = (sig: string): boolean => {
@@ -1416,8 +1460,8 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    * resident-subset preview is showing, and supersedes it.
    */
   ensureFeatureCatalog(target: PointsLoadTarget): Promise<void> {
-    const { key, element } = target;
-    const entry = this.ensureEntry(key);
+    const { element } = target;
+    const entry = this.entryFor(target);
     const slot = entry.catalog;
     // Already the authoritative full catalog, or a full scan already in flight → done.
     if (slot.settledKey === 'full') {
@@ -1494,7 +1538,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   ensureRowFeatureCodes(target: PointsLoadTarget): Promise<void> {
     const { key, element } = target;
-    const entry = this.ensureEntry(key);
+    const entry = this.entryFor(target);
     const slot = entry.rowCodes;
     const cap = entry.preload.settledKey ?? entry.preload.pendingKey ?? DEFAULT_POINTS_MEMORY_CAP;
     // Already aligned at this cap (typically settled by the preload decode) → no-op.
@@ -1535,7 +1579,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    */
   ensureTilingMetadata(target: PointsLoadTarget): Promise<void> {
     const { key, layerId, element } = target;
-    const slot = this.ensureEntry(key).tiling;
+    const slot = this.entryFor(target).tiling;
     // A settled-ready slot answers `request` with a FRESH resolved promise while
     // `pending` stays `undefined`, so the `loading !== before` test below reads true on
     // every repeat call: status would churn loading→ready and `releaseResidentBatch`
@@ -1614,6 +1658,34 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       .map((slot) => slot.retry())
       .filter((promise): promise is Promise<void> => promise !== undefined);
     return Promise.all(pending).then(() => undefined);
+  }
+
+  /** Nothing loaded yet for `ctx.element`: what {@link snapshot} reports for a
+   * {@link isForeign} entry rather than the other element's data. */
+  private foreignSnapshot(ctx: ResolveContext<PointsResolveConfig, PointsElement>): EntryResources {
+    let byEntry = this.foreignSnapshots.get(ctx.element);
+    if (!byEntry) {
+      byEntry = new Map();
+      this.foreignSnapshots.set(ctx.element, byEntry);
+    }
+    const cached = byEntry.get(ctx.entryId);
+    if (cached) return cached;
+    const idle = Resolution.idle();
+    const resources: Record<string, Resolution<unknown>> = pointsTilingEnabled(
+      ctx.config.pointsTiling
+    )
+      ? { tiling: idle, catalog: idle, rowCodes: idle, matching: idle }
+      : { preload: idle, catalog: idle, rowCodes: idle, matching: idle };
+    const value: EntryResources = {
+      entryId: ctx.entryId,
+      elementKey: ctx.elementKey,
+      resources,
+      notices: [],
+      bounds: null,
+      revision: this.version,
+    };
+    byEntry.set(ctx.entryId, value);
+    return value;
   }
 
   // --- Lifecycle --------------------------------------------------------------

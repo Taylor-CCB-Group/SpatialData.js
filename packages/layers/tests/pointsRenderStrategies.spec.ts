@@ -193,6 +193,16 @@ describe('mortonTiledStrategy — the selection reaches the scan', () => {
     expect(calls[0]?.featureCodes).toBeUndefined();
   });
 
+  it("refetches tiles for another store's same-named element", () => {
+    // The trigger used to be the element's NAME, so deck kept serving the previous
+    // store's cached tiles after a dataset swap.
+    const before = tileLayerOf(tiledLayer({}).layer).props.updateTriggers.getTileData;
+    const after = tileLayerOf(tiledLayer({}).layer).props.updateTriggers.getTileData;
+
+    // deck compares trigger entries with ===, so that is the comparison that matters.
+    expect(before.some((value, i) => value !== after[i])).toBe(true);
+  });
+
   it('refetches tiles when the selection changes', () => {
     // Without the selection in the trigger, deck keeps serving the cached tiles it
     // fetched for the PREVIOUS selection — the filter would appear to do nothing.

@@ -1481,3 +1481,68 @@ describe('D5 step 4 — a tiled entry asks for its own catalog', () => {
     expect(resolver.plan(ctx(el, auto))).toEqual([]);
   });
 });
+
+/**
+ * The resolver is keyed by element NAME and a host keeps it across a dataset swap, so
+ * opening another store with a same-named points element used to serve the first
+ * store's data: plan saw "already loaded" and the new element was never read.
+ */
+describe('a same-named element from another store', () => {
+  const store = (resolver: PointsResolver) =>
+    new SpatialEntryStore({
+      points: resolver,
+      shapes: resolver,
+      images: resolver,
+      labels: resolver,
+    });
+
+  it('loads its own points instead of reusing the cached ones', async () => {
+    const resolver = new PointsResolver();
+    const fromStoreA = element({ loadPoints: vi.fn(async () => batch(4)) });
+    const fromStoreB = element({ loadPoints: vi.fn(async () => batch(9)) });
+
+    await store(resolver).reconcile([ctx(fromStoreA)]);
+    await store(resolver).reconcile([ctx(fromStoreB)]);
+
+    expect(fromStoreB.loadPoints).toHaveBeenCalledTimes(1);
+    expect(resolver.getData('transcripts')?.shape[1]).toBe(9);
+  });
+
+  it("reports nothing loaded for it until then, not the other store's data", async () => {
+    const resolver = new PointsResolver();
+    await store(resolver).reconcile([ctx(element())]);
+
+    const snapshot = resolver.snapshot(ctx(element()));
+
+    expect(snapshot.resources.preload?.status).toBe('idle');
+    expect(snapshot.bounds).toBeNull();
+  });
+
+  it('probes its own tiling instead of reusing the cached answer', async () => {
+    const tiled = (bounds: { minX: number; minY: number; maxX: number; maxY: number }) =>
+      element({
+        getPointsTilingMetadata: vi.fn(async () => ({
+          kind: 'morton-points',
+          parquetPath: 'points/transcripts/points.parquet',
+          axisNames: ['x', 'y'],
+          featureCodeColumnName: 'feature_name_codes',
+          mortonCodeColumnName: MORTON_CODE_2D_COLUMN,
+          totalRows: 12_000_000,
+          totalRowGroups: 96,
+          maxRowsPerGroup: 131_072,
+          supportsRowGroupRangeReads: true,
+          bounds,
+        })),
+      });
+    const resolver = new PointsResolver();
+    const fromStoreB = tiled({ minX: 0, minY: 0, maxX: 5, maxY: 5 });
+
+    await store(resolver).reconcile([
+      ctx(tiled({ minX: 0, minY: 0, maxX: 100, maxY: 100 }), { pointsTiling: 'auto' }),
+    ]);
+    await store(resolver).reconcile([ctx(fromStoreB, { pointsTiling: 'auto' })]);
+
+    expect(fromStoreB.getPointsTilingMetadata).toHaveBeenCalledTimes(1);
+    expect(resolver.getTilingMetadata('transcripts')?.bounds?.maxX).toBe(5);
+  });
+});

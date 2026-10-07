@@ -122,7 +122,12 @@ export const mortonTiledStrategy: PointsRenderStrategy = {
           maxCacheSize: grid.maxCacheSize,
           refinementStrategy: 'best-available',
           updateTriggers: {
-            getTileData: [resource.element.key, featureCodesSignature(featureCodes)],
+            getTileData: [
+              // The instance, not its name: another store's same-named element must
+              // not be served this one's cached tiles.
+              resource.element,
+              featureCodesSignature(featureCodes),
+            ],
             renderSubLayers: [
               pointSize,
               pointRadiusMinPixels,
