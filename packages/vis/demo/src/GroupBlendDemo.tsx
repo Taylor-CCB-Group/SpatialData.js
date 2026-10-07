@@ -23,18 +23,21 @@
  */
 
 import { Deck, Layer, OrthographicView } from '@deck.gl/core';
-import { ScatterplotLayer } from '@deck.gl/layers';
-import { ScaleBarLayer } from '@hms-dbmi/viv';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { Matrix4 } from '@math.gl/core';
 import {
-  DeviceAdaptiveImageLayer,
   type GroupBlendMode,
   getIsolatedGroupMember,
   IsolatedGroupLayer,
 } from '@spatialdata/layers';
-import { DetailView } from '@vivjs/views';
 import { useEffect, useRef, useState } from 'react';
+import {
+  BACKDROP,
+  circles,
+  GREEN,
+  RED,
+  syntheticImageLoader,
+  vivImageLayers,
+} from './groupDemoLayers';
 
 const WIDTH = 640;
 const HEIGHT = 360;
@@ -61,72 +64,14 @@ const VIEW_STATES = {
   inset: { target: [160, 0, 0] as [number, number, number], zoom: -1 },
 };
 
-type Circle = { position: [number, number]; radius: number; color: [number, number, number] };
-
-function circles(id: string, data: Circle[], opacity: number): ScatterplotLayer<Circle> {
-  return new ScatterplotLayer<Circle>({
-    id,
-    data,
-    getPosition: (d) => d.position,
-    getRadius: (d) => d.radius,
-    getFillColor: (d) => d.color,
-    opacity,
-    pickable: true,
-    autoHighlight: true,
-    highlightColor: [255, 255, 0, 255],
-  });
-}
-
-const RED: [number, number, number] = [230, 40, 40];
-const GREEN: [number, number, number] = [40, 200, 60];
-
 function flatChildren(group: IsolatedGroupLayer): Layer[] {
   return group.props.layers.filter((layer): layer is Layer => layer instanceof Layer);
-}
-
-const IMAGE_SIZE = 256;
-const IMAGE_VALUE = 200;
-/** World placement of the image: x 60..316, y -128..128, under the group's circles. */
-const IMAGE_ORIGIN: [number, number, number] = [60, -128, 0];
-
-/** A one-level, one-channel uint8 Viv pixel source filled with `IMAGE_VALUE`. */
-function syntheticImageLoader() {
-  const filled = () => new Uint8Array(IMAGE_SIZE * IMAGE_SIZE).fill(IMAGE_VALUE);
-  return [
-    {
-      shape: [1, IMAGE_SIZE, IMAGE_SIZE],
-      labels: ['c', 'y', 'x'],
-      tileSize: IMAGE_SIZE,
-      dtype: 'Uint8',
-      meta: {},
-      getTile: async () => ({ data: filled(), width: IMAGE_SIZE, height: IMAGE_SIZE }),
-      getRaster: async () => ({ data: filled(), width: IMAGE_SIZE, height: IMAGE_SIZE }),
-      onTileError: (error: unknown) => console.error(error),
-    },
-  ];
 }
 
 const imageLoader = IMAGE ? syntheticImageLoader() : null;
 
 function imageLayers(view: ViewId): Layer[] {
-  if (!imageLoader) return [];
-  const detail = new DetailView({ id: `image-${view}`, width: WIDTH, height: HEIGHT });
-  const result: unknown = detail.getLayers({
-    props: {
-      loader: imageLoader,
-      colors: [[255, 255, 255]],
-      contrastLimits: [[0, 255]],
-      channelsVisible: [true],
-      selections: [{ c: 0 }],
-      modelMatrix: new Matrix4().translate(IMAGE_ORIGIN),
-    },
-  });
-  const vivLayers = (Array.isArray(result) ? result.flat(Infinity) : [result]).filter(
-    (layer): layer is Layer => layer instanceof Layer && !(layer instanceof ScaleBarLayer)
-  );
-  return vivLayers.map(
-    (vivLayer) => new DeviceAdaptiveImageLayer({ id: `${vivLayer.id}-device@${view}`, vivLayer })
-  );
+  return imageLoader ? vivImageLayers(imageLoader, `@${view}`, WIDTH, HEIGHT) : [];
 }
 
 function buildLayers(view: ViewId): Layer[] {
@@ -134,8 +79,8 @@ function buildLayers(view: ViewId): Layer[] {
   const backdrop = circles(
     tag('backdrop'),
     [
-      { position: [-160, 0], radius: 150, color: [60, 120, 200] },
-      { position: [160, 0], radius: 150, color: [60, 120, 200] },
+      { position: [-160, 0], radius: 150, color: BACKDROP },
+      { position: [160, 0], radius: 150, color: BACKDROP },
     ],
     1
   );

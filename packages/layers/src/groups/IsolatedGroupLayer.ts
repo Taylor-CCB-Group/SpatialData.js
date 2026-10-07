@@ -16,6 +16,12 @@
  * Nested groups work because the effect renders deepest groups first, and a group
  * treats a pass belonging to one of its ancestors like the main pass.
  *
+ * Caching: a target is the size of one viewport, and is keyed by that viewport's
+ * projection (`Viewport.equals`: size and matrices, not position). Views that show the
+ * same thing — a grid of cells sharing one view state — share one target, drawn once
+ * and composited into each. A target is redrawn only when its projection changes or
+ * something inside the group asked deck for a redraw.
+ *
  * Picking: deck reports the outermost layer as `info.layer`, so a pick inside a group
  * names the group. The innermost group records the child the pick came through, and
  * `getIsolatedGroupMember` reads it back.
@@ -32,6 +38,8 @@ import {
   _LayersPass as LayersPass,
   type PickingInfo,
   type PreRenderOptions,
+  type UpdateParameters,
+  type Viewport,
 } from '@deck.gl/core';
 import type { Device, Framebuffer, Texture } from '@luma.gl/core';
 import { GroupCompositeLayer } from './GroupCompositeLayer';
@@ -76,10 +84,37 @@ function isDescendantOf(layer: Layer, ancestor: Layer): boolean {
   return false;
 }
 
+/** Why a group's target was drawn this frame. */
+export type IsolationRenderReason = 'new' | 'contents' | 'view';
+
+export interface IsolationRenderEvent {
+  groupId: string;
+  /** The viewport the target was drawn for; others with the same projection share it. */
+  viewportId: string;
+  reason: IsolationRenderReason;
+  /** Target size in device pixels. */
+  width: number;
+  height: number;
+}
+
 export interface IsolatedGroupLayerProps {
   /** The group's children, drawn into its target in this order. */
   layers: LayersList;
   blendMode?: GroupBlendMode;
+  /** Diagnostic: called each time a target is drawn, so cache hits are observable. */
+  onTargetRender?: ((event: IsolationRenderEvent) => void) | null;
+}
+
+/** Whether any layer under `layer`, other than `skip`, has asked deck for a redraw.
+ *  Reads the flags without clearing them. */
+function subtreeNeedsRedraw(layer: Layer, skip: Layer | null): boolean {
+  if (!(layer instanceof CompositeLayer)) return false;
+  for (const sub of layer.getSubLayers()) {
+    if (sub === skip) continue;
+    if (sub.getNeedsRedraw({ clearRedrawFlags: false })) return true;
+    if (subtreeNeedsRedraw(sub, skip)) return true;
+  }
+  return false;
 }
 
 export class IsolatedGroupLayer extends CompositeLayer<IsolatedGroupLayerProps> {
@@ -87,10 +122,54 @@ export class IsolatedGroupLayer extends CompositeLayer<IsolatedGroupLayerProps> 
   static defaultProps = {
     layers: { type: 'array', value: [], compare: true },
     blendMode: { type: 'string', value: 'normal' },
+    onTargetRender: { type: 'function', value: null, optional: true },
   };
 
+  /** `contentsChanged` latches until the effect next draws this group's targets. */
+  declare state: { contentsChanged: boolean };
+
   initializeState(): void {
+    this.setState({ contentsChanged: true });
     this.context.deck?._addDefaultEffect(new GroupIsolationEffect());
+  }
+
+  updateState(params: UpdateParameters<this>): void {
+    super.updateState(params);
+    // A removed member asks for no redraw of its own, so membership changes count here.
+    const ids = (list: LayersList) => flattenLayers(list).map((layer) => layer.id);
+    if (
+      ids(params.props.layers).join('\u0000') !== ids(params.oldProps.layers ?? []).join('\u0000')
+    ) {
+      this.setState({ contentsChanged: true });
+    }
+  }
+
+  /**
+   * deck asks every layer, parents before children, whether it needs a redraw, and
+   * clears each layer's flag as it goes. Asking here, before the members are asked,
+   * is the one point where their flags can be read. Anything deck would redraw for —
+   * changed props, a tile arriving, a highlight, a transition — then also redraws
+   * the group's targets.
+   */
+  getNeedsRedraw(opts?: { clearRedrawFlags: boolean }): string | false {
+    const redraw = super.getNeedsRedraw(opts);
+    const ownComposite = this.getSubLayers().find((layer) => layer instanceof GroupCompositeLayer);
+    if (this.state && subtreeNeedsRedraw(this, ownComposite ?? null)) {
+      this.state.contentsChanged = true;
+    }
+    return redraw;
+  }
+
+  /** Read and clear the contents-changed latch. */
+  _takeContentsChanged(): boolean {
+    const changed = this.state?.contentsChanged ?? true;
+    if (this.state) this.state.contentsChanged = false;
+    return changed;
+  }
+
+  /** Mark contents changed from outside: a nested group's target was redrawn. */
+  _markContentsChanged(): void {
+    if (this.state) this.state.contentsChanged = true;
   }
 
   renderLayers(): LayersList {
@@ -160,9 +239,26 @@ class IsolationPass extends LayersPass {
   }
 }
 
+type IsolationTarget = {
+  /** The viewport last drawn into this target; others equal to it share the target. */
+  viewport: Viewport;
+  framebuffer: Framebuffer;
+  color: Texture;
+};
+
+/** The same viewport moved to the canvas origin, so it fills a target of its own size.
+ *  Everything but the position is read through to the original. */
+function atOrigin(viewport: Viewport): Viewport {
+  if (viewport.x === 0 && viewport.y === 0) return viewport;
+  const moved: Viewport = Object.create(viewport);
+  moved.x = 0;
+  moved.y = 0;
+  return moved;
+}
+
 /**
- * Renders every visible `IsolatedGroupLayer`'s subtree into that group's target
- * before the main pass. One instance per Deck, added through `_addDefaultEffect`.
+ * Draws each visible `IsolatedGroupLayer`'s members into viewport-sized targets before
+ * the main pass. One instance per Deck, added through `_addDefaultEffect`.
  */
 class GroupIsolationEffect implements Effect {
   id = 'spatialdata-group-isolation';
@@ -173,7 +269,8 @@ class GroupIsolationEffect implements Effect {
   private device: Device | null = null;
   private pass: IsolationPass | null = null;
   private dummyTexture: Texture | null = null;
-  private targets = new Map<string, { framebuffer: Framebuffer; color: Texture }>();
+  /** Per group: one target per distinct projection seen in the last frame. */
+  private targets = new Map<string, IsolationTarget[]>();
 
   setup({ device }: EffectContext): void {
     this.device = device;
@@ -191,41 +288,105 @@ class GroupIsolationEffect implements Effect {
         layer instanceof IsolatedGroupLayer && layer.props.visible
     );
     const live = new Set(groups.map((group) => group.id));
-    for (const [id, target] of this.targets) {
+    for (const [id, targets] of this.targets) {
       if (!live.has(id)) {
-        destroyTarget(target);
+        for (const target of targets) destroyTarget(target);
         this.targets.delete(id);
       }
     }
-    if (groups.length === 0) return;
-
     const canvasContext = opts.canvasContext ?? device.canvasContext;
-    if (!canvasContext) return;
-    const [width, height] = canvasContext.getDrawingBufferSize();
+    if (groups.length === 0 || !canvasContext) return;
+    const pixelRatio = canvasContext.cssToDeviceRatio();
 
-    // LayerManager lists parents before children, so reversing renders the deepest
+    // LayerManager lists parents before children, so reversing draws the deepest
     // groups first: an inner group's target is ready before its parent samples it.
     for (const group of groups.reverse()) {
-      const target = this._getTarget(device, group.id, width, height);
-      pass.render({
-        ...opts,
-        pass: isolationPassName(group.id),
-        layers: opts.layers.filter((layer) => isDescendantOf(layer, group)),
-        target: target.framebuffer,
-        clearCanvas: true,
-        clearColor: [0, 0, 0, 0],
-      });
+      const contentsChanged = group._takeContentsChanged();
+      const previous = this.targets.get(group.id) ?? [];
+      const kept: IsolationTarget[] = [];
+      let drewAny = false;
+
+      for (const viewport of this._viewportsShowing(group, opts)) {
+        if (kept.some((target) => target.viewport.equals(viewport))) continue;
+        const width = Math.max(1, Math.round(viewport.width * pixelRatio));
+        const height = Math.max(1, Math.round(viewport.height * pixelRatio));
+        const sized = (target: IsolationTarget) =>
+          target.color.width === width && target.color.height === height;
+        // Prefer a target already showing this projection; failing that, redraw one of
+        // the right size (a pan), so panning does not reallocate every frame.
+        const same = previous.find(
+          (t) => !kept.includes(t) && sized(t) && t.viewport.equals(viewport)
+        );
+        const reusable = same ?? previous.find((t) => !kept.includes(t) && sized(t));
+        const target = reusable ?? this._createTarget(device, group.id, viewport, width, height);
+        const reason: IsolationRenderReason | null = !reusable
+          ? 'new'
+          : !same
+            ? 'view'
+            : contentsChanged
+              ? 'contents'
+              : null;
+        if (reason) {
+          pass.render({
+            ...opts,
+            pass: isolationPassName(group.id),
+            layers: opts.layers.filter((layer) => isDescendantOf(layer, group)),
+            viewports: [atOrigin(viewport)],
+            target: target.framebuffer,
+            clearCanvas: true,
+            clearColor: [0, 0, 0, 0],
+          });
+          group.props.onTargetRender?.({
+            groupId: group.id,
+            viewportId: viewport.id,
+            reason,
+            width,
+            height,
+          });
+          drewAny = true;
+        }
+        target.viewport = viewport;
+        kept.push(target);
+      }
+
+      for (const target of previous) {
+        if (!kept.includes(target)) destroyTarget(target);
+      }
+      this.targets.set(group.id, kept);
+      // An enclosing group samples this target, so its own contents just changed.
+      if (drewAny) {
+        for (let p = group.parent; p; p = p.parent) {
+          if (p instanceof IsolatedGroupLayer) p._markContentsChanged();
+        }
+      }
     }
   }
 
+  /** Viewports the group draws in: those the deck's `layerFilter` admits its root to. */
+  _viewportsShowing(group: IsolatedGroupLayer, opts: PreRenderOptions): Viewport[] {
+    const { layerFilter } = opts;
+    if (!layerFilter) return opts.viewports;
+    const root = group.root;
+    return opts.viewports.filter((viewport) =>
+      layerFilter({ layer: root, viewport, isPicking: false, renderPass: 'screen' })
+    );
+  }
+
+  /** deck activates each viewport before resolving a layer's module props, so the
+   *  composite's context names the viewport it is about to draw in. */
   getShaderModuleProps(layer: Layer): Record<string, unknown> | undefined {
     if (!(layer instanceof GroupCompositeLayer)) return undefined;
-    const target = this.targets.get(layer.props.groupId);
+    const viewport = layer.context.viewport;
+    const target = this.targets
+      .get(layer.props.groupId)
+      ?.find((candidate) => candidate.viewport.equals(viewport));
     return { groupComposite: { groupTarget: target?.color ?? this.dummyTexture } };
   }
 
   cleanup(): void {
-    for (const target of this.targets.values()) destroyTarget(target);
+    for (const targets of this.targets.values()) {
+      for (const target of targets) destroyTarget(target);
+    }
     this.targets.clear();
     this.dummyTexture?.destroy();
     this.dummyTexture = null;
@@ -233,12 +394,13 @@ class GroupIsolationEffect implements Effect {
     this.device = null;
   }
 
-  _getTarget(device: Device, groupId: string, width: number, height: number) {
-    const existing = this.targets.get(groupId);
-    if (existing && existing.color.width === width && existing.color.height === height) {
-      return existing;
-    }
-    if (existing) destroyTarget(existing);
+  _createTarget(
+    device: Device,
+    groupId: string,
+    viewport: Viewport,
+    width: number,
+    height: number
+  ): IsolationTarget {
     // Colour is created here rather than by format string: luma's auto-created
     // attachments are render-only, and this one must also be sampled. The
     // framebuffer does not own it, so destroyTarget frees it separately.
@@ -250,9 +412,7 @@ class GroupIsolationEffect implements Effect {
       colorAttachments: [color],
       depthStencilAttachment: 'depth24plus',
     });
-    const target = { framebuffer, color };
-    this.targets.set(groupId, target);
-    return target;
+    return { viewport, framebuffer, color };
   }
 }
 

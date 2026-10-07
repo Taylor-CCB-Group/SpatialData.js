@@ -281,7 +281,48 @@ mechanism. In short:
 - The group's `filterSubLayer` keeps its children out of the main pass.
 - A full-screen composite layer draws the target at the group's place in the order.
 
-The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
+The demos are `/groups` and `/groupgrid` in the vis demo, with `?device=webgl` to
+switch backends.
+
+**Caching.** A target is one viewport in size, and is keyed by that viewport's
+projection (deck's `Viewport.equals`: size and matrices, not position). It is redrawn
+only when no target with that projection exists, or when the group's contents
+changed.
+- **Shared across views:** views showing the same thing share one target, drawn once
+  and composited into each. In a grid of cells under one view state, that means one
+  draw per frame however many cells there are. An inset at a different zoom gets a
+  target of its own.
+- **Detecting changed contents:** deck asks every layer, parents first, whether it
+  needs a redraw, clearing each flag as it goes. The group reads its members' flags
+  before they are cleared and latches the result. Anything deck itself would redraw
+  for therefore redraws the target: changed props, a tile arriving, a highlight, a
+  transition. A membership change counts too.
+- **Nesting:** a redrawn inner target marks its enclosing groups changed.
+- **What does not count:** the group's own opacity and blend mode only affect the
+  composite, so they do not redraw the target.
+- **Panning:** reuses a target of the right size rather than allocating a new one.
+
+`/groupgrid` has the shape of MDV's density grid (`chart-array-fbo`): shared layers in
+an isolated group, and an overlay per cell outside it. Its counters confirm, on both
+backends:
+- recolouring the per-cell overlays draws nothing;
+- adding a cell draws nothing;
+- recolouring a shared member is one draw for every cell;
+- a pan is one draw per frame;
+- a Viv tile arriving late (`?image=1&tileDelay=800`) is exactly one draw.
+
+This replaces the prototype's second `Deck`, its private `_framebuffer` prop, and its
+hand-built content key.
+
+**Picking in a grid** never touches the cached targets. Members draw directly in
+picking passes, and deck only draws the view under the pointer.
+- **Identifying the cell:** `info.viewport` names the cell, and
+  `getIsolatedGroupMember` names the member. Checked on WebGL.
+- **Shared highlight:** a shared member is one layer, so its hover highlight shows in
+  every cell, at the cost of one target redraw each time the highlighted object
+  changes. A per-cell highlight would have to be drawn outside the shared target.
+- **WebGPU:** picking across several views is untested, because of deck's multi-view
+  bugs below.
 
 **What was verified**, by pixel readback on both backends:
 - Group opacity removes the overlap bleed that per-child opacity shows. A green
@@ -338,9 +379,6 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
 - **Private deck API.** The effect is registered through `deck._addDefaultEffect` and
   renders with `_LayersPass`. Both are underscore APIs, the same ones deck's
   `MaskExtension` uses.
-- **No caching yet.** The subtree redraws into its target every frame, which costs
-  one extra full-screen pass over drawing the children directly. Caching when
-  nothing changed is ADR 0003's FBO caching, and it belongs here.
 - **deck 9.4 bugs with several views on WebGPU.** These happen with no groups at
   all (`?group=0`).
   - A view with `clear: true` never draws. deck begins the clear pass while the
@@ -349,6 +387,13 @@ The demo is `/groups` in the vis demo, with `?device=webgl` to switch backends.
   - A view smaller than the canvas is drawn upside down: its viewport y is
     computed for WebGL's bottom-left origin. This is the same family as the picking
     y-flip that `applyWebGPUPickingFix` works around.
+- **Caching limits:**
+  - **Invalidation is deck's redraw flags.** A change that reaches the GPU without
+    setting one, such as a texture mutated in place, will not redraw the target.
+  - **Members of a shared target are the same in every view.** A layer that should
+    differ per cell belongs outside the group.
+  - **The first frame can draw at the wrong size.** The drawing buffer is not yet
+    settled, so the target is reallocated on the next frame.
 - **Not yet tried:**
   - a real multiscale image, where tiles from several levels load as the view moves;
   - tiled points and labels as members;
