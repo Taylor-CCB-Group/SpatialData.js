@@ -4,21 +4,46 @@
     {
       "name": "vis-demo",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@spatialdata/vis", "dev:demo"],
+      "runtimeArgs": [
+        "--filter",
+        "@spatialdata/vis",
+        "dev:demo"
+      ],
       "autoPort": true,
       "port": 5173
     },
     {
       "name": "vis-demo-alt",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@spatialdata/vis", "dev:demo", "--port", "5180", "--strictPort"],
+      "runtimeArgs": [
+        "--filter",
+        "@spatialdata/vis",
+        "dev:demo",
+        "--port",
+        "5180",
+        "--strictPort"
+      ],
       "port": 5180
     },
     {
       "name": "docs",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "docs", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "docs",
+        "dev"
+      ],
       "port": 3001
+    },
+    {
+      "name": "vis-dev-fixtures",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@spatialdata/vis",
+        "dev"
+      ],
+      "port": 5173
     }
   ]
 }
