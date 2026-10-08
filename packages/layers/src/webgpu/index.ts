@@ -3,3 +3,4 @@
 export { DeviceAdaptiveImageLayer, renderRasterImageTile } from './deviceAdaptiveImageLayer';
 export { applyWebGPUPickingFix } from './pickingFix';
 export { RasterTileLayer } from './RasterTileLayer';
+export { applyWebGPUViewFix } from './viewFix';
