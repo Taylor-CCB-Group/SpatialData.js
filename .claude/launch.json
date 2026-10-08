@@ -19,6 +19,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "docs", "dev"],
       "port": 3001
+    },
+    {
+      "name": "vis-dev-fixtures",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@spatialdata/vis", "dev"],
+      "port": 5173
     }
   ]
 }

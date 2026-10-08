@@ -17,3 +17,17 @@ empty), so on WebGPU an extension means a layer with its own WGSL. MDV's
 answer, whether WGSL hooks in deck, a Viv-owned channel-composite module, or
 extensions as layer subclasses, needs agreeing across Viv, MDV and intraspatial
 before anything is upstreamed.
+
+Per-channel opacity and blend mode are a WebGL feature worth proposing upstream
+whatever happens with WebGPU. Viv adds channel colours together and clamps the sum,
+with one opacity per layer. Our WGSL composite in `rasterTileLayerShaders.ts` does the
+same. Per-channel opacity, and a per-channel choice of add, alpha-over or max, live
+inside that one shader, so they need nothing from deck.
+
+On WebGL this can ship here first, as a local extension that replaces
+`ColorPaletteExtension`. Viv's `DECKGL_MUTATE_COLOR` hook already receives every
+channel's intensity. Offering it upstream afterwards avoids carrying a fork of
+Viv's colour step. Ideally our WGSL and Viv share one channel model, so that this is
+the same feature on both backends. The
+[Render Stack hierarchy plan](render-stack-hierarchy.md#backend-support) relies on
+it.

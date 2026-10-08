@@ -5,8 +5,17 @@ import HeadlessBlobsDemo from './HeadlessBlobsDemo';
 const CodecFixtureDemo = lazy(() => import('./CodecFixtureDemo'));
 const MultiCanvasDemo = lazy(() => import('./MultiCanvasDemo'));
 const PickDiagnosticDemo = lazy(() => import('./PickDiagnosticDemo'));
+const GroupBlendDemo = lazy(() => import('./GroupBlendDemo'));
+const GroupGridDemo = lazy(() => import('./GroupGridDemo'));
 
-type DemoRoute = 'sketch' | 'headless' | 'codec' | 'multicanvas' | 'pickdiag';
+type DemoRoute =
+  | 'sketch'
+  | 'headless'
+  | 'codec'
+  | 'multicanvas'
+  | 'pickdiag'
+  | 'groups'
+  | 'groupgrid';
 
 function getDemoRoute(): DemoRoute {
   if (typeof window === 'undefined') {
@@ -17,6 +26,8 @@ function getDemoRoute(): DemoRoute {
   if (pathname.endsWith('/codec')) return 'codec';
   if (pathname.endsWith('/multicanvas')) return 'multicanvas';
   if (pathname.endsWith('/pickdiag')) return 'pickdiag';
+  if (pathname.endsWith('/groups')) return 'groups';
+  if (pathname.endsWith('/groupgrid')) return 'groupgrid';
   return 'sketch';
 }
 
@@ -45,6 +56,12 @@ function DemoNav({ route }: { route: DemoRoute }) {
       <a href="/pickdiag" style={linkStyle(route === 'pickdiag')}>
         Pick diagnostic
       </a>
+      <a href="/groups" style={linkStyle(route === 'groups')}>
+        Isolated groups
+      </a>
+      <a href="/groupgrid" style={linkStyle(route === 'groupgrid')}>
+        Group grid
+      </a>
     </nav>
   );
 }
@@ -64,6 +81,14 @@ function App() {
         ) : route === 'pickdiag' ? (
           <Suspense fallback={null}>
             <PickDiagnosticDemo />
+          </Suspense>
+        ) : route === 'groupgrid' ? (
+          <Suspense fallback={null}>
+            <GroupGridDemo />
+          </Suspense>
+        ) : route === 'groups' ? (
+          <Suspense fallback={null}>
+            <GroupBlendDemo />
           </Suspense>
         ) : route === 'multicanvas' ? (
           <Suspense fallback={null}>
