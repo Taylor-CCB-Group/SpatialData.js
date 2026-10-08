@@ -20,11 +20,16 @@
  * `VivSpatialViewer` builds image layers (`DetailView.getLayers`, wrapped in
  * `DeviceAdaptiveImageLayer`), from a synthetic in-memory loader: one uint8 channel of
  * constant value, so the expected pixels can be worked out.
+ *
+ * WebGPU runs with `applyWebGPUViewFix` and `applyWebGPUPickingFix`; `?fix=0` leaves
+ * deck unpatched to show the bugs they work around.
  */
 
 import { Deck, Layer, OrthographicView } from '@deck.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
 import {
+  applyWebGPUPickingFix,
+  applyWebGPUViewFix,
   type GroupBlendMode,
   getIsolatedGroupMember,
   IsolatedGroupLayer,
@@ -48,11 +53,8 @@ const BLEND = (BLEND_MODES.find((mode) => mode === params.get('blend')) ??
   'normal') satisfies GroupBlendMode;
 const NESTED = params.get('nested') === '1';
 const VIEWS = params.get('views') === '2';
-/**
- * `?clear=0` leaves the inset uncleared. deck 9.4 breaks a `clear: true` view on
- * WebGPU: it begins the clear pass while the main pass is still open, and the view
- * never draws. Viv's OverviewView sets `clear: true`, so it hits this too.
- */
+const FIX = params.get('fix') !== '0';
+/** `?clear=0` leaves the inset uncleared, so it draws on unpatched WebGPU (`?fix=0`). */
 const CLEAR_INSET = params.get('clear') !== '0';
 const GROUPED = params.get('group') !== '0';
 const IMAGE = params.get('image') === '1';
@@ -133,15 +135,13 @@ const WORLD_SAMPLES: Array<[string, ViewId, [number, number]]> = [
   ['inset iso overlap', 'inset', [160, 0]],
   ['inset iso red only', 'inset', [85, 0]],
   ['inset iso backdrop only', 'inset', [160, 110]],
+  // Empty in the inset, over the main view's circles: transparent only if cleared.
+  ['inset empty (0 if cleared)', 'inset', [-50, -130]],
 ];
 
-/**
- * deck 9.4 places a non-full-canvas view upside down on WebGPU (its viewport y is
- * computed for WebGL's bottom-left origin). These samples read the inset where WebGPU
- * actually draws it, to check the group composites correctly inside that view.
- */
+/** Unpatched deck draws the inset mirrored on WebGPU; these samples read it there. */
 function mirroredInsetSamples(): Array<[string, [number, number]]> {
-  if (!(VIEWS && DEVICE === 'webgpu')) return [];
+  if (!(VIEWS && DEVICE === 'webgpu' && !FIX)) return [];
   const flip = HEIGHT - 2 * INSET.y - INSET.height;
   return WORLD_SAMPLES.filter(([, view]) => view === 'inset').map(([name, view, world]) => {
     const [x, y] = toPixel(view, world);
@@ -183,6 +183,11 @@ export default function GroupBlendDemo() {
         ...(VIEWS ? [new OrthographicView({ id: 'inset', ...INSET, clear: CLEAR_INSET })] : []),
       ],
       initialViewState: VIEW_STATES,
+      onDeviceInitialized: (device) => {
+        if (!FIX) return;
+        applyWebGPUViewFix(device);
+        applyWebGPUPickingFix(device);
+      },
       layers: [...buildLayers('main'), ...(VIEWS ? buildLayers('inset') : [])],
       // Viv's convention: a layer draws in the view whose id its own id carries.
       layerFilter: ({ layer, viewport }) => layer.id.endsWith(`@${viewport.id}`),
@@ -223,6 +228,7 @@ export default function GroupBlendDemo() {
       ...(VIEWS ? { views: '2' } : {}),
       ...(IMAGE ? { image: '1' } : {}),
       ...(GROUPED ? {} : { group: '0' }),
+      ...(FIX ? {} : { fix: '0' }),
       ...query,
     });
     return (
@@ -242,6 +248,7 @@ export default function GroupBlendDemo() {
         {link(VIEWS ? 'one view' : 'inset view', { views: VIEWS ? '1' : '2' })}{' '}
         {link(IMAGE ? 'no image' : 'viv image', { image: IMAGE ? '0' : '1' })}{' '}
         {link(GROUPED ? 'ungroup' : 'group', { group: GROUPED ? '0' : '1' })}
+        {DEVICE === 'webgpu' && link(FIX ? 'unpatch deck' : 'patch deck', { fix: FIX ? '0' : '1' })}
       </div>
       <div
         ref={container}
