@@ -123,8 +123,17 @@ usually names the element and the reason, for example the dtype.
 Each command prints a JSON report and writes a manifest next to the output
 store, named from the store's stem: `out.zarr` gets `out.manifest.json` from
 the image commands and `out.csc-manifest.json` from `tables to-csc`. Read an
-image manifest with `spatialdata-js-util images inspect out.manifest.json`; it
-records the codec backend and per-raster error statistics. Then confirm:
+image manifest with `spatialdata-js-util images inspect out.manifest.json`. It
+records the codec, backend, encode options and encoded size for each raster,
+plus checksums for spot-checked chunks. It does not measure error. For lossy
+presets, measure error against the original. This streams through dask, so
+large images are fine:
+
+```bash
+python <this skill>/scripts/compare_images.py in.zarr out.zarr     # max/mean abs error per image
+```
+
+Then confirm:
 
 ```bash
 python <this skill>/scripts/inspect_store.py out.zarr     # suggest lists should now be empty
