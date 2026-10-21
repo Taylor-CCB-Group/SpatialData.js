@@ -2,7 +2,13 @@ import * as ad from 'anndata.js';
 import { createPrefixedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
 import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
-import type { PointsFeatureCatalog } from '../pointsTiling.js';
+import type { PointsFeatureCatalog, PointsTilingMetadata } from '../pointsTiling.js';
+import {
+  isPointsZarrAttrs,
+  type PointsZarrInBoundsOptions,
+  type PointsZarrInBoundsResult,
+  PointsZarrSource,
+} from '../pointsZarr.js';
 import {
   type CoordinateTransformation,
   type PointsAttrs,
@@ -636,9 +642,17 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
  */
 export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs> {
   readonly attrs: PointsAttrs;
+  /**
+   * How the points are stored: `points.parquet` (the SpatialData default, optionally
+   * Morton-sorted), or the experimental multiscale Zarr layout (`pointsZarr.ts`),
+   * recognised by its `points:version` attribute.
+   */
+  readonly storage: 'parquet' | 'points-zarr';
   private readonly vPoints: SpatialDataPointsSource;
+  private zarrSource?: Promise<PointsZarrSource>;
   constructor(params: ElementParams<'points'>) {
     super(params);
+    this.storage = isPointsZarrAttrs(this.rawAttrs) ? 'points-zarr' : 'parquet';
 
     // Parse attrs through schema
     const result = pointsAttrsSchema.safeParse(this.rawAttrs);
@@ -659,7 +673,37 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.attrs.coordinateTransformations;
   }
 
+  /** The multiscale Zarr reader, opened once. Only for `storage === 'points-zarr'`. */
+  private pointsZarr(): Promise<PointsZarrSource> {
+    if (this.storage !== 'points-zarr') {
+      return Promise.reject(new Error(`points/${this.key} is not a points-zarr element`));
+    }
+    this.zarrSource ??= PointsZarrSource.open(
+      this.sdata.rootStore.zarritaStore,
+      this.path,
+      this.rawAttrs
+    ).catch((error) => {
+      // Not cached as failed: a transient read error must be retryable.
+      this.zarrSource = undefined;
+      throw error;
+    });
+    return this.zarrSource;
+  }
+
+  /**
+   * Throw for a parquet-only read on a points-zarr element. Such an element has no
+   * resident form to preload: it is drawn tile by tile ({@link loadPointsZarrInBounds}).
+   */
+  private requireParquet(method: string) {
+    if (this.storage === 'points-zarr') {
+      throw new Error(
+        `${method} reads points.parquet; points/${this.key} is a points-zarr element, read through its tiles`
+      );
+    }
+  }
+
   async loadPoints(options?: PointsLoadOptions) {
+    this.requireParquet('loadPoints');
     return this.vPoints.loadPoints(`points/${this.key}`, options);
   }
 
@@ -674,6 +718,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
    * ```
    */
   streamPoints(options?: PointsLoadOptions) {
+    this.requireParquet('streamPoints');
     return this.vPoints.streamPoints(`points/${this.key}`, options);
   }
 
@@ -682,6 +727,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     featureCatalog?: PointsFeatureCatalog | null;
     signal?: AbortSignal;
   }) {
+    this.requireParquet('loadRowFeatureCodes');
     return this.vPoints.loadPointsRowFeatureCodes(`points/${this.key}`, options);
   }
 
@@ -700,6 +746,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     /** Aborts the scan between row-group chunks when it is superseded. */
     signal?: AbortSignal;
   }) {
+    this.requireParquet('loadPointsMatchingFeatureCodes');
     return this.vPoints.loadPointsMatchingFeatureCodes(`points/${this.key}`, options);
   }
 
@@ -710,10 +757,17 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     featureCodeByName?: ReadonlyMap<string, number>;
     signal?: AbortSignal;
   }) {
+    this.requireParquet('streamPointsMatchingFeatureCodes');
     return this.vPoints.streamPointsMatchingFeatureCodes(`points/${this.key}`, options);
   }
 
-  async loadFeatureCounts() {
+  async loadFeatureCounts(): Promise<Map<number, number>> {
+    if (this.storage === 'points-zarr') {
+      const counts = await (await this.pointsZarr()).featureCounts();
+      const byCode = new Map<number, number>();
+      for (let code = 0; code < counts.length; code++) byCode.set(code, counts[code]);
+      return byCode;
+    }
     return this.vPoints.loadFeatureCounts(`points/${this.key}`);
   }
 
@@ -721,23 +775,42 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     /** Called with the names-only catalog before the (slow) counts scan, so a panel
      * can list features while counts are still loading. */
     onPartialCatalog?: (catalog: PointsFeatureCatalog) => void;
-  }) {
+  }): Promise<PointsFeatureCatalog | null> {
+    if (this.storage === 'points-zarr') {
+      // Exact counts from the index: no partial phase to report.
+      return (await this.pointsZarr()).featureCatalog();
+    }
     return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`, options);
   }
 
-  async getPointsTilingMetadata() {
+  async getPointsTilingMetadata(): Promise<PointsTilingMetadata | null> {
+    if (this.storage === 'points-zarr') {
+      return (await this.pointsZarr()).tilingMetadata;
+    }
     return this.vPoints.getPointsTilingMetadata(`points/${this.key}`);
   }
 
   async loadPointsInBounds(options: Parameters<SpatialDataPointsSource['loadPointsInBounds']>[1]) {
+    this.requireParquet('loadPointsInBounds');
     return this.vPoints.loadPointsInBounds(`points/${this.key}`, options);
   }
 
-  async listFeatures() {
+  /** A region of a points-zarr element, at the level its budget allows. */
+  async loadPointsZarrInBounds(
+    options: PointsZarrInBoundsOptions
+  ): Promise<PointsZarrInBoundsResult> {
+    return (await this.pointsZarr()).loadInBounds(options);
+  }
+
+  async listFeatures(): Promise<PointsFeatureCatalog | null> {
+    if (this.storage === 'points-zarr') {
+      return (await this.pointsZarr()).featureCatalog();
+    }
     return this.vPoints.listPointsFeatures(`points/${this.key}`);
   }
 
   async getParquetRowCount() {
+    this.requireParquet('getParquetRowCount');
     return this.vPoints.getPointsParquetRowCount(`points/${this.key}`);
   }
 }

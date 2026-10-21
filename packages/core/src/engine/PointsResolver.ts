@@ -5,6 +5,7 @@ import { DEFAULT_POINTS_MEMORY_CAP } from '../pointsLimits.js';
 import type { PointsLoadProgress, PointsLoadResult } from '../pointsLoadOptions.js';
 import { planPointsLoads } from '../pointsLoadPlan.js';
 import {
+  isTileablePointsMetadata,
   type PointsFeatureCatalog,
   type PointsTilingMetadata,
   type PointsTilingMode,
@@ -1564,7 +1565,8 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
   // --- Tiling metadata probe (D5) ---------------------------------------------
 
   /**
-   * Idempotently probe the element for a renderable Morton artifact.
+   * Idempotently probe the element for a renderable tiled artifact: a Morton parquet,
+   * or a points-zarr element (which is tileable by construction).
    *
    * The renderability gate lives HERE, not at the render resolver: what this slot
    * settles is the answer to "can this element be tiled", so a Morton file whose
@@ -1592,10 +1594,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     const before = slot.pending;
     const loading = slot.request('probe', async () => {
       const metadata = await element.getPointsTilingMetadata();
-      if (!metadata?.supportsRowGroupRangeReads || !metadata.bounds) {
-        return null;
-      }
-      return metadata;
+      return isTileablePointsMetadata(metadata) ? metadata : null;
     });
 
     // Same contract as the preload's: 'loading' only when a NEW request starts. The only

@@ -2,7 +2,13 @@ import type { Layer, LayersList } from '@deck.gl/core';
 import { COORDINATE_SYSTEM } from '@deck.gl/core';
 import { TileLayer } from '@deck.gl/geo-layers';
 import { PolygonLayer } from '@deck.gl/layers';
-import { DEFAULT_POINTS_MEMORY_CAP, mortonTileGrid } from '@spatialdata/core';
+import {
+  DEFAULT_POINTS_MEMORY_CAP,
+  mortonTileGrid,
+  multiscaleTileGrid,
+  type PointsTileGrid,
+  type SpatialBounds,
+} from '@spatialdata/core';
 import type { PointsLayer } from './PointsLayer.js';
 import {
   boundsFromTileBbox,
@@ -50,258 +56,286 @@ function renderedPointCount(batch: ColumnarNdarrayPointsBatch): number {
   return batch.data[0]?.length ?? 0;
 }
 
-export const mortonTiledStrategy: PointsRenderStrategy = {
-  renderLayers(layer: PointsLayer): Layer | null | LayersList {
-    const {
-      resource,
-      featureCodes,
-      showTileDebugOverlay,
-      opacity = 1,
-      visible = true,
-      pointSize = DEFAULT_POINT_SIZE,
-      pointRadiusMinPixels,
-      pointRadiusMaxPixels,
-      color = [255, 100, 100, 200],
-      colorByFeature,
-      featureCodeSpaceSize,
-      featureColorOverrides,
-      highlightFeatureCode,
-      use3d,
-    } = layer.props;
+/**
+ * A `TileLayer` over `loader.loadInBounds`. The encodings that share it differ only in
+ * how the tile grid is sized: a Morton file by its density and row-group size, a
+ * multiscale artifact by its extent and finest grid.
+ */
+function createTiledPointsStrategy(
+  tileGrid: (layer: PointsLayer, localBounds: SpatialBounds) => PointsTileGrid
+): PointsRenderStrategy {
+  return {
+    renderLayers: (layer) => renderTiledPoints(layer, tileGrid),
+  };
+}
 
-    const localBounds = resource.loader.capabilities.bounds;
-    if (!localBounds) {
-      return null;
-    }
+export const mortonTiledStrategy = createTiledPointsStrategy((layer, localBounds) => {
+  const capabilities = layer.props.resource.loader.capabilities;
+  // The grid comes from the artifact — density and row-group size — not deck's
+  // defaults; see mortonTileGrid for why both ends are bounded.
+  return mortonTileGrid({
+    bounds: localBounds,
+    totalRows: capabilities.totalRows ?? 0,
+    maxRowsPerGroup: capabilities.maxRowsPerGroup ?? 0,
+    modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
+    // A second pool the resident cap cannot see (ADR 0005 — account first, manage
+    // after). Budgeting against the same number is not the cap applying: it makes the
+    // worst case a stated quantity rather than deck's `5 x whatever is on screen`.
+    cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
+  });
+});
 
-    // The grid comes from the artifact — density and row-group size — not deck's
-    // defaults; see mortonTileGrid for why both ends are bounded.
-    const capabilities = resource.loader.capabilities;
-    const grid = mortonTileGrid({
-      bounds: localBounds,
-      totalRows: capabilities.totalRows ?? 0,
-      maxRowsPerGroup: capabilities.maxRowsPerGroup ?? 0,
-      modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
-      // A second pool the resident cap cannot see (ADR 0005 — account first, manage
-      // after). Budgeting against the same number is not the cap applying: it makes the
-      // worst case a stated quantity rather than deck's `5 x whatever is on screen`.
-      cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
-    });
+export const pointsZarrTiledStrategy = createTiledPointsStrategy((layer, localBounds) =>
+  multiscaleTileGrid({
+    bounds: localBounds,
+    finestTileSize: layer.props.resource.loader.capabilities.finestTileSize ?? 0,
+    modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
+    cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
+  })
+);
 
-    const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
-    // Colour rides the per-tile batch: the scan returns a feature code per point, so a
-    // tile carries everything the colour extension needs.
-    const scatterStyleProps = {
-      color,
-      pointSize,
-      pointRadiusMinPixels,
-      pointRadiusMaxPixels,
-      opacity,
-      modelMatrix: layer.props.modelMatrix,
-      colorByFeature,
-      ...(featureCodeSpaceSize !== undefined ? { featureCodeSpaceSize } : {}),
-      ...(featureColorOverrides ? { featureColorOverrides } : {}),
-      ...(highlightFeatureCode !== undefined ? { highlightFeatureCode } : {}),
-      use3d,
-    };
+function renderTiledPoints(
+  layer: PointsLayer,
+  tileGrid: (layer: PointsLayer, localBounds: SpatialBounds) => PointsTileGrid
+): Layer | null | LayersList {
+  const {
+    resource,
+    featureCodes,
+    showTileDebugOverlay,
+    opacity = 1,
+    visible = true,
+    pointSize = DEFAULT_POINT_SIZE,
+    pointRadiusMinPixels,
+    pointRadiusMaxPixels,
+    color = [255, 100, 100, 200],
+    colorByFeature,
+    featureCodeSpaceSize,
+    featureColorOverrides,
+    highlightFeatureCode,
+    use3d,
+  } = layer.props;
 
-    const layers: LayersList = [
-      new TileLayer(
-        layer.subLayerProps({
-          id: 'tiles',
-          coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
-          modelMatrix: layer.props.modelMatrix,
-          extent: [localBounds.minX, localBounds.minY, localBounds.maxX, localBounds.maxY],
-          opacity,
-          visible,
-          tileSize: grid.tileSize,
-          minZoom: grid.minZoom,
-          maxZoom: grid.maxZoom,
-          zoomOffset: grid.zoomOffset,
-          maxRequests: grid.maxRequests,
-          maxCacheSize: grid.maxCacheSize,
-          refinementStrategy: 'best-available',
-          updateTriggers: {
-            getTileData: [
-              // The instance, not its name: another store's same-named element must
-              // not be served this one's cached tiles.
-              resource.element,
-              featureCodesSignature(featureCodes),
-            ],
-            renderSubLayers: [
-              pointSize,
-              pointRadiusMinPixels,
-              pointRadiusMaxPixels,
-              color,
-              opacity,
-              layer.props.modelMatrix,
-              colorByFeature,
-              featureCodeSpaceSize,
-              featureColorOverrides,
-              highlightFeatureCode,
-              use3d,
-            ],
-          },
-          onTileUnload(unloaded: { index?: { x: number; y: number; z: number }; id?: string }) {
-            const handle = tileHandleFromDeckTile(unloaded);
-            if (handle) {
-              debugHooks.onTileUnloaded(handle.tileId);
-            }
-          },
-          onViewportLoad(
-            tiles: Array<{
-              index?: { x: number; y: number; z: number };
-              id?: string;
-              bbox?: unknown;
-            }> | null
-          ) {
-            const handles = (tiles ?? [])
-              .map(
-                (tile: {
-                  index?: { x: number; y: number; z: number };
-                  id?: string;
-                  bbox?: unknown;
-                }) => tileHandleFromDeckTile(tile)
-              )
-              .filter(
-                (handle): handle is NonNullable<ReturnType<typeof tileHandleFromDeckTile>> =>
-                  handle != null
-              );
-            debugHooks.onViewportTilesRequested(handles);
-          },
-          async getTileData(tileProps: {
+  const localBounds = resource.loader.capabilities.bounds;
+  if (!localBounds) {
+    return null;
+  }
+
+  const grid = tileGrid(layer, localBounds);
+
+  const debugHooks = createTiledPointsDebugHooks(layer.props.tileDebugStore);
+  // Colour rides the per-tile batch: the scan returns a feature code per point, so a
+  // tile carries everything the colour extension needs.
+  const scatterStyleProps = {
+    color,
+    pointSize,
+    pointRadiusMinPixels,
+    pointRadiusMaxPixels,
+    opacity,
+    modelMatrix: layer.props.modelMatrix,
+    colorByFeature,
+    ...(featureCodeSpaceSize !== undefined ? { featureCodeSpaceSize } : {}),
+    ...(featureColorOverrides ? { featureColorOverrides } : {}),
+    ...(highlightFeatureCode !== undefined ? { highlightFeatureCode } : {}),
+    use3d,
+  };
+
+  const layers: LayersList = [
+    new TileLayer(
+      layer.subLayerProps({
+        id: 'tiles',
+        coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
+        modelMatrix: layer.props.modelMatrix,
+        extent: [localBounds.minX, localBounds.minY, localBounds.maxX, localBounds.maxY],
+        opacity,
+        visible,
+        tileSize: grid.tileSize,
+        minZoom: grid.minZoom,
+        maxZoom: grid.maxZoom,
+        zoomOffset: grid.zoomOffset,
+        maxRequests: grid.maxRequests,
+        maxCacheSize: grid.maxCacheSize,
+        refinementStrategy: 'best-available',
+        updateTriggers: {
+          getTileData: [
+            // The instance, not its name: another store's same-named element must
+            // not be served this one's cached tiles.
+            resource.element,
+            featureCodesSignature(featureCodes),
+          ],
+          renderSubLayers: [
+            pointSize,
+            pointRadiusMinPixels,
+            pointRadiusMaxPixels,
+            color,
+            opacity,
+            layer.props.modelMatrix,
+            colorByFeature,
+            featureCodeSpaceSize,
+            featureColorOverrides,
+            highlightFeatureCode,
+            use3d,
+          ],
+        },
+        onTileUnload(unloaded: { index?: { x: number; y: number; z: number }; id?: string }) {
+          const handle = tileHandleFromDeckTile(unloaded);
+          if (handle) {
+            debugHooks.onTileUnloaded(handle.tileId);
+          }
+        },
+        onViewportLoad(
+          tiles: Array<{
             index?: { x: number; y: number; z: number };
             id?: string;
             bbox?: unknown;
-            signal?: AbortSignal;
-          }) {
-            const tile = tileHandleFromDeckTile(tileProps);
-            if (!tile || !isPointTileBbox(tileProps.bbox)) {
-              return null;
-            }
-            const attempt = debugHooks.onTileLoadStart(tile);
-            const rawBounds = boundsFromTileBbox(tile.bbox);
-            const bounds = intersectBounds(rawBounds, localBounds);
-            if (!bounds) {
-              debugHooks.onTileLoadEnd(
-                tile,
-                { success: true, clippedBounds: null, pointCount: 0, loadMode: 'clipped' },
-                rawBounds,
-                attempt
-              );
-              return null;
-            }
-            try {
-              const batch = await resource.loader.loadInBounds({
-                bounds,
-                featureCodes,
-                signal: tileProps.signal,
-              });
-              if (!batch || !isColumnarBatch(batch)) {
-                debugHooks.onTileLoadEnd(
-                  tile,
-                  { success: true, clippedBounds: bounds, pointCount: 0 },
-                  rawBounds,
-                  attempt
-                );
-                return null;
-              }
-              debugHooks.onTileLoadEnd(
-                tile,
-                {
-                  success: true,
-                  clippedBounds: bounds,
-                  pointCount: renderedPointCount(batch),
-                  loadMode: batch.loadMode,
-                },
-                rawBounds,
-                attempt
-              );
-              return batch;
-            } catch (error) {
-              const aborted = Boolean(tileProps.signal?.aborted) || isAbortError(error);
-              debugHooks.onTileLoadEnd(
-                tile,
-                {
-                  success: false,
-                  aborted,
-                  clippedBounds: bounds,
-                  // No message for an abort: `status` says it, and a row labelled "error"
-                  // reading "aborted" is the palette's red herring in words.
-                  ...(aborted ? {} : { errorMessage: String(error) }),
-                },
-                rawBounds,
-                attempt
-              );
-              if (aborted) {
-                return null;
-              }
-              throw error;
-            }
-          },
-          renderSubLayers: (props: {
-            id: string;
-            data?: ColumnarNdarrayPointsBatch | null;
-            tile?: { bbox?: unknown };
-          }) => {
-            if (!props.data || !isColumnarBatch(props.data)) {
-              return null;
-            }
-            const tileBbox = isPointTileBbox(props.tile?.bbox) ? props.tile.bbox : null;
-            return renderColumnarScatterLayer(`${props.id}-scatter`, props.data, {
-              ...scatterStyleProps,
-              tileBounds: tileBbox ? scatterBoundsFromTileBbox(tileBbox) : undefined,
+          }> | null
+        ) {
+          const handles = (tiles ?? [])
+            .map(
+              (tile: {
+                index?: { x: number; y: number; z: number };
+                id?: string;
+                bbox?: unknown;
+              }) => tileHandleFromDeckTile(tile)
+            )
+            .filter(
+              (handle): handle is NonNullable<ReturnType<typeof tileHandleFromDeckTile>> =>
+                handle != null
+            );
+          debugHooks.onViewportTilesRequested(handles);
+        },
+        async getTileData(tileProps: {
+          index?: { x: number; y: number; z: number };
+          id?: string;
+          bbox?: unknown;
+          signal?: AbortSignal;
+        }) {
+          const tile = tileHandleFromDeckTile(tileProps);
+          if (!tile || !isPointTileBbox(tileProps.bbox)) {
+            return null;
+          }
+          const attempt = debugHooks.onTileLoadStart(tile);
+          const rawBounds = boundsFromTileBbox(tile.bbox);
+          const bounds = intersectBounds(rawBounds, localBounds);
+          if (!bounds) {
+            debugHooks.onTileLoadEnd(
+              tile,
+              { success: true, clippedBounds: null, pointCount: 0, loadMode: 'clipped' },
+              rawBounds,
+              attempt
+            );
+            return null;
+          }
+          try {
+            const batch = await resource.loader.loadInBounds({
+              bounds,
+              tileBounds: rawBounds,
+              featureCodes,
+              signal: tileProps.signal,
             });
+            if (!batch || !isColumnarBatch(batch)) {
+              debugHooks.onTileLoadEnd(
+                tile,
+                { success: true, clippedBounds: bounds, pointCount: 0 },
+                rawBounds,
+                attempt
+              );
+              return null;
+            }
+            debugHooks.onTileLoadEnd(
+              tile,
+              {
+                success: true,
+                clippedBounds: bounds,
+                pointCount: renderedPointCount(batch),
+                loadMode: batch.loadMode,
+              },
+              rawBounds,
+              attempt
+            );
+            return batch;
+          } catch (error) {
+            const aborted = Boolean(tileProps.signal?.aborted) || isAbortError(error);
+            debugHooks.onTileLoadEnd(
+              tile,
+              {
+                success: false,
+                aborted,
+                clippedBounds: bounds,
+                // No message for an abort: `status` says it, and a row labelled "error"
+                // reading "aborted" is the palette's red herring in words.
+                ...(aborted ? {} : { errorMessage: String(error) }),
+              },
+              rawBounds,
+              attempt
+            );
+            if (aborted) {
+              return null;
+            }
+            throw error;
+          }
+        },
+        renderSubLayers: (props: {
+          id: string;
+          data?: ColumnarNdarrayPointsBatch | null;
+          tile?: { bbox?: unknown };
+        }) => {
+          if (!props.data || !isColumnarBatch(props.data)) {
+            return null;
+          }
+          const tileBbox = isPointTileBbox(props.tile?.bbox) ? props.tile.bbox : null;
+          return renderColumnarScatterLayer(`${props.id}-scatter`, props.data, {
+            ...scatterStyleProps,
+            tileBounds: tileBbox ? scatterBoundsFromTileBbox(tileBbox) : undefined,
+          });
+        },
+      })
+    ),
+  ];
+
+  if (showTileDebugOverlay) {
+    const entries = debugHooks.getTileDebugEntries();
+    const debugSignature = layer.props.tileDebugSignature ?? debugHooks.getTileDebugSignature();
+    const polygonData = pointsTileDebugPolygonData(entries).map(({ polygon, entry }) => ({
+      polygon,
+      entry,
+      kind: POINTS_TILE_DEBUG_PICK_KIND as typeof POINTS_TILE_DEBUG_PICK_KIND,
+    }));
+    layers.push(
+      new PolygonLayer(
+        layer.subLayerProps({
+          id: 'tile-debug',
+          coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
+          modelMatrix: layer.props.modelMatrix,
+          data: polygonData,
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [255, 255, 255, 120],
+          getPolygon: (d: { polygon: [number, number][] }) => d.polygon,
+          getFillColor: (d: {
+            entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+          }) => tileDebugStatusFillColor(d.entry.status),
+          getLineColor: (d: {
+            entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+          }) => tileDebugStatusLineColor(d.entry.status),
+          getLineWidth: (d: {
+            entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
+          }) => tileDebugStatusLineWidth(d.entry.status),
+          lineWidthUnits: 'pixels',
+          filled: true,
+          stroked: true,
+          opacity: Math.min(1, opacity + 0.15),
+          visible,
+          updateTriggers: {
+            data: [debugSignature],
+            getFillColor: [debugSignature],
+            getLineColor: [debugSignature],
+            getLineWidth: [debugSignature],
+            getPolygon: [debugSignature],
           },
         })
-      ),
-    ];
+      )
+    );
+  }
 
-    if (showTileDebugOverlay) {
-      const entries = debugHooks.getTileDebugEntries();
-      const debugSignature = layer.props.tileDebugSignature ?? debugHooks.getTileDebugSignature();
-      const polygonData = pointsTileDebugPolygonData(entries).map(({ polygon, entry }) => ({
-        polygon,
-        entry,
-        kind: POINTS_TILE_DEBUG_PICK_KIND as typeof POINTS_TILE_DEBUG_PICK_KIND,
-      }));
-      layers.push(
-        new PolygonLayer(
-          layer.subLayerProps({
-            id: 'tile-debug',
-            coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
-            modelMatrix: layer.props.modelMatrix,
-            data: polygonData,
-            pickable: true,
-            autoHighlight: true,
-            highlightColor: [255, 255, 255, 120],
-            getPolygon: (d: { polygon: [number, number][] }) => d.polygon,
-            getFillColor: (d: {
-              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
-            }) => tileDebugStatusFillColor(d.entry.status),
-            getLineColor: (d: {
-              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
-            }) => tileDebugStatusLineColor(d.entry.status),
-            getLineWidth: (d: {
-              entry: { status: import('./pointsTileDebug.js').PointsTileStatus };
-            }) => tileDebugStatusLineWidth(d.entry.status),
-            lineWidthUnits: 'pixels',
-            filled: true,
-            stroked: true,
-            opacity: Math.min(1, opacity + 0.15),
-            visible,
-            updateTriggers: {
-              data: [debugSignature],
-              getFillColor: [debugSignature],
-              getLineColor: [debugSignature],
-              getLineWidth: [debugSignature],
-              getPolygon: [debugSignature],
-            },
-          })
-        )
-      );
-    }
-
-    return layers;
-  },
-};
+  return layers;
+}

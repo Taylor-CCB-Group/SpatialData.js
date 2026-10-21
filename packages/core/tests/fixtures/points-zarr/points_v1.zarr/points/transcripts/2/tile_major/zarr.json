@@ -1,0 +1,17 @@
+{
+  "attributes": {
+    "zarr_conventions": [
+      {
+        "uuid": "1f1b36d2-3185-6da8-91f6-9a0823af2d33",
+        "name": "df:"
+      }
+    ],
+    "df:shape": [
+      176,
+      5
+    ],
+    "points:order": "tile_major"
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

@@ -1,7 +1,10 @@
 import type { PointsElement } from './models/index.js';
+import { POINTS_TILE_TARGET_ROWS } from './pointsTileGrid.js';
 import type {
+  MortonPointsTilingMetadata,
   PointsInBoundsResponse,
   PointsTilingMetadata,
+  PointsZarrTilingMetadata,
   SpatialBounds,
 } from './pointsTiling.js';
 import type { PointsLoadMode } from './types.js';
@@ -9,6 +12,7 @@ import type { PointsLoadMode } from './types.js';
 export type PointsEncodingKind =
   | 'preloaded-columnar'
   | 'morton-tiled'
+  | 'points-zarr-tiled'
   | 'geoarrow-binary'
   | 'geoarrow-tiled';
 
@@ -28,6 +32,8 @@ export interface PointsLoaderCapabilities {
    * finer than one row group's footprint fetches the same bytes in more requests.
    */
   maxRowsPerGroup?: number;
+  /** Tile size of a multiscale artifact's finest grid; sizes the finest deck tile. */
+  finestTileSize?: number;
 }
 
 export interface ColumnarNdarrayPointsBatch {
@@ -51,6 +57,12 @@ export type PointsBatch = ColumnarNdarrayPointsBatch;
 
 export interface PointsLoadInBoundsOptions {
   bounds: SpatialBounds;
+  /**
+   * The unclipped tile `bounds` was cut from, when the extent clipped it. A loader
+   * that chooses a level of detail sizes the choice from this, so an edge tile matches
+   * its neighbours.
+   */
+  tileBounds?: SpatialBounds;
   featureCodes?: readonly number[];
   signal?: AbortSignal;
 }
@@ -76,7 +88,15 @@ export function resolvePointsEncoding(
   if (preloaded) {
     return 'preloaded-columnar';
   }
-  if (wantsOptimized && metadata?.supportsRowGroupRangeReads && metadata.bounds) {
+  if (wantsOptimized && metadata?.kind === 'points-zarr') {
+    return 'points-zarr-tiled';
+  }
+  if (
+    wantsOptimized &&
+    metadata?.kind === 'morton-points' &&
+    metadata.supportsRowGroupRangeReads &&
+    metadata.bounds
+  ) {
     return 'morton-tiled';
   }
   return 'preloaded-columnar';
@@ -115,7 +135,7 @@ function toColumnarBatch(
 
 export function createMortonTiledPointsLoader(
   element: PointsElement,
-  metadata: PointsTilingMetadata
+  metadata: MortonPointsTilingMetadata
 ): CorePointsLoader {
   const capabilities: PointsLoaderCapabilities = {
     kind: 'morton-tiled',
@@ -132,6 +152,48 @@ export function createMortonTiledPointsLoader(
     async loadInBounds(options: PointsLoadInBoundsOptions): Promise<PointsBatch | null> {
       const result = await element.loadPointsInBounds(options);
       return toColumnarBatch(result);
+    },
+  };
+}
+
+/**
+ * Tiles of a points-zarr element. Each tile reads the level whose expected count fits
+ * {@link POINTS_TILE_TARGET_ROWS} — the same per-tile bound the Morton grid is sized
+ * for — so a zoomed-out view draws a uniform sample and a zoomed-in one every point.
+ */
+export function createPointsZarrTiledPointsLoader(
+  element: PointsElement,
+  metadata: PointsZarrTilingMetadata
+): CorePointsLoader {
+  const capabilities: PointsLoaderCapabilities = {
+    kind: 'points-zarr-tiled',
+    batchFormat: 'columnar-ndarray',
+    bounds: metadata.bounds,
+    supportsViewportTiles: true,
+    supportsFeatureCodes: true,
+    totalRows: metadata.totalRows,
+    finestTileSize: metadata.finestTileSize,
+  };
+
+  return {
+    capabilities,
+    async loadInBounds(options: PointsLoadInBoundsOptions): Promise<PointsBatch | null> {
+      const result = await element.loadPointsZarrInBounds({
+        bounds: options.bounds,
+        levelBounds: options.tileBounds,
+        featureCodes: options.featureCodes,
+        pointBudget: POINTS_TILE_TARGET_ROWS,
+        signal: options.signal,
+      });
+      return {
+        format: 'columnar-ndarray',
+        data: result.data,
+        shape: [result.data.length, result.pointCount],
+        bounds: options.bounds,
+        loadMode: 'clipped',
+        pointCount: result.pointCount,
+        featureCodes: result.featureCodes,
+      };
     },
   };
 }
@@ -201,8 +263,12 @@ export function createPointsLoaderForElement(
     options.wantsOptimized
   );
 
-  if (encoding === 'morton-tiled' && options.tilingMetadata?.bounds) {
-    return createMortonTiledPointsLoader(element, options.tilingMetadata);
+  const metadata = options.tilingMetadata;
+  if (encoding === 'points-zarr-tiled' && metadata?.kind === 'points-zarr') {
+    return createPointsZarrTiledPointsLoader(element, metadata);
+  }
+  if (encoding === 'morton-tiled' && metadata?.kind === 'morton-points' && metadata.bounds) {
+    return createMortonTiledPointsLoader(element, metadata);
   }
 
   if (options.preloaded) {

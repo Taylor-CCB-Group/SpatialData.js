@@ -1,0 +1,18 @@
+{
+  "attributes": {
+    "zarr_conventions": [
+      {
+        "uuid": "1f1b36d2-3185-6da8-91f6-9a0823af2d33",
+        "name": "df:"
+      }
+    ],
+    "df:shape": [
+      3000,
+      5
+    ],
+    "points:order": "feature_major",
+    "points:copied_columns": []
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

@@ -4,7 +4,7 @@ import {
   geoArrowTiledStrategy,
   unsupportedPointsStrategy,
 } from './geoArrowStrategies.js';
-import { mortonTiledStrategy } from './mortonTiledStrategy.js';
+import { mortonTiledStrategy, pointsZarrTiledStrategy } from './mortonTiledStrategy.js';
 import type { PointsLayer } from './PointsLayer.js';
 import type { PointsEncodingKind, PointsLoader } from './pointsLoader.js';
 import { preloadedScatterStrategy } from './preloadedScatterStrategy.js';
@@ -16,6 +16,7 @@ export interface PointsRenderStrategy {
 const STRATEGIES: Record<PointsEncodingKind, PointsRenderStrategy> = {
   'preloaded-columnar': preloadedScatterStrategy,
   'morton-tiled': mortonTiledStrategy,
+  'points-zarr-tiled': pointsZarrTiledStrategy,
   'geoarrow-binary': geoArrowBinaryStrategy,
   'geoarrow-tiled': geoArrowTiledStrategy,
 };

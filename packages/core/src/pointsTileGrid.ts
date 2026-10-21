@@ -121,3 +121,45 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
     cacheRowBudget: maxCacheSize * estimatedRowsPerTile,
   };
 }
+
+export interface MultiscalePointsTileGridInput {
+  bounds: SpatialBounds;
+  /** Tile size of the artifact's finest grid: below it a read fetches the same rows. */
+  finestTileSize: number;
+  /** Uniform scale of the layer's model matrix: local units -> world units. */
+  modelMatrixScale: number;
+  /** Row budget for the tile cache; defaults to the resident points memory cap. */
+  cacheRowBudget?: number;
+}
+
+/**
+ * Choose the tile grid for a multiscale artifact (points-zarr). Unlike a Morton file,
+ * a tile's size no longer decides how much it holds — the loader picks a coarser level
+ * for a bigger tile, keeping each near {@link POINTS_TILE_TARGET_ROWS} — so both ends
+ * are set by geometry alone:
+ *
+ * - **Coarsest** — one tile covers the whole extent, which draws the coarsest level.
+ * - **Finest** — one tile of the artifact's finest grid. Smaller deck tiles would read
+ *   the same row ranges and throw more of them away.
+ */
+export function multiscaleTileGrid(input: MultiscalePointsTileGridInput): PointsTileGrid {
+  const { bounds, finestTileSize, modelMatrixScale } = input;
+  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  const minZoom = span > 0 ? Math.floor(zoomForSpan(span)) : 0;
+  const maxZoom =
+    finestTileSize > 0 ? Math.max(minZoom, Math.floor(zoomForSpan(finestTileSize))) : minZoom;
+  const estimatedRowsPerTile = POINTS_TILE_TARGET_ROWS;
+  const budget = input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP;
+  const maxCacheSize = Math.min(512, Math.max(16, Math.round(budget / estimatedRowsPerTile)));
+  return {
+    tileSize: POINTS_TILE_SIZE,
+    minZoom,
+    maxZoom,
+    zoomOffset:
+      Number.isFinite(modelMatrixScale) && modelMatrixScale > 0 ? Math.log2(modelMatrixScale) : 0,
+    maxRequests: 6,
+    maxCacheSize,
+    estimatedRowsPerTile,
+    cacheRowBudget: maxCacheSize * estimatedRowsPerTile,
+  };
+}
