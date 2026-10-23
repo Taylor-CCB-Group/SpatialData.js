@@ -1,6 +1,6 @@
 import type { DeckGLProps } from '@deck.gl/react';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { FolderStore, ZipStore } from 'zarrextra';
 import SpatialCanvas from '../SpatialCanvas';
 import Transforms from '../Transforms';
@@ -56,18 +56,27 @@ function DataSource({ children }: React.PropsWithChildren) {
 
   const source = local?.store ?? (url.trim() || DEFAULT_DEMO_SPATIALDATA_URL);
 
+  // Bumped by every source change, so a zip that finishes opening after the user
+  // has moved on (another zip, a folder, a URL edit) is dropped, not shown.
+  const selection = useRef(0);
+
   const openZip = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     // Cleared so picking the same file again still fires a change.
     event.target.value = '';
     if (!file) return;
+    const request = ++selection.current;
     setLocalStatus(`Opening ${file.name}…`);
     ZipStore.open(file).then(
       (store) => {
+        if (request !== selection.current) return;
         setLocal({ store, label: file.name });
         setLocalStatus(null);
       },
-      (error: unknown) => setLocalStatus(`Could not open ${file.name}: ${String(error)}`)
+      (error: unknown) => {
+        if (request !== selection.current) return;
+        setLocalStatus(`Could not open ${file.name}: ${String(error)}`);
+      }
     );
   };
 
@@ -75,6 +84,7 @@ function DataSource({ children }: React.PropsWithChildren) {
     const files = event.target.files;
     const folder = files?.[0]?.webkitRelativePath.split('/')[0];
     if (!files || files.length === 0 || !folder) return;
+    selection.current += 1;
     setLocal({ store: FolderStore.fromFiles(files), label: `${folder}/` });
     setLocalStatus(null);
     event.target.value = '';
@@ -90,7 +100,9 @@ function DataSource({ children }: React.PropsWithChildren) {
           type="text"
           value={url}
           onChange={(e) => {
+            selection.current += 1;
             setLocal(null);
+            setLocalStatus(null);
             setUrl(e.target.value);
           }}
           style={{
