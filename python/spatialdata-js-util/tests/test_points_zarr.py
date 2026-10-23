@@ -49,17 +49,27 @@ def _tiles(level: zarr.Group, entry: dict, order: zarr.Group) -> np.ndarray:
     return ty * nx + tx
 
 
-@pytest.fixture
-def element(tmp_path: Path) -> tuple[zarr.Group, pd.DataFrame]:
+def _frames(df: pd.DataFrame, n: int):
+    """A re-iterable source yielding ``df`` in ``n`` slices, as a converter would."""
+    bounds = np.linspace(0, len(df), n + 1).astype(int)
+    return lambda: (df.iloc[lo:hi] for lo, hi in zip(bounds[:-1], bounds[1:]))
+
+
+@pytest.fixture(params=["whole", "out-of-core"])
+def element(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[zarr.Group, pd.DataFrame]:
+    """The same points written whole, and as 7 frames with a band budget so small that
+    every level-0 tile row is its own band and coarser levels sort groups of bands."""
     df = _points()
+    data = df if request.param == "whole" else _frames(df, 7)
     write_points_zarr(
-        df,
+        data,
         tmp_path / "transcripts",
         feature_key="gene",
         coordinates=("x", "y", "z"),
         n_levels=3,
         chunk_rows=256,
         shard_chunks=4,
+        band_points=1 if request.param == "out-of-core" else 50_000_000,
     )
     return zarr.open_group(tmp_path / "transcripts", mode="r"), df
 
@@ -235,3 +245,20 @@ def test_adding_to_a_store_merges_only_the_new_element(tmp_path: Path) -> None:
     )
     after = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
     assert not any(k.startswith("points/b/1") for k in after)
+
+
+def test_small_band_budget_sorts_one_tile_row_at_a_time(tmp_path: Path) -> None:
+    messages: list[str] = []
+    write_points_zarr(
+        _frames(_points(), 3),
+        tmp_path / "t",
+        feature_key="gene",
+        n_levels=3,
+        band_points=1,
+        progress=messages.append,
+    )
+    # 600 units of y in 100-unit tiles: 6 level-0 rows, each its own band; a level-2
+    # row is 4 of them, so level 2 sorts 2 groups.
+    assert "spilling 6,000 points into 6 bands" in messages
+    assert any(m.startswith("level 2:") and m.endswith("2 groups") for m in messages)
+    assert not any(p.name.startswith(".t-") for p in tmp_path.iterdir())

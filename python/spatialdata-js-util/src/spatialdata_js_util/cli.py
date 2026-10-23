@@ -534,7 +534,7 @@ def _add_points_commands(subparsers: argparse._SubParsersAction) -> None:
             "Write a new store holding one points element in merfisheyes' points-zarr "
             "layout: levels of uniform random samples, each in tile and feature order, "
             "with a row index. Experimental; spatialdata 0.8 cannot read such a store. "
-            "Sorts in memory."
+            "Parquet input is streamed and sorted out of core."
         ),
     )
     points_zarr.add_argument(

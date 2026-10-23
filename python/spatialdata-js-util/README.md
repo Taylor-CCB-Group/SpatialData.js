@@ -285,8 +285,14 @@ spatialdata-js-util points zarr transcripts.parquet transcripts.zarr \
 ```
 
 It writes a new store rather than adding to an existing one, because spatialdata 0.8
-cannot read a store holding such an element. Sorting is in memory, so the input must
-fit with a few copies of its coordinates.
+cannot read a store holding such an element. It works out of core: Parquet input is
+read in batches, spilled to temporary files beside the output (about 18 bytes a point,
+plus one level's sorted copy) and sorted one band of tile rows at a time.
+
+On exFAT (and other filesystems without extended attributes) macOS writes a `._name`
+file beside each file that carries one, which doubles the file count and breaks
+readers that list a directory (pyarrow reads `._part.0.parquet` as a part). Delete
+them after writing: `find STORE -name '._*' -delete`.
 
 ## Tables
 

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import shutil
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence, TypeVar
 
 import pandas as pd
+import pyarrow.dataset as ds
 
 from .errors import WriterCommandError
 from .index_permutations import (
@@ -17,7 +19,12 @@ from .index_permutations import (
     write_index_permutations,
 )
 from .points import EncodingPolicy
-from .points_zarr import DEFAULT_CHUNK_ROWS, DEFAULT_SHARD_CHUNKS, write_points_zarr_store
+from .points_zarr import (
+    DEFAULT_CHUNK_ROWS,
+    DEFAULT_SHARD_CHUNKS,
+    PointsSource,
+    write_points_zarr_store,
+)
 from .points import (
     build_spatialdata_multiscale_metadata,
     write_morton_points_parquet,
@@ -121,10 +128,12 @@ def run_points_zarr(
         raise WriterCommandError(
             f"Output already exists: {output_store}\nChoose another path or enable overwrite."
         )
-    df = _as_command_error(lambda: read_input_dataframe(input_path))
+    source = _as_command_error(
+        lambda: _points_source(input_path, [*coordinates, feature_key])
+    )
     return _as_command_error(
         lambda: write_points_zarr_store(
-            df,
+            source,
             output_store,
             points_key=points_key,
             overwrite=overwrite,
@@ -135,8 +144,25 @@ def run_points_zarr(
             seed=seed,
             chunk_rows=chunk_rows,
             shard_chunks=shard_chunks,
+            progress=lambda message: print(message, file=sys.stderr, flush=True),
         )
     )
+
+
+def _points_source(path: str | Path, columns: list[str]) -> pd.DataFrame | PointsSource:
+    """Parquet is streamed a batch at a time, so it need not fit in memory; CSV is read whole."""
+    input_path = Path(path)
+    if input_path.suffix.lower() == ".csv":
+        return read_input_dataframe(input_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input not found: {input_path}")
+    dataset = ds.dataset(input_path, format="parquet")
+
+    def batches() -> Iterator[pd.DataFrame]:
+        for batch in dataset.to_batches(columns=columns, batch_size=4_000_000):
+            yield batch.to_pandas()
+
+    return batches
 
 
 def run_multiscale_points(
