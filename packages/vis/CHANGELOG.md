@@ -1,5 +1,20 @@
 # @spatialdata/vis
 
+## 0.13.0
+
+### Patch Changes
+
+- [#210](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/210) [`4360733`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4360733922afa61d50d1182b013cc519b586989d) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental `IsolatedGroupLayer`: draws its member layers into an offscreen target and composites them with the group's opacity and blend mode, on WebGL and WebGPU. Views sharing a view state share one target, redrawn only when its members change. deck reports picks inside a group against the group; `getIsolatedGroupMember(info)` returns the member, and the SpatialCanvas viewers resolve tooltips and feature events through it.
+
+- [#213](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/213) [`dab2ae0`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dab2ae08b12c2e322f79cb53efcc89bf03aef272) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Image layers no longer intermittently fail to draw under React StrictMode (dev builds) until another layer edit forces a refresh.
+
+- [#211](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/211) [`18045b7`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/18045b7133ae1ad9d11e92b01aa7ffa5a8d4ee1e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental `applyWebGPUViewFix(device)` works around two deck.gl 9.4 bugs on WebGPU: a view smaller than the canvas draws upside down, and a view with `clear: true` (Viv's OverviewView, for one) doesn't draw at all. The SpatialCanvas viewers now apply it with the picking fix. If you build your own Deck, call it from `onDeviceInitialized`.
+- Updated dependencies [[`4360733`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4360733922afa61d50d1182b013cc519b586989d), [`4217760`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4217760639bc2e81f32e93e9769030d8cb13d449), [`18045b7`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/18045b7133ae1ad9d11e92b01aa7ffa5a8d4ee1e)]:
+  - @spatialdata/layers@0.13.0
+  - @spatialdata/core@0.13.0
+  - @spatialdata/react@0.13.0
+  - @spatialdata/avivatorish@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes

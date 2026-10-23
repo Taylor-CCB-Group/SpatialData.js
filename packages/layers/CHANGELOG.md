@@ -1,5 +1,19 @@
 # @spatialdata/layers
 
+## 0.13.0
+
+### Minor Changes
+
+- [#210](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/210) [`4360733`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4360733922afa61d50d1182b013cc519b586989d) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental `IsolatedGroupLayer`: draws its member layers into an offscreen target and composites them with the group's opacity and blend mode, on WebGL and WebGPU. Views sharing a view state share one target, redrawn only when its members change. deck reports picks inside a group against the group; `getIsolatedGroupMember(info)` returns the member, and the SpatialCanvas viewers resolve tooltips and feature events through it.
+
+- [#211](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/211) [`18045b7`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/18045b7133ae1ad9d11e92b01aa7ffa5a8d4ee1e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental `applyWebGPUViewFix(device)` works around two deck.gl 9.4 bugs on WebGPU: a view smaller than the canvas draws upside down, and a view with `clear: true` (Viv's OverviewView, for one) doesn't draw at all. The SpatialCanvas viewers now apply it with the picking fix. If you build your own Deck, call it from `onDeviceInitialized`.
+
+### Patch Changes
+
+- [#208](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/208) [`4217760`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4217760639bc2e81f32e93e9769030d8cb13d449) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Opening another store no longer shows the previous store's points for a same-named points element.
+- Updated dependencies [[`4217760`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4217760639bc2e81f32e93e9769030d8cb13d449)]:
+  - @spatialdata/core@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes
