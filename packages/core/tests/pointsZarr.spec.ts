@@ -110,13 +110,24 @@ class CountingStore {
     this.inner = new FileSystemStore(root);
   }
 
-  async get(key: AbsolutePath) {
+  /** Called before each read; a test uses it to cancel at a chosen moment. */
+  beforeRead?: (key: string) => void;
+
+  /** Honours the read's signal, as a fetch-backed or browser file store does. */
+  private start(key: string, opts?: { signal?: AbortSignal }) {
+    this.beforeRead?.(key);
+    opts?.signal?.throwIfAborted();
+  }
+
+  async get(key: AbsolutePath, opts?: { signal?: AbortSignal }) {
+    this.start(key, opts);
     const bytes = await this.inner.get(key);
     this.reads.push({ key, bytes: bytes?.byteLength ?? 0 });
     return bytes;
   }
 
-  async getRange(key: AbsolutePath, range: RangeQuery) {
+  async getRange(key: AbsolutePath, range: RangeQuery, opts?: { signal?: AbortSignal }) {
+    this.start(key, opts);
     const bytes = await this.inner.getRange(key, range);
     this.reads.push({ key, range: JSON.stringify(range), bytes: bytes?.byteLength ?? 0 });
     return bytes;
@@ -341,6 +352,32 @@ describe('points-zarr element', () => {
         signal: controller.signal,
       })
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('settles every read it started when a tile is cancelled', async () => {
+    // A cancelled tile's reads all reject; any left unawaited surfaces as an unhandled
+    // rejection, one per read, every time a pan or zoom prunes tiles.
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', record);
+    const controller = new AbortController();
+    store.beforeRead = (key) => {
+      if (/tile_major\/column_0\/c\//.test(key)) controller.abort();
+    };
+    try {
+      await expect(
+        element.loadPointsZarrInBounds({
+          bounds: wholeExtent,
+          pointBudget: UNLIMITED,
+          signal: controller.signal,
+        })
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off('unhandledRejection', record);
+      store.beforeRead = undefined;
+    }
+    expect(unhandled).toEqual([]);
   });
 
   it('refuses the parquet-only paths with a message naming the format', async () => {

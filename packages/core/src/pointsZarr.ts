@@ -528,7 +528,10 @@ export class PointsZarrSource {
       }
       codes = this.readNumbers(`${featurePath}/codes`, range.lo, range.hi, signal);
     }
-    return { range, coordinates: await coordinates, codes: codes ? await codes : undefined };
+    // Awaited together: awaiting one first would leave the other unhandled when a
+    // cancelled tile rejects both.
+    const [values, featureCodes] = await Promise.all([coordinates, codes]);
+    return { range, coordinates: values, codes: featureCodes };
   }
 
   private filterToBounds(
