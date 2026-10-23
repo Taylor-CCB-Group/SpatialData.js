@@ -64,6 +64,34 @@ and what type is each one?" is answerable synchronously, before deciding whether
 of it is worth loading. [Tree nodes](./tree-nodes) covers the shape of a node, how to
 tell a group from an array, and how to read a data type out of one.
 
+## Zipped stores
+
+`ZipStore.open` opens a zipped zarr store from a URL, a `Blob`/`File`, or any
+`{ getLength, read }` byte reader, and the result can be passed anywhere a store is
+taken, including `openExtraConsolidated` and `readZarr`:
+
+```ts
+import { openExtraConsolidated, ZipStore } from 'zarrextra';
+
+const store = await ZipStore.open('https://example.com/store.zarr.zip');
+const result = await openExtraConsolidated(store);
+```
+
+Consolidated metadata is used when the archive has it; otherwise the store is listed
+from the zip's central directory, at one read per node. An archive whose only
+top-level entry is a `.zarr` folder is rooted inside it. Only STORED (uncompressed)
+entries are range-read; deflated ones are inflated whole on every read. A URL needs a
+server that answers `Range` with 206, and `ZipStore.open` rejects one that doesn't.
+
+In Node, open a local archive over 4 GiB through a reader on a `FileHandle` rather
+than `fs.openAsBlob`, which reports such files' size modulo 2^32.
+
+`FolderStore.fromFiles(input.files)` does the same for an unzipped folder picked with
+`<input type="file" webkitdirectory>`: listing, consolidated-metadata preference and
+single-folder rooting behave as for a zip, and reads are `Blob.slice`s. The browser
+enumerates every file in the folder before handing them over, which is slow for a
+store with hundreds of thousands of chunks; zip those.
+
 ## Store extras
 
 Two smaller helpers that come up when a store is not being consumed whole:
@@ -114,7 +142,7 @@ Measured from the current build:
 
 | Entry | Raw | Gzipped |
 |---|---|---|
-| `zarrextra` | 15.4 kB | 5.2 kB |
+| `zarrextra` | 18.8 kB | 6.3 kB |
 | `zarrextra/codec-worker` | 3.2 MB | 899 kB |
 
 The main entry is small, and the WASM codec packages are `optionalDependencies` whose
@@ -123,6 +151,10 @@ OpenJPEG or OpenJPH in. What is heavy is the codec worker, and it is one bundle
 carrying every codec: enabling worker decode for JP2K also ships OpenJPH, and vice
 versa. An application reading uncompressed or blosc-compressed stores — which is most
 of them — gets no benefit from either.
+
+`zarrita`, `@zarrita/storage/zip` and its `unzipit` stay external to that build.
+`openExtraConsolidated` recognises a [`ZipStore`](#zipped-stores), so unzipit
+(about 12 kB minified, 4 kB gzipped) reaches every bundle that imports `zarrextra`.
 
 The install footprint is also larger than the import graph suggests. `zod` is a hard
 dependency reached by a single internal schema module that nothing currently calls,

@@ -32,6 +32,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@zarrita/storage": "catalog:",
     "zarrita": "catalog:"
   },
   "devDependencies": {
@@ -39,6 +40,7 @@
     "@fideus-labs/worker-pool": "^2.1.0",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
+    "fflate": "^0.8.3",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"
