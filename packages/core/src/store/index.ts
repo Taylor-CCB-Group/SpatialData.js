@@ -2,7 +2,12 @@
  * Store interface for reading SpatialData from zarr stores
  */
 
-import { type ConsolidatedStore, openExtraConsolidated, serializeZarrTree } from 'zarrextra';
+import {
+  type ConsolidatedStore,
+  isZipUrl,
+  openExtraConsolidated,
+  serializeZarrTree,
+} from 'zarrextra';
 import {
   type ElementInstanceMap,
   loadElements,
@@ -49,7 +54,8 @@ export class SpatialData {
     onBadFiles?: BadFileHandler
   ) {
     this.source = source;
-    this.url = typeof source === 'string' ? source : undefined;
+    // Element URLs are derived from this, and a path inside a zip is not fetchable.
+    this.url = typeof source === 'string' && !isZipUrl(source) ? source : undefined;
     this.onBadFiles = onBadFiles;
     this.rootStore = rootStore;
     const _selection = selection || ElementNames;

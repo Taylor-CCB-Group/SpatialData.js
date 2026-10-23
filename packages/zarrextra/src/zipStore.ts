@@ -115,6 +115,23 @@ class HttpRangeReader implements ZipByteReader {
   }
 }
 
+/**
+ * Whether a store location names a zip archive by its path (not its query), so
+ * `openExtraConsolidated` and `readZarr` open it with {@link ZipStore} rather
+ * than as a folder of zarr keys.
+ */
+export function isZipUrl(location: string): boolean {
+  const trimmed = location.trim();
+  let path = trimmed;
+  try {
+    // The base only lets a relative location's query and fragment be split off.
+    path = new URL(trimmed, 'http://relative.invalid').pathname;
+  } catch {
+    // Unparseable: judge the text as given.
+  }
+  return path.toLowerCase().endsWith('.zip');
+}
+
 function isByteReader(source: ZipSource): source is ZipByteReader {
   return (
     typeof source === 'object' &&

@@ -10,7 +10,7 @@ import type {
   ZarrTree,
 } from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
-import { ZipStore } from './zipStore';
+import { isZipUrl, ZipStore } from './zipStore';
 
 const decoder = new TextDecoder();
 
@@ -133,7 +133,9 @@ async function parseStoreContents(store: zarr.Listable<zarr.Readable>): Promise<
 async function resolveListableStore(source: StoreReference): Promise<zarr.Listable<zarr.Readable>> {
   const store = isReadableStore(source)
     ? source
-    : new zarr.FetchStore(normalizeStringSource(source));
+    : isZipUrl(source)
+      ? await ZipStore.open(source.trim())
+      : new zarr.FetchStore(normalizeStringSource(source));
 
   if (isListableStore(store)) {
     return store;
@@ -266,6 +268,7 @@ export type {
 } from './types';
 export { ATTRS_KEY, ZARRAY_KEY } from './types';
 export {
+  isZipUrl,
   type ZipByteReader,
   type ZipSource,
   ZipStore,
