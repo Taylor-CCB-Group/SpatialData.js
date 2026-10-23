@@ -271,6 +271,23 @@ Use `--experimental` only for layouts standard readers cannot consume (see
 side by side for benchmarking. All of these are also available from the
 [TUI](#interactive-tui), which verifies the output after each write.
 
+### Multiscale Zarr points (experimental)
+
+`points zarr` writes the layout of merfisheyes'
+[points-zarr spec draft 0.1](https://github.com/kresnajenie/merfisheyes/blob/main/docs/points-zarr-spec.md):
+levels of uniform random samples (each a quarter of the one below), each stored in
+tile order and in feature order, with a row index. A viewer can then draw any zoom
+from a bounded read, and read only the rows of the genes selected.
+
+```bash
+spatialdata-js-util points zarr transcripts.parquet transcripts.zarr \
+  --feature-key feature_name --coordinates x_location,y_location
+```
+
+It writes a new store rather than adding to an existing one, because spatialdata 0.8
+cannot read a store holding such an element. Sorting is in memory, so the input must
+fit with a few copies of its coordinates.
+
 ## Tables
 
 ```bash

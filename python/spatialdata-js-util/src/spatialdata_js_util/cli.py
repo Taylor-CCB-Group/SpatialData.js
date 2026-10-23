@@ -370,6 +370,33 @@ def _points_index_permutations(args: argparse.Namespace) -> None:
     )
 
 
+def _points_zarr(args: argparse.Namespace) -> None:
+    from .runners import run_points_zarr
+
+    _run_command(
+        lambda: run_points_zarr(
+            args.input,
+            args.output,
+            feature_key=args.feature_key,
+            coordinates=args.coordinates.split(","),
+            points_key=args.points_key,
+            tile_size=args.tile_size,
+            n_levels=args.levels,
+            seed=args.seed,
+            chunk_rows=args.chunk_rows,
+            shard_chunks=args.shard_chunks,
+            overwrite=args.overwrite,
+        )
+    )
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def _add_row_group_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--row-group-size",
@@ -388,10 +415,11 @@ def _add_row_group_args(parser: argparse.ArgumentParser) -> None:
 def _add_points_commands(subparsers: argparse._SubParsersAction) -> None:
     points = subparsers.add_parser(
         "points",
-        help="Morton-index Points elements for spatial browser reads",
+        help="Morton-index Points elements, or write multiscale Zarr points",
         description=(
             "Write browser-oriented Points artifacts: Morton-sorted Parquet with "
-            "sentinel bounding-box rows and controlled row groups."
+            "sentinel bounding-box rows and controlled row groups, or the experimental "
+            "multiscale Zarr layout (points zarr)."
         ),
     )
     point_commands = points.add_subparsers(dest="points_command", required=True, metavar="command")
@@ -498,6 +526,65 @@ def _add_points_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_row_group_args(multiscale)
     multiscale.set_defaults(func=_points_multiscale)
+
+    points_zarr = point_commands.add_parser(
+        "zarr",
+        help="write points as multiscale Zarr (experimental points-zarr 0.1)",
+        description=(
+            "Write a new store holding one points element in merfisheyes' points-zarr "
+            "layout: levels of uniform random samples, each in tile and feature order, "
+            "with a row index. Experimental; spatialdata 0.8 cannot read such a store. "
+            "Sorts in memory."
+        ),
+    )
+    points_zarr.add_argument(
+        "input", metavar="INPUT", help="Input .csv, .parquet file, or directory of Parquet parts"
+    )
+    points_zarr.add_argument("output", metavar="OUTPUT", help="Output store directory")
+    points_zarr.add_argument(
+        "--feature-key", required=True, metavar="COLUMN", help="Categorical feature column"
+    )
+    points_zarr.add_argument(
+        "--coordinates",
+        default="x,y",
+        metavar="COLUMNS",
+        help="Comma-separated coordinate columns, two or three, written as x,y(,z) (default: x,y)",
+    )
+    points_zarr.add_argument(
+        "--points-key", default="transcripts", metavar="KEY", help="Element name under points/"
+    )
+    points_zarr.add_argument(
+        "--tile-size",
+        type=_positive_float,
+        default=100.0,
+        metavar="UNITS",
+        help="Level-0 tile size, doubled per level (default: 100)",
+    )
+    points_zarr.add_argument(
+        "--levels",
+        type=_positive_int,
+        metavar="N",
+        help="Number of levels (default: until a level holds about a million points)",
+    )
+    points_zarr.add_argument(
+        "--seed", type=int, default=0, help="Seed for the level sample (default: 0)"
+    )
+    points_zarr.add_argument(
+        "--chunk-rows",
+        type=_positive_int,
+        default=65_536,
+        metavar="N",
+        help="Rows per chunk of a point column (default: 65536)",
+    )
+    points_zarr.add_argument(
+        "--shard-chunks",
+        type=_positive_int,
+        default=64,
+        metavar="N",
+        help="Chunks per shard (default: 64)",
+    )
+    points_zarr.add_argument("--overwrite", action="store_true")
+    points_zarr.set_defaults(func=_points_zarr)
 
     index_permutations = point_commands.add_parser(
         "index-permutations",

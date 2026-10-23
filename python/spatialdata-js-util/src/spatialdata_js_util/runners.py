@@ -17,6 +17,7 @@ from .index_permutations import (
     write_index_permutations,
 )
 from .points import EncodingPolicy
+from .points_zarr import DEFAULT_CHUNK_ROWS, DEFAULT_SHARD_CHUNKS, write_points_zarr_store
 from .points import (
     build_spatialdata_multiscale_metadata,
     write_morton_points_parquet,
@@ -100,6 +101,42 @@ def run_morton_points(
         "output": str(output_path),
         "row_group_size": row_group_size,
     }
+
+
+def run_points_zarr(
+    input_path: str | Path,
+    output_store: str | Path,
+    *,
+    feature_key: str,
+    coordinates: Sequence[str] = ("x", "y"),
+    points_key: str = "transcripts",
+    tile_size: float = 100.0,
+    n_levels: int | None = None,
+    seed: int = 0,
+    chunk_rows: int = DEFAULT_CHUNK_ROWS,
+    shard_chunks: int = DEFAULT_SHARD_CHUNKS,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    if Path(output_store).exists() and not overwrite:
+        raise WriterCommandError(
+            f"Output already exists: {output_store}\nChoose another path or enable overwrite."
+        )
+    df = _as_command_error(lambda: read_input_dataframe(input_path))
+    return _as_command_error(
+        lambda: write_points_zarr_store(
+            df,
+            output_store,
+            points_key=points_key,
+            overwrite=overwrite,
+            feature_key=feature_key,
+            coordinates=coordinates,
+            tile_size=tile_size,
+            n_levels=n_levels,
+            seed=seed,
+            chunk_rows=chunk_rows,
+            shard_chunks=shard_chunks,
+        )
+    )
 
 
 def run_multiscale_points(

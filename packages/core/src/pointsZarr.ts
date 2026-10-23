@@ -536,9 +536,16 @@ export class PointsZarrSource {
     bounds: SpatialBounds,
     levels: number[]
   ): PointsZarrInBoundsResult {
-    // Half-open, so a point on a shared tile edge is drawn by exactly one tile.
+    // Half-open, so a point on a shared tile edge is drawn by exactly one tile — except
+    // at the element's own far edge, which is a point's coordinate and has no
+    // neighbouring tile to draw it.
+    const xEnd = bounds.maxX >= this.bounds.maxX;
+    const yEnd = bounds.maxY >= this.bounds.maxY;
     const inside = (x: number, y: number) =>
-      x >= bounds.minX && x < bounds.maxX && y >= bounds.minY && y < bounds.maxY;
+      x >= bounds.minX &&
+      (x < bounds.maxX || (xEnd && x === bounds.maxX)) &&
+      y >= bounds.minY &&
+      (y < bounds.maxY || (yEnd && y === bounds.maxY));
     // Count first and allocate exactly. The batch lives in deck's tile cache, so a view
     // onto a buffer sized to every row read would pin the rows the filter dropped — at
     // fine zoom, many times the rows kept.

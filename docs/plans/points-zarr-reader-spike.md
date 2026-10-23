@@ -1,6 +1,6 @@
 # Points: reading merfisheyes' multiscale points-zarr (spike)
 
-Status: **spike, working end to end on synthetic and fixture stores**. Not pushed.
+Status: **spike, reader and writer working end to end on synthetic stores**. Not pushed.
 
 merfisheyes stores points as Zarr v3 under `points/<name>/` ([spec draft 0.1][spec]):
 nested uniform-sample levels, each holding the points in two orders (`tile_major`,
@@ -28,8 +28,13 @@ It fits as one more encoding kind with no change to the resolver's shape:
 
 Codes come from the format's enum and are identical across orders and levels, so the
 dict-only code-space reconciliation does not arise. The catalog with exact counts costs
-one read of `feature_rows`. Tests: `core/tests/pointsZarr.spec.ts`, against
-merfisheyes' own fixture and recorded answers (`core/tests/fixtures/points-zarr`).
+one read of `feature_rows`.
+
+`spatialdata-js-util points zarr` writes the format (`points_zarr.py`, in memory), into
+a store of its own because of the compatibility problem below. merfisheyes'
+reference validator (`scripts/points_zarr.py validate`) accepts its output.
+`core/tests/pointsZarr.spec.ts` generates its store with it and checks the reader
+against answers computed from the input points.
 
 ## Measured
 

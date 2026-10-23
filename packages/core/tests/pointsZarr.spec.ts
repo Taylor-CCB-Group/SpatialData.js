@@ -1,31 +1,102 @@
-import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Matrix4 } from '@math.gl/core';
 import { FileSystemStore } from '@zarrita/storage';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PointsResolver } from '../src/engine/index.js';
 import type { PointsElement } from '../src/models/index.js';
 import { createPointsLoaderForElement } from '../src/pointsLoader.js';
+import type { SpatialBounds } from '../src/pointsTiling.js';
 import { readZarr } from '../src/store/index.js';
 
 /**
- * The points-zarr reader against merfisheyes' own tiny fixture (see
- * `fixtures/points-zarr/README.md`), checked against the answers their generator
- * recorded beside it. Reads are observed at the store, so "reads only what the view
- * needs" is a claim about requests, not about caches.
+ * The points-zarr reader against a store written by `spatialdata-js-util points zarr`
+ * (the format's reference validator, in merfisheyes' `scripts/points_zarr.py`, accepts
+ * that writer's output). The answers are computed from the input points, not from the
+ * store. Reads are observed at the store, so "reads only what the view needs" is a
+ * claim about requests, not about caches.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const fixtureRoot = join(__dirname, 'fixtures/points-zarr');
-const expected: {
+const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
+
+interface Expected {
   genes: string[];
   counts: number[];
   levels: number[];
+  extent: SpatialBounds;
   beta_xyz_sorted: [number, number, number][];
   alpha_bbox: [number, number, number, number];
   alpha_in_bbox: number;
-} = JSON.parse(readFileSync(join(fixtureRoot, 'points_expected.json'), 'utf8'));
+}
+
+/**
+ * 3,000 points, 4 genes of very different abundance, 3 levels; chunks of 128 rows in
+ * shards of 4, so reads cross both.
+ */
+function writeFixture(dir: string) {
+  const input = join(dir, 'points.parquet');
+  execSync(
+    `uv run python - <<'PY'
+import json
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(7)
+n = 3000
+genes = ["Alpha", "Beta", "Gamma", "Delta"]
+x = rng.uniform(0, 1000, n).astype(np.float32)
+y = rng.uniform(0, 600, n).astype(np.float32)
+z = rng.uniform(-5, 5, n).astype(np.float32)
+f = rng.choice(4, n, p=[0.6, 0.25, 0.1, 0.05])
+pd.DataFrame(
+    {"x": x, "y": y, "z": z, "gene": pd.Categorical.from_codes(f, categories=genes)}
+).to_parquet(${JSON.stringify(input)})
+
+bbox = [250, 100, 520, 330]
+inside = (f == 0) & (x >= bbox[0]) & (x < bbox[2]) & (y >= bbox[1]) & (y < bbox[3])
+beta = sorted(
+    [round(float(a), 3), round(float(b), 3), round(float(c), 3)]
+    for a, b, c in zip(x[f == 1], y[f == 1], z[f == 1])
+)
+expected = {
+    "genes": genes,
+    "counts": [int((f == i).sum()) for i in range(4)],
+    "extent": {
+        "minX": float(x.min()), "minY": float(y.min()),
+        "maxX": float(x.max()), "maxY": float(y.max()),
+    },
+    "beta_xyz_sorted": beta,
+    "alpha_bbox": bbox,
+    "alpha_in_bbox": int(inside.sum()),
+}
+with open(${JSON.stringify(join(dir, 'expected.json'))}, "w") as fh:
+    json.dump(expected, fh)
+PY`,
+    { cwd: writerRoot, stdio: 'pipe' }
+  );
+  const summary = execSync(
+    `uv run spatialdata-js-util points zarr ${JSON.stringify(input)} ${JSON.stringify(join(dir, 'store.zarr'))} --feature-key gene --coordinates x,y,z --levels 3 --chunk-rows 128 --shard-chunks 4`,
+    { cwd: writerRoot, stdio: ['ignore', 'pipe', 'pipe'] }
+  ).toString();
+  return JSON.parse(summary).levels as number[];
+}
+
+let fixtureDir: string;
+let expected: Expected;
+
+beforeAll(async () => {
+  fixtureDir = await mkdtemp(join(tmpdir(), 'points-zarr-'));
+  const levels = writeFixture(fixtureDir);
+  expected = { ...JSON.parse(await readFile(join(fixtureDir, 'expected.json'), 'utf8')), levels };
+}, 120_000);
+
+afterAll(async () => {
+  await rm(fixtureDir, { recursive: true, force: true });
+});
 
 type AbsolutePath = `/${string}`;
 type RangeQuery = { offset: number; length: number } | { suffixLength: number };
@@ -70,7 +141,7 @@ let store: CountingStore;
 let element: PointsElement;
 
 beforeEach(async () => {
-  store = new CountingStore(join(fixtureRoot, 'points_v1.zarr'));
+  store = new CountingStore(join(fixtureDir, 'store.zarr'));
   const sdata = await readZarr(store);
   const points = sdata.points?.transcripts;
   if (!points) throw new Error('fixture has no points/transcripts');
@@ -78,6 +149,7 @@ beforeEach(async () => {
   store.reset();
 });
 
+// Wider than the data on every side; `expected.extent` is the data's own extent.
 const wholeExtent = { minX: 0, minY: 0, maxX: 1000, maxY: 600 };
 const UNLIMITED = Number.POSITIVE_INFINITY;
 
@@ -91,7 +163,7 @@ describe('points-zarr element', () => {
       featureKey: 'gene',
       totalRows: expected.levels[0],
       levelCount: expected.levels.length,
-      bounds: wholeExtent,
+      bounds: expected.extent,
     });
     expect(store.pointColumnReads()).toEqual([]);
   });
@@ -177,6 +249,16 @@ describe('points-zarr element', () => {
     const reads = store.pointColumnReads().map((r) => `${r.key} ${r.range ?? 'whole'}`);
     expect(reads.length).toBeGreaterThan(0);
     expect(new Set(reads).size).toBe(reads.length);
+  });
+
+  it("includes the points on the far edge of the element's extent", async () => {
+    // Tiles are half-open so a shared edge is drawn once, but the extent's own max is
+    // a point's coordinate: a tile ending there must keep it.
+    const result = await element.loadPointsZarrInBounds({
+      bounds: expected.extent,
+      pointBudget: UNLIMITED,
+    });
+    expect(result.pointCount).toBe(expected.levels[0]);
   });
 
   it('draws nothing for an empty selection', async () => {
