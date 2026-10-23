@@ -137,8 +137,9 @@ const containerStyle: CSSProperties = {
  * It internally manages 'Avivator-ish' zustand state, with a React context that is independent
  * of any other instances (which also entails not being able to share image data between components).
  *
- * As of writing, it doesn't expose any public API for interacting with these stores, customisation etc.
- * That should be changed - but the API will probably not be stable, particularly initially.
+ * @deprecated Use `SpatialCanvas` with an image layer. `ImageView` loads only from an
+ * element URL, so it never finishes for store-only sources such as `ZipStore`. Removal:
+ * https://github.com/Taylor-CCB-Group/SpatialData.js/issues/215
  */
 export default function ImageView() {
   // todo decide what public API should like etc
