@@ -38,21 +38,6 @@ export function buildDemoPageHref(
 }
 
 /**
- * Whether a store URL names a zip archive (by its path), to be opened with range reads
- * into the archive rather than as a folder of zarr keys.
- */
-export function isZipUrl(spatialDataUrl: string): boolean {
-  const trimmed = spatialDataUrl.trim();
-  let path = trimmed;
-  try {
-    path = new URL(trimmed).pathname;
-  } catch {
-    // Not absolute: judge the text as given.
-  }
-  return path.toLowerCase().endsWith('.zip');
-}
-
-/**
  * `?webgpu` (any value but `0`/`false`) runs the demo's deck on WebGPU (experimental).
  */
 export function isWebGPURequested(searchParams: URLSearchParams): boolean {

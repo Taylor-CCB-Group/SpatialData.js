@@ -1,13 +1,19 @@
 import { createServer, type Server } from 'node:http';
 import { zipSync } from 'fflate';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getNodeAttrs, openExtraConsolidated, type ZipByteReader, ZipStore } from '../src/index';
+import {
+  getNodeAttrs,
+  isZipUrl,
+  openExtraConsolidated,
+  type ZipByteReader,
+  ZipStore,
+} from '../src/index';
 import { encoder, json, readValues, VALUES, v2Files, v3Files } from './zarrFixtures';
 
 /** STORED entries, as zarr writers produce: chunks are already compressed. */
 const zip = (files: Record<string, Uint8Array>) => zipSync(files, { level: 0 });
 
-async function openTree(store: ZipStore) {
+async function openTree(store: ZipStore | string) {
   const result = await openExtraConsolidated(store);
   if (!result.ok) throw result.error;
   return result.value;
@@ -162,10 +168,30 @@ describe('ZipStore', () => {
       expect(await readValues(zarritaStore)).toEqual(VALUES);
     });
 
+    it('opens a zip URL passed to openExtraConsolidated as an archive', async () => {
+      const url = await serve(zip(v2Files()), true);
+      const { zarritaStore } = await openTree(url);
+
+      expect(await readValues(zarritaStore)).toEqual(VALUES);
+    });
+
     it('refuses a server that ignores Range rather than misreading the whole file', async () => {
       const url = await serve(zip(v2Files()), false);
 
       await expect(ZipStore.open(url)).rejects.toThrow(/honours Range/);
     });
+  });
+});
+
+describe('isZipUrl', () => {
+  it('recognises a zip by its path, ignoring case, query and whitespace', () => {
+    expect(isZipUrl('http://127.0.0.1:5196/store.zarr.zip')).toBe(true);
+    expect(isZipUrl(' https://example.com/STORE.ZIP?token=1 ')).toBe(true);
+    expect(isZipUrl('store.zarr.zip')).toBe(true);
+  });
+
+  it('leaves zarr folders and zip-looking query strings alone', () => {
+    expect(isZipUrl('https://example.com/data.zarr')).toBe(false);
+    expect(isZipUrl('https://example.com/data.zarr?name=a.zip')).toBe(false);
   });
 });
