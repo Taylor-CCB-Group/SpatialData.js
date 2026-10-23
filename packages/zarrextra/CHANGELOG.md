@@ -1,5 +1,15 @@
 # zarrextra
 
+## 0.6.0
+
+### Minor Changes
+
+- [#220](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/220) [`3d71b82`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3d71b821d00eaa63593a7eac134082a98deca540) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `readZarr`, `openExtraConsolidated` and `SpatialDataProvider` open a URL whose path ends in `.zip` as a zipped store, read by range rather than downloaded; the server must honour `Range`. `isZipUrl(url)` reports which URLs this applies to.
+
+- [#214](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/214) [`ce4c8af`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ce4c8af925658d4671926332163fede79bf0a556) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `ZipStore.open(source)` opens a zipped zarr store from a URL, `Blob`/`File` or byte reader, and `FolderStore.fromFiles(files)` opens a folder picked with `<input webkitdirectory>`; pass either to `openExtraConsolidated` or `readZarr`. `ZipStore.entrySize(key)` lets a STORED zip nested in another be opened without extracting it. Stores without consolidated metadata are listed from their files, and zip URLs need a server that honours `Range`. The `Sketch` demo can open a local zip or folder.
+  
+  `ImageView` is deprecated; use `SpatialCanvas` with an image layer.
+
 ## 0.5.1
 
 ### Patch Changes

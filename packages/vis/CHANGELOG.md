@@ -1,5 +1,19 @@
 # @spatialdata/vis
 
+## 0.13.1
+
+### Patch Changes
+
+- [#214](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/214) [`ce4c8af`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ce4c8af925658d4671926332163fede79bf0a556) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `ZipStore.open(source)` opens a zipped zarr store from a URL, `Blob`/`File` or byte reader, and `FolderStore.fromFiles(files)` opens a folder picked with `<input webkitdirectory>`; pass either to `openExtraConsolidated` or `readZarr`. `ZipStore.entrySize(key)` lets a STORED zip nested in another be opened without extracting it. Stores without consolidated metadata are listed from their files, and zip URLs need a server that honours `Range`. The `Sketch` demo can open a local zip or folder.
+  
+  `ImageView` is deprecated; use `SpatialCanvas` with an image layer.
+- Updated dependencies [[`9efa976`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/9efa9769e4bdc8e1a30bcd1f467480d00a9a8144), [`3d71b82`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3d71b821d00eaa63593a7eac134082a98deca540), [`ce4c8af`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ce4c8af925658d4671926332163fede79bf0a556)]:
+  - @spatialdata/layers@0.13.1
+  - zarrextra@0.6.0
+  - @spatialdata/core@0.13.1
+  - @spatialdata/avivatorish@0.13.1
+  - @spatialdata/react@0.13.1
+
 ## 0.13.0
 
 ### Patch Changes

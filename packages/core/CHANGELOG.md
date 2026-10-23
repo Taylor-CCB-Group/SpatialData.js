@@ -1,5 +1,13 @@
 # @spatialdata/core
 
+## 0.13.1
+
+### Patch Changes
+
+- [#220](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/220) [`3d71b82`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3d71b821d00eaa63593a7eac134082a98deca540) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `readZarr`, `openExtraConsolidated` and `SpatialDataProvider` open a URL whose path ends in `.zip` as a zipped store, read by range rather than downloaded; the server must honour `Range`. `isZipUrl(url)` reports which URLs this applies to.
+- Updated dependencies [[`3d71b82`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3d71b821d00eaa63593a7eac134082a98deca540), [`ce4c8af`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/ce4c8af925658d4671926332163fede79bf0a556)]:
+  - zarrextra@0.6.0
+
 ## 0.13.0
 
 ### Patch Changes
