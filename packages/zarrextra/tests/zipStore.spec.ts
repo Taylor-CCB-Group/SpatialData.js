@@ -81,6 +81,25 @@ describe('ZipStore', () => {
     expect(bytesRead).toBeLessThan(1024);
   });
 
+  it("reads an entry's local header once, then one read per range", async () => {
+    const archive = zip(v2Files());
+    let reads = 0;
+    const store = await ZipStore.open({
+      getLength: async () => archive.length,
+      read: async (offset, length) => {
+        reads += 1;
+        return archive.slice(offset, offset + length);
+      },
+    });
+    await store.getRange('/values/0', { offset: 0, length: 4 });
+    reads = 0;
+
+    await store.getRange('/values/0', { offset: 4, length: 4 });
+    await store.getRange('/values/0', { suffixLength: 4 });
+
+    expect(reads).toBe(2);
+  });
+
   it('rejects bytes that are not a zip archive', async () => {
     await expect(ZipStore.open(new Blob([encoder.encode('not a zip')]))).rejects.toThrow();
   });

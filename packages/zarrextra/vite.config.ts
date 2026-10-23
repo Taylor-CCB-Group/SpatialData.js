@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 
 const pkgExternals = [
   'zarrita',
-  '@zarrita/storage/zip',
+  'unzipit',
   '@fideus-labs/fizarrita',
   '@fideus-labs/worker-pool',
 ];

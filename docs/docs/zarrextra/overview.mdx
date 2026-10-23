@@ -142,7 +142,7 @@ Measured from the current build:
 
 | Entry | Raw | Gzipped |
 |---|---|---|
-| `zarrextra` | 18.8 kB | 6.3 kB |
+| `zarrextra` | 20.9 kB | 7.0 kB |
 | `zarrextra/codec-worker` | 3.2 MB | 899 kB |
 
 The main entry is small, and the WASM codec packages are `optionalDependencies` whose
@@ -152,9 +152,9 @@ carrying every codec: enabling worker decode for JP2K also ships OpenJPH, and vi
 versa. An application reading uncompressed or blosc-compressed stores — which is most
 of them — gets no benefit from either.
 
-`zarrita`, `@zarrita/storage/zip` and its `unzipit` stay external to that build.
-`openExtraConsolidated` recognises a [`ZipStore`](#zipped-stores), so unzipit
-(about 12 kB minified, 4 kB gzipped) reaches every bundle that imports `zarrextra`.
+`zarrita` and `unzipit` stay external to that build. `openExtraConsolidated`
+recognises a [`ZipStore`](#zipped-stores), so unzipit (about 15 kB minified, 5 kB
+gzipped) reaches every bundle that imports `zarrextra`.
 
 The install footprint is also larger than the import graph suggests. `zod` is a hard
 dependency reached by a single internal schema module that nothing currently calls,
