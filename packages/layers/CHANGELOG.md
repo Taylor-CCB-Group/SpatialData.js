@@ -1,5 +1,13 @@
 # @spatialdata/layers
 
+## 0.13.1
+
+### Patch Changes
+
+- [#216](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/216) [`9efa976`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/9efa9769e4bdc8e1a30bcd1f467480d00a9a8144) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Colour-by-feature now works on points elements with more features than the GPU's maximum texture size (e.g. a ~25k-gene whole-transcriptome panel), which previously drew every point uncoloured.
+- Updated dependencies [[`3d71b82`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3d71b821d00eaa63593a7eac134082a98deca540)]:
+  - @spatialdata/core@0.13.1
+
 ## 0.13.0
 
 ### Minor Changes
