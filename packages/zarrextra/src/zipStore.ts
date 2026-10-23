@@ -124,9 +124,10 @@ export function isZipUrl(location: string): boolean {
   const trimmed = location.trim();
   let path = trimmed;
   try {
-    path = new URL(trimmed).pathname;
+    // The base only lets a relative location's query and fragment be split off.
+    path = new URL(trimmed, 'http://relative.invalid').pathname;
   } catch {
-    // Not absolute: judge the text as given.
+    // Unparseable: judge the text as given.
   }
   return path.toLowerCase().endsWith('.zip');
 }

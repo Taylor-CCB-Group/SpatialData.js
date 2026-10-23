@@ -188,10 +188,12 @@ describe('isZipUrl', () => {
     expect(isZipUrl('http://127.0.0.1:5196/store.zarr.zip')).toBe(true);
     expect(isZipUrl(' https://example.com/STORE.ZIP?token=1 ')).toBe(true);
     expect(isZipUrl('store.zarr.zip')).toBe(true);
+    expect(isZipUrl('data/store.zip?token=1#top')).toBe(true);
   });
 
   it('leaves zarr folders and zip-looking query strings alone', () => {
     expect(isZipUrl('https://example.com/data.zarr')).toBe(false);
     expect(isZipUrl('https://example.com/data.zarr?name=a.zip')).toBe(false);
+    expect(isZipUrl('data.zarr?name=a.zip')).toBe(false);
   });
 });
