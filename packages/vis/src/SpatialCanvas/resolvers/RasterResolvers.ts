@@ -221,15 +221,22 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
     this.options.onStatus?.(ctx.entryId, 'image', 'loading');
     this.notify();
 
+    // `dispose()` / `evict()` drop the entry, but `produce` does not take the abort
+    // signal, so its load still settles. By then a replacement load may own this key
+    // (StrictMode's dev double-mount disposes and reloads mid-flight); reporting the
+    // orphan's status under the same entry id would announce "ready" before the live
+    // loader exists, so it is dropped silently instead.
+    const isLive = () => this.entries.get(ctx.elementKey) === entry;
+
     const run = (async () => {
+      let result: RasterLoadResult<TData>;
       try {
-        const result = await produce();
-        entry.loader = Resolution.ready(result.data);
-        entry.notices = result.notices;
-        this.options.onStatus?.(ctx.entryId, 'image', 'ready');
+        result = await produce();
       } catch (cause) {
+        if (!isLive()) return;
         if (isCancellation(cause)) {
           entry.loader = prior;
+          this.notify();
           return;
         }
         entry.loader = Resolution.failed(
@@ -244,9 +251,14 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
           stale
         );
         this.options.onStatus?.(ctx.entryId, 'image', 'error');
-      } finally {
         this.notify();
+        return;
       }
+      if (!isLive()) return;
+      entry.loader = Resolution.ready(result.data);
+      entry.notices = result.notices;
+      this.options.onStatus?.(ctx.entryId, 'image', 'ready');
+      this.notify();
     })().finally(() => {
       if (entry.inFlight.get(task.id) === run) entry.inFlight.delete(task.id);
     });

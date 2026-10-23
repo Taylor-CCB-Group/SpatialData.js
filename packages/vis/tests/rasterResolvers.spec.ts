@@ -181,6 +181,36 @@ describe('ImagesResolver — a ResourceResolver that happens to live in vis', ()
     expect(resolver.plan(c).map((t) => t.resource)).toEqual(['loader']);
   });
 
+  it('drops a load that outlives dispose instead of reporting it as the live one', async () => {
+    // StrictMode's dev double-mount disposes the store mid-load and starts a second
+    // load for the same entry. The first one's late "ready" must not be reported:
+    // it would flip the entry's status before the live load has data to show.
+    let releaseOrphan!: () => void;
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (releaseOrphan = () => resolve(vivLoader())))
+      )
+      .mockImplementation(async () => vivLoader());
+    const onStatus = vi.fn();
+    const resolver = new ImagesResolver({ fetchMultiscales: fetch, onStatus });
+    const c = imageCtx(imageElement());
+
+    const orphan = resolver.load({ id: 'l', resource: 'loader' }, c, signal());
+    resolver.dispose();
+    const listener = vi.fn();
+    resolver.subscribe(listener);
+    onStatus.mockClear();
+
+    releaseOrphan();
+    await orphan;
+
+    expect(onStatus).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    expect(resolver.getLoadedData('morphology')).toBeUndefined();
+    expect(resolver.plan(c).map((t) => t.resource)).toEqual(['loader']);
+  });
+
   it('surfaces a channel-defaults failure as a NOTICE, not a failed loader', async () => {
     // Computing contrast stats reads pixels and can fail on a store whose metadata
     // loaded fine. The image still draws with fallback channels, so it is a notice.
