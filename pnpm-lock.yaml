@@ -571,6 +571,9 @@ importers:
 
   packages/zarrextra:
     dependencies:
+      unzipit:
+        specifier: ^2.1.1
+        version: 2.1.1
       zarrita:
         specifier: 'catalog:'
         version: 0.7.3
@@ -581,6 +584,9 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       typescript:
         specifier: 'catalog:'
         version: '@typescript/typescript6@6.0.2'
@@ -7573,6 +7579,10 @@ packages:
 
   unzipit@2.0.3:
     resolution: {integrity: sha512-e6+ftgSQRj9Hwf2mIWFwYIGqBoKV7AziG/d7pep2Uv3NCzHbhLO5d9dGRwpahVlnpQ7aQC+5kWk72dnWocdYyA==}
+    engines: {node: '>=18'}
+
+  unzipit@2.1.1:
+    resolution: {integrity: sha512-GNIM737c1VV8Z5VD2gSs3SERnqe7KS+dHAmqN9GzdXHB3k4NfXcgNv0+z0br7gJZdhJvv8+MCxBwLvRy7fOhyg==}
     engines: {node: '>=18'}
 
   update-browserslist-db@1.2.3:
@@ -16794,6 +16804,8 @@ snapshots:
   unzipit@2.0.0: {}
 
   unzipit@2.0.3: {}
+
+  unzipit@2.1.1: {}
 
   update-browserslist-db@1.2.3(browserslist@4.28.7):
     dependencies:

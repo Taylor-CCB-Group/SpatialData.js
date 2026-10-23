@@ -1,6 +1,7 @@
 import type { DeckGLProps } from '@deck.gl/react';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { FolderStore, ZipStore } from 'zarrextra';
 import SpatialCanvas from '../SpatialCanvas';
 import Transforms from '../Transforms';
 import SpatialDataTree from '../Tree';
@@ -26,8 +27,20 @@ function getInitialDemoUrl(): string {
   return getSpatialDataUrlFromSearchParams(new URLSearchParams(window.location.search));
 }
 
+/** A store opened from a local zip or folder; it has no URL to share or put in `?url=`. */
+type LocalSource = { store: ZipStore | FolderStore; label: string };
+
+const pickerLabelStyle: CSSProperties = { fontSize: 11, color: '#8af', cursor: 'pointer' };
+
+// React's DOM types have no `webkitdirectory`, so it is set as a plain attribute.
+function setDirectoryPicker(input: HTMLInputElement | null) {
+  input?.setAttribute('webkitdirectory', '');
+}
+
 function DataSource({ children }: React.PropsWithChildren) {
   const [url, setUrl] = useState(getInitialDemoUrl);
+  const [local, setLocal] = useState<LocalSource | null>(null);
+  const [localStatus, setLocalStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const nextHref = buildDemoPageHref(url);
@@ -37,11 +50,45 @@ function DataSource({ children }: React.PropsWithChildren) {
   }, [url]);
 
   const shareHref =
-    typeof window !== 'undefined'
+    typeof window !== 'undefined' && !local
       ? buildDemoPageHref(url, `${window.location.origin}${window.location.pathname}`)
       : '';
 
-  const source = url.trim() || DEFAULT_DEMO_SPATIALDATA_URL;
+  const source = local?.store ?? (url.trim() || DEFAULT_DEMO_SPATIALDATA_URL);
+
+  // Bumped by every source change, so a zip that finishes opening after the user
+  // has moved on (another zip, a folder, a URL edit) is dropped, not shown.
+  const selection = useRef(0);
+
+  const openZip = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Cleared so picking the same file again still fires a change.
+    event.target.value = '';
+    if (!file) return;
+    const request = ++selection.current;
+    setLocalStatus(`Opening ${file.name}…`);
+    ZipStore.open(file).then(
+      (store) => {
+        if (request !== selection.current) return;
+        setLocal({ store, label: file.name });
+        setLocalStatus(null);
+      },
+      (error: unknown) => {
+        if (request !== selection.current) return;
+        setLocalStatus(`Could not open ${file.name}: ${String(error)}`);
+      }
+    );
+  };
+
+  const openFolder = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    const folder = files?.[0]?.webkitRelativePath.split('/')[0];
+    if (!files || files.length === 0 || !folder) return;
+    selection.current += 1;
+    setLocal({ store: FolderStore.fromFiles(files), label: `${folder}/` });
+    setLocalStatus(null);
+    event.target.value = '';
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -52,17 +99,40 @@ function DataSource({ children }: React.PropsWithChildren) {
         <input
           type="text"
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px' }}
+          onChange={(e) => {
+            selection.current += 1;
+            setLocal(null);
+            setLocalStatus(null);
+            setUrl(e.target.value);
+          }}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            padding: '6px 8px',
+            opacity: local ? 0.5 : 1,
+          }}
         />
-        {shareHref ? (
-          <a
-            href={shareHref}
-            style={{ display: 'inline-block', marginTop: 6, fontSize: 11, color: '#8af' }}
-          >
-            Link to this dataset
-          </a>
-        ) : null}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginTop: 6 }}>
+          {shareHref ? (
+            <a href={shareHref} style={{ fontSize: 11, color: '#8af' }}>
+              Link to this dataset
+            </a>
+          ) : null}
+          <label style={pickerLabelStyle}>
+            Open zip…
+            <input type="file" accept=".zip" onChange={openZip} hidden />
+          </label>
+          <label style={pickerLabelStyle}>
+            Open folder…
+            <input type="file" ref={setDirectoryPicker} onChange={openFolder} hidden />
+          </label>
+          {local ? (
+            <span style={{ fontSize: 11, color: '#ccc' }}>
+              Showing local {local.label} — edit the URL to switch back
+            </span>
+          ) : null}
+          {localStatus ? <span style={{ fontSize: 11, color: '#c96' }}>{localStatus}</span> : null}
+        </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <SpatialDataProvider source={source}>{children}</SpatialDataProvider>

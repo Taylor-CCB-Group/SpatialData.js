@@ -1,4 +1,5 @@
 import * as zarr from 'zarrita';
+import { FolderStore } from './folderStore';
 import { Err, Ok, type Result } from './result';
 import { getArrayMetadata, getNodeAttrs } from './treeNodes';
 import type {
@@ -9,6 +10,7 @@ import type {
   ZarrTree,
 } from './types';
 import { ATTRS_KEY, ZARRAY_KEY } from './types';
+import { ZipStore } from './zipStore';
 
 const decoder = new TextDecoder();
 
@@ -146,6 +148,12 @@ async function resolveListableStore(source: StoreReference): Promise<zarr.Listab
         metadataKey: 'zmetadata',
       });
     } catch {
+      // Consolidated metadata comes first even for stores that can list their
+      // files: the tree walk below opens every listed node, one read each,
+      // where consolidated metadata is a single read.
+      if (store instanceof ZipStore || store instanceof FolderStore) {
+        return await store.withListing();
+      }
       throw defaultError;
     }
   }
@@ -212,6 +220,7 @@ export {
   registerExperimentalHtj2kCodec,
   registerJpeg2kCodec,
 } from './codecs';
+export { FolderStore, type PickedFile } from './folderStore';
 export {
   createOpenJphEncoder,
   encodeHtj2kPlane,
@@ -256,3 +265,9 @@ export type {
   ZarrV3ArrayNode,
 } from './types';
 export { ATTRS_KEY, ZARRAY_KEY } from './types';
+export {
+  type ZipByteReader,
+  type ZipSource,
+  ZipStore,
+  type ZipStoreOptions,
+} from './zipStore';

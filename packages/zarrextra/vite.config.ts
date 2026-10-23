@@ -1,7 +1,12 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
-const pkgExternals = ['zarrita', '@fideus-labs/fizarrita', '@fideus-labs/worker-pool'];
+const pkgExternals = [
+  'zarrita',
+  'unzipit',
+  '@fideus-labs/fizarrita',
+  '@fideus-labs/worker-pool',
+];
 
 // .d.ts files are emitted via `tsc --emitDeclarationOnly` in the build script.
 export default defineConfig(({ mode }) => {

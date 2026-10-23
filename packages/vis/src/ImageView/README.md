@@ -1,1 +1,1 @@
-`ImageView` is a narrow demo component: **Viv + zustand** state now lives in **`@spatialdata/avivatorish`**. Prefer **`SpatialCanvas`** with an image-only layer configuration for new work; see the docs site *SpatialCanvas + images — status and roadmap*.
+**Deprecated** — use **`SpatialCanvas`** with an image layer. Removal is tracked in [#215](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/215).
