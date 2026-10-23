@@ -3,6 +3,7 @@ import { LabelsColorByConsumer } from './labelsColorByScenario';
 import { LabelsPickWebGPUConsumer } from './labelsPickWebGPUScenario';
 import { ParquetWorkerConsumer } from './parquetWorkerScenario';
 import { PolygonFixtureConsumer } from './polygonShapesScenario';
+import { ViewsWebGPUConsumer } from './viewsWebGPUScenario';
 
 /**
  * One built bundle, several scenarios, selected by query string.
@@ -16,6 +17,7 @@ const scenarios = {
   'labels-color-by': LabelsColorByConsumer,
   'labels-pick-webgpu': LabelsPickWebGPUConsumer,
   'parquet-worker': ParquetWorkerConsumer,
+  'views-webgpu': ViewsWebGPUConsumer,
 } as const;
 
 type ScenarioName = keyof typeof scenarios;

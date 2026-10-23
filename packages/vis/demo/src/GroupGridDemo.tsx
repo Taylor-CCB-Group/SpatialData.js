@@ -16,6 +16,8 @@
 import { Deck, type Layer, OrthographicView, type OrthographicViewState } from '@deck.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
 import {
+  applyWebGPUPickingFix,
+  applyWebGPUViewFix,
   getIsolatedGroupMember,
   IsolatedGroupLayer,
   type IsolationRenderEvent,
@@ -120,17 +122,15 @@ function buildLayers(scene: Scene, onTargetRender: (event: IsolationRenderEvent)
   return [backdrop, shared, ...overlays];
 }
 
-/** World point → canvas pixel in a cell. deck 9.4 draws a view smaller than the canvas
- *  upside down on WebGPU, so the cell's rows are mirrored there. */
+/** World point → canvas pixel in a cell. */
 function cellPixel(index: number, [x, y]: [number, number], viewState: OrthographicViewState) {
   const rect = cellRect(index);
-  const top = DEVICE === 'webgpu' ? HEIGHT - rect.y - rect.height : rect.y;
   const zoom = typeof viewState.zoom === 'number' ? viewState.zoom : 0;
   const scale = 2 ** zoom;
   const [tx, ty] = viewState.target ?? [0, 0, 0];
   return [
     Math.round(rect.x + rect.width / 2 + (x - tx) * scale),
-    Math.round(top + rect.height / 2 + (y - ty) * scale),
+    Math.round(rect.y + rect.height / 2 + (y - ty) * scale),
   ];
 }
 
@@ -185,6 +185,10 @@ export default function GroupGridDemo() {
       ...(DEVICE === 'webgpu'
         ? { deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } }
         : {}),
+      onDeviceInitialized: (device) => {
+        applyWebGPUViewFix(device);
+        applyWebGPUPickingFix(device);
+      },
       // Viv's convention: a root layer draws in the view whose id its own id carries.
       layerFilter: ({ layer, viewport }) =>
         layer.id.endsWith('@shared') || layer.id.endsWith(`@${viewport.id}`),
