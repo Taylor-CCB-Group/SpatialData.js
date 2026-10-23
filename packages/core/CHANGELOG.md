@@ -1,5 +1,11 @@
 # @spatialdata/core
 
+## 0.13.0
+
+### Patch Changes
+
+- [#208](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/208) [`4217760`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4217760639bc2e81f32e93e9769030d8cb13d449) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Opening another store no longer shows the previous store's points for a same-named points element.
+
 ## 0.12.0
 
 ### Patch Changes
