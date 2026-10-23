@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { featureCodeToRgb } from '../src/pointsFeatureColor.js';
 import {
   injectPointsFeatureColorWGSL,
   PointsFeatureColorExtension,
@@ -39,13 +40,15 @@ describe('PointsFeatureColorExtension', () => {
 
   it('samples the colour from the pfcPalette LUT (not a procedural formula)', () => {
     const mainEnd = shaders.inject['vs:#main-end'];
-    expect(mainEnd).toContain('texelFetch(pfcPalette');
-    // The palette module must declare the sampler + the width used to clamp the index.
+    // Row-major 2-D lookup, sized from the bound texture itself.
+    expect(mainEnd).toContain('textureSize(pfcPalette, 0)');
+    expect(mainEnd).toContain(
+      'texelFetch(pfcPalette, ivec2(pfcIdx % pfcSize.x, pfcIdx / pfcSize.x), 0)'
+    );
     const paletteModule = (shaders.modules as Array<{ name: string; vs: string }>).find(
       (m) => m.name === 'pfcColor'
     );
     expect(paletteModule?.vs).toContain('sampler2D pfcPalette');
-    expect(paletteModule?.vs).toContain('paletteWidth');
   });
 
   it('declares the LUT-sizing and override props so deck tracks them', () => {
@@ -74,6 +77,71 @@ describe('PointsFeatureColorExtension', () => {
   });
 });
 
+describe('PointsFeatureColorExtension palette texture', () => {
+  interface Descriptor {
+    width: number;
+    height: number;
+    data: Uint8Array;
+  }
+
+  // Stands in for the host layer: records every texture the extension creates.
+  function mountHost(props: Record<string, unknown>) {
+    const created: Array<Descriptor & { destroyed: boolean }> = [];
+    const device = {
+      createTexture(descriptor: Descriptor) {
+        const texture = { ...descriptor, destroyed: false, destroy: () => {} };
+        texture.destroy = () => {
+          texture.destroyed = true;
+        };
+        created.push(texture);
+        return texture;
+      },
+    };
+    const host = {
+      props,
+      state: {} as Record<string, unknown>,
+      context: { device },
+      getAttributeManager: () => ({ add: () => {} }),
+    };
+    const ext = new PointsFeatureColorExtension();
+    ext.initializeState.call(host as never);
+    const update = (next: Record<string, unknown>) => {
+      const oldProps = host.props;
+      host.props = next;
+      ext.updateState.call(host as never, { props: next, oldProps } as never);
+    };
+    return { created, update };
+  }
+
+  it('colours a code past 16,384 from a texture no dimension of which exceeds 4096', () => {
+    const { created } = mountHost({ featureCodeSpaceSize: 24_674 });
+    expect(created).toHaveLength(1);
+    const [texture] = created;
+    expect(texture.width).toBeLessThanOrEqual(4096);
+    expect(texture.height).toBeLessThanOrEqual(4096);
+
+    // Mirrors the shader's lookup: texel (code % width, code / width), row-major.
+    const code = 24_000;
+    const x = code % texture.width;
+    const y = Math.floor(code / texture.width);
+    const o = (y * texture.width + x) * 4;
+    expect([...texture.data.slice(o, o + 3)]).toEqual(featureCodeToRgb(code));
+  });
+
+  it('keeps the texture across cosmetic updates and rebuilds once when the code space grows', () => {
+    const { created, update } = mountHost({ featureCodeSpaceSize: 0 });
+    update({ featureCodeSpaceSize: 0, highlightFeatureCode: 3 });
+    update({ featureCodeSpaceSize: 4096, highlightFeatureCode: 5 });
+    expect(created).toHaveLength(1);
+
+    update({ featureCodeSpaceSize: 24_674 });
+    update({ featureCodeSpaceSize: 24_674, highlightFeatureCode: 7 });
+    expect(created).toHaveLength(2);
+    expect(created[0].destroyed).toBe(true);
+    expect(created[1].destroyed).toBe(false);
+  });
+});
+
 describe('PointsScatterplotLayer WGSL', () => {
   it("finds its injection anchors in the installed deck's scatterplot WGSL", () => {
     // Pins the deck version: an upgrade that reshapes the shader throws here rather
@@ -84,7 +152,9 @@ describe('PointsScatterplotLayer WGSL', () => {
     });
     const source: string = layer.getShaders().source;
     expect(source).toContain('@location(9) featureCode: f32,');
-    expect(source).toContain('textureLoad(pfcPalette');
+    expect(source).toContain(
+      'textureLoad(pfcPalette, vec2<i32>(pfcIdx % pfcSize.x, pfcIdx / pfcSize.x), 0)'
+    );
   });
 
   it('refuses a scatterplot WGSL without the anchors', () => {

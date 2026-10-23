@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFeaturePalette,
-  DEFAULT_FEATURE_PALETTE_WIDTH,
+  FEATURE_PALETTE_WIDTH,
   featureCodeToCssColor,
   featureCodeToRgb,
-  featurePaletteWidth,
+  featurePaletteRows,
 } from '../src/pointsFeatureColor.js';
 
 describe('featureCodeToRgb', () => {
@@ -34,9 +34,9 @@ describe('featureCodeToRgb', () => {
 describe('buildFeaturePalette', () => {
   it('lays out one RGBA texel per code, defaulting to featureCodeToRgb', () => {
     const palette = buildFeaturePalette(3);
-    // Width is a floor, not the requested size — see DEFAULT_FEATURE_PALETTE_WIDTH.
-    expect(palette.width).toBe(DEFAULT_FEATURE_PALETTE_WIDTH);
-    expect(palette.data.length).toBe(DEFAULT_FEATURE_PALETTE_WIDTH * 4);
+    // One full row is a floor, not the requested size — see featurePaletteRows.
+    expect([palette.width, palette.height]).toEqual([FEATURE_PALETTE_WIDTH, 1]);
+    expect(palette.data.length).toBe(FEATURE_PALETTE_WIDTH * 4);
     for (let code = 0; code < 3; code += 1) {
       const [r, g, b] = featureCodeToRgb(code);
       const o = code * 4;
@@ -64,7 +64,7 @@ describe('buildFeaturePalette', () => {
     // until the catalog landed, and the shader clamps every code to texel 0 — the
     // whole layer one flat colour for the entire load of a big element.
     const palette = buildFeaturePalette(0);
-    expect(palette.width).toBe(DEFAULT_FEATURE_PALETTE_WIDTH);
+    expect([palette.width, palette.height]).toEqual([FEATURE_PALETTE_WIDTH, 1]);
 
     // Distinct codes must get distinct texels with no catalog at all.
     const texel = (code: number) => [...palette.data.slice(code * 4, code * 4 + 3)];
@@ -72,10 +72,23 @@ describe('buildFeaturePalette', () => {
     expect(texel(500)).not.toEqual(texel(7));
   });
 
-  it('widens past the default when the catalog code space is larger', () => {
-    expect(buildFeaturePalette(10_000).width).toBe(10_000);
-    expect(featurePaletteWidth(10_000)).toBe(10_000);
-    // …and never narrows below the default for a small/unknown space.
-    expect(featurePaletteWidth(12)).toBe(DEFAULT_FEATURE_PALETTE_WIDTH);
+  it('adds rows, not width, for a code space past the GPU texture limit', () => {
+    // A whole-transcriptome panel: one row this wide exceeds the common 16,384
+    // MAX_TEXTURE_SIZE, so texture creation failed and every point drew uncoloured.
+    const palette = buildFeaturePalette(24_674);
+    expect(palette.width).toBeLessThanOrEqual(4096);
+    expect(palette.height).toBeLessThanOrEqual(4096);
+    expect(palette.width * palette.height).toBeGreaterThanOrEqual(24_674);
+
+    // The shader reads texel (code % width, code / width) of the row-major data.
+    const code = 20_000;
+    const x = code % palette.width;
+    const y = Math.floor(code / palette.width);
+    const o = (y * palette.width + x) * 4;
+    expect([...palette.data.slice(o, o + 4)]).toEqual([...featureCodeToRgb(code), 255]);
+
+    // …and never shrinks below one row for a small/unknown space.
+    expect(featurePaletteRows(12)).toBe(1);
+    expect(featurePaletteRows(Number.NaN)).toBe(1);
   });
 });

@@ -3,12 +3,12 @@ import { LayerExtension } from '@deck.gl/core';
 import {
   buildFeaturePalette,
   type FeatureColorOverrides,
-  featurePaletteWidth,
+  featurePaletteRows,
 } from './pointsFeatureColor.js';
 
 /** A luma texture, narrowed to the members this extension touches. */
 interface PaletteTexture {
-  width: number;
+  height: number;
   destroy?: () => void;
   delete?: () => void;
 }
@@ -18,12 +18,11 @@ interface DeviceLike {
 }
 
 /**
- * Uniform block for the colour pass:
- *  - `highlightCode`: the emphasised feature code + 1 (0 = no highlight; also what a
- *    zeroed UBO reads, so the default is safe even if the binding fails — code 0 would
- *    otherwise be a valid, wrongly-highlighted value).
- *  - `paletteWidth`: the LUT width, so the shader can clamp an out-of-range code to
- *    the last texel instead of reading undefined memory.
+ * Uniform block for the colour pass. `highlightCode` is the emphasised feature code
+ * + 1 (0 = no highlight; also what a zeroed UBO reads, so the default is safe even if
+ * the binding fails — code 0 would otherwise be a valid, wrongly-highlighted value).
+ * The palette's dimensions are read from the texture itself, so they can't drift
+ * from what's bound.
  */
 const PFC_COLOR_MODULE = {
   name: 'pfcColor',
@@ -31,7 +30,6 @@ const PFC_COLOR_MODULE = {
     uniform sampler2D pfcPalette;
     layout(std140) uniform pfcColorUniforms {
       float highlightCode;
-      float paletteWidth;
     } pfcColor;
   `,
   // WGSL bindings for the same uniforms + palette; the colour code itself is spliced
@@ -40,12 +38,11 @@ const PFC_COLOR_MODULE = {
   source: /* wgsl */ `
     struct PfcColorUniforms {
       highlightCode: f32,
-      paletteWidth: f32,
     };
     @group(0) @binding(auto) var<uniform> pfcColor: PfcColorUniforms;
     @group(0) @binding(auto) var pfcPalette: texture_2d<f32>;
   `,
-  uniformTypes: { highlightCode: 'f32' as const, paletteWidth: 'f32' as const },
+  uniformTypes: { highlightCode: 'f32' as const },
 };
 
 /**
@@ -60,8 +57,9 @@ const WGSL_FILL_COLOR_ANCHOR =
 /** WGSL twin of the GLSL `vs:#main-end` injection below. */
 const WGSL_FEATURE_COLOR = /* wgsl */ `
   if (attributes.featureCode >= 0.0) {
-    let pfcIdx = clamp(i32(attributes.featureCode + 0.5), 0, i32(pfcColor.paletteWidth) - 1);
-    var pfcRgb = textureLoad(pfcPalette, vec2<i32>(pfcIdx, 0), 0).rgb;
+    let pfcSize = vec2<i32>(textureDimensions(pfcPalette));
+    let pfcIdx = clamp(i32(attributes.featureCode + 0.5), 0, pfcSize.x * pfcSize.y - 1);
+    var pfcRgb = textureLoad(pfcPalette, vec2<i32>(pfcIdx % pfcSize.x, pfcIdx / pfcSize.x), 0).rgb;
     if (pfcColor.highlightCode > 0.5 && abs(attributes.featureCode - (pfcColor.highlightCode - 1.0)) > 0.5) {
       let pfcLum = dot(pfcRgb, vec3<f32>(0.2126, 0.7152, 0.0722));
       pfcRgb = mix(vec3<f32>(pfcLum), pfcRgb, 0.2) * 0.55;
@@ -107,7 +105,7 @@ function destroyTexture(texture: PaletteTexture | undefined): void {
  *
  * The feature code rides along as an instance attribute (`featureCode`, supplied as
  * the binary `getFeatureCode` attribute); the vertex shader looks the code up in a
- * **palette texture** (`pfcPalette`) — a 1-row RGBA LUT, one texel per code — and
+ * **palette texture** (`pfcPalette`) — a 2-D RGBA LUT, one texel per code — and
  * writes the result to `vFillColor`. The palette is built on the CPU from
  * {@link buildFeaturePalette} (defaults matching the old procedural golden-angle
  * hue, plus any per-feature overrides), so colour is now DATA, not a hard-coded
@@ -125,8 +123,8 @@ function destroyTexture(texture: PaletteTexture | undefined): void {
  * register the `featureCode` attribute — the sublayer already exists and only
  * updates. Colour is instead gated by the attribute value: with no `getFeatureCode`
  * buffer the attribute reads its `-1` default and the shader leaves the flat fill
- * colour untouched. A palette texture is ALWAYS bound (a 1×1 fallback until a real
- * one arrives), because a declared sampler with no binding is a draw error.
+ * colour untouched. A palette texture is ALWAYS bound (built at mount, before any
+ * catalog), because a declared sampler with no binding is a draw error.
  *
  * Deck subtleties that each cost a debugging session:
  *  - `in float featureCode` must be declared in `vs:#decl` (deck does NOT auto-declare
@@ -172,11 +170,13 @@ export class PointsFeatureColorExtension extends LayerExtension {
         `,
         'vs:#main-end': /* glsl */ `
           if (featureCode >= 0.0) {
+            // Row-major: code -> (code % width, code / width); see buildFeaturePalette.
             // Clamp to the last texel so a code beyond the LUT mis-colours its tail
             // rather than reading undefined texture memory (texelFetch ignores the
             // sampler's clamp-to-edge, unlike texture()).
-            int pfcIdx = clamp(int(featureCode + 0.5), 0, int(pfcColor.paletteWidth) - 1);
-            vec3 pfcRgb = texelFetch(pfcPalette, ivec2(pfcIdx, 0), 0).rgb;
+            ivec2 pfcSize = textureSize(pfcPalette, 0);
+            int pfcIdx = clamp(int(featureCode + 0.5), 0, pfcSize.x * pfcSize.y - 1);
+            vec3 pfcRgb = texelFetch(pfcPalette, ivec2(pfcIdx % pfcSize.x, pfcIdx / pfcSize.x), 0).rgb;
             // Highlight: uniform holds highlightCode + 1 (0 = off). Non-matching codes
             // are desaturated toward their luminance and dimmed.
             if (pfcColor.highlightCode > 0.5 && abs(featureCode - (pfcColor.highlightCode - 1.0)) > 0.5) {
@@ -206,8 +206,8 @@ export class PointsFeatureColorExtension extends LayerExtension {
     // loaded — so `featureCodeSpaceSize` arrives at its final value here and never
     // "changes" again. Seeding a 1×1 and waiting for a change left the palette one
     // texel wide forever, and the shader clamps every code to texel 0: one flat
-    // colour for the whole layer. (`buildFeaturePalette` floors width at 1, so an
-    // unknown code space still yields a bindable fallback.)
+    // colour for the whole layer. (`buildFeaturePalette` always fills at least one
+    // row, so an unknown code space still yields a bindable palette.)
     const props = this.props as {
       featureCodeSpaceSize?: number;
       featureColorOverrides?: FeatureColorOverrides | null;
@@ -230,12 +230,12 @@ export class PointsFeatureColorExtension extends LayerExtension {
     const oldProps = params.oldProps as typeof props;
     const state = this.state as { pfcPaletteTexture?: PaletteTexture };
     // Reconcile against the texture we actually hold rather than against a prop
-    // transition: a width mismatch means the palette cannot colour every code, no
+    // transition: a row-count mismatch means the palette cannot colour every code, no
     // matter which update did or didn't fire. Self-healing, so a missed transition
     // degrades to a rebuild instead of a permanently wrong palette.
-    const neededWidth = featurePaletteWidth(props.featureCodeSpaceSize ?? 0);
+    const neededRows = featurePaletteRows(props.featureCodeSpaceSize ?? 0);
     if (
-      state.pfcPaletteTexture?.width !== neededWidth ||
+      state.pfcPaletteTexture?.height !== neededRows ||
       props.featureColorOverrides !== oldProps.featureColorOverrides
     ) {
       pfcSetPaletteTexture(
@@ -256,10 +256,7 @@ export class PointsFeatureColorExtension extends LayerExtension {
     const texture = state.pfcPaletteTexture;
     // Store code + 1 so "no highlight" is 0 (safe default; see PFC_COLOR_MODULE).
     (this as unknown as { setShaderModuleProps(props: unknown): void }).setShaderModuleProps({
-      pfcColor: {
-        highlightCode: highlight >= 0 ? highlight + 1 : 0,
-        paletteWidth: texture?.width ?? 1,
-      },
+      pfcColor: { highlightCode: highlight >= 0 ? highlight + 1 : 0 },
     });
     if (texture) {
       (
@@ -275,8 +272,8 @@ export class PointsFeatureColorExtension extends LayerExtension {
   }
 }
 
-/** Create the LUT texture for a code space (+ overrides). Falls back to a 1×1 texel
- * when the code space isn't known yet, so a texture is always available to bind. */
+/** Create the LUT texture for a code space (+ overrides). An unknown code space still
+ * gets one full row, so a texture is always available to bind. */
 function pfcBuildPaletteTexture(
   layer: Layer,
   codeSpaceSize: number,
@@ -289,7 +286,7 @@ function pfcBuildPaletteTexture(
   const palette = buildFeaturePalette(codeSpaceSize, overrides ?? undefined);
   return device.createTexture({
     width: palette.width,
-    height: 1,
+    height: palette.height,
     dimension: '2d',
     data: palette.data,
     mipmaps: false,
