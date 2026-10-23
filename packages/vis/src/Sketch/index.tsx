@@ -11,6 +11,7 @@ import {
   getSpatialDataUrlFromSearchParams,
   isAntialiasDisabled,
   isWebGPURequested,
+  isZipUrl,
 } from './demoUrl';
 
 const dataSourceBarStyle: CSSProperties = {
@@ -29,6 +30,9 @@ function getInitialDemoUrl(): string {
 
 /** A store opened from a local zip or folder; it has no URL to share or put in `?url=`. */
 type LocalSource = { store: ZipStore | FolderStore; label: string };
+
+/** A zip opened from a URL, or the reason it could not be. */
+type RemoteZip = { url: string; store?: ZipStore; error?: string };
 
 const pickerLabelStyle: CSSProperties = { fontSize: 11, color: '#8af', cursor: 'pointer' };
 
@@ -54,7 +58,35 @@ function DataSource({ children }: React.PropsWithChildren) {
       ? buildDemoPageHref(url, `${window.location.origin}${window.location.pathname}`)
       : '';
 
-  const source = local?.store ?? (url.trim() || DEFAULT_DEMO_SPATIALDATA_URL);
+  // A `.zip` URL is one archive, read by range, not a folder of zarr keys; nothing is
+  // shown until its central directory has been read.
+  const zipUrl = !local && isZipUrl(url) ? url.trim() : null;
+  const [remoteZip, setRemoteZip] = useState<RemoteZip | null>(null);
+  useEffect(() => {
+    if (!zipUrl) return;
+    let current = true;
+    ZipStore.open(zipUrl).then(
+      (store) => {
+        if (current) setRemoteZip({ url: zipUrl, store });
+      },
+      (error: unknown) => {
+        if (current) setRemoteZip({ url: zipUrl, error: String(error) });
+      }
+    );
+    return () => {
+      current = false;
+    };
+  }, [zipUrl]);
+  const zip = zipUrl && remoteZip?.url === zipUrl ? remoteZip : null;
+  const zipStatus = !zipUrl
+    ? null
+    : zip?.error
+      ? `Could not open ${zipUrl}: ${zip.error}`
+      : zip?.store
+        ? null
+        : `Opening ${zipUrl}…`;
+
+  const source = local?.store ?? (zipUrl ? zip?.store : url.trim() || DEFAULT_DEMO_SPATIALDATA_URL);
 
   // Bumped by every source change, so a zip that finishes opening after the user
   // has moved on (another zip, a folder, a URL edit) is dropped, not shown.
@@ -131,7 +163,9 @@ function DataSource({ children }: React.PropsWithChildren) {
               Showing local {local.label} — edit the URL to switch back
             </span>
           ) : null}
-          {localStatus ? <span style={{ fontSize: 11, color: '#c96' }}>{localStatus}</span> : null}
+          {(localStatus ?? zipStatus) ? (
+            <span style={{ fontSize: 11, color: '#c96' }}>{localStatus ?? zipStatus}</span>
+          ) : null}
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
