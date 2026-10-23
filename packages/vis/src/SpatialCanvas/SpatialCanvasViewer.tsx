@@ -277,6 +277,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
     // useLayerData returns a fresh object every render, so we intentionally depend
     // on its stable members (the useCallback'd getter plus the memoized load flags)
     // rather than `layerData` itself, which would recompute this on every render.
+    // The getter changes identity when image data lands; the flags do not track it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [layerData.getVivLayerProps, vivPassthrough, layerData.isBlocking, layerData.isLoading]
   );

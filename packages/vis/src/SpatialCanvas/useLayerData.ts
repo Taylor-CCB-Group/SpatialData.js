@@ -1815,7 +1815,17 @@ export function useLayerData(
     [getFeatureTooltip, getShapePickEvent, labelsResolver]
   );
 
+  // Read during render, like the other resolver getters: every resolver settle
+  // re-renders this hook via `loadedDataRevision`, so this is current. It is what
+  // gives `getVivLayerProps` a new identity when an image loader lands — callers
+  // memoise on that identity, and the load-status flags are not a substitute: a
+  // load disposed mid-flight (StrictMode's dev double-mount) can flip them before
+  // the live loader exists, leaving nothing to change when it does.
+  const imageDataVersion = imagesResolver.getVersion();
+
   const getVivLayerProps = useCallback((): ImageLayerConfig[] => {
+    // Bare reference: a re-trigger for the image data read below, not a value used.
+    void imageDataVersion;
     const vivProps: ImageLayerConfig[] = [];
     const passthrough = vivPassthrough;
 
@@ -1889,7 +1899,7 @@ export function useLayerData(
     }
 
     return vivProps;
-  }, [layers, layerOrder, getStableSelections, vivPassthrough, imagesResolver]);
+  }, [layers, layerOrder, getStableSelections, vivPassthrough, imagesResolver, imageDataVersion]);
 
   /**
    * Viewport-tile progress across every tiled points layer (D5).
