@@ -83,6 +83,11 @@ top-level entry is a `.zarr` folder is rooted inside it. Only STORED (uncompress
 entries are range-read; deflated ones are inflated whole on every read. A URL needs a
 server that answers `Range` with 206, and `ZipStore.open` rejects one that doesn't.
 
+A STORED zip inside another opens without extracting it: build a reader from the outer
+store's `entrySize(key)` and `getRange(key, …)` (the `entrySize` doc comment has the
+snippet). Each inner read is then an outer read, so for a remote outer archive, fetching
+a small nested zip whole with `get` is usually fewer requests.
+
 In Node, open a local archive over 4 GiB through a reader on a `FileHandle` rather
 than `fs.openAsBlob`, which reports such files' size modulo 2^32.
 

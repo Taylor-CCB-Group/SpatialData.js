@@ -100,6 +100,31 @@ describe('ZipStore', () => {
     expect(reads).toBe(2);
   });
 
+  it('opens a STORED zip nested in another through entrySize and getRange', async () => {
+    const outerArchive = zip({ 'inner.zip': zip(v2Files()), padding: new Uint8Array(1 << 20) });
+    let bytesRead = 0;
+    const outer = await ZipStore.open({
+      getLength: async () => outerArchive.length,
+      read: async (offset, length) => {
+        bytesRead += length;
+        return outerArchive.slice(offset, offset + length);
+      },
+    });
+    const key = '/inner.zip';
+    bytesRead = 0;
+
+    const inner = await ZipStore.open({
+      getLength: async () => outer.entrySize(key) ?? 0,
+      read: async (offset, length) =>
+        (await outer.getRange(key, { offset, length })) ?? new Uint8Array(0),
+    });
+    const { zarritaStore } = await openTree(inner);
+
+    expect(await readValues(zarritaStore)).toEqual(VALUES);
+    expect(bytesRead).toBeLessThan(64 * 1024);
+    expect(outer.entrySize('/missing.zip')).toBeUndefined();
+  });
+
   it('rejects bytes that are not a zip archive', async () => {
     await expect(ZipStore.open(new Blob([encoder.encode('not a zip')]))).rejects.toThrow();
   });

@@ -186,7 +186,10 @@ export class ZipStore implements zarr.AsyncReadable {
     return entry && new Uint8Array(await entry.arrayBuffer());
   }
 
-  async getRange(key: zarr.AbsolutePath, range: zarr.RangeQuery): Promise<Uint8Array | undefined> {
+  async getRange(
+    key: zarr.AbsolutePath,
+    range: zarr.RangeQuery
+  ): Promise<Uint8Array<ArrayBuffer> | undefined> {
     const name = key.slice(1);
     const entry = this.#entries.get(name);
     if (!entry) {
@@ -201,6 +204,26 @@ export class ZipStore implements zarr.AsyncReadable {
       return bytes.subarray(start, start + length);
     }
     return this.#reader.read((await this.#dataOffset(name, entry)) + start, length);
+  }
+
+  /**
+   * An entry's uncompressed size in bytes, or `undefined` if the archive has no
+   * such entry. With `getRange`, enough to open a STORED zip nested in this one
+   * without extracting it:
+   *
+   * ```ts
+   * const inner = await ZipStore.open({
+   *   getLength: async () => outer.entrySize(key) ?? 0,
+   *   read: async (offset, length) => (await outer.getRange(key, { offset, length })) ?? new Uint8Array(0),
+   * });
+   * ```
+   *
+   * Every read of the inner store is then one read of the outer one, so when the
+   * outer archive is remote, fetching a small nested zip whole with `get` and
+   * opening that `Blob` usually costs fewer requests.
+   */
+  entrySize(key: zarr.AbsolutePath): number | undefined {
+    return this.#entries.get(key.slice(1))?.size;
   }
 
   /**
