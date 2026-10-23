@@ -12,7 +12,11 @@ import pandas as pd
 import pytest
 import zarr
 
-from spatialdata_js_util import write_points_zarr, write_points_zarr_store
+from spatialdata_js_util import (
+    add_points_zarr_to_store,
+    write_points_zarr,
+    write_points_zarr_store,
+)
 
 GENES = ["Alpha", "Beta", "Gamma", "Delta"]
 
@@ -202,3 +206,32 @@ def test_coordinate_columns_are_written_as_standard_axes(tmp_path: Path) -> None
     group = zarr.open_group(tmp_path / "t", mode="r")
     assert group.attrs["axes"] == ["x", "y"]
     assert list(group["0"]["tile_major"]["columns"][:]) == ["x", "y", "gene"]
+
+
+def test_adding_to_a_store_merges_only_the_new_element(tmp_path: Path) -> None:
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(_points(400), store, points_key="a", feature_key="gene", n_levels=2)
+    before = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
+    scale = [
+        {
+            "type": "scale",
+            "scale": [4.7, 4.7],
+            "input": {"name": "xy", "axes": [{"name": "x"}, {"name": "y"}]},
+            "output": {"name": "global", "axes": [{"name": "x"}, {"name": "y"}]},
+        }
+    ]
+
+    add_points_zarr_to_store(
+        _points(400), store, points_key="b", feature_key="gene", n_levels=3, transformations=scale
+    )
+    after = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
+    assert {k: v for k, v in after.items() if not k.startswith("points/b")} == before
+    assert after["points/b"]["attributes"]["coordinateTransformations"] == scale
+    assert "points/b/2/feature_major/column_0" in after
+
+    # Rewritten with fewer levels: the dropped level's entries go too.
+    add_points_zarr_to_store(
+        _points(400), store, points_key="b", feature_key="gene", n_levels=1, overwrite=True
+    )
+    after = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
+    assert not any(k.startswith("points/b/1") for k in after)

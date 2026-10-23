@@ -21,6 +21,7 @@ implemented.
 
 from __future__ import annotations
 
+import json
 import math
 import shutil
 from pathlib import Path
@@ -144,6 +145,7 @@ def write_points_zarr(
     seed: int = 0,
     units: str = "micrometer",
     coordinate_system: str = "global",
+    transformations: list[dict[str, Any]] | None = None,
     chunk_rows: int = DEFAULT_CHUNK_ROWS,
     shard_chunks: int = DEFAULT_SHARD_CHUNKS,
     overwrite: bool = False,
@@ -157,6 +159,10 @@ def write_points_zarr(
     Levels are added until one holds about a million points unless ``n_levels`` is
     given, stopping early at a level that would be empty. ``seed`` fixes the random
     sample, so a rerun on the same input writes the same rows.
+
+    ``transformations`` are written as the element's ``coordinateTransformations``,
+    so an element converted from another keeps its placement (copy them from the
+    source element's attrs); by default, identity into ``coordinate_system``.
 
     Returns a summary: point counts per level and the feature list.
     """
@@ -291,7 +297,9 @@ def write_points_zarr(
         {
             "encoding-type": "ngff:points",
             "axes": list(axes),
-            "coordinateTransformations": [
+            "coordinateTransformations": transformations
+            if transformations is not None
+            else [
                 {
                     "type": "identity",
                     "input": {"name": "".join(axes), "axes": axis_list},
@@ -340,3 +348,47 @@ def write_points_zarr_store(
     summary = write_points_zarr(df, store_dir / "points" / points_key, **kwargs)
     zarr.consolidate_metadata(store_dir)
     return {**summary, "store": str(store_dir)}
+
+
+def add_points_zarr_to_store(
+    df: pd.DataFrame,
+    store_dir: str | Path,
+    *,
+    points_key: str,
+    overwrite: bool = False,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Add a points-zarr element at ``points/<points_key>`` of an existing store.
+
+    spatialdata 0.8 cannot read a store holding such an element, so add it to a copy
+    of a store, not to one other tools still read. When the store root has
+    consolidated metadata, only the new element's nodes are merged into it; every
+    other entry is left as it was. ``kwargs`` are :func:`write_points_zarr`'s.
+    """
+    store_dir = Path(store_dir)
+    root_json = store_dir / "zarr.json"
+    if not root_json.is_file():
+        raise FileNotFoundError(f"No Zarr v3 store at {store_dir}")
+    points_dir = store_dir / "points"
+    if not (points_dir / "zarr.json").is_file():
+        zarr.open_group(store_dir, mode="a", zarr_format=3).require_group("points")
+    element_dir = points_dir / points_key
+    summary = write_points_zarr(df, element_dir, overwrite=overwrite, **kwargs)
+
+    root = json.loads(root_json.read_text())
+    consolidated = root.get("consolidated_metadata")
+    if consolidated is not None:
+        prefix = f"points/{points_key}"
+        metadata = {
+            key: value
+            for key, value in consolidated["metadata"].items()
+            if key != prefix and not key.startswith(f"{prefix}/")
+        }
+        metadata.setdefault("points", json.loads((points_dir / "zarr.json").read_text()))
+        for node in element_dir.rglob("zarr.json"):
+            relative = node.parent.relative_to(element_dir).as_posix()
+            key = prefix if relative == "." else f"{prefix}/{relative}"
+            metadata[key] = json.loads(node.read_text())
+        consolidated["metadata"] = dict(sorted(metadata.items()))
+        root_json.write_text(json.dumps(root, indent=2, sort_keys=True))
+    return {**summary, "store": str(store_dir), "consolidated": consolidated is not None}

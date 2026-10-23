@@ -56,6 +56,7 @@ from .points import (
 )
 from .points_zarr import (
     POINTS_ZARR_VERSION,
+    add_points_zarr_to_store,
     write_points_zarr,
     write_points_zarr_store,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "CscConversion",
     "PyramidResult",
     "RecompressedSpatialData",
+    "add_points_zarr_to_store",
     "add_pyramids",
     "anndata_to_csc",
     "backend_report",
