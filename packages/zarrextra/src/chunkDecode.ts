@@ -132,8 +132,9 @@ export async function getZarrChunk<D extends zarr.DataType>(
 
   // zarrita takes `signal` as a first-class option: it forwards it to every
   // `store.get` and re-checks it between chunks, so a multi-chunk read stops
-  // early rather than running the rest out.
-  const result = await zarr.get(arr, selection, { signal: opts?.signal });
+  // early rather than running the rest out. `opts` passes straight through; zarrita
+  // ignores `cache`.
+  const result = await zarr.get(arr, selection, opts);
   assertChunk(result, 'zarr.get()');
   return result;
 }
