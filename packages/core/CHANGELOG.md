@@ -1,5 +1,15 @@
 # @spatialdata/core
 
+## 0.13.2
+
+### Patch Changes
+
+- [#224](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/224) [`abf6a72`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/abf6a72bb8b1348c06ea924fd67efefe7d5b4f34) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental: points-zarr chunks are read through zarrextra's codec workers when they are enabled, decoded off the main thread, and each element keeps the decoded chunks its tiles read (up to `POINTS_ZARR_CACHE_BYTES`, 256 MB), so neighbouring tiles no longer fetch the same chunks and returning to a view reads nothing. On a 1.19B-transcript section a view reads half the bytes.
+
+- [#221](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/221) [`aa32030`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/aa320309d206f5663be2a00383eb39254d0b8017) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental: a points element with a copy in merfisheyes' draft multiscale points-zarr layout (as its `experimental.points-zarr` subgroup, beside `points.parquet`) is drawn as level-of-detail tiles read from the copy; stores in merfisheyes' own layout open too. `getPointsTilingMetadata()` and `PointsResolver.getTilingMetadata()` now return `AnyPointsTilingMetadata`, so narrow on `kind === 'morton-points'` before reading Morton fields; `PointsTilingMetadata` itself is unchanged.
+- Updated dependencies [[`65b8717`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/65b8717bcff2b30ad06b61582cabdcc10197a89f)]:
+  - zarrextra@0.7.0
+
 ## 0.13.1
 
 ### Patch Changes

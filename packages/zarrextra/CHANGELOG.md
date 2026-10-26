@@ -1,5 +1,11 @@
 # zarrextra
 
+## 0.7.0
+
+### Minor Changes
+
+- [#222](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/222) [`65b8717`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/65b8717bcff2b30ad06b61582cabdcc10197a89f) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `getZarrChunk(arr, selection, { cache })` takes a chunk cache per read, used in place of the one given to `enableWorkerChunkDecode`; the main-thread backend still caches nothing. `getZarrChunk`, `ZarrGetOptions` and `ChunkCache` are exported from the package root.
+
 ## 0.6.0
 
 ### Minor Changes

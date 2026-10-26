@@ -1,5 +1,13 @@
 # @spatialdata/layers
 
+## 0.13.2
+
+### Patch Changes
+
+- [#221](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/221) [`aa32030`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/aa320309d206f5663be2a00383eb39254d0b8017) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Experimental: a points element with a copy in merfisheyes' draft multiscale points-zarr layout (as its `experimental.points-zarr` subgroup, beside `points.parquet`) is drawn as level-of-detail tiles read from the copy; stores in merfisheyes' own layout open too. `getPointsTilingMetadata()` and `PointsResolver.getTilingMetadata()` now return `AnyPointsTilingMetadata`, so narrow on `kind === 'morton-points'` before reading Morton fields; `PointsTilingMetadata` itself is unchanged.
+- Updated dependencies [[`abf6a72`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/abf6a72bb8b1348c06ea924fd67efefe7d5b4f34), [`aa32030`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/aa320309d206f5663be2a00383eb39254d0b8017)]:
+  - @spatialdata/core@0.13.2
+
 ## 0.13.1
 
 ### Patch Changes
