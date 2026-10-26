@@ -1,5 +1,12 @@
 # @spatialdata/react
 
+## 0.13.2
+
+### Patch Changes
+
+- Updated dependencies [[`abf6a72`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/abf6a72bb8b1348c06ea924fd67efefe7d5b4f34), [`aa32030`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/aa320309d206f5663be2a00383eb39254d0b8017)]:
+  - @spatialdata/core@0.13.2
+
 ## 0.13.1
 
 ### Patch Changes
