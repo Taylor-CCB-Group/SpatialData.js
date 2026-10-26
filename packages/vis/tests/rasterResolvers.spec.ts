@@ -4,6 +4,7 @@ import type {
   LabelsElement,
   ResolveContext,
   ResourceResolver,
+  SpatialData,
 } from '@spatialdata/core';
 import { Resolution, SpatialEntryStore } from '@spatialdata/core';
 import { describe, expect, it, vi } from 'vitest';
@@ -367,6 +368,64 @@ describe('the store cannot tell where a resolver lives', () => {
 
     expect(store.snapshot(imageCtx(el))?.resources.loader?.status).toBe('ready');
     expect(store.isBlocking(imageCtx(el))).toBe(false);
+  });
+
+  it('store.retry() re-fetches a failed loader once; reconciling alone does not', async () => {
+    let call = 0;
+    const fetch = vi.fn(async () => {
+      call += 1;
+      if (call === 1) throw new Error('the store is unreachable');
+      return vivLoader();
+    });
+    const images = new ImagesResolver({ fetchMultiscales: fetch });
+    const store = new SpatialEntryStore({
+      points: images as never,
+      shapes: images as never,
+      images,
+      labels: images as never,
+    });
+    const c = imageCtx(imageElement());
+
+    await store.reconcile([c]);
+    await store.reconcile([c]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(store.snapshot(c)?.resources.loader?.status).toBe('failed');
+
+    await store.retry(c);
+    await store.reconcile([c]);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(store.snapshot(c)?.resources.loader?.status).toBe('ready');
+  });
+
+  it('store.retry() re-requests a failed labels tooltip without reloading the raster', async () => {
+    const fetch = fetchMultiscales();
+    let call = 0;
+    // No associated table on the retry: the tooltip settles empty, which is `ready`.
+    const getAssociatedTable = vi.fn(() => {
+      call += 1;
+      if (call === 1) throw new Error('table read failed');
+      return undefined;
+    });
+    const labels = new LabelsResolver({
+      fetchMultiscales: fetch,
+      spatialData: { getAssociatedTable } as unknown as SpatialData,
+    });
+    const store = new SpatialEntryStore({
+      points: labels as never,
+      shapes: labels as never,
+      images: labels as never,
+      labels,
+    });
+    const c = labelsCtx(labelsElement(), { tooltipFields: ['cell_type'] });
+
+    await store.reconcile([c]);
+    expect(store.snapshot(c)?.resources.tooltip?.status).toBe('failed');
+
+    await store.retry(c);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(store.snapshot(c)?.resources.tooltip?.status).toBe('ready');
   });
 
   it('blocks on the raster loader until it is drawable', async () => {

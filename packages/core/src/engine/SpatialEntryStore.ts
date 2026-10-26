@@ -168,6 +168,17 @@ export class SpatialEntryStore {
     });
   }
 
+  /**
+   * Re-run an entry's failed resources. Gate the affordance on `error.retryable`:
+   * a non-retryable failure is re-run too, and fails the same way.
+   */
+  async retry(ctx: AnyResolveContext): Promise<void> {
+    const resolver = this.resolvers[ctx.kind];
+    if (!resolver) return;
+    await resolver.retry(ctx.elementKey);
+    await this.reconcile([ctx]);
+  }
+
   evict(kind: SpatialEntryKind, elementKey: string): void {
     this.resolvers[kind]?.evict(elementKey);
   }

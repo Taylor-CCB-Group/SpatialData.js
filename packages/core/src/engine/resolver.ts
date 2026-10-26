@@ -165,6 +165,13 @@ export interface ResourceResolver<TConfig = unknown, TElement = unknown> {
   subscribe(listener: () => void): () => void;
   /** Monotonic; backs `useSyncExternalStore`. */
   getVersion(): number;
+  /**
+   * Make one element's **failed** resources plannable again, or re-run them. A
+   * failure otherwise stays put: `plan()` must not reschedule it by itself, or
+   * every settle re-requests it. Ready and in-flight resources are untouched.
+   * `SpatialEntryStore.retry` follows this with a reconcile.
+   */
+  retry(elementKey: string): Promise<void> | void;
   /** Drop one element from the cache. */
   evict(elementKey: string): void;
   dispose(): void;

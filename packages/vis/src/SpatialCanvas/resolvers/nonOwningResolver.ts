@@ -80,6 +80,7 @@ export function createNonOwningResolver(
     snapshot: (ctx) => inner.snapshot(ctx),
     subscribe: (listener) => inner.subscribe(listener),
     getVersion: () => inner.getVersion(),
+    retry: (key) => inner.retry(key),
     evict: (key) => inner.evict(key),
     // The one edge we cut — see the doc above. Everything else delegates.
     dispose: () => {},

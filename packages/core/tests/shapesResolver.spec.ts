@@ -352,6 +352,62 @@ describe('a failed load settles', () => {
     expect(resolver.snapshot(c).resources.fillColor?.status).toBe('failed');
   });
 
+  it('retry() re-requests a failed tooltip once, and leaves good geometry alone', async () => {
+    const resolver = new ShapesResolver();
+    let tooltipCalls = 0;
+    const loadFeatureIds = vi.fn(async () => {
+      tooltipCalls += 1;
+      if (tooltipCalls === 1) throw new Error('flaky read');
+      return ['c1', 'c2'];
+    });
+    const el = element({ loadFeatureIds });
+    const c = ctx(el, { tooltipFields: ['cell_type'] });
+
+    await reconcile(resolver, c);
+    resolver.retry('cells');
+    await reconcile(resolver, c);
+    await reconcile(resolver, c);
+
+    expect(loadFeatureIds).toHaveBeenCalledTimes(2);
+    expect(el.loadRenderData).toHaveBeenCalledTimes(1);
+    expect(resolver.snapshot(c).resources.tooltip?.status).toBe('ready');
+  });
+
+  it('retry() re-requests failed geometry, keeping the stale copy drawable meanwhile', async () => {
+    const resolver = new ShapesResolver();
+    let call = 0;
+    const loadRenderData = vi.fn(async () => {
+      call += 1;
+      if (call === 2) throw new Error('the second read failed');
+      return renderData();
+    });
+    const c = ctx(element({ loadRenderData }));
+
+    await resolver.load({ id: 'g1', resource: 'geometry' }, c, signal());
+    await resolver.load({ id: 'g2', resource: 'geometry' }, c, signal());
+    expect(resolver.plan(c)).toEqual([]);
+
+    resolver.retry('cells');
+    expect(resolver.getRenderData('cells')).toBeDefined();
+    await reconcile(resolver, c);
+    await reconcile(resolver, c);
+
+    expect(loadRenderData).toHaveBeenCalledTimes(3);
+    expect(resolver.snapshot(c).resources.geometry?.status).toBe('ready');
+  });
+
+  it('retry() does nothing to an entry with no failures', async () => {
+    const resolver = new ShapesResolver();
+    const c = ctx(element());
+    await reconcile(resolver, c);
+    const version = resolver.getVersion();
+
+    resolver.retry('cells');
+
+    expect(resolver.getVersion()).toBe(version);
+    expect(resolver.plan(c)).toEqual([]);
+  });
+
   it('still requests a different tooltip field after one failed', async () => {
     const resolver = new ShapesResolver();
     const loadFeatureIds = vi.fn(async () => {

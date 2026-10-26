@@ -122,6 +122,8 @@ interface RasterEntry<T> {
   boundsTransform?: unknown;
   /** Non-fatal facts about a successful load — e.g. channel defaults fell back. */
   notices?: readonly EntryNotice[];
+  /** Set by `retry()`: `plan()` otherwise schedules the loader only while it is idle. */
+  retryLoader?: boolean;
 }
 
 /** What a raster load produces: the resolved data, plus any non-fatal notices. */
@@ -189,6 +191,23 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
     return computed;
   }
 
+  /** Should `plan()` schedule this entry's loader? */
+  protected needsLoader(entry: RasterEntry<TData> | undefined): boolean {
+    return !entry || Resolution.isIdle(entry.loader) || entry.retryLoader === true;
+  }
+
+  retry(key: string): void {
+    if (this.markForRetry(key)) this.notify();
+  }
+
+  /** Make this element's failed resources plannable again. Returns whether any were. */
+  protected markForRetry(key: string): boolean {
+    const entry = this.entries.get(key);
+    if (!entry || !Resolution.isFailed(entry.loader)) return false;
+    entry.retryLoader = true;
+    return true;
+  }
+
   evict(key: string): void {
     const existed = this.entries.delete(key);
     this.snapshots.evictByElement(key);
@@ -216,6 +235,7 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
     // aborted initial load must fall back to its prior state, or `plan()` (which
     // only schedules an idle loader) never reschedules it and the entry hangs.
     const prior = entry.loader;
+    entry.retryLoader = false;
     const stale = Resolution.lastGood(entry.loader);
     entry.loader = Resolution.loading(stale !== undefined ? { stale } : {});
     this.options.onStatus?.(ctx.entryId, 'image', 'loading');
@@ -277,8 +297,7 @@ export class ImagesResolver
   readonly blockingResources = ['loader'] as const;
 
   plan(ctx: ResolveContext<ImagesResolveConfig, ImageElement>): readonly ResolveTask[] {
-    const entry = this.entries.get(ctx.elementKey);
-    if (!entry || Resolution.isIdle(entry.loader)) {
+    if (this.needsLoader(this.entries.get(ctx.elementKey))) {
       return [{ id: `${ctx.elementKey}#loader`, resource: 'loader' }];
     }
     return [];
@@ -363,8 +382,7 @@ export class LabelsResolver
   plan(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): readonly ResolveTask[] {
     const key = ctx.elementKey;
     const tasks: ResolveTask[] = [];
-    const entry = this.entries.get(key);
-    if (!entry || Resolution.isIdle(entry.loader)) {
+    if (this.needsLoader(this.entries.get(key))) {
       tasks.push({ id: `${key}#loader`, resource: 'loader' });
     }
     const fields = ctx.config.tooltipFields;
@@ -521,6 +539,23 @@ export class LabelsResolver
     };
     this.snapshots.set(ctx.entryId, this.version, ctx.transform, fillColorColumn ?? '', value);
     return value;
+  }
+
+  protected override markForRetry(key: string): boolean {
+    let changed = super.markForRetry(key);
+    // Dropping a failed tooltip or column is enough: `plan()` reschedules what it lacks.
+    const tooltip = this.tooltips.get(key);
+    if (tooltip && Resolution.isFailed(tooltip.resolution)) {
+      this.tooltips.delete(key);
+      changed = true;
+    }
+    for (const [cacheKey, held] of this.fillColors) {
+      if (cacheKey.startsWith(`${key}\u0000`) && Resolution.isFailed(held.resolution)) {
+        this.fillColors.delete(cacheKey);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   override evict(key: string): void {
