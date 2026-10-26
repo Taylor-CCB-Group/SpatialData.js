@@ -246,6 +246,16 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         fallback: slot === 'geometry' ? 'decode-failed' : 'load-failed',
       });
       entry[slot] = Resolution.failed(error, stale) as never;
+      // Record what failed, not just what succeeded: `plan()` reschedules whenever
+      // these differ from the config, and every settle triggers a reconcile, so
+      // leaving them unset re-requests the failing read in a loop.
+      if (slot === 'tooltip') {
+        entry.tooltipSignature = tooltipSignature(
+          (task.payload as { tooltipFields: string[] }).tooltipFields
+        );
+      } else if (slot === 'fillColor') {
+        entry.fillColorColumn = (task.payload as { column: string }).column;
+      }
       this.callbacks.onStatus?.(ctx.entryId, slot, 'error');
     } finally {
       this.notify();

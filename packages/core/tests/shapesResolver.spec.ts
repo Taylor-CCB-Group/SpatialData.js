@@ -8,6 +8,7 @@ import {
 } from '../src/engine/index.js';
 import type { ShapesElement } from '../src/models/index.js';
 import type { ShapesRenderData } from '../src/shapes.js';
+import type { SpatialData } from '../src/store/index.js';
 
 /**
  * The shapes Resource Resolver, headless — no deck layer, no GL context.
@@ -307,5 +308,60 @@ describe('snapshot() — identity and bounds', () => {
     expect(Resolution.isFailed(geometry)).toBe(true);
     // "stale is a retention": the failed refine keeps drawing rather than blanking.
     expect(Resolution.lastGood(geometry)).toBe(good);
+  });
+});
+
+describe('a failed load settles', () => {
+  // Every resolver settle triggers another reconcile in `vis`, so a failure that
+  // `plan()` reschedules re-requests itself forever. Count the reads, not the plan.
+  const reconcile = async (
+    resolver: ShapesResolver,
+    c: ResolveContext<ShapesResolveConfig, ShapesElement>
+  ) => {
+    for (const task of resolver.plan(c)) await resolver.load(task, c, signal());
+  };
+
+  it('does not re-request a failed tooltip on the next reconcile', async () => {
+    const resolver = new ShapesResolver();
+    const loadFeatureIds = vi.fn(async () => {
+      throw new Error('no such column: cell_type');
+    });
+    const c = ctx(element({ loadFeatureIds }), { tooltipFields: ['cell_type'] });
+
+    await reconcile(resolver, c);
+    await reconcile(resolver, c);
+    await reconcile(resolver, c);
+
+    expect(loadFeatureIds).toHaveBeenCalledTimes(1);
+    expect(resolver.snapshot(c).resources.tooltip?.status).toBe('failed');
+  });
+
+  it('does not re-request a failed fill-colour column on the next reconcile', async () => {
+    const getAssociatedTable = vi.fn(() => {
+      throw new Error('table read failed');
+    });
+    const resolver = new ShapesResolver({
+      spatialData: { getAssociatedTable } as unknown as SpatialData,
+    });
+    const c = ctx(element(), { fillColorByColumn: { columnName: 'cluster', mode: 'auto' } });
+
+    await reconcile(resolver, c);
+    await reconcile(resolver, c);
+
+    expect(getAssociatedTable).toHaveBeenCalledTimes(1);
+    expect(resolver.snapshot(c).resources.fillColor?.status).toBe('failed');
+  });
+
+  it('still requests a different tooltip field after one failed', async () => {
+    const resolver = new ShapesResolver();
+    const loadFeatureIds = vi.fn(async () => {
+      throw new Error('no such column');
+    });
+    const el = element({ loadFeatureIds });
+
+    await reconcile(resolver, ctx(el, { tooltipFields: ['cell_type'] }));
+    await reconcile(resolver, ctx(el, { tooltipFields: ['cluster'] }));
+
+    expect(loadFeatureIds).toHaveBeenCalledTimes(2);
   });
 });
