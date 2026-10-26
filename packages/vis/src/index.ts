@@ -36,6 +36,8 @@ export type {
   AvailableElement,
   ChannelConfig,
   ElementsByType,
+  EntryStatus,
+  EntryStatusError,
   FeatureColorResolver,
   FeatureColorResolverContext,
   FeatureRowState,

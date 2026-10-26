@@ -29,7 +29,7 @@ import { useLayerData } from '../src/SpatialCanvas/useLayerData.js';
  * whether the shim is honest.
  */
 
-/** The eighteen members MDV consumes. This list IS the compat contract. */
+/** The members MDV consumes. This list IS the compat contract. */
 const PUBLIC_SURFACE = [
   'getLayers',
   'getVivLayerProps',
@@ -37,6 +37,8 @@ const PUBLIC_SURFACE = [
   'getImageLoadedDataByElementKey',
   'getLabelsLayerLoadedData',
   'getLayerLoadState',
+  'getEntryStatus',
+  'retryEntry',
   'hasRenderableLayerData',
   'pointsEngine',
   'resolvePointsTarget',
@@ -108,11 +110,11 @@ const shapesConfig = (id: string, elementKey: string): LayerConfig => ({
 const render = (layers: Record<string, LayerConfig>, elements: ElementsByType) =>
   renderHook(() => useLayerData(layers, Object.keys(layers), elements, null));
 
-describe('useLayerData — the 18-member public surface', () => {
+describe('useLayerData — the public surface', () => {
   // ADR 0004 promises MDV that this surface survives the refactor behind a compat
   // shim. MDV gets it via `...layerData` in SpatialCanvasViewer, so a member that
   // silently vanishes is a downstream break with no local failure.
-  it('exposes exactly the eighteen members, and no more', () => {
+  it('exposes exactly these members, and no more', () => {
     const { result } = render({}, EMPTY_ELEMENTS);
 
     expect(Object.keys(result.current).sort()).toEqual([...PUBLIC_SURFACE].sort());

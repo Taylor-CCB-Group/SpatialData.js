@@ -5,6 +5,7 @@ import type { RenderStack } from '@spatialdata/layers';
 import { useMeasure } from '@uidotdev/usehooks';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ensureCodecWorkers } from '../codecWorkers';
+import type { EntryStatus } from './entryStatus';
 import type { FeatureColorResolver } from './featureColorResolver';
 import {
   type HoverPointerEvent,
@@ -200,6 +201,12 @@ export interface UseSpatialCanvasRendererOptions {
   vivImageExtensionResolver?: VivImageExtensionResolver;
   vivImagePropsResolver?: VivImagePropsResolver;
   featureColorResolver?: FeatureColorResolver;
+  /**
+   * Called when a layer's `getEntryStatus` changes, with `undefined` once it has
+   * nothing to report or the layer is removed. Lets a host keep load failures in
+   * its own state instead of reading them on every render.
+   */
+  onEntryStatusChange?: (layerId: string, status: EntryStatus | undefined) => void;
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -223,6 +230,12 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
    * "off" tooltip mode and to suppress picking during pan/zoom. Defaults to true.
    */
   pickingEnabled?: boolean;
+  /**
+   * Called when a layer's `getEntryStatus` changes, with `undefined` once it has
+   * nothing to report or the layer is removed. Lets a host keep load failures in
+   * its own state instead of reading them on every render.
+   */
+  onEntryStatusChange?: (layerId: string, status: EntryStatus | undefined) => void;
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -241,6 +254,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   vivPassthrough,
   featureColorResolver,
   pickingEnabled = true,
+  onEntryStatusChange,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   ensureCodecWorkers();
 
@@ -344,6 +358,33 @@ export function useSpatialCanvasRendererFromLayerInputs({
     width,
   ]);
 
+  const onEntryStatusChangeRef = useRef(onEntryStatusChange);
+  useEffect(() => {
+    onEntryStatusChangeRef.current = onEntryStatusChange;
+  });
+  const reportedStatusesRef = useRef(new Map<string, EntryStatus>());
+  // No dependency list: a status changes when a resolver settles or a host edits a
+  // config in place, and neither shows up as a dependency here. Each run is one
+  // cached read per layer, and statuses keep their identity until they change.
+  useEffect(() => {
+    const notify = onEntryStatusChangeRef.current;
+    if (!notify) return;
+    const reported = reportedStatusesRef.current;
+    const layerIds = new Set(Object.keys(layerInputs.layers));
+    for (const layerId of layerIds) {
+      const status = layerData.getEntryStatus(layerId);
+      if (status === reported.get(layerId)) continue;
+      if (status) reported.set(layerId, status);
+      else reported.delete(layerId);
+      notify(layerId, status);
+    }
+    for (const layerId of [...reported.keys()]) {
+      if (layerIds.has(layerId)) continue;
+      reported.delete(layerId);
+      notify(layerId, undefined);
+    }
+  });
+
   return {
     ...layerData,
     availableElements,
@@ -374,6 +415,7 @@ export function useSpatialCanvasRenderer({
   vivImageExtensionResolver,
   vivImagePropsResolver,
   featureColorResolver,
+  onEntryStatusChange,
 }: UseSpatialCanvasRendererOptions) {
   const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
   const hostDeckLayers = useMemo(
@@ -407,6 +449,7 @@ export function useSpatialCanvasRenderer({
     autoFit,
     vivPassthrough,
     featureColorResolver,
+    onEntryStatusChange,
   });
 }
 

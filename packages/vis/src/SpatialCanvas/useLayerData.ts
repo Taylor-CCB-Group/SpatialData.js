@@ -54,6 +54,7 @@ import {
   type TileDebugStore,
 } from '@spatialdata/layers';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type EntryStatus, EntryStatusCache } from './entryStatus';
 import { createFeatureColorStabilizer, type FeatureColorResolver } from './featureColorResolver';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
 import {
@@ -223,6 +224,16 @@ interface UseLayerDataResult {
   getLabelsLayerLoadedData: (layerId: string) => LabelsLoaderData | undefined;
   /** Current load state for a given layer. */
   getLayerLoadState: (layerId?: string) => LayerLoadState | undefined;
+  /**
+   * Why a layer failed and what is degraded about it, or `undefined` when it has
+   * nothing to report. Identity-stable until the status changes.
+   */
+  getEntryStatus: (layerId: string) => EntryStatus | undefined;
+  /**
+   * Re-run a layer's failed loads. Offer it for errors with `retryable: true`; the
+   * others fail the same way again. Settles once the retried loads have.
+   */
+  retryEntry: (layerId: string) => Promise<void>;
   /** Whether a layer already has enough data to render. */
   hasRenderableLayerData: (layerId: string) => boolean;
   /** The live points data engine (the render path's single owner). Exposed so
@@ -345,6 +356,87 @@ export function resolveLayerElement(
   return elementMap.get(getElementMapKey(config)) ?? elementMap.get(layerId);
 }
 
+/**
+ * The `ResolveContext` for one layer: what the reconcile effect plans from, and
+ * what a status read or a retry must pass so it addresses the same entry.
+ */
+function buildResolveContext(
+  layerId: string,
+  config: LayerConfig,
+  elem: AvailableElement,
+  pointsEngine: PointsDataEngine
+): AnyResolveContext | undefined {
+  if (elem.type === 'shapes' && config.type === 'shapes') {
+    return {
+      entryId: layerId,
+      elementKey: elem.key,
+      kind: 'shapes',
+      element: elem.element,
+      config: {
+        tooltipFields: config.tooltipFields,
+        fillColorByColumn: config.fillColorByColumn,
+      },
+      transform: elem.transform,
+    };
+  }
+  if (elem.type === 'image' && config.type === 'image') {
+    return {
+      entryId: layerId,
+      elementKey: elem.key,
+      kind: 'images',
+      element: elem.element,
+      config: { channels: config.channels },
+      transform: elem.transform,
+    };
+  }
+  if (elem.type === 'labels' && config.type === 'labels') {
+    return {
+      entryId: layerId,
+      elementKey: elem.key,
+      kind: 'labels',
+      element: elem.element,
+      config: {
+        tooltipFields: config.tooltipFields,
+        channels: config.channels,
+        fillColorByColumn: config.fillColorByColumn,
+      },
+      transform: elem.transform,
+    };
+  }
+  if (elem.type === 'points' && config.type === 'points') {
+    // The full points config drives planning (Track A): `plan()` emits the
+    // preload, and — once the preload makes a scan possible — the row-codes and
+    // feature-index scan tasks from `featureCodes`/`colorByFeature`. These used
+    // to be kicked imperatively from `getLayers` during render.
+    return {
+      entryId: layerId,
+      elementKey: elem.key,
+      kind: 'points',
+      element: elem.element,
+      config: {
+        pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap),
+        // Names are the durable selection; resolve them against the settled
+        // catalog so everything downstream keeps working in codes.
+        ...(() => {
+          const codes = resolveFeatureSelectionCodes(
+            config,
+            pointsEngine.getFeatureCatalog(elem.key)
+          );
+          return codes ? { featureCodes: codes } : {};
+        })(),
+        ...(config.colorByFeature ? { colorByFeature: true } : {}),
+        // D5: opting in makes `plan()` probe for a Morton artifact before it
+        // commits to a full-table preload, and render viewport tiles when there
+        // is one. Off by default; an element that cannot be tiled preloads either
+        // way.
+        ...(config.pointsTiling ? { pointsTiling: config.pointsTiling } : {}),
+      },
+      transform: elem.transform,
+    };
+  }
+  return undefined;
+}
+
 export function getCachedWorldBounds(
   cache: Map<string, WorldBoundsCacheEntry>,
   key: string,
@@ -390,7 +482,7 @@ export function useLayerData(
   layers: Record<string, LayerConfig>,
   layerOrder: string[],
   availableElements: ElementsByType,
-  _coordinateSystem: string | null,
+  coordinateSystem: string | null,
   spatialData?: SpatialData,
   vivPassthrough?: VivImagePassthroughOptions,
   featureColorResolver?: FeatureColorResolver
@@ -720,72 +812,8 @@ export function useLayerData(
       const config = layers[layerId];
       if (!config?.visible) continue;
       const elem = resolveLayerElement(layerId, config, elementMapValue);
-      if (!elem) continue;
-      if (elem.type === 'shapes' && config.type === 'shapes') {
-        contexts.push({
-          entryId: layerId,
-          elementKey: elem.key,
-          kind: 'shapes',
-          element: elem.element,
-          config: {
-            tooltipFields: config.tooltipFields,
-            fillColorByColumn: config.fillColorByColumn,
-          },
-          transform: elem.transform,
-        });
-      } else if (elem.type === 'image' && config.type === 'image') {
-        contexts.push({
-          entryId: layerId,
-          elementKey: elem.key,
-          kind: 'images',
-          element: elem.element,
-          config: { channels: config.channels },
-          transform: elem.transform,
-        });
-      } else if (elem.type === 'labels' && config.type === 'labels') {
-        contexts.push({
-          entryId: layerId,
-          elementKey: elem.key,
-          kind: 'labels',
-          element: elem.element,
-          config: {
-            tooltipFields: config.tooltipFields,
-            channels: config.channels,
-            fillColorByColumn: config.fillColorByColumn,
-          },
-          transform: elem.transform,
-        });
-      } else if (elem.type === 'points' && config.type === 'points') {
-        // The full points config drives planning (Track A): `plan()` emits the
-        // preload, and — once the preload makes a scan possible — the row-codes and
-        // feature-index scan tasks from `featureCodes`/`colorByFeature`. These used
-        // to be kicked imperatively from `getLayers` during render.
-        contexts.push({
-          entryId: layerId,
-          elementKey: elem.key,
-          kind: 'points',
-          element: elem.element,
-          config: {
-            pointsMemoryCap: resolvePointsMemoryCap(config.pointsMemoryCap),
-            // Names are the durable selection; resolve them against the settled
-            // catalog so everything downstream keeps working in codes.
-            ...(() => {
-              const codes = resolveFeatureSelectionCodes(
-                config,
-                pointsEngine.getFeatureCatalog(elem.key)
-              );
-              return codes ? { featureCodes: codes } : {};
-            })(),
-            ...(config.colorByFeature ? { colorByFeature: true } : {}),
-            // D5: opting in makes `plan()` probe for a Morton artifact before it
-            // commits to a full-table preload, and render viewport tiles when there
-            // is one. Off by default; an element that cannot be tiled preloads either
-            // way.
-            ...(config.pointsTiling ? { pointsTiling: config.pointsTiling } : {}),
-          },
-          transform: elem.transform,
-        });
-      }
+      const ctx = elem ? buildResolveContext(layerId, config, elem, pointsEngine) : undefined;
+      if (ctx) contexts.push(ctx);
     }
     void store.reconcile(contexts);
     // `pointsEngine` is the stable useState value, so this adds no churn; it is in
@@ -1604,6 +1632,50 @@ export function useLayerData(
     [layerLoadStates]
   );
 
+  const [entryStatusCache] = useState(() => new EntryStatusCache());
+
+  // The same context the reconcile effect builds, so a status read or a retry
+  // addresses the entry that was planned. Hidden layers resolve too: a host marking
+  // failed layers in a layer list wants the ones switched off as well.
+  const resolveEntryContext = useCallback(
+    (layerId: string): AnyResolveContext | undefined => {
+      const config = layersRef.current[layerId];
+      const elem = resolveLayerElement(layerId, config, elementMap.current);
+      return config && elem ? buildResolveContext(layerId, config, elem, pointsEngine) : undefined;
+    },
+    [pointsEngine]
+  );
+
+  const getEntryStatus = useCallback(
+    (layerId: string): EntryStatus | undefined => {
+      const config = layersRef.current[layerId];
+      if (!config) return undefined;
+      if (resolveLayerElement(layerId, config, elementMap.current)) {
+        const ctx = resolveEntryContext(layerId);
+        const snapshot = ctx ? store.snapshot(ctx) : undefined;
+        return snapshot ? entryStatusCache.fromSnapshot(snapshot) : undefined;
+      }
+      // The reconcile effect skips an entry it cannot resolve; say why instead.
+      if (!spatialData || !coordinateSystem) return undefined;
+      return entryStatusCache.fromUnresolved(
+        layerId,
+        spatialData,
+        coordinateSystem,
+        config.type,
+        config.elementKey
+      );
+    },
+    [resolveEntryContext, store, entryStatusCache, spatialData, coordinateSystem]
+  );
+
+  const retryEntry = useCallback(
+    async (layerId: string): Promise<void> => {
+      const ctx = resolveEntryContext(layerId);
+      if (ctx) await store.retry(ctx);
+    },
+    [resolveEntryContext, store]
+  );
+
   const getFeatureTooltip = useCallback(
     (
       layerId: string,
@@ -1983,6 +2055,8 @@ export function useLayerData(
     getImageLoadedDataByElementKey,
     getLabelsLayerLoadedData,
     getLayerLoadState,
+    getEntryStatus,
+    retryEntry,
     hasRenderableLayerData,
     pointsEngine,
     resolvePointsTarget,

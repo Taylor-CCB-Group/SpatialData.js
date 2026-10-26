@@ -480,6 +480,33 @@ Two things worth designing around:
 - Set `autoFit={false}` if your app restores saved view state and must never
   overwrite it.
 
+## Layer errors and notices
+
+`getEntryStatus(layerId)` says why a layer drew nothing, and what is degraded
+about one that did. It is `undefined` while a layer has nothing to report.
+
+```tsx
+const renderer = useSpatialCanvasRenderer({
+  /* … */
+  onEntryStatusChange: (layerId, status) => chartState.setLayerStatus(layerId, status),
+});
+
+const status = renderer.getEntryStatus(layerId);
+for (const { resource, error } of status?.errors ?? []) {
+  // error.kind: 'element-not-found' | 'coordinate-system-not-found' | 'load-failed' | …
+  if (error.retryable) showRetry(() => renderer.retryEntry(layerId));
+}
+// status.notices: e.g. 'preload-truncated', 'channel-defaults-fallback'
+```
+
+Resources fail independently, so a shapes layer with a broken tooltip column
+still draws its geometry and reports only `tooltip`. A stack entry naming an
+element the store doesn't have, or one without a transform to the active
+coordinate system, reports `resource: 'element'`; the latter carries
+`availableCoordinateSystems`. A failure stays until the config changes or
+`retryEntry` is called. `onEntryStatusChange` fires only when a status changes,
+and with `undefined` when it clears or the layer is removed.
+
 ## Try it locally
 
 From the repo root:
@@ -535,6 +562,7 @@ Before treating the API as stable for MDV:
 - [x] Points feature selection persisted by NAME (`featureNames`), with `featureColorOverrides` keyed by name
 - [x] Labels per-feature filtering and colouring through the same `fillColorByColumn` / `featureState` API as shapes
 - [x] Host-supplied precomputed colour via `featureColorResolver` (runtime, not serialized)
+- [x] Per-layer typed errors and notices (`getEntryStatus`, `onEntryStatusChange`, `retryEntry`)
 - [x] `demo/headless` route with local `blobs.zarr` fixture
 - [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)
 - [ ] Tooltip/pick row resolution fully on shared `FeatureTableAlignment` (in progress)
