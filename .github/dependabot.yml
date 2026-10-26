@@ -6,9 +6,14 @@
 # while the manifests stayed permissive enough to have resolved the fixes on their
 # own. Keeping the lockfile moving is what stops that from recurring.
 #
-# Security updates are a separate, always-on GitHub feature and do not need to be
-# listed here. This file only adds the routine version updates, plus the grouping
-# that keeps both kinds of PR reviewable.
+# Security updates are a separate GitHub feature, switched on in the repository's
+# Code security settings rather than here. It is not on by default: with it off,
+# alerts still open but no fix PR follows, which is how the October 2026 Pillow
+# alerts sat unpatched. This file only adds the routine version updates, plus the
+# grouping that keeps both kinds of PR reviewable.
+#
+# Version updates only bump *direct* dependencies (Dependabot's default `allow`),
+# so on their own they do not move a vulnerable transitive dependency.
 
 version: 2
 
@@ -178,8 +183,9 @@ updates:
   # --- Python: the spatialdata version matrix --------------------------------
   # Each of these directories pins one exact spatialdata release so the fixture
   # generator can emit stores in that version's on-disk layout. Their transitive
-  # deps still need patching (the open setuptools alerts live here), but the pin
-  # itself is the entire point of the directory and must never be bumped.
+  # deps still need patching, but that comes from security updates, not from
+  # these entries (see the top of this file). The pin itself is the entire point
+  # of the directory and must never be bumped.
   #
   # Split in two only because of the setuptools cap below. The two entries are
   # otherwise identical, and anything that changes one should change both.
