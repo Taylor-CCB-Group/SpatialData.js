@@ -646,7 +646,9 @@ def _write_standard_points(
         table = pd.DataFrame(
             {
                 **{a: frame[c].to_numpy(dtype=np.float32) for a, c in zip(axes, coordinates)},
-                feature_key: frame[feature_key].astype(str).astype(categories),
+                # An array, not a Series: a Series would be aligned to the index below
+                # by label, emptying every part whose frame index restarts at 0.
+                feature_key: pd.Categorical(frame[feature_key].astype(str), dtype=categories),
             },
             index=pd.RangeIndex(rows, rows + len(frame)),
         )

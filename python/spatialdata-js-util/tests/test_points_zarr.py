@@ -330,3 +330,18 @@ def test_cli_add_zarr_refuses_an_existing_copy_without_overwrite(tmp_path: Path)
     assert result.returncode != 0
     assert "Output already exists" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_standard_parquet_keeps_every_feature_value_across_parts(tmp_path: Path) -> None:
+    # Frames whose own index restarts at 0, as Parquet batches do: the written parts
+    # must not align the feature column against a continuing index.
+    df = _points(900)
+    frames = [df.iloc[i : i + 300].reset_index(drop=True) for i in range(0, 900, 300)]
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(lambda: iter(frames), store, feature_key="gene")
+    parts = sorted((store / "points" / "transcripts" / "points.parquet").glob("part.*.parquet"))
+    assert len(parts) == 3
+    written = pd.concat([pd.read_parquet(p) for p in parts])
+    assert written["gene"].isna().sum() == 0
+    assert list(written["gene"].astype(str)) == list(df["gene"].astype(str))
+    assert list(written.index) == list(range(900))
