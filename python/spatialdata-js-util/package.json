@@ -1,0 +1,6 @@
+{
+  "name": "spatialdata-js-util",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Changesets shim for the PyPI package. `pnpm version-packages` copies this version into pyproject.toml; see RELEASE.md."
+}

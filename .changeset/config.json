@@ -20,9 +20,9 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": [],
+  "ignore": ["docs"],
   "privatePackages": {
-    "version": false,
+    "version": true,
     "tag": false
   }
 }

@@ -610,6 +610,8 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
 
+  python/spatialdata-js-util: {}
+
 packages:
 
   '@11ty/gray-matter@1.0.0':
