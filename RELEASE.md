@@ -78,7 +78,9 @@ npm dist-tag add zarrextra@<latest-version> next
    Since Changesets v3, `changeset version` exits 1 when there is nothing to
    release, rather than exiting 0 having done nothing. That is only a surprise
    when running it by hand: the GitHub Action checks for pending changesets
-   first and skips the version script when there are none.
+   first and skips the version script when there are none. Locally it also
+   needs `GITHUB_TOKEN` set (for example `GITHUB_TOKEN=$(gh auth token)`),
+   because the changelog generator looks up PR authors.
 
 4. Review the version PR carefully:
 
@@ -139,8 +141,8 @@ npm dist-tag add zarrextra@<latest-version> next
 ## Python package (PyPI)
 
 Publishing is manual, from the same clean checkout of the merged version PR.
-Run `pnpm version-packages` locally with `GITHUB_TOKEN` set (for example
-`GITHUB_TOKEN=$(gh auth token)`); the changelog generator looks up PR authors.
+That PR has already set the version in the shim, `pyproject.toml` and `uv.lock`;
+do not rerun `pnpm version-packages`.
 
 1. Build both artifacts:
 
@@ -149,8 +151,9 @@ Run `pnpm version-packages` locally with `GITHUB_TOKEN` set (for example
    ```
 
    This vendors the OpenJPH WASM, builds into `python/spatialdata-js-util/dist/`,
-   and fails unless the wheel and sdist both contain every vendored file. Do not
-   publish the output of a bare `uv build`: it succeeds without the WASM.
+   and fails unless the wheel and sdist both contain every vendored file and
+   carry the shim's version. Do not publish the output of a bare `uv build`:
+   it succeeds without the WASM.
 
 2. Smoke-test the wheel in a throwaway environment:
 
