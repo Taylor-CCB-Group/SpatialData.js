@@ -1,4 +1,4 @@
-import type { GetWorkerOptions } from '@fideus-labs/fizarrita';
+import type { ChunkCache, GetWorkerOptions } from '@fideus-labs/fizarrita';
 import type { WorkerPool } from '@fideus-labs/worker-pool';
 import * as zarr from 'zarrita';
 
@@ -14,6 +14,12 @@ export type ZarrGetOptions = {
    * already handed to a worker.
    */
   signal?: AbortSignal;
+  /**
+   * Decoded chunks for this read, in place of the cache the worker backend was
+   * enabled with, so a caller can keep its chunks under a budget of its own.
+   * Ignored on the main-thread backend, which caches nothing.
+   */
+  cache?: ChunkCache;
 };
 
 export type FizarritaGetWorkerOptions = Pick<
@@ -117,7 +123,7 @@ export async function getZarrChunk<D extends zarr.DataType>(
       pool: backend.pool,
       workerUrl: backend.options?.workerUrl,
       useSharedArrayBuffer: backend.options?.useSharedArrayBuffer,
-      cache: backend.options?.cache,
+      cache: opts?.cache ?? backend.options?.cache,
       signal: opts?.signal,
     });
     assertChunk(result, 'fizarrita getWorker()');
@@ -126,7 +132,8 @@ export async function getZarrChunk<D extends zarr.DataType>(
 
   // zarrita takes `signal` as a first-class option: it forwards it to every
   // `store.get` and re-checks it between chunks, so a multi-chunk read stops
-  // early rather than running the rest out. `opts` passes straight through.
+  // early rather than running the rest out. `opts` passes straight through; zarrita
+  // ignores `cache`.
   const result = await zarr.get(arr, selection, opts);
   assertChunk(result, 'zarr.get()');
   return result;

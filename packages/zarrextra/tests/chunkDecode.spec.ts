@@ -172,3 +172,30 @@ describe('getZarrChunk cancellation', () => {
     expect(get).not.toHaveBeenCalled();
   });
 });
+
+describe('getZarrChunk with a per-read cache', () => {
+  it("hands fizarrita the read's cache in place of the backend's", async () => {
+    const getWorker = vi.fn(async () => ({
+      data: new Uint8Array([1, 2, 3, 4]),
+      shape: [2, 2],
+      stride: [2, 1],
+    }));
+    setFizarritaGetWorker(getWorker as never);
+    const newCache = () => ({ get: () => undefined, set: () => {} });
+    const backendCache = newCache();
+    setChunkDecodeBackend({
+      kind: 'fizarrita',
+      pool: {} as never,
+      options: { cache: backendCache },
+    });
+    const arr = await zarr.open(createArrayStore() as never, { kind: 'array' });
+    const cache = newCache();
+
+    await getZarrChunk(arr, [null, null], { cache });
+    await getZarrChunk(arr, [null, null]);
+    expect(getWorker.mock.calls[0]?.[2]).toMatchObject({ cache });
+    expect(getWorker.mock.calls[1]?.[2]).toMatchObject({ cache: backendCache });
+
+    setChunkDecodeBackend({ kind: 'main' });
+  });
+});
