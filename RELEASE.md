@@ -33,8 +33,9 @@ publishing is intentionally manual for now.
 - `spatialdata-js-util` (the PyPI package in `python/spatialdata-js-util`) is
   versioned by Changesets through a private `package.json` shim there.
   `pnpm version-packages` copies its version into `pyproject.toml` and `uv.lock`.
-  It is not fixed to any npm package, and `changeset publish` skips it; see
-  [Python package](#python-package-pypi).
+  It is not fixed to any npm package. `changeset publish` does not publish it,
+  but tags each new version `spatialdata-js-util@<version>`, and PyPI releases
+  are built from that tag; see [Python package](#python-package-pypi).
 
 ## Dist-tags
 
@@ -132,6 +133,12 @@ npm dist-tag add zarrextra@<latest-version> next
    pnpm publish:next
    ```
 
+   Either way, push the git tags it created:
+
+   ```bash
+   git push origin --tags
+   ```
+
 10. Smoke-test in MDV:
 
     ```bash
@@ -140,28 +147,36 @@ npm dist-tag add zarrextra@<latest-version> next
 
 ## Python package (PyPI)
 
-Publishing is manual, from the same clean checkout of the merged version PR.
-That PR has already set the version in the shim, `pyproject.toml` and `uv.lock`;
-do not rerun `pnpm version-packages`.
+Publishing is manual. The merged version PR has already set the version in the
+shim, `pyproject.toml` and `uv.lock`; do not rerun `pnpm version-packages`.
 
-1. Build both artifacts:
+1. Tag the version. Step 9 of the normal flow does this. If the version PR
+   changed no npm package, create and push the tag without publishing:
 
    ```bash
-   pnpm build:python
+   pnpm changeset git-tag
+   git push origin --tags
+   ```
+
+2. Build both artifacts from that tag:
+
+   ```bash
+   git checkout spatialdata-js-util@<version>
+   pnpm build:python --release
    ```
 
    This vendors the OpenJPH WASM, builds into `python/spatialdata-js-util/dist/`,
-   and fails unless the wheel and sdist both contain every vendored file and
-   carry the shim's version. Do not publish the output of a bare `uv build`:
-   it succeeds without the WASM.
+   and fails unless HEAD carries the tag and the wheel and sdist both contain
+   every vendored file and the shim's version. Do not publish the output of a
+   bare `uv build`: it succeeds without the WASM.
 
-2. Smoke-test the wheel in a throwaway environment:
+3. Smoke-test the wheel in a throwaway environment:
 
    ```bash
    uv run --isolated --with python/spatialdata-js-util/dist/*.whl spatialdata-js-util --help
    ```
 
-3. Publish, with a PyPI API token scoped to `spatialdata-js-util`:
+4. Publish, with a PyPI API token scoped to `spatialdata-js-util`:
 
    ```bash
    uv publish python/spatialdata-js-util/dist/*

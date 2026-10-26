@@ -10,6 +10,11 @@
  *
  * Output: python/spatialdata-js-util/dist/. It and setuptools' in-tree state
  * (build/, *.egg-info, whose SOURCES.txt feeds the sdist) are cleared first.
+ *
+ * `--release` additionally requires HEAD to carry the
+ * `spatialdata-js-util@<version>` tag that `changeset publish` creates, so a
+ * PyPI upload is always built from the commit that version names rather than
+ * from a later `main`. CI builds without it.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -52,6 +57,23 @@ function archiveMembers(path) {
   return new Set(JSON.parse(result.stdout));
 }
 
+const { version } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
+
+if (process.argv.includes('--release')) {
+  const tag = `spatialdata-js-util@${version}`;
+  const tags = run('git', ['tag', '--points-at', 'HEAD'], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    encoding: 'utf8',
+  }).stdout.split('\n');
+  if (!tags.includes(tag)) {
+    console.error(
+      `HEAD is not tagged ${tag}. Check out that tag (see RELEASE.md) before building a release.`
+    );
+    process.exit(1);
+  }
+}
+
 run(process.execPath, [join(repoRoot, 'scripts', 'vendor-openjph-for-python.mjs')]);
 
 const vendored = listFiles(vendorDir).map((path) =>
@@ -70,7 +92,6 @@ for (const stale of [
 }
 run('uv', ['build', '--directory', pkgDir, '--out-dir', distDir]);
 
-const { version } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
 const wheel = join(distDir, `spatialdata_js_util-${version}-py3-none-any.whl`);
 const sdist = join(distDir, `spatialdata_js_util-${version}.tar.gz`);
 const problems = [];
