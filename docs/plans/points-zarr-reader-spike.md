@@ -1,6 +1,7 @@
 # Points: reading merfisheyes' multiscale points-zarr (spike)
 
-Status: **spike, reader and writer working end to end on synthetic stores**. Not pushed.
+Status: **spike; reader and writer working end to end, on synthetic stores and on a
+1.19B-transcript Atera kidney section** (below). Not pushed.
 
 merfisheyes stores points as Zarr v3 under `points/<name>/` ([spec draft 0.1][spec]):
 nested uniform-sample levels, each holding the points in two orders (`tile_major`,
@@ -10,10 +11,13 @@ selecting a few genes reads only their rows.
 
 It fits as one more encoding kind with no change to the resolver's shape:
 
-- `PointsElement.storage` is `'points-zarr'` when the attrs carry `points:version`. The
-  tiling probe returns a `PointsZarrTilingMetadata` (a new member of the
-  `PointsTilingMetadata` union). The resolver plans tiling, then the catalog, and never
-  a preload, exactly as for a Morton element. Parquet-only methods throw.
+- A copy sits beside the standard element, as its `experimental.points-zarr` subgroup
+  (ADR 0006), so spatialdata and other standard readers still read `points.parquet`.
+  `PointsElement.pointsZarrPath` names it; merfisheyes' own layout, where the element
+  itself is the points-zarr group, is read too. The tiling probe returns a
+  `PointsZarrTilingMetadata` (a new member of the `AnyPointsTilingMetadata` union), so
+  with tiling on the resolver draws tiles from the copy; with it off, it preloads the
+  standard parquet as before, which is how the two are compared on the same data.
 - `PointsZarrSource` (`core/src/pointsZarr.ts`) reads through zarrita 0.7, which handles
   their sharding, blosc, crc32c and `vlen-utf8` columns unchanged.
 - The `'points-zarr-tiled'` loader picks a level per deck tile from the index alone:
@@ -30,9 +34,10 @@ Codes come from the format's enum and are identical across orders and levels, so
 dict-only code-space reconciliation does not arise. The catalog with exact counts costs
 one read of `feature_rows`.
 
-`spatialdata-js-util points zarr` writes the format (`points_zarr.py`, out of core), into
-a store of its own because of the compatibility problem below. merfisheyes'
-reference validator (`scripts/points_zarr.py validate`) accepts its output.
+`spatialdata-js-util points zarr` writes a store with a standard element and the copy
+beside it, and `points add-zarr` adds the copy to an existing element (`points_zarr.py`,
+out of core). merfisheyes' reference validator (`scripts/points_zarr.py validate`)
+accepts the copy, and plain spatialdata reads the store.
 `core/tests/pointsZarr.spec.ts` generates its store with it and checks the reader
 against answers computed from the input points.
 
@@ -52,9 +57,13 @@ Level selection behaves: zoomed out reads level 3 from `tile_major`, and zooming
 to level 0. A rare gene is always read whole, and a gene selection reads only its rows of
 `feature_major`.
 
-On a real store: the Atera v1 WTA kidney section (1.19B transcripts, 24,674 genes; via
-spatialdata-io's atera reader, then `points zarr` out of core: 26 min, 16 GB peak RAM,
-7 levels, 3,813 files, 19 GB). Reads from local disk, one call each:
+On a real store: the Atera v1 WTA kidney section (1.19B transcripts, 24,674 genes),
+read with spatialdata-io's atera reader and written as one SpatialData store: image,
+labels, shapes, table and the standard `points.parquet`, with the points-zarr copy
+beside it (written out of core: 26 min, 16 GB peak RAM, 7 levels, 3,813 files, 19 GB).
+The whole store is 49 GB in 4,965 files and plain spatialdata reads it; as a STORED zip
+it is one file, which our `ZipStore` opens in 4 reads, locally or over HTTP. Reads from
+local disk, one call each:
 
 | Read | Level | Points | Bytes |
 |---|---|---|---|
@@ -80,17 +89,15 @@ Morton-sorted) fetched 24 GB before the preload was stopped.
   lever.
 - **Range merging** (`mergeRanges`) only stops one read from fetching a chunk twice;
   it cannot help across tiles.
-- **Feature colour fails above 16,384 features.** The colour lookup is a one-row texture
-  as wide as the catalog; at 24,674 genes it exceeds `MAX_TEXTURE_SIZE` and every point
-  draws uncoloured. Not specific to this format: any WTA element hits it.
 - **Zoomed out, points vanish.** A coarse level is a sparse sample and our scatter's
   `radiusMinPixels` is 0.01; merfisheyes keeps molecules at least 1 px on screen.
 - **The UI says "Morton".** The props panel labels the tile toggle "Viewport tiles
   (Morton)" and describes row groups.
-- **Compatibility.** The element declares `spatialdata_attrs.version: "0.3-zarr"`, and
-  their spec says spatialdata 0.8 then fails to read the whole store. A store that keeps
-  `points.parquet` beside the Zarr element would stay readable. This reader would still
-  prefer the Zarr form.
+- **The draft's version string.** The spec has its group declare
+  `spatialdata_attrs.version: "0.3-zarr"`, a string from spatialdata's own list. Beside
+  the standard element it is harmless, but worth raising with merfisheyes.
+- **Storage.** A copy beside the standard element doubles the points: 16 GB of parquet
+  and 19 GB of copy for the kidney section.
 - **Spec stability.** Only `points:version` 0.1 is accepted. Their 0.2 proposals
   (tile-relative `uint16` coordinates) would need decoding here.
 - Not done: hover/picking (no `id` → level-0 lookup), and 3-D rendering (`z` is read and
@@ -101,7 +108,7 @@ Morton-sorted) fetched 24 GB before the preload was stopped.
 Pursue it, behind the shared chunk cache. The format removes both limits the parquet
 path has hit (no LOD; gene selection saves no I/O), and at 1.19B transcripts it is the
 difference between a usable view and an unusable one. Our resolver and strategy seams
-absorbed it without reshaping. Next: the chunk cache, the palette limit, a minimum point
-size; then raise compatibility and spec ownership with merfisheyes and scverse.
+absorbed it without reshaping. Next: the chunk cache and a minimum point size; then
+raise the draft's version string and spec ownership with merfisheyes and scverse.
 
 [spec]: https://github.com/kresnajenie/merfisheyes/blob/main/docs/points-zarr-spec.md

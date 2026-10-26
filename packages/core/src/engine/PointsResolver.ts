@@ -7,7 +7,7 @@ import { planPointsLoads } from '../pointsLoadPlan.js';
 import {
   isTileablePointsMetadata,
   type PointsFeatureCatalog,
-  type PointsTilingMetadata,
+  type AnyPointsTilingMetadata,
   type PointsTilingMode,
   pointsTilingEnabled,
 } from '../pointsTiling.js';
@@ -178,11 +178,11 @@ interface PointsEntry {
    * too — it must fall through to the preload rather than strand the layer — while
    * staying `failed`, and therefore retryable, in the snapshot.
    */
-  tiling: RequestSlot<TilingProbeKey, PointsTilingMetadata | null>;
+  tiling: RequestSlot<TilingProbeKey, AnyPointsTilingMetadata | null>;
   /** World bounds of a tiled entry, memoised on the metadata AND the transform it
    * was computed with — bounds are transform-relative. */
   bounds?: AxisAlignedBounds | null;
-  boundsSource?: PointsTilingMetadata;
+  boundsSource?: AnyPointsTilingMetadata;
   boundsTransform?: unknown;
   /** The element instance every slot above was loaded from. See {@link entryFor}. */
   element?: PointsElement;
@@ -327,7 +327,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
           // The full-list scan shows a spinner; its loading transition is a re-render.
           notifyOnLoading: true,
         }),
-        tiling: new RequestSlot<TilingProbeKey, PointsTilingMetadata | null>({
+        tiling: new RequestSlot<TilingProbeKey, AnyPointsTilingMetadata | null>({
           context: {
             elementKey: key,
             kind: 'points',
@@ -605,7 +605,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
     return this.entries.get(key)?.rowCodes.resolution ?? Resolution.idle();
   }
 
-  private tilingResolution(key: string): Resolution<PointsTilingMetadata | null> {
+  private tilingResolution(key: string): Resolution<AnyPointsTilingMetadata | null> {
     return this.entries.get(key)?.tiling.resolution ?? Resolution.idle();
   }
 
@@ -712,7 +712,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    * {@link planPointsLoads} distinguishes to decide between "preload instead" and
    * "wait, we are still asking".
    */
-  getTilingMetadata(key: string): PointsTilingMetadata | null | undefined {
+  getTilingMetadata(key: string): AnyPointsTilingMetadata | null | undefined {
     const slot = this.entries.get(key)?.tiling;
     if (!slot) return undefined;
     if (slot.isFailed) return null;

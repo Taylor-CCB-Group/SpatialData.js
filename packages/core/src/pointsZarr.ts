@@ -28,6 +28,14 @@ import type {
 /** `points:version` values this reader understands. */
 export const POINTS_ZARR_SUPPORTED_VERSIONS: readonly string[] = ['0.1'];
 
+/**
+ * Where a points-zarr copy sits beside a standard points element: a subgroup of the
+ * element, which standard readers ignore (ADR 0006).
+ *
+ * @experimental
+ */
+export const POINTS_ZARR_SIDECAR = 'experimental.points-zarr';
+
 const gridSchema = z.object({
   origin: z.tuple([z.number(), z.number()]),
   tile_size: z.number().positive(),
@@ -204,6 +212,8 @@ function mergeRanges(ranges: readonly RowRange[], chunkRows: number): RowRange[]
 /**
  * An opened points-zarr element. Holds its own index caches, so two layers on one
  * element share them and a second element never sees the first's.
+ *
+ * @experimental Reads a draft format (ADR 0006); its API may change with the spec.
  */
 export class PointsZarrSource {
   readonly elementPath: string;

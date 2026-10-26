@@ -141,6 +141,8 @@ export interface MultiscalePointsTileGridInput {
  * - **Coarsest** — one tile covers the whole extent, which draws the coarsest level.
  * - **Finest** — one tile of the artifact's finest grid. Smaller deck tiles would read
  *   the same row ranges and throw more of them away.
+ *
+ * @experimental
  */
 export function multiscaleTileGrid(input: MultiscalePointsTileGridInput): PointsTileGrid {
   const { bounds, finestTileSize, modelMatrixScale } = input;

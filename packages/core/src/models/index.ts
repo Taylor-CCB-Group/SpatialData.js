@@ -2,9 +2,10 @@ import * as ad from 'anndata.js';
 import { createPrefixedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
 import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
-import type { PointsFeatureCatalog, PointsTilingMetadata } from '../pointsTiling.js';
+import type { PointsFeatureCatalog, AnyPointsTilingMetadata } from '../pointsTiling.js';
 import {
   isPointsZarrAttrs,
+  POINTS_ZARR_SIDECAR,
   type PointsZarrInBoundsOptions,
   type PointsZarrInBoundsResult,
   PointsZarrSource,
@@ -643,16 +644,36 @@ export class ShapesElement extends AbstractSpatialElement<'shapes', ShapesAttrs>
 export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs> {
   readonly attrs: PointsAttrs;
   /**
-   * How the points are stored: `points.parquet` (the SpatialData default, optionally
-   * Morton-sorted), or the experimental multiscale Zarr layout (`pointsZarr.ts`),
-   * recognised by its `points:version` attribute.
+   * What the element itself is: a standard `points.parquet` (optionally Morton-sorted),
+   * or a points-zarr group in its place, as merfisheyes writes it (`pointsZarr.ts`).
    */
   readonly storage: 'parquet' | 'points-zarr';
+  /**
+   * Where this element's points-zarr copy is, if it has one: the element itself, or
+   * its {@link POINTS_ZARR_SIDECAR} subgroup beside `points.parquet` (ADR 0006). When
+   * present, tiles and the feature catalog are read from it.
+   *
+   * @experimental
+   */
+  readonly pointsZarrPath?: string;
+  private readonly pointsZarrAttrs?: unknown;
   private readonly vPoints: SpatialDataPointsSource;
   private zarrSource?: Promise<PointsZarrSource>;
   constructor(params: ElementParams<'points'>) {
     super(params);
-    this.storage = isPointsZarrAttrs(this.rawAttrs) ? 'points-zarr' : 'parquet';
+    const sidecar = getChildGroup(this.parsed, POINTS_ZARR_SIDECAR);
+    const sidecarAttrs = sidecar ? getNodeAttrs(sidecar) : undefined;
+    if (isPointsZarrAttrs(this.rawAttrs)) {
+      this.storage = 'points-zarr';
+      this.pointsZarrPath = this.path;
+      this.pointsZarrAttrs = this.rawAttrs;
+    } else {
+      this.storage = 'parquet';
+      if (isPointsZarrAttrs(sidecarAttrs)) {
+        this.pointsZarrPath = `${this.path}/${POINTS_ZARR_SIDECAR}`;
+        this.pointsZarrAttrs = sidecarAttrs;
+      }
+    }
 
     // Parse attrs through schema
     const result = pointsAttrsSchema.safeParse(this.rawAttrs);
@@ -673,15 +694,16 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.attrs.coordinateTransformations;
   }
 
-  /** The multiscale Zarr reader, opened once. Only for `storage === 'points-zarr'`. */
+  /** The multiscale Zarr reader, opened once. Only when {@link pointsZarrPath} is set. */
   private pointsZarr(): Promise<PointsZarrSource> {
-    if (this.storage !== 'points-zarr') {
-      return Promise.reject(new Error(`points/${this.key} is not a points-zarr element`));
+    const path = this.pointsZarrPath;
+    if (path === undefined) {
+      return Promise.reject(new Error(`points/${this.key} has no points-zarr copy`));
     }
     this.zarrSource ??= PointsZarrSource.open(
       this.sdata.rootStore.zarritaStore,
-      this.path,
-      this.rawAttrs
+      path,
+      this.pointsZarrAttrs
     ).catch((error) => {
       // Not cached as failed: a transient read error must be retryable.
       this.zarrSource = undefined;
@@ -762,7 +784,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
   }
 
   async loadFeatureCounts(): Promise<Map<number, number>> {
-    if (this.storage === 'points-zarr') {
+    if (this.pointsZarrPath !== undefined) {
       const counts = await (await this.pointsZarr()).featureCounts();
       const byCode = new Map<number, number>();
       for (let code = 0; code < counts.length; code++) byCode.set(code, counts[code]);
@@ -776,15 +798,18 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
      * can list features while counts are still loading. */
     onPartialCatalog?: (catalog: PointsFeatureCatalog) => void;
   }): Promise<PointsFeatureCatalog | null> {
-    if (this.storage === 'points-zarr') {
+    // A points-zarr copy's enum is authoritative and its index counts are exact, so it
+    // answers even when the standard copy is the one being drawn: the preload's
+    // dictionary codes are re-expressed against this catalog by name.
+    if (this.pointsZarrPath !== undefined) {
       // Exact counts from the index: no partial phase to report.
       return (await this.pointsZarr()).featureCatalog();
     }
     return this.vPoints.listPointsFeaturesWithCounts(`points/${this.key}`, options);
   }
 
-  async getPointsTilingMetadata(): Promise<PointsTilingMetadata | null> {
-    if (this.storage === 'points-zarr') {
+  async getPointsTilingMetadata(): Promise<AnyPointsTilingMetadata | null> {
+    if (this.pointsZarrPath !== undefined) {
       return (await this.pointsZarr()).tilingMetadata;
     }
     return this.vPoints.getPointsTilingMetadata(`points/${this.key}`);
@@ -795,7 +820,11 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     return this.vPoints.loadPointsInBounds(`points/${this.key}`, options);
   }
 
-  /** A region of a points-zarr element, at the level its budget allows. */
+  /**
+   * A region of this element's points-zarr copy, at the level its budget allows.
+   *
+   * @experimental
+   */
   async loadPointsZarrInBounds(
     options: PointsZarrInBoundsOptions
   ): Promise<PointsZarrInBoundsResult> {
@@ -803,7 +832,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
   }
 
   async listFeatures(): Promise<PointsFeatureCatalog | null> {
-    if (this.storage === 'points-zarr') {
+    if (this.pointsZarrPath !== undefined) {
       return (await this.pointsZarr()).featureCatalog();
     }
     return this.vPoints.listPointsFeatures(`points/${this.key}`);

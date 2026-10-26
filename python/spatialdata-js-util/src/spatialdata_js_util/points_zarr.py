@@ -10,9 +10,12 @@ anywhere". An ``index`` of row numbers says where each tile's and each feature's
 rows are, so a reader plans a read from counts before fetching any point.
 
 Experimental: the spec is one group's draft, built on maturity-0 zarr conventions.
-A store holding such an element declares ``spatialdata_attrs.version`` ``0.3-zarr``,
-which spatialdata 0.8 cannot read, so write it into a store of its own (see
-:func:`write_points_zarr_store`) or a copy (:func:`add_points_zarr_to_store`).
+Its group declares ``spatialdata_attrs.version`` ``0.3-zarr``, which spatialdata 0.8
+fails on, so stores here keep it beside a standard element rather than in its place
+(ADR 0006): ``points/<key>/`` stays an ordinary SpatialData points element with its
+``points.parquet``, and the points-zarr group is its ``experimental.points-zarr``
+subgroup, which standard readers ignore. :func:`write_points_zarr_store` writes both;
+:func:`add_points_zarr_to_store` adds the copy to an existing element.
 
 The writer works out of core, so the input may be far larger than memory:
 
@@ -42,10 +45,15 @@ from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 import zarr
 from zarr.codecs import BloscCodec
 
 POINTS_ZARR_VERSION = "0.1"
+#: The points-zarr copy's subgroup in a standard points element (ADR 0006).
+SIDECAR_GROUP = "experimental.points-zarr"
 #: Rows per chunk of a point column, and chunks per shard: the reference writer's.
 DEFAULT_CHUNK_ROWS = 65_536
 DEFAULT_SHARD_CHUNKS = 64
@@ -391,20 +399,13 @@ def write_points_zarr(
         if work_dir is None:
             shutil.rmtree(work, ignore_errors=True)
 
-    axis_list = [{"name": a, "type": "space", "unit": units} for a in axes]
     root.attrs.update(
         {
             "encoding-type": "ngff:points",
             "axes": list(axes),
             "coordinateTransformations": transformations
             if transformations is not None
-            else [
-                {
-                    "type": "identity",
-                    "input": {"name": "".join(axes), "axes": axis_list},
-                    "output": {"name": coordinate_system, "axes": axis_list},
-                }
-            ],
+            else _identity_transform(axes, coordinate_system, units),
             "spatialdata_attrs": {"feature_key": feature_key, "version": "0.3-zarr"},
             "zarr_conventions": [_MULTISCALES_CONVENTION, _POINTS_CONVENTION],
             "multiscales": {"layout": layout},
@@ -604,71 +605,181 @@ def _write_level(
     return entry
 
 
+def _identity_transform(axes: Sequence[str], coordinate_system: str, units: str) -> list[dict[str, Any]]:
+    axis_list = [{"name": a, "type": "space", "unit": units} for a in axes]
+    return [
+        {
+            "type": "identity",
+            "input": {"name": "".join(axes), "axes": axis_list},
+            "output": {"name": coordinate_system, "axes": axis_list},
+        }
+    ]
+
+
+def _write_standard_points(
+    source: PointsSource,
+    element_dir: Path,
+    *,
+    feature_key: str,
+    coordinates: Sequence[str],
+    features: Sequence[str],
+    transformations: list[dict[str, Any]],
+) -> int:
+    """An ordinary SpatialData points element: ``points.parquet`` as parts, and attrs.
+
+    Coordinates are written as ``x``, ``y`` (``z``), the feature column as a
+    categorical over ``features`` so every part shares one dictionary.
+    """
+    axes = ("x", "y", "z")[: len(coordinates)]
+    parquet_dir = element_dir / "points.parquet"
+    parquet_dir.mkdir(parents=True)
+    categories = pd.CategoricalDtype(list(features))
+    parts = 0
+    for frame in source():
+        if len(frame) == 0:
+            continue
+        table = pd.DataFrame(
+            {
+                **{a: frame[c].to_numpy(dtype=np.float32) for a, c in zip(axes, coordinates)},
+                feature_key: frame[feature_key].astype(str).astype(categories),
+            }
+        )
+        pq.write_table(
+            pa.Table.from_pandas(table, preserve_index=False),
+            parquet_dir / f"part.{parts}.parquet",
+            compression="zstd",
+        )
+        parts += 1
+    group = zarr.open_group(element_dir, mode="a", zarr_format=3)
+    group.attrs.update(
+        {
+            "encoding-type": "ngff:points",
+            "axes": list(axes),
+            "coordinateTransformations": transformations,
+            "spatialdata_attrs": {"feature_key": feature_key, "version": "0.2"},
+        }
+    )
+    return parts
+
+
+def _merge_consolidated(store_dir: Path, group_dir: Path, prefix: str) -> bool:
+    """Put ``group_dir``'s nodes into the root's consolidated metadata under ``prefix``,
+    replacing what was there; leave every other entry as it was. False if the root has
+    no consolidated metadata."""
+    root_json = store_dir / "zarr.json"
+    root = json.loads(root_json.read_text())
+    consolidated = root.get("consolidated_metadata")
+    if consolidated is None:
+        return False
+    metadata = {
+        key: value
+        for key, value in consolidated["metadata"].items()
+        if key != prefix and not key.startswith(f"{prefix}/")
+    }
+    for node in group_dir.rglob("zarr.json"):
+        if node.name.startswith("._"):
+            continue
+        relative = node.parent.relative_to(group_dir).as_posix()
+        metadata[prefix if relative == "." else f"{prefix}/{relative}"] = json.loads(node.read_text())
+    consolidated["metadata"] = dict(sorted(metadata.items()))
+    root_json.write_text(json.dumps(root, indent=2, sort_keys=True))
+    return True
+
+
 def write_points_zarr_store(
     data: pd.DataFrame | PointsSource,
     store_dir: str | Path,
     *,
     points_key: str = "transcripts",
+    feature_key: str,
+    coordinates: Sequence[str] = ("x", "y"),
+    units: str = "micrometer",
+    coordinate_system: str = "global",
+    transformations: list[dict[str, Any]] | None = None,
     overwrite: bool = False,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Write a new store holding one points-zarr element at ``points/<points_key>``.
+    """Write a new SpatialData store with one points element and its points-zarr copy.
 
-    The store gets consolidated metadata, which browser readers need to open it
-    without listing. ``kwargs`` are :func:`write_points_zarr`'s.
+    ``points/<points_key>`` is a standard element (``points.parquet`` and attrs) that
+    any SpatialData reader opens; the points-zarr copy is its ``experimental.points-zarr``
+    subgroup (ADR 0006). The store gets consolidated metadata, which browser readers
+    need to open it without listing. Other ``kwargs`` are :func:`write_points_zarr`'s.
     """
     store_dir = Path(store_dir)
     if store_dir.exists():
         if not overwrite:
             raise FileExistsError(f"{store_dir} exists; pass overwrite=True to replace it")
         shutil.rmtree(store_dir)
+    source: PointsSource = (lambda: [data]) if isinstance(data, pd.DataFrame) else data
+    transforms = transformations or _identity_transform(
+        ("x", "y", "z")[: len(coordinates)], coordinate_system, units
+    )
     root = zarr.open_group(store_dir, mode="w", zarr_format=3)
     root.attrs["spatialdata_attrs"] = {"version": "0.2"}
     root.create_group("points")
-    summary = write_points_zarr(data, store_dir / "points" / points_key, **kwargs)
+    element_dir = store_dir / "points" / points_key
+    summary = write_points_zarr(
+        source,
+        element_dir / SIDECAR_GROUP,
+        feature_key=feature_key,
+        coordinates=coordinates,
+        units=units,
+        transformations=transforms,
+        **kwargs,
+    )
+    _write_standard_points(
+        source,
+        element_dir,
+        feature_key=feature_key,
+        coordinates=coordinates,
+        features=summary["features"],
+        transformations=transforms,
+    )
     zarr.consolidate_metadata(store_dir)
     return {**summary, "store": str(store_dir)}
 
 
 def add_points_zarr_to_store(
-    data: pd.DataFrame | PointsSource,
+    data: pd.DataFrame | PointsSource | None,
     store_dir: str | Path,
     *,
     points_key: str,
     overwrite: bool = False,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Add a points-zarr element at ``points/<points_key>`` of an existing store.
+    """Add a points-zarr copy beside the standard points element ``points/<points_key>``.
 
-    spatialdata 0.8 cannot read a store holding such an element, so add it to a copy
-    of a store, not to one other tools still read. When the store root has
-    consolidated metadata, only the new element's nodes are merged into it; every
-    other entry is left as it was. ``kwargs`` are :func:`write_points_zarr`'s.
+    The copy is written to the element's ``experimental.points-zarr`` subgroup, which
+    standard readers ignore (ADR 0006). With ``data`` None it is read from the element's
+    own ``points.parquet``, a batch at a time, with the element's axes, feature key and
+    transformations. When the store root has consolidated metadata, only the copy's
+    nodes are merged into it. ``kwargs`` are :func:`write_points_zarr`'s.
     """
     store_dir = Path(store_dir)
-    root_json = store_dir / "zarr.json"
-    if not root_json.is_file():
-        raise FileNotFoundError(f"No Zarr v3 store at {store_dir}")
-    points_dir = store_dir / "points"
-    if not (points_dir / "zarr.json").is_file():
-        zarr.open_group(store_dir, mode="a", zarr_format=3).require_group("points")
-    element_dir = points_dir / points_key
-    summary = write_points_zarr(data, element_dir, overwrite=overwrite, **kwargs)
+    element_dir = store_dir / "points" / points_key
+    element_json = element_dir / "zarr.json"
+    if not element_json.is_file():
+        raise FileNotFoundError(f"No points element at {element_dir}")
+    attrs = json.loads(element_json.read_text()).get("attributes", {})
+    if "points:version" in attrs:
+        raise ValueError(
+            f"{element_dir} is itself a points-zarr element; there is no standard copy to add to"
+        )
+    if data is None:
+        feature_key = kwargs.setdefault("feature_key", attrs["spatialdata_attrs"]["feature_key"])
+        coordinates = kwargs.setdefault("coordinates", tuple(attrs["axes"]))
+        kwargs.setdefault("transformations", attrs.get("coordinateTransformations"))
+        dataset = ds.dataset(element_dir / "points.parquet", format="parquet", exclude_invalid_files=True)
+        columns = [*coordinates, feature_key]
 
-    root = json.loads(root_json.read_text())
-    consolidated = root.get("consolidated_metadata")
-    if consolidated is not None:
-        prefix = f"points/{points_key}"
-        metadata = {
-            key: value
-            for key, value in consolidated["metadata"].items()
-            if key != prefix and not key.startswith(f"{prefix}/")
-        }
-        metadata.setdefault("points", json.loads((points_dir / "zarr.json").read_text()))
-        for node in element_dir.rglob("zarr.json"):
-            relative = node.parent.relative_to(element_dir).as_posix()
-            key = prefix if relative == "." else f"{prefix}/{relative}"
-            metadata[key] = json.loads(node.read_text())
-        consolidated["metadata"] = dict(sorted(metadata.items()))
-        root_json.write_text(json.dumps(root, indent=2, sort_keys=True))
-    return {**summary, "store": str(store_dir), "consolidated": consolidated is not None}
+        def parquet_frames() -> Iterable[pd.DataFrame]:
+            for batch in dataset.to_batches(columns=columns, batch_size=4_000_000):
+                yield batch.to_pandas()
+
+        data = parquet_frames
+
+    group_dir = element_dir / SIDECAR_GROUP
+    summary = write_points_zarr(data, group_dir, overwrite=overwrite, **kwargs)
+    consolidated = _merge_consolidated(store_dir, group_dir, f"points/{points_key}/{SIDECAR_GROUP}")
+    return {**summary, "store": str(store_dir), "consolidated": consolidated}

@@ -77,6 +77,7 @@ export * from './pointsTileGrid.js';
 export * from './pointsTiling.js';
 export {
   isPointsZarrAttrs,
+  POINTS_ZARR_SIDECAR,
   POINTS_ZARR_SUPPORTED_VERSIONS,
   type PointsZarrGrid,
   type PointsZarrInBoundsOptions,

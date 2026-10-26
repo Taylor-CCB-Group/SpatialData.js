@@ -34,7 +34,9 @@ Parquet/GeoParquet rather than inventing a deck.gl-specific storage format.
 
 Use `points.experimental/<key>/` and `shapes.experimental/<key>/` only for
 persisted layouts that **standard SpatialData / Vitessce readers cannot correctly
-consume** — not for every browser optimization.
+consume** — not for every browser optimization. A draft layout stored *beside* a
+standard copy goes inside the element instead (`points/<key>/experimental.<format>/`);
+see [ADR 0006](0006-experimental-formats-beside-the-standard.md).
 
 | Layout | Where it lives | Why |
 |--------|----------------|-----|

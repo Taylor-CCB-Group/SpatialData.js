@@ -280,14 +280,20 @@ tile order and in feature order, with a row index. A viewer can then draw any zo
 from a bounded read, and read only the rows of the genes selected.
 
 ```bash
+# A new store: a standard points element, with the copy beside it
 spatialdata-js-util points zarr transcripts.parquet transcripts.zarr \
   --feature-key feature_name --coordinates x_location,y_location
+
+# Add the copy to an existing store's points element, from its own points.parquet
+spatialdata-js-util points add-zarr ~/data/xenium.zarr --points-key transcripts
 ```
 
-It writes a new store rather than adding to an existing one, because spatialdata 0.8
-cannot read a store holding such an element. It works out of core: Parquet input is
-read in batches, spilled to temporary files beside the output (about 18 bytes a point,
-plus one level's sorted copy) and sorted one band of tile rows at a time.
+The copy is the element's `experimental.points-zarr` subgroup; the element itself stays
+an ordinary SpatialData points element, so spatialdata and other standard readers read
+the store as before ([ADR 0006](../../docs/adr/0006-experimental-formats-beside-the-standard.md)).
+Writing works out of core: Parquet input is read in batches, spilled to temporary files
+beside the output (about 18 bytes a point, plus one level's sorted copy) and sorted one
+band of tile rows at a time.
 
 On exFAT (and other filesystems without extended attributes) macOS writes a `._name`
 file beside each file that carries one, which doubles the file count and breaks

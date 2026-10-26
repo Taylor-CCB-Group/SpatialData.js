@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PointsResolver } from '../src/engine/index.js';
 import type { PointsElement } from '../src/models/index.js';
 import { createPointsLoaderForElement } from '../src/pointsLoader.js';
+import { POINTS_ZARR_SIDECAR } from '../src/pointsZarr.js';
 import type { SpatialBounds } from '../src/pointsTiling.js';
 import { readZarr } from '../src/store/index.js';
 
@@ -82,6 +83,26 @@ PY`,
     `uv run spatialdata-js-util points zarr ${JSON.stringify(input)} ${JSON.stringify(join(dir, 'store.zarr'))} --feature-key gene --coordinates x,y,z --levels 3 --chunk-rows 128 --shard-chunks 4`,
     { cwd: writerRoot, stdio: ['ignore', 'pipe', 'pipe'] }
   ).toString();
+  // The same points in merfisheyes' own layout, where the element itself is the
+  // points-zarr group: stores written by their tools still have to open.
+  execSync(
+    `uv run python - <<'PY'
+import pandas as pd
+import zarr
+from spatialdata_js_util import write_points_zarr
+
+store = ${JSON.stringify(join(dir, 'store.zarr'))}
+write_points_zarr(
+    pd.read_parquet(${JSON.stringify(input)}),
+    store + "/points/theirs",
+    feature_key="gene",
+    coordinates=("x", "y", "z"),
+    n_levels=3,
+)
+zarr.consolidate_metadata(store)
+PY`,
+    { cwd: writerRoot, stdio: 'pipe' }
+  );
   return JSON.parse(summary).levels as number[];
 }
 
@@ -165,8 +186,9 @@ const wholeExtent = { minX: 0, minY: 0, maxX: 1000, maxY: 600 };
 const UNLIMITED = Number.POSITIVE_INFINITY;
 
 describe('points-zarr element', () => {
-  it('is recognised from its attrs and reports tileable metadata', async () => {
-    expect(element.storage).toBe('points-zarr');
+  it('finds the copy beside the standard element and reports tileable metadata', async () => {
+    expect(element.storage).toBe('parquet');
+    expect(element.pointsZarrPath).toBe(`points/transcripts/${POINTS_ZARR_SIDECAR}`);
     const metadata = await element.getPointsTilingMetadata();
     expect(metadata).toMatchObject({
       kind: 'points-zarr',
@@ -380,8 +402,23 @@ describe('points-zarr element', () => {
     expect(unhandled).toEqual([]);
   });
 
-  it('refuses the parquet-only paths with a message naming the format', async () => {
-    await expect(element.loadPoints()).rejects.toThrow(/points-zarr element/);
+  it('still reads the standard copy beside it', async () => {
+    expect(await element.getParquetRowCount()).toBe(expected.levels[0]);
+  });
+
+  it("opens merfisheyes' own layout, where the element is the points-zarr group", async () => {
+    const sdata = await readZarr(new FileSystemStore(join(fixtureDir, 'store.zarr')));
+    const theirs = sdata.points?.theirs;
+    if (!theirs) throw new Error('fixture has no points/theirs');
+    expect(theirs.storage).toBe('points-zarr');
+    expect(theirs.pointsZarrPath).toBe('points/theirs');
+    const result = await theirs.loadPointsZarrInBounds({
+      bounds: expected.extent,
+      pointBudget: UNLIMITED,
+    });
+    expect(result.pointCount).toBe(expected.levels[0]);
+    // It has no standard copy to preload from.
+    await expect(theirs.loadPoints()).rejects.toThrow(/points-zarr element/);
   });
 
   it('builds a tiled loader whose batches carry feature codes', async () => {

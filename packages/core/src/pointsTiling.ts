@@ -62,7 +62,7 @@ export interface PointsInBoundsOptions {
   columns?: string[];
 }
 
-export interface MortonPointsTilingMetadata {
+export interface PointsTilingMetadata {
   kind: 'morton-points';
   parquetPath: string;
   axisNames: string[];
@@ -88,6 +88,8 @@ export interface MortonPointsTilingMetadata {
  * A multiscale points element stored as Zarr (points-zarr spec 0.1; see
  * `pointsZarr.ts`). It is tileable by construction: the format's row index answers
  * "which rows lie in this region" without reading any points.
+ *
+ * @experimental
  */
 export interface PointsZarrTilingMetadata {
   kind: 'points-zarr';
@@ -105,8 +107,11 @@ export interface PointsZarrTilingMetadata {
   bounds: SpatialBounds;
 }
 
-/** What a tiling probe can find. The `kind` decides which loader reads it. */
-export type PointsTilingMetadata = MortonPointsTilingMetadata | PointsZarrTilingMetadata;
+/**
+ * What a tiling probe can find. The `kind` decides which loader reads it. Draft formats
+ * join this union rather than changing {@link PointsTilingMetadata}.
+ */
+export type AnyPointsTilingMetadata = PointsTilingMetadata | PointsZarrTilingMetadata;
 
 /**
  * Whether the tile path can draw this element. A Morton artifact needs a store that
@@ -114,8 +119,8 @@ export type PointsTilingMetadata = MortonPointsTilingMetadata | PointsZarrTiling
  * every zarr store can do.
  */
 export function isTileablePointsMetadata(
-  metadata: PointsTilingMetadata | null | undefined
-): metadata is PointsTilingMetadata & { bounds: SpatialBounds } {
+  metadata: AnyPointsTilingMetadata | null | undefined
+): metadata is AnyPointsTilingMetadata & { bounds: SpatialBounds } {
   if (!metadata?.bounds) return false;
   return metadata.kind === 'points-zarr' || metadata.supportsRowGroupRangeReads;
 }
@@ -123,7 +128,7 @@ export function isTileablePointsMetadata(
 export type PointsInBoundsResponse = PointsColumnarData & {
   bounds: SpatialBounds;
   loadMode: 'row-groups' | 'full-filter';
-  tiling?: MortonPointsTilingMetadata;
+  tiling?: PointsTilingMetadata;
   featureIndices?: ArrayLike<number>;
 };
 

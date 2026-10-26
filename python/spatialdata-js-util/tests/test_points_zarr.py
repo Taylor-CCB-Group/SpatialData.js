@@ -17,6 +17,7 @@ from spatialdata_js_util import (
     write_points_zarr,
     write_points_zarr_store,
 )
+from spatialdata_js_util.points_zarr import SIDECAR_GROUP
 
 GENES = ["Alpha", "Beta", "Gamma", "Delta"]
 
@@ -170,42 +171,60 @@ def test_refuses_missing_features_and_existing_output(tmp_path: Path) -> None:
         write_points_zarr(_points(100), tmp_path / "exists", feature_key="gene")
 
 
-def test_store_has_consolidated_metadata(tmp_path: Path) -> None:
+def test_store_keeps_the_standard_element_and_the_copy_beside_it(tmp_path: Path) -> None:
     summary = write_points_zarr_store(_points(500), tmp_path / "s.zarr", feature_key="gene")
     root = json.loads((tmp_path / "s.zarr" / "zarr.json").read_text())
     consolidated = root["consolidated_metadata"]["metadata"]
-    assert "points/transcripts" in consolidated
-    assert consolidated["points/transcripts"]["attributes"]["points:version"] == "0.1"
+    element = consolidated["points/transcripts"]["attributes"]
+    assert element["spatialdata_attrs"] == {"feature_key": "gene", "version": "0.2"}
+    assert "points:version" not in element
+    copy = consolidated[f"points/transcripts/{SIDECAR_GROUP}"]["attributes"]
+    assert copy["points:version"] == "0.1"
+    assert (tmp_path / "s.zarr" / "points" / "transcripts" / "points.parquet" / "part.0.parquet").is_file()
     assert summary["levels"] == [500]
 
 
-def test_cli_writes_a_store(tmp_path: Path) -> None:
+def test_plain_spatialdata_reads_stores_with_a_copy(tmp_path: Path) -> None:
+    """ADR 0006: a draft copy beside the standard element must not stop a standard
+    reader. Here spatialdata itself, which knows nothing of points-zarr."""
+    sd = pytest.importorskip("spatialdata")
+    df = _points(700)
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(df, store, feature_key="gene", coordinates=("x", "y", "z"))
+    points = sd.read_zarr(store)["transcripts"].compute()
+    assert len(points) == len(df)
+    assert sorted(points["gene"].unique()) == sorted(GENES)
+    assert np.allclose(sorted(points["x"]), sorted(df["x"].astype(np.float32)))
+
+    # Rewriting the copy, from the element's own parquet, keeps the store readable.
+    add_points_zarr_to_store(None, store, points_key="transcripts", n_levels=2, overwrite=True)
+    assert len(sd.read_zarr(store)["transcripts"].compute()) == len(df)
+
+
+def test_cli_writes_a_store_and_adds_a_copy(tmp_path: Path) -> None:
     source = tmp_path / "points.parquet"
     _points(800).astype({"gene": str}).to_parquet(source)
     out = tmp_path / "out.zarr"
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "spatialdata_js_util.cli",
-            "points",
-            "zarr",
-            str(source),
-            str(out),
-            "--feature-key",
-            "gene",
-            "--levels",
-            "2",
-        ],
-        check=True,
-        cwd=Path(__file__).resolve().parents[1],
-        capture_output=True,
-        text=True,
-    )
-    summary = json.loads(result.stdout)
+
+    def cli(*args: str) -> dict:
+        result = subprocess.run(
+            [sys.executable, "-m", "spatialdata_js_util.cli", "points", *args],
+            check=True,
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(result.stdout)
+
+    summary = cli("zarr", str(source), str(out), "--feature-key", "gene", "--levels", "2")
     assert summary["levels"][0] == 800
     assert summary["features"] == sorted(GENES)
-    assert (out / "points" / "transcripts" / "1" / "feature_major").is_dir()
+    copy = out / "points" / "transcripts" / SIDECAR_GROUP
+    assert (copy / "1" / "feature_major").is_dir()
+
+    summary = cli("add-zarr", str(out), "--points-key", "transcripts", "--levels", "3", "--overwrite")
+    assert len(summary["levels"]) == 3
+    assert (copy / "2" / "feature_major").is_dir()
 
 
 def test_coordinate_columns_are_written_as_standard_axes(tmp_path: Path) -> None:
@@ -218,33 +237,38 @@ def test_coordinate_columns_are_written_as_standard_axes(tmp_path: Path) -> None
     assert list(group["0"]["tile_major"]["columns"][:]) == ["x", "y", "gene"]
 
 
-def test_adding_to_a_store_merges_only_the_new_element(tmp_path: Path) -> None:
+def test_adding_a_copy_merges_only_its_own_metadata(tmp_path: Path) -> None:
     store = tmp_path / "s.zarr"
     write_points_zarr_store(_points(400), store, points_key="a", feature_key="gene", n_levels=2)
+    prefix = f"points/a/{SIDECAR_GROUP}"
     before = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
-    scale = [
-        {
-            "type": "scale",
-            "scale": [4.7, 4.7],
-            "input": {"name": "xy", "axes": [{"name": "x"}, {"name": "y"}]},
-            "output": {"name": "global", "axes": [{"name": "x"}, {"name": "y"}]},
-        }
-    ]
+    outside = {k: v for k, v in before.items() if not k.startswith(prefix)}
 
-    add_points_zarr_to_store(
-        _points(400), store, points_key="b", feature_key="gene", n_levels=3, transformations=scale
-    )
+    # From the element's own parquet, with its own transforms.
+    add_points_zarr_to_store(None, store, points_key="a", n_levels=3, overwrite=True)
     after = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
-    assert {k: v for k, v in after.items() if not k.startswith("points/b")} == before
-    assert after["points/b"]["attributes"]["coordinateTransformations"] == scale
-    assert "points/b/2/feature_major/column_0" in after
+    assert {k: v for k, v in after.items() if not k.startswith(prefix)} == outside
+    assert f"{prefix}/2/feature_major/column_0" in after
+    assert (
+        after[prefix]["attributes"]["coordinateTransformations"]
+        == after["points/a"]["attributes"]["coordinateTransformations"]
+    )
 
-    # Rewritten with fewer levels: the dropped level's entries go too.
-    add_points_zarr_to_store(
-        _points(400), store, points_key="b", feature_key="gene", n_levels=1, overwrite=True
-    )
+    # Rewritten with fewer levels: the dropped levels' entries go too.
+    add_points_zarr_to_store(None, store, points_key="a", n_levels=1, overwrite=True)
     after = json.loads((store / "zarr.json").read_text())["consolidated_metadata"]["metadata"]
-    assert not any(k.startswith("points/b/1") for k in after)
+    assert not any(k.startswith(f"{prefix}/1") for k in after)
+
+
+def test_adding_a_copy_needs_a_standard_element(tmp_path: Path) -> None:
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(_points(200), store, feature_key="gene")
+    with pytest.raises(FileNotFoundError):
+        add_points_zarr_to_store(None, store, points_key="missing")
+    # merfisheyes' own layout: the element is the points-zarr group, with no parquet.
+    write_points_zarr(_points(200), store / "points" / "theirs", feature_key="gene")
+    with pytest.raises(ValueError, match="itself a points-zarr element"):
+        add_points_zarr_to_store(None, store, points_key="theirs")
 
 
 def test_small_band_budget_sorts_one_tile_row_at_a_time(tmp_path: Path) -> None:

@@ -256,7 +256,6 @@ import {
   filterPointsToBounds,
   isMortonSentinelValue,
   MORTON_CODE_2D_COLUMN,
-  type MortonPointsTilingMetadata,
   type MortonRowGroupExtent,
   mortonBoundsAgreeWithCodes,
   mortonIntervalsForBounds,
@@ -264,6 +263,7 @@ import {
   type PointsFeatureCatalog,
   type PointsInBoundsOptions,
   type PointsInBoundsResponse,
+  type PointsTilingMetadata,
   type SpatialBounds,
   selectMortonRowGroups,
 } from '../pointsTiling.js';
@@ -496,7 +496,7 @@ function checkAbort(signal?: AbortSignal) {
   }
 }
 
-function rowGroupCountForIndex(metadata: MortonPointsTilingMetadata, rowGroupIndex: number) {
+function rowGroupCountForIndex(metadata: PointsTilingMetadata, rowGroupIndex: number) {
   if (rowGroupIndex < 0 || rowGroupIndex >= metadata.totalRowGroups) {
     return 0;
   }
@@ -506,7 +506,7 @@ function rowGroupCountForIndex(metadata: MortonPointsTilingMetadata, rowGroupInd
 export default class SpatialDataPointsSource extends SpatialDataTableSource {
   private readonly pointTilingMetadataCache = new Map<
     string,
-    Promise<MortonPointsTilingMetadata | null>
+    Promise<PointsTilingMetadata | null>
   >();
 
   /**
@@ -2540,7 +2540,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     return checked === 0 || matched * 2 > checked;
   }
 
-  async getPointsTilingMetadata(elementPath: string): Promise<MortonPointsTilingMetadata | null> {
+  async getPointsTilingMetadata(elementPath: string): Promise<PointsTilingMetadata | null> {
     if (this.pointTilingMetadataCache.has(elementPath)) {
       return this.pointTilingMetadataCache.get(elementPath) ?? null;
     }
@@ -2554,7 +2554,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
   private async loadPointsTilingMetadataUncached(
     elementPath: string
-  ): Promise<MortonPointsTilingMetadata | null> {
+  ): Promise<PointsTilingMetadata | null> {
     const parquetPath = getParquetPath(elementPath);
     const zattrs = await this.loadSpatialDataElementAttrs(elementPath);
     const { axes, spatialdata_attrs: spatialDataAttrs } = zattrs;
@@ -2640,7 +2640,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     }
     const rowGroupSizes = datasetMetadata?.rowGroupRows ?? [];
 
-    const metadata: MortonPointsTilingMetadata = {
+    const metadata: PointsTilingMetadata = {
       kind: 'morton-points',
       parquetPath,
       axisNames,
@@ -2691,7 +2691,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
   private async loadPointsWithOptionalFeatureCodes(
     elementPath: string,
-    metadata: MortonPointsTilingMetadata | null,
+    metadata: PointsTilingMetadata | null,
     options: PointsInBoundsOptions
   ) {
     const parquetPath = getParquetPath(elementPath);
@@ -2809,7 +2809,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
    * step, `log2(rowGroups)` steps per interval.
    */
   private async selectRowGroupsForIntervals(
-    metadata: MortonPointsTilingMetadata,
+    metadata: PointsTilingMetadata,
     intervals: ReadonlyArray<readonly [number, number]>
   ): Promise<number[]> {
     const extents = metadata.rowGroupMortonExtents;
@@ -2863,7 +2863,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
 
   private async loadMortonPointsInBounds(
     elementPath: string,
-    metadata: MortonPointsTilingMetadata,
+    metadata: PointsTilingMetadata,
     options: PointsInBoundsOptions
   ): Promise<PointsInBoundsResponse | null> {
     if (!metadata.bounds || metadata.totalRowGroups <= 0) {

@@ -1,9 +1,9 @@
 import type { PointsElement } from './models/index.js';
 import { POINTS_TILE_TARGET_ROWS } from './pointsTileGrid.js';
 import type {
-  MortonPointsTilingMetadata,
-  PointsInBoundsResponse,
   PointsTilingMetadata,
+  PointsInBoundsResponse,
+  AnyPointsTilingMetadata,
   PointsZarrTilingMetadata,
   SpatialBounds,
 } from './pointsTiling.js';
@@ -82,7 +82,7 @@ export interface PreloadedColumnarInput {
 
 export function resolvePointsEncoding(
   preloaded: PreloadedColumnarInput | null | undefined,
-  metadata: PointsTilingMetadata | null | undefined,
+  metadata: AnyPointsTilingMetadata | null | undefined,
   wantsOptimized: boolean
 ): PointsEncodingKind {
   if (preloaded) {
@@ -135,7 +135,7 @@ function toColumnarBatch(
 
 export function createMortonTiledPointsLoader(
   element: PointsElement,
-  metadata: MortonPointsTilingMetadata
+  metadata: PointsTilingMetadata
 ): CorePointsLoader {
   const capabilities: PointsLoaderCapabilities = {
     kind: 'morton-tiled',
@@ -160,6 +160,8 @@ export function createMortonTiledPointsLoader(
  * Tiles of a points-zarr element. Each tile reads the level whose expected count fits
  * {@link POINTS_TILE_TARGET_ROWS} — the same per-tile bound the Morton grid is sized
  * for — so a zoomed-out view draws a uniform sample and a zoomed-in one every point.
+ *
+ * @experimental
  */
 export function createPointsZarrTiledPointsLoader(
   element: PointsElement,
@@ -253,7 +255,7 @@ export function createPointsLoaderForElement(
   element: PointsElement,
   options: {
     preloaded?: PreloadedColumnarInput | null;
-    tilingMetadata?: PointsTilingMetadata | null;
+    tilingMetadata?: AnyPointsTilingMetadata | null;
     wantsOptimized: boolean;
   }
 ): CorePointsLoader | null {

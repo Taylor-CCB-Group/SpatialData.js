@@ -2,7 +2,7 @@ import {
   createPointsLoaderForElement,
   isTileablePointsMetadata,
   type PointsElement,
-  type PointsTilingMetadata,
+  type AnyPointsTilingMetadata,
 } from '@spatialdata/core';
 import type { PointsRenderResource } from './pointsLoader.js';
 import { createPointsRenderResource } from './pointsLoaderAdapter.js';
@@ -13,7 +13,7 @@ export interface ResolvePointsRenderResourceCache {
     data: ArrayLike<number>[];
     featureCodes?: ArrayLike<number>;
   } | null;
-  tilingMetadata?: PointsTilingMetadata | null;
+  tilingMetadata?: AnyPointsTilingMetadata | null;
   metadataKnown?: boolean;
 }
 
@@ -62,7 +62,7 @@ export function pointsRenderResourceSignature(
   ].join('|');
 }
 
-function tilingSignature(metadata: PointsTilingMetadata | null | undefined): string {
+function tilingSignature(metadata: AnyPointsTilingMetadata | null | undefined): string {
   if (!metadata) return '';
   if (metadata.kind === 'points-zarr') return `zarr:${metadata.elementPath}`;
   return `${metadata.parquetPath}|${metadata.supportsRowGroupRangeReads ? 'rg' : ''}`;

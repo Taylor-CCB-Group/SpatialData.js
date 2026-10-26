@@ -390,6 +390,51 @@ def _points_zarr(args: argparse.Namespace) -> None:
     )
 
 
+def _points_add_zarr(args: argparse.Namespace) -> None:
+    from .runners import run_add_points_zarr
+
+    _run_command(
+        lambda: run_add_points_zarr(
+            args.zarr,
+            points_key=args.points_key,
+            tile_size=args.tile_size,
+            n_levels=args.levels,
+            seed=args.seed,
+            chunk_rows=args.chunk_rows,
+            shard_chunks=args.shard_chunks,
+            overwrite=args.overwrite,
+        )
+    )
+
+
+def _add_points_zarr_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--tile-size",
+        type=_positive_float,
+        default=100.0,
+        metavar="UNITS",
+        help="Level-0 tile size, doubled per level (default: 100)",
+    )
+    parser.add_argument(
+        "--levels",
+        type=_positive_int,
+        metavar="N",
+        help="Number of levels (default: until a level holds about a million points)",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="Seed for the level sample (default: 0)")
+    parser.add_argument(
+        "--chunk-rows",
+        type=_positive_int,
+        default=65_536,
+        metavar="N",
+        help="Rows per chunk of a point column (default: 65536)",
+    )
+    parser.add_argument(
+        "--shard-chunks", type=_positive_int, default=64, metavar="N", help="Chunks per shard (default: 64)"
+    )
+    parser.add_argument("--overwrite", action="store_true")
+
+
 def _positive_float(value: str) -> float:
     parsed = float(value)
     if parsed <= 0:
@@ -529,12 +574,13 @@ def _add_points_commands(subparsers: argparse._SubParsersAction) -> None:
 
     points_zarr = point_commands.add_parser(
         "zarr",
-        help="write points as multiscale Zarr (experimental points-zarr 0.1)",
+        help="write a points store with an experimental points-zarr copy",
         description=(
-            "Write a new store holding one points element in merfisheyes' points-zarr "
-            "layout: levels of uniform random samples, each in tile and feature order, "
-            "with a row index. Experimental; spatialdata 0.8 cannot read such a store. "
-            "Parquet input is streamed and sorted out of core."
+            "Write a new SpatialData store with one standard points element and, beside "
+            "it, a copy in merfisheyes' draft points-zarr layout (levels of uniform random "
+            "samples, each in tile and feature order, with a row index). Standard readers "
+            "read the standard element and ignore the copy. Parquet input is streamed and "
+            "sorted out of core."
         ),
     )
     points_zarr.add_argument(
@@ -553,38 +599,22 @@ def _add_points_commands(subparsers: argparse._SubParsersAction) -> None:
     points_zarr.add_argument(
         "--points-key", default="transcripts", metavar="KEY", help="Element name under points/"
     )
-    points_zarr.add_argument(
-        "--tile-size",
-        type=_positive_float,
-        default=100.0,
-        metavar="UNITS",
-        help="Level-0 tile size, doubled per level (default: 100)",
-    )
-    points_zarr.add_argument(
-        "--levels",
-        type=_positive_int,
-        metavar="N",
-        help="Number of levels (default: until a level holds about a million points)",
-    )
-    points_zarr.add_argument(
-        "--seed", type=int, default=0, help="Seed for the level sample (default: 0)"
-    )
-    points_zarr.add_argument(
-        "--chunk-rows",
-        type=_positive_int,
-        default=65_536,
-        metavar="N",
-        help="Rows per chunk of a point column (default: 65536)",
-    )
-    points_zarr.add_argument(
-        "--shard-chunks",
-        type=_positive_int,
-        default=64,
-        metavar="N",
-        help="Chunks per shard (default: 64)",
-    )
-    points_zarr.add_argument("--overwrite", action="store_true")
+    _add_points_zarr_args(points_zarr)
     points_zarr.set_defaults(func=_points_zarr)
+
+    add_zarr = point_commands.add_parser(
+        "add-zarr",
+        help="add an experimental points-zarr copy beside an existing points element",
+        description=(
+            "Read points/<key>/points.parquet from a store and write its points-zarr copy "
+            "as the element's experimental.points-zarr subgroup, merging the copy into the "
+            "store's consolidated metadata. The standard element is left as it is."
+        ),
+    )
+    add_zarr.add_argument("zarr", metavar="ZARR", help="Path to a SpatialData Zarr store")
+    add_zarr.add_argument("--points-key", required=True, metavar="KEY", help="Element name under points/")
+    _add_points_zarr_args(add_zarr)
+    add_zarr.set_defaults(func=_points_add_zarr)
 
     index_permutations = point_commands.add_parser(
         "index-permutations",

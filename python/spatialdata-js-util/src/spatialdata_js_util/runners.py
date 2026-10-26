@@ -23,6 +23,7 @@ from .points_zarr import (
     DEFAULT_CHUNK_ROWS,
     DEFAULT_SHARD_CHUNKS,
     PointsSource,
+    add_points_zarr_to_store,
     write_points_zarr_store,
 )
 from .points import (
@@ -139,6 +140,33 @@ def run_points_zarr(
             overwrite=overwrite,
             feature_key=feature_key,
             coordinates=coordinates,
+            tile_size=tile_size,
+            n_levels=n_levels,
+            seed=seed,
+            chunk_rows=chunk_rows,
+            shard_chunks=shard_chunks,
+            progress=lambda message: print(message, file=sys.stderr, flush=True),
+        )
+    )
+
+
+def run_add_points_zarr(
+    store: str | Path,
+    *,
+    points_key: str,
+    tile_size: float = 100.0,
+    n_levels: int | None = None,
+    seed: int = 0,
+    chunk_rows: int = DEFAULT_CHUNK_ROWS,
+    shard_chunks: int = DEFAULT_SHARD_CHUNKS,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    return _as_command_error(
+        lambda: add_points_zarr_to_store(
+            None,
+            store,
+            points_key=points_key,
+            overwrite=overwrite,
             tile_size=tile_size,
             n_levels=n_levels,
             seed=seed,
