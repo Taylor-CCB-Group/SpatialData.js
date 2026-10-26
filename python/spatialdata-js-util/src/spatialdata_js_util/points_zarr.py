@@ -291,10 +291,8 @@ def write_points_zarr(
     say = progress or (lambda _message: None)
     if not 2 <= len(coordinates) <= 3:
         raise ValueError(f"coordinates must name two or three columns, got {list(coordinates)}")
-    if element_dir.exists():
-        if not overwrite:
-            raise FileExistsError(f"{element_dir} exists; pass overwrite=True to replace it")
-        shutil.rmtree(element_dir)
+    if element_dir.exists() and not overwrite:
+        raise FileExistsError(f"{element_dir} exists; pass overwrite=True to replace it")
     element_dir.parent.mkdir(parents=True, exist_ok=True)
     dims = len(coordinates)
     axes = ("x", "y", "z")[:dims]
@@ -372,6 +370,10 @@ def write_points_zarr(
 
         level_sizes = band_level_counts.sum(axis=0)
         level_count = int(np.count_nonzero(level_sizes)) if level_sizes[-1] == 0 else level_count
+        # Replaced only now that the input has been read and spilled, so a bad input
+        # leaves the existing group as it was.
+        if element_dir.exists():
+            shutil.rmtree(element_dir)
         root = zarr.open_group(element_dir, mode="w", zarr_format=3)
         layout: list[dict[str, Any]] = []
         for level in range(level_count):
@@ -635,21 +637,26 @@ def _write_standard_points(
     parquet_dir.mkdir(parents=True)
     categories = pd.CategoricalDtype(list(features))
     parts = 0
+    rows = 0
     for frame in source():
         if len(frame) == 0:
             continue
+        # A RangeIndex continuing across parts, recorded in the pandas metadata rather
+        # than as a column: the form pandas and dask write, and readers expect an index.
         table = pd.DataFrame(
             {
                 **{a: frame[c].to_numpy(dtype=np.float32) for a, c in zip(axes, coordinates)},
                 feature_key: frame[feature_key].astype(str).astype(categories),
-            }
+            },
+            index=pd.RangeIndex(rows, rows + len(frame)),
         )
         pq.write_table(
-            pa.Table.from_pandas(table, preserve_index=False),
+            pa.Table.from_pandas(table),
             parquet_dir / f"part.{parts}.parquet",
             compression="zstd",
         )
         parts += 1
+        rows += len(frame)
     group = zarr.open_group(element_dir, mode="a", zarr_format=3)
     group.attrs.update(
         {
@@ -767,7 +774,12 @@ def add_points_zarr_to_store(
             f"{element_dir} is itself a points-zarr element; there is no standard copy to add to"
         )
     if data is None:
-        feature_key = kwargs.setdefault("feature_key", attrs["spatialdata_attrs"]["feature_key"])
+        declared = (attrs.get("spatialdata_attrs") or {}).get("feature_key")
+        if declared is None and "feature_key" not in kwargs:
+            raise ValueError(
+                f"{element_dir} declares no feature_key; points-zarr needs a feature column"
+            )
+        feature_key = kwargs.setdefault("feature_key", declared)
         coordinates = kwargs.setdefault("coordinates", tuple(attrs["axes"]))
         kwargs.setdefault("transformations", attrs.get("coordinateTransformations"))
         dataset = ds.dataset(element_dir / "points.parquet", format="parquet", exclude_invalid_files=True)

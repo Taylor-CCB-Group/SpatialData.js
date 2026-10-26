@@ -5,9 +5,9 @@ import { DEFAULT_POINTS_MEMORY_CAP } from '../pointsLimits.js';
 import type { PointsLoadProgress, PointsLoadResult } from '../pointsLoadOptions.js';
 import { planPointsLoads } from '../pointsLoadPlan.js';
 import {
+  type AnyPointsTilingMetadata,
   isTileablePointsMetadata,
   type PointsFeatureCatalog,
-  type AnyPointsTilingMetadata,
   type PointsTilingMode,
   pointsTilingEnabled,
 } from '../pointsTiling.js';

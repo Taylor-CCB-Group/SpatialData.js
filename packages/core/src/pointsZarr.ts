@@ -165,6 +165,22 @@ function boundsArea(bounds: SpatialBounds): number {
   return Math.max(0, bounds.maxX - bounds.minX) * Math.max(0, bounds.maxY - bounds.minY);
 }
 
+/**
+ * The cached promise for `key`, made by `make()` on first use. A rejection is
+ * forgotten, so a transient read error is retried by the next call rather than
+ * returned to every later one.
+ */
+function memo<K, V>(cache: Map<K, Promise<V>>, key: K, make: () => Promise<V>): Promise<V> {
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const promise = make();
+  cache.set(key, promise);
+  promise.catch(() => {
+    if (cache.get(key) === promise) cache.delete(key);
+  });
+  return promise;
+}
+
 /** First index of an ascending array whose value is >= x. */
 function lowerBound(values: ArrayLike<number>, x: number): number {
   let lo = 0;
@@ -587,80 +603,59 @@ export class PointsZarrSource {
   // --- index caches --------------------------------------------------------------
 
   private featureIndex(level: number): Promise<FeatureIndex> {
-    let p = this.featureIndexes.get(level);
-    if (!p) {
+    return memo(this.featureIndexes, level, () => {
       const asset = this.levels[level].asset;
-      p = Promise.all([
+      return Promise.all([
         this.readNumbers(`${asset}/index/feature_rows`),
         this.readNumbers(`${asset}/index/feature_tile_ptr`),
       ]).then(([rows, ptr]) => ({ rows: Float64Array.from(rows), ptr: Float64Array.from(ptr) }));
-      this.featureIndexes.set(level, p);
-    }
-    return p;
+    });
   }
 
   private featureTiles(level: number, feature: number): Promise<FeatureTiles> {
-    const key = `${level}/${feature}`;
-    let p = this.featureTilesCache.get(key);
-    if (!p) {
-      p = (async () => {
-        const asset = this.levels[level].asset;
-        const { rows, ptr } = await this.featureIndex(level);
-        const lo = ptr[feature];
-        const hi = ptr[feature + 1];
-        const [tiles, counts] =
-          hi > lo
-            ? await Promise.all([
-                this.readNumbers(`${asset}/index/feature_tile`, lo, hi),
-                this.readNumbers(`${asset}/index/feature_tile_count`, lo, hi),
-              ])
-            : [[], []];
-        const cum = new Float64Array(counts.length + 1);
-        for (let i = 0; i < counts.length; i++) cum[i + 1] = cum[i] + counts[i];
-        return { tiles: Float64Array.from(tiles), cum, start: rows[feature] };
-      })();
-      this.featureTilesCache.set(key, p);
-    }
-    return p;
+    return memo(this.featureTilesCache, `${level}/${feature}`, async () => {
+      const asset = this.levels[level].asset;
+      const { rows, ptr } = await this.featureIndex(level);
+      const lo = ptr[feature];
+      const hi = ptr[feature + 1];
+      const [tiles, counts] =
+        hi > lo
+          ? await Promise.all([
+              this.readNumbers(`${asset}/index/feature_tile`, lo, hi),
+              this.readNumbers(`${asset}/index/feature_tile_count`, lo, hi),
+            ])
+          : [[], []];
+      const cum = new Float64Array(counts.length + 1);
+      for (let i = 0; i < counts.length; i++) cum[i + 1] = cum[i] + counts[i];
+      return { tiles: Float64Array.from(tiles), cum, start: rows[feature] };
+    });
   }
 
   private tileIndex(level: number): Promise<TileIndex> {
-    let p = this.tileIndexes.get(level);
-    if (!p) {
-      const asset = this.levels[level].asset;
-      p = this.readNumbers(`${asset}/index/tile_rows`).then((values) => {
+    return memo(this.tileIndexes, level, () =>
+      this.readNumbers(`${this.levels[level].asset}/index/tile_rows`).then((values) => {
         const rows = Float64Array.from(values);
         let occupied = 0;
         for (let t = 0; t + 1 < rows.length; t++) if (rows[t + 1] > rows[t]) occupied++;
         return { rows, occupied };
-      });
-      this.tileIndexes.set(level, p);
-    }
-    return p;
+      })
+    );
   }
 
   /** Column name -> member path, for one order of one level (the `df:` convention). */
   private columns(asset: string, order: Order): Promise<Map<string, string>> {
     const key = `${asset}/${order}`;
-    let p = this.columnMaps.get(key);
-    if (!p) {
-      p = this.readStrings(`${key}/columns`).then(
+    return memo(this.columnMaps, key, () =>
+      this.readStrings(`${key}/columns`).then(
         (names) => new Map(names.map((name, i) => [name, `${key}/column_${i}`]))
-      );
-      this.columnMaps.set(key, p);
-    }
-    return p;
+      )
+    );
   }
 
   // --- typed reads ---------------------------------------------------------------
 
   private open(path: string) {
-    let p = this.arrays.get(path);
-    if (!p) {
-      p = zarr.open(this.root.resolve(path), { kind: 'array' });
-      this.arrays.set(path, p);
-    }
-    return p;
+    return memo(this.arrays, path, () => zarr.open(this.root.resolve(path), { kind: 'array' }));
   }
 
   private selection(lo?: number, hi?: number) {

@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,8 +9,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PointsResolver } from '../src/engine/index.js';
 import type { PointsElement } from '../src/models/index.js';
 import { createPointsLoaderForElement } from '../src/pointsLoader.js';
-import { POINTS_ZARR_SIDECAR } from '../src/pointsZarr.js';
 import type { SpatialBounds } from '../src/pointsTiling.js';
+import { POINTS_ZARR_SIDECAR } from '../src/pointsZarr.js';
 import { readZarr } from '../src/store/index.js';
 
 /**
@@ -400,6 +400,45 @@ describe('points-zarr element', () => {
       store.beforeRead = undefined;
     }
     expect(unhandled).toEqual([]);
+  });
+
+  it('retries a read that failed, rather than keeping the failure', async () => {
+    let failed = false;
+    store.beforeRead = (key) => {
+      if (!failed && key.endsWith('/index/tile_rows/c/0')) {
+        failed = true;
+        throw new Error('transient read error');
+      }
+    };
+    const read = () =>
+      element.loadPointsZarrInBounds({ bounds: wholeExtent, pointBudget: UNLIMITED });
+    await expect(read()).rejects.toThrow('transient read error');
+    expect((await read()).pointCount).toBe(expected.levels[0]);
+    store.beforeRead = undefined;
+  });
+
+  it('falls back to the standard copy when the points-zarr copy cannot be read', async () => {
+    // A copy in a version this reader does not know, beside a readable parquet.
+    const dir = await mkdtemp(join(tmpdir(), 'points-zarr-unknown-'));
+    try {
+      const copy = join(dir, 'store.zarr');
+      await cp(join(fixtureDir, 'store.zarr'), copy, { recursive: true });
+      const rootPath = join(copy, 'zarr.json');
+      const root = JSON.parse(await readFile(rootPath, 'utf8'));
+      root.consolidated_metadata.metadata[`points/transcripts/${POINTS_ZARR_SIDECAR}`].attributes[
+        'points:version'
+      ] = '9.9';
+      await writeFile(rootPath, JSON.stringify(root));
+      const sdata = await readZarr(new FileSystemStore(copy));
+      const points = sdata.points?.transcripts;
+      if (!points) throw new Error('copy has no points/transcripts');
+      const catalog = await points.listFeaturesWithCounts();
+      expect(catalog?.entries.map((e) => e.name).sort()).toEqual([...expected.genes].sort());
+      // Not tileable from the copy, and the plain parquet is not Morton-sorted.
+      expect(await points.getPointsTilingMetadata()).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('still reads the standard copy beside it', async () => {

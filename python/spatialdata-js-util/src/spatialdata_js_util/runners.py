@@ -22,6 +22,7 @@ from .points import EncodingPolicy
 from .points_zarr import (
     DEFAULT_CHUNK_ROWS,
     DEFAULT_SHARD_CHUNKS,
+    SIDECAR_GROUP,
     PointsSource,
     add_points_zarr_to_store,
     write_points_zarr_store,
@@ -161,6 +162,11 @@ def run_add_points_zarr(
     shard_chunks: int = DEFAULT_SHARD_CHUNKS,
     overwrite: bool = False,
 ) -> dict[str, Any]:
+    existing = Path(store) / "points" / points_key / SIDECAR_GROUP
+    if existing.exists() and not overwrite:
+        raise WriterCommandError(
+            f"Output already exists: {existing}\nChoose another element or enable overwrite."
+        )
     return _as_command_error(
         lambda: add_points_zarr_to_store(
             None,

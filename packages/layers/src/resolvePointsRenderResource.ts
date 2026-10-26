@@ -1,8 +1,8 @@
 import {
+  type AnyPointsTilingMetadata,
   createPointsLoaderForElement,
   isTileablePointsMetadata,
   type PointsElement,
-  type AnyPointsTilingMetadata,
 } from '@spatialdata/core';
 import type { PointsRenderResource } from './pointsLoader.js';
 import { createPointsRenderResource } from './pointsLoaderAdapter.js';

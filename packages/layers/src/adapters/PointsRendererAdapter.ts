@@ -1,4 +1,4 @@
-import type { PointsElement, PointsLoadResult, AnyPointsTilingMetadata } from '@spatialdata/core';
+import type { AnyPointsTilingMetadata, PointsElement, PointsLoadResult } from '@spatialdata/core';
 import {
   columnarBatchFromPointData,
   type PointsLoader,

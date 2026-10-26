@@ -286,3 +286,47 @@ def test_small_band_budget_sorts_one_tile_row_at_a_time(tmp_path: Path) -> None:
     assert "spilling 6,000 points into 6 bands" in messages
     assert any(m.startswith("level 2:") and m.endswith("2 groups") for m in messages)
     assert not any(p.name.startswith(".t-") for p in tmp_path.iterdir())
+
+
+def test_a_failed_overwrite_keeps_the_existing_copy(tmp_path: Path) -> None:
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(_points(300), store, feature_key="gene", n_levels=2)
+    copy = store / "points" / "transcripts" / SIDECAR_GROUP
+    before = (copy / "zarr.json").read_text()
+    # Input without the feature column fails the survey, before anything is replaced.
+    with pytest.raises(ValueError, match="Missing columns"):
+        add_points_zarr_to_store(
+            _points(300).drop(columns=["gene"]),
+            store,
+            points_key="transcripts",
+            feature_key="gene",
+            overwrite=True,
+        )
+    assert (copy / "zarr.json").read_text() == before
+    assert (copy / "1" / "feature_major").is_dir()
+
+
+def test_adding_a_copy_needs_a_feature_key(tmp_path: Path) -> None:
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(_points(200), store, feature_key="gene")
+    element_json = store / "points" / "transcripts" / "zarr.json"
+    meta = json.loads(element_json.read_text())
+    del meta["attributes"]["spatialdata_attrs"]["feature_key"]
+    element_json.write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="declares no feature_key"):
+        add_points_zarr_to_store(None, store, points_key="transcripts", overwrite=True)
+
+
+def test_cli_add_zarr_refuses_an_existing_copy_without_overwrite(tmp_path: Path) -> None:
+    store = tmp_path / "s.zarr"
+    write_points_zarr_store(_points(200), store, feature_key="gene")
+    result = subprocess.run(
+        [sys.executable, "-m", "spatialdata_js_util.cli", "points", "add-zarr", str(store), "--points-key", "transcripts"],
+        check=False,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "Output already exists" in result.stderr
+    assert "Traceback" not in result.stderr

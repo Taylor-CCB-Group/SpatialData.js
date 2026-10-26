@@ -1,9 +1,9 @@
 import type { PointsElement } from './models/index.js';
 import { POINTS_TILE_TARGET_ROWS } from './pointsTileGrid.js';
 import type {
-  PointsTilingMetadata,
-  PointsInBoundsResponse,
   AnyPointsTilingMetadata,
+  PointsInBoundsResponse,
+  PointsTilingMetadata,
   PointsZarrTilingMetadata,
   SpatialBounds,
 } from './pointsTiling.js';
