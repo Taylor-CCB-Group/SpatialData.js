@@ -2,15 +2,18 @@ import { execSync } from 'node:child_process';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Matrix4 } from '@math.gl/core';
 import { FileSystemStore } from '@zarrita/storage';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { disableWorkerChunkDecode, enableWorkerChunkDecode } from 'zarrextra/workers';
+import * as zarr from 'zarrita';
 import { PointsResolver } from '../src/engine/index.js';
+import { ByteLruCache } from '../src/memory/byteLruCache.js';
 import type { PointsElement } from '../src/models/index.js';
 import { createPointsLoaderForElement } from '../src/pointsLoader.js';
 import type { SpatialBounds } from '../src/pointsTiling.js';
-import { POINTS_ZARR_SIDECAR } from '../src/pointsZarr.js';
+import { POINTS_ZARR_SIDECAR, PointsZarrSource } from '../src/pointsZarr.js';
 import { readZarr } from '../src/store/index.js';
 
 /**
@@ -19,6 +22,9 @@ import { readZarr } from '../src/store/index.js';
  * that writer's output). The answers are computed from the input points, not from the
  * store. Reads are observed at the store, so "reads only what the view needs" is a
  * claim about requests, not about caches.
+ *
+ * Reads decode on codec workers, as in the viewer: only that backend keeps a chunk
+ * cache.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -113,9 +119,20 @@ beforeAll(async () => {
   fixtureDir = await mkdtemp(join(tmpdir(), 'points-zarr-'));
   const levels = writeFixture(fixtureDir);
   expected = { ...JSON.parse(await readFile(join(fixtureDir, 'expected.json'), 'utf8')), levels };
+  // fizarrita's own `worker_threads` entry: zarrextra's bundled worker is for browsers.
+  enableWorkerChunkDecode({
+    workers: 2,
+    workerUrl: pathToFileURL(
+      join(
+        __dirname,
+        '../../zarrextra/node_modules/@fideus-labs/fizarrita/dist/codec-worker-node.js'
+      )
+    ),
+  });
 }, 120_000);
 
 afterAll(async () => {
+  disableWorkerChunkDecode();
   await rm(fixtureDir, { recursive: true, force: true });
 });
 
@@ -400,6 +417,69 @@ describe('points-zarr element', () => {
       store.beforeRead = undefined;
     }
     expect(unhandled).toEqual([]);
+  });
+
+  it('fetches each chunk once for two adjacent tiles, and nothing to draw one again', async () => {
+    // Every tile row of the grid crosses both tiles, so each pays the chunks it shares
+    // with the other.
+    const left = { minX: 0, minY: 0, maxX: 500, maxY: 600 };
+    const right = { minX: 500, minY: 0, maxX: 1000, maxY: 600 };
+    const results = await Promise.all(
+      [left, right].map((bounds) =>
+        element.loadPointsZarrInBounds({ bounds, pointBudget: UNLIMITED })
+      )
+    );
+    expect(results[0].pointCount + results[1].pointCount).toBe(expected.levels[0]);
+    const reads = store.pointColumnReads().map((r) => `${r.key} ${r.range ?? 'whole'}`);
+    expect(reads.length).toBeGreaterThan(0);
+    expect(new Set(reads).size).toBe(reads.length);
+
+    store.reset();
+    const again = await element.loadPointsZarrInBounds({ bounds: left, pointBudget: UNLIMITED });
+    expect(again.pointCount).toBe(results[0].pointCount);
+    expect(store.pointColumnReads()).toEqual([]);
+  });
+
+  it('loads a tile in full when asked again after a cancelled request for it', async () => {
+    const controller = new AbortController();
+    store.beforeRead = (key) => {
+      if (/tile_major\/column_0\/c\//.test(key)) controller.abort();
+    };
+    const read = (signal?: AbortSignal) =>
+      element.loadPointsZarrInBounds({ bounds: wholeExtent, pointBudget: UNLIMITED, signal });
+    try {
+      await expect(read(controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      store.beforeRead = undefined;
+    }
+    expect((await read()).pointCount).toBe(expected.levels[0]);
+  });
+
+  it('keeps its chunk cache under its byte budget, reading again what it dropped', async () => {
+    const path = element.pointsZarrPath;
+    if (!path) throw new Error('fixture has no points-zarr copy');
+    const maxBytes = 4096;
+    const chunkCache = new ByteLruCache<zarr.Chunk<zarr.DataType>>({
+      maxBytes,
+      sizeOf: (chunk) => {
+        const data: { byteLength?: number; length: number } = chunk.data;
+        return data.byteLength ?? data.length;
+      },
+    });
+    const group = await zarr.open(zarr.root(store).resolve(path), { kind: 'group' });
+    const source = await PointsZarrSource.open(store, path, group.attrs, { chunkCache });
+    const read = () => source.loadInBounds({ bounds: wholeExtent, pointBudget: UNLIMITED });
+
+    expect((await read()).pointCount).toBe(expected.levels[0]);
+    // More chunks than the budget holds: 128 float32 rows each.
+    expect(store.pointColumnReads().length).toBeGreaterThan(maxBytes / (128 * 4));
+    expect(chunkCache.byteLength).toBeGreaterThan(0);
+    expect(chunkCache.byteLength).toBeLessThanOrEqual(maxBytes);
+
+    store.reset();
+    expect((await read()).pointCount).toBe(expected.levels[0]);
+    expect(store.pointColumnReads().length).toBeGreaterThan(0);
+    expect(chunkCache.byteLength).toBeLessThanOrEqual(maxBytes);
   });
 
   it('retries a read that failed, rather than keeping the failure', async () => {

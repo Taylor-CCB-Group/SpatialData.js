@@ -1,10 +1,12 @@
 import * as ad from 'anndata.js';
 import { createPrefixedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
+import { ByteLruCache } from '../memory/byteLruCache.js';
 import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
 import type { AnyPointsTilingMetadata, PointsFeatureCatalog } from '../pointsTiling.js';
 import {
   isPointsZarrAttrs,
+  POINTS_ZARR_CACHE_BYTES,
   POINTS_ZARR_SIDECAR,
   type PointsZarrInBoundsOptions,
   type PointsZarrInBoundsResult,
@@ -659,6 +661,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
   private readonly pointsZarrAttrs?: unknown;
   private readonly vPoints: SpatialDataPointsSource;
   private zarrSource?: Promise<PointsZarrSource>;
+  private zarrChunks?: ByteLruCache<zarr.Chunk<zarr.DataType>>;
   constructor(params: ElementParams<'points'>) {
     super(params);
     const sidecar = getChildGroup(this.parsed, POINTS_ZARR_SIDECAR);
@@ -700,10 +703,20 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
     if (path === undefined) {
       return Promise.reject(new Error(`points/${this.key} has no points-zarr copy`));
     }
+    // Its own chunk cache, shared by the element's tiles and its layers, and kept
+    // across a retried open. Filled only when chunks decode on the codec workers. Points arrays are numeric, so every chunk is a typed array.
+    this.zarrChunks ??= new ByteLruCache<zarr.Chunk<zarr.DataType>>({
+      maxBytes: POINTS_ZARR_CACHE_BYTES,
+      sizeOf: (chunk) => {
+        const data: { byteLength?: number; length: number } = chunk.data;
+        return data.byteLength ?? data.length;
+      },
+    });
     this.zarrSource ??= PointsZarrSource.open(
       this.sdata.rootStore.zarritaStore,
       path,
-      this.pointsZarrAttrs
+      this.pointsZarrAttrs,
+      { chunkCache: this.zarrChunks }
     ).catch((error) => {
       // Not cached as failed: a transient read error must be retryable.
       this.zarrSource = undefined;
