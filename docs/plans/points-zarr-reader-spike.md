@@ -43,19 +43,10 @@ against answers computed from the input points.
 
 ## Measured
 
-On a synthetic 8M-point, 40-gene store (levels 8M / 2M / 500k / 125k), written by their
-reference writer and read from disk. Each view is all genes, every deck tile it covers:
-
-| View (µm) | Tiles | Points | Bytes, no cache | Bytes, shared chunk cache |
-|---|---|---|---|---|
-| 8192 (whole) | 4 | 125k (level 3) | 1.8 MB | 0.7 MB |
-| 2048 | 9 | 1.48M (level 0–1) | 44 MB | 19 MB |
-| 1024 | 9 | 370k (level 0) | 23 MB | 7.9 MB |
-| 512 | 9 | 92k (level 0) | 13 MB | 4.1 MB |
-
-Level selection behaves: zoomed out reads level 3 from `tile_major`, and zooming in moves
-to level 0. A rare gene is always read whole, and a gene selection reads only its rows of
-`feature_major`.
+On a synthetic 8M-point, 40-gene store written by merfisheyes' reference writer, level
+selection behaves: zoomed out reads the coarsest level from `tile_major`, zooming in
+moves to level 0, a rare gene is always read whole, and a gene selection reads only its
+rows of `feature_major`.
 
 On a real store: the Atera v1 WTA kidney section (1.19B transcripts, 24,674 genes),
 read with spatialdata-io's atera reader and written as one SpatialData store: image,
@@ -74,21 +65,36 @@ local disk, one call each:
 | C7 (2.6M), whole section | 2 | 163k | 2.0 MB |
 | Median gene (8k), whole section | 0 | 8k | 0.5 MB |
 
+A view is every deck tile it covers, read as the layers strategy reads them: all genes,
+tiles half the view's width, so 3×3 tiles. The cache is the element's own decoded-chunk
+cache (`POINTS_ZARR_CACHE_BYTES`, 256 MB), passed to zarrextra's `getZarrChunk` per read,
+so it works on the main thread and through fizarrita's workers alike; bytes are the same
+on both:
+
+| View (µm) | Tiles | Level | Points | No cache | Chunk cache | Held, decoded |
+|---|---|---|---|---|---|---|
+| whole | 4 | 6 | 289k | 6.9 MB, 84 requests | 2.0 MB, 36 requests | 4.6 MB |
+| 4096 | 9 | 4 | 2.64M | 55 MB, 566 | 22 MB, 246 | 51 MB |
+| 2048 | 9 | 3 | 3.08M | 58 MB, 649 | 26 MB, 313 | 63 MB |
+| 1024 | 9 | 2 | 2.92M | 61 MB, 724 | 29 MB, 376 | 74 MB |
+| 512 | 9 | 1 | 2.49M | 50 MB, 631 | 25 MB, 335 | 65 MB |
+| 256 | 9 | 0 | 2.23M | 44 MB, 579 | 20 MB, 291 | 56 MB |
+
+Zooming in 2048 → 1024 → 512 µm, panning half a view, and zooming back out costs
+338 MB without the cache and 86 MB with it, holding 218 MB of decoded chunks; the way
+back out reads nothing. A 128 MB cache makes it 123 MB, 64 MB makes it 142 MB.
+
 In the viewer the section frames from 11 MB and a single gene shows its tissue pattern.
 The same transcripts as spatialdata's standard `points.parquet` (30 parts of 540 MB, not
 Morton-sorted) fetched 24 GB before the preload was stopped.
 
 ## What doesn't fit yet
 
-- **Chunk granularity is the cost.** A level-0 `tile_major` chunk is 65,536 rows,
-  about 6.5 mm of one grid row, so a 512 µm deck tile pays a whole chunk per column and
-  its neighbour pays again: 60–140 B/point at fine zoom. merfisheyes' viewer amortises
-  this with a 256 MB byte cache shared by every read and plans per view, not per deck
-  tile. We need the equivalent: a chunk cache under the zarrita store, shared by the
-  element's tiles (2.3–3× fewer bytes above). Smaller chunks in the writer are the other
-  lever.
-- **Range merging** (`mergeRanges`) only stops one read from fetching a chunk twice;
-  it cannot help across tiles.
+- **Chunk granularity costs little now.** With the cache a view reads 7–10 B per point
+  drawn, against about 6 B per row stored; smaller chunks in the writer would close the
+  rest.
+- **Requests.** A view takes about 300. merfisheyes' store merges neighbouring ranges of
+  one shard into one request, which would cut that over HTTP; not done here.
 - **Zoomed out, points vanish.** A coarse level is a sparse sample and our scatter's
   `radiusMinPixels` is 0.01; merfisheyes keeps molecules at least 1 px on screen.
 - **The UI says "Morton".** The props panel labels the tile toggle "Viewport tiles
@@ -105,10 +111,10 @@ Morton-sorted) fetched 24 GB before the preload was stopped.
 
 ## Recommendation
 
-Pursue it, behind the shared chunk cache. The format removes both limits the parquet
-path has hit (no LOD; gene selection saves no I/O), and at 1.19B transcripts it is the
-difference between a usable view and an unusable one. Our resolver and strategy seams
-absorbed it without reshaping. Next: the chunk cache and a minimum point size; then
-raise the draft's version string and spec ownership with merfisheyes and scverse.
+Pursue it. The format removes both limits the parquet path has hit (no LOD; gene
+selection saves no I/O), and at 1.19B transcripts it is the difference between a usable
+view and an unusable one. Our resolver and strategy seams absorbed it without reshaping.
+Next: a minimum point size; then raise the draft's version string and spec ownership
+with merfisheyes and scverse.
 
 [spec]: https://github.com/kresnajenie/merfisheyes/blob/main/docs/points-zarr-spec.md

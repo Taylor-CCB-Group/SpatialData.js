@@ -17,6 +17,7 @@
  * Its `index/` arrays are in ROW NUMBERS and small enough to read before any point,
  * so a read is planned from counts alone: which level, which rows, how many.
  */
+import { type ChunkCache, getZarrChunk } from 'zarrextra';
 import * as zarr from 'zarrita';
 import { z } from 'zod';
 import type {
@@ -35,6 +36,16 @@ export const POINTS_ZARR_SUPPORTED_VERSIONS: readonly string[] = ['0.1'];
  * @experimental
  */
 export const POINTS_ZARR_SIDECAR = 'experimental.points-zarr';
+
+/**
+ * Bytes of decoded chunks a points-zarr element keeps, shared by all its tiles. A chunk
+ * holds far more rows than one deck tile wants, so neighbouring tiles read the same
+ * chunks. Sized to hold a zoom in and back out on a 1.19B-point section (218 MB);
+ * decoded chunks are about 2.5x what they cost to fetch.
+ *
+ * @experimental
+ */
+export const POINTS_ZARR_CACHE_BYTES = 256 * 1024 * 1024;
 
 const gridSchema = z.object({
   origin: z.tuple([z.number(), z.number()]),
@@ -205,10 +216,10 @@ interface RowRange {
  * Join ascending ranges (one per tile row) when no whole chunk lies between them.
  *
  * The next tile row's rows usually start in the chunk where this one's end, or the
- * chunk after; read separately, zarrita fetches that chunk (and, sharded, its index)
- * once per range, having no cache. Reading the span instead fetches exactly the chunks
- * the separate reads would, each once. It is correct because the rows in the gap belong
- * to tiles outside the bounds and the exact filter drops them. Only ranges of the same
+ * chunk after; read separately without a chunk cache, zarrita fetches and decodes that
+ * chunk once per range. Reading the span instead reads exactly the chunks the separate
+ * reads would, each once. It is correct because the rows in the gap belong to tiles
+ * outside the bounds and the exact filter drops them. Only ranges of the same
  * feature merge, so a `feature_major` span still carries one code.
  */
 function mergeRanges(ranges: readonly RowRange[], chunkRows: number): RowRange[] {
@@ -242,6 +253,7 @@ export class PointsZarrSource {
   readonly bounds: SpatialBounds;
 
   private readonly root: zarr.Location<zarr.Readable>;
+  private readonly chunkCache?: ChunkCache;
   private readonly arrays = new Map<string, Promise<zarr.Array<zarr.DataType, zarr.Readable>>>();
   private readonly columnMaps = new Map<string, Promise<Map<string, string>>>();
   private readonly featureIndexes = new Map<number, Promise<FeatureIndex>>();
@@ -252,9 +264,11 @@ export class PointsZarrSource {
   private constructor(
     root: zarr.Location<zarr.Readable>,
     elementPath: string,
-    attrs: z.infer<typeof pointsZarrAttrsSchema>
+    attrs: z.infer<typeof pointsZarrAttrsSchema>,
+    chunkCache: ChunkCache | undefined
   ) {
     this.root = root;
+    this.chunkCache = chunkCache;
     this.elementPath = elementPath;
     this.version = attrs['points:version'];
     this.axisNames = attrs.axes;
@@ -292,11 +306,15 @@ export class PointsZarrSource {
   /**
    * Open the element at `elementPath`. Reads the level-0 `feature_major` column names
    * and the feature column's `enum_values` — two small arrays — and nothing else.
+   *
+   * `chunkCache` holds the decoded chunks of every numeric read; without one, no chunk
+   * is kept between reads.
    */
   static async open(
     store: zarr.Readable,
     elementPath: string,
-    rawAttrs: unknown
+    rawAttrs: unknown,
+    options?: { chunkCache?: ChunkCache }
   ): Promise<PointsZarrSource> {
     const parsed = pointsZarrAttrsSchema.safeParse(rawAttrs);
     if (!parsed.success) {
@@ -313,7 +331,8 @@ export class PointsZarrSource {
     const source = new PointsZarrSource(
       zarr.root(store).resolve(elementPath),
       elementPath,
-      parsed.data
+      parsed.data,
+      options?.chunkCache
     );
     const columns = await source.columns(source.levels[0].asset, 'feature_major');
     const featurePath = columns.get(source.featureKey);
@@ -658,8 +677,15 @@ export class PointsZarrSource {
     return memo(this.arrays, path, () => zarr.open(this.root.resolve(path), { kind: 'array' }));
   }
 
-  private selection(lo?: number, hi?: number) {
-    return lo === undefined ? null : [zarr.slice(lo, hi ?? null)];
+  /** Rows `[lo, hi)` of a 1-D array, through the element's chunk cache; all of it without `lo`. */
+  private get<D extends zarr.DataType>(
+    arr: zarr.Array<D>,
+    lo?: number,
+    hi?: number,
+    signal?: AbortSignal
+  ) {
+    const selection = lo === undefined ? [null] : [zarr.slice(lo, hi ?? null)];
+    return getZarrChunk(arr, selection, { signal, cache: this.chunkCache });
   }
 
   private async readStrings(path: string): Promise<string[]> {
@@ -680,11 +706,11 @@ export class PointsZarrSource {
   ): Promise<ArrayLike<number>> {
     const arr = await this.open(path);
     if (arr.is('bigint')) {
-      const chunk = await zarr.get(arr, this.selection(lo, hi), { signal });
+      const chunk = await this.get(arr, lo, hi, signal);
       return Float64Array.from(chunk.data, Number);
     }
     if (arr.is('number')) {
-      return (await zarr.get(arr, this.selection(lo, hi), { signal })).data;
+      return (await this.get(arr, lo, hi, signal)).data;
     }
     throw new Error(`points-zarr array '${path}' is ${arr.dtype}, expected a number type`);
   }
@@ -692,10 +718,10 @@ export class PointsZarrSource {
   private async readFloat32(path: string, lo: number, hi: number, signal?: AbortSignal) {
     const arr = await this.open(path);
     if (arr.is('float32')) {
-      return (await zarr.get(arr, this.selection(lo, hi), { signal })).data;
+      return (await this.get(arr, lo, hi, signal)).data;
     }
     if (arr.is('number')) {
-      return Float32Array.from((await zarr.get(arr, this.selection(lo, hi), { signal })).data);
+      return Float32Array.from((await this.get(arr, lo, hi, signal)).data);
     }
     throw new Error(
       `points-zarr coordinate array '${path}' is ${arr.dtype}, expected a float type`
