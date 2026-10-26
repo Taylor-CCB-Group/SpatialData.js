@@ -15,13 +15,9 @@ export type ZarrGetOptions = {
    */
   signal?: AbortSignal;
   /**
-   * Decoded chunks for this read: looked up before a chunk is fetched, filled after
-   * it is decoded. Takes the place of the backend's cache, so a caller can keep its
-   * chunks under a budget of its own. Concurrent reads through one cache share each
-   * chunk's fetch and decode, on either backend.
-   *
-   * Cached chunks are shared, not copied: a read copies out of them and never
-   * writes to them.
+   * Decoded chunks for this read, in place of the cache the worker backend was
+   * enabled with, so a caller can keep its chunks under a budget of its own.
+   * Ignored on the main-thread backend, which caches nothing.
    */
   cache?: ChunkCache;
 };
@@ -137,125 +133,7 @@ export async function getZarrChunk<D extends zarr.DataType>(
   // zarrita takes `signal` as a first-class option: it forwards it to every
   // `store.get` and re-checks it between chunks, so a multi-chunk read stops
   // early rather than running the rest out.
-  const source = opts?.cache ? withChunkCache(arr, opts.cache) : arr;
-  const result = await zarr.get(source, selection, { signal: opts?.signal });
+  const result = await zarr.get(arr, selection, { signal: opts?.signal });
   assertChunk(result, 'zarr.get()');
   return result;
-}
-
-// --- main-thread chunk cache -------------------------------------------------
-
-/** One chunk being fetched and decoded, shared by every read that wants it meanwhile. */
-interface Flight {
-  promise: Promise<zarr.Chunk<zarr.DataType>>;
-  controller: AbortController;
-  waiters: number;
-}
-
-/**
- * Chunks in flight, per cache. Bookkeeping attached to the caller's cache rather
- * than a cache of its own: it holds only reads still running.
- */
-const flightsByCache = new WeakMap<ChunkCache, Map<string, Flight>>();
-
-const storeIds = new WeakMap<object, number>();
-let nextStoreId = 0;
-
-/** The store's identity in cache keys, so two stores' chunks never collide. */
-function storeId(store: object): number {
-  let id = storeIds.get(store);
-  if (id === undefined) {
-    id = nextStoreId++;
-    storeIds.set(store, id);
-  }
-  return id;
-}
-
-/**
- * `arr`, with its chunks read through `cache`. `zarr.get` reads every chunk through
- * `arr.getChunk`, so that is the one member replaced; everything else is the array's
- * own, read with the array as receiver so its private fields resolve.
- */
-function withChunkCache<D extends zarr.DataType>(
-  arr: zarr.Array<D>,
-  cache: ChunkCache
-): zarr.Array<D> {
-  const prefix = `main_${storeId(arr.store)}:${arr.path}:`;
-  const getChunk: zarr.Array<D>['getChunk'] = async (coords, options, chunkOptions) => {
-    const chunk = await readCachedChunk(
-      cache,
-      prefix + coords.join('/'),
-      options?.signal ?? undefined,
-      (signal) => arr.getChunk(coords, { ...options, signal }, chunkOptions)
-    );
-    // The key names this array, so what it holds was read from this array; the
-    // cache's interface is not generic over the dtype, which is all this asserts.
-    return chunk as zarr.Chunk<D>;
-  };
-  return new Proxy(arr, {
-    get: (target, prop) => (prop === 'getChunk' ? getChunk : Reflect.get(target, prop, target)),
-  });
-}
-
-/**
- * The chunk at `key`, from the cache or from one shared read. A caller whose signal
- * aborts is rejected at once, with the signal's reason; the read itself is aborted only when every caller
- * waiting on it has gone, and a read that settles anyway is still cached.
- */
-async function readCachedChunk(
-  cache: ChunkCache,
-  key: string,
-  signal: AbortSignal | undefined,
-  load: (signal: AbortSignal) => Promise<zarr.Chunk<zarr.DataType>>
-): Promise<zarr.Chunk<zarr.DataType>> {
-  signal?.throwIfAborted();
-  const cached = cache.get(key);
-  if (cached) return cached;
-  let flights = flightsByCache.get(cache);
-  if (!flights) {
-    flights = new Map();
-    flightsByCache.set(cache, flights);
-  }
-  let flight = flights.get(key);
-  // A flight whose callers have all gone is aborting: it cannot serve a new one.
-  if (!flight || flight.controller.signal.aborted) flight = startFlight(cache, flights, key, load);
-  return joinFlight(flight, signal);
-}
-
-function startFlight(
-  cache: ChunkCache,
-  flights: Map<string, Flight>,
-  key: string,
-  load: (signal: AbortSignal) => Promise<zarr.Chunk<zarr.DataType>>
-): Flight {
-  const controller = new AbortController();
-  const promise = load(controller.signal)
-    .then((chunk) => {
-      cache.set(key, chunk);
-      return chunk;
-    })
-    .finally(() => {
-      if (flights.get(key) === flight) flights.delete(key);
-    });
-  // Each caller is given the failure; this only stops it surfacing as unhandled
-  // when every caller has already gone.
-  promise.catch(() => {});
-  const flight: Flight = { promise, controller, waiters: 0 };
-  flights.set(key, flight);
-  return flight;
-}
-
-/** Wait on a flight; when its last caller aborts, abort the flight too. */
-function joinFlight(flight: Flight, signal: AbortSignal | undefined) {
-  flight.waiters++;
-  // A caller with no signal never leaves, so the flight runs to the end.
-  if (!signal) return flight.promise;
-  return new Promise<zarr.Chunk<zarr.DataType>>((resolve, reject) => {
-    const leave = () => {
-      reject(signal.reason);
-      if (--flight.waiters === 0) flight.controller.abort();
-    };
-    signal.addEventListener('abort', leave, { once: true });
-    flight.promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', leave));
-  });
 }
