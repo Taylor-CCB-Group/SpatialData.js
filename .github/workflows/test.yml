@@ -232,6 +232,11 @@ jobs:
       - name: Run spatialdata-js-util tests
         run: uv run --directory python/spatialdata-js-util --extra write --extra tui pytest
 
+      # A bare `uv build` succeeds without the vendored WASM; this is the build
+      # RELEASE.md publishes, and it fails if either artifact is missing a file.
+      - name: Build spatialdata-js-util release artifacts
+        run: pnpm build:python
+
       - name: Run unit tests
         run: pnpm test:unit
 

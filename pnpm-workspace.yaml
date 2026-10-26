@@ -1,6 +1,8 @@
 packages:
   - packages/*
   - docs
+  # A private package.json shim so Changesets versions the PyPI package; see RELEASE.md.
+  - python/spatialdata-js-util
 
 allowBuilds:
   '@biomejs/biome': false

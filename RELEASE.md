@@ -30,6 +30,11 @@ publishing is intentionally manual for now.
 - `zarrextra` participates in the first prerelease because `@spatialdata/core`
   depends on it, but it is not fixed to the `@spatialdata/*` version train for
   future releases.
+- `spatialdata-js-util` (the PyPI package in `python/spatialdata-js-util`) is
+  versioned by Changesets through a private `package.json` shim there.
+  `pnpm version-packages` copies its version into `pyproject.toml` and `uv.lock`.
+  It is not fixed to any npm package, and `changeset publish` skips it; see
+  [Python package](#python-package-pypi).
 
 ## Dist-tags
 
@@ -130,6 +135,38 @@ npm dist-tag add zarrextra@<latest-version> next
     ```bash
     pnpm add @spatialdata/vis
     ```
+
+## Python package (PyPI)
+
+Publishing is manual, from the same clean checkout of the merged version PR.
+Run `pnpm version-packages` locally with `GITHUB_TOKEN` set (for example
+`GITHUB_TOKEN=$(gh auth token)`); the changelog generator looks up PR authors.
+
+1. Build both artifacts:
+
+   ```bash
+   pnpm build:python
+   ```
+
+   This vendors the OpenJPH WASM, builds into `python/spatialdata-js-util/dist/`,
+   and fails unless the wheel and sdist both contain every vendored file. Do not
+   publish the output of a bare `uv build`: it succeeds without the WASM.
+
+2. Smoke-test the wheel in a throwaway environment:
+
+   ```bash
+   uv run --isolated --with python/spatialdata-js-util/dist/*.whl spatialdata-js-util --help
+   ```
+
+3. Publish, with a PyPI API token scoped to `spatialdata-js-util`:
+
+   ```bash
+   uv publish python/spatialdata-js-util/dist/*
+   ```
+
+   `uv publish` prompts for the token, or reads `UV_PUBLISH_TOKEN`.
+   PyPI never accepts a version twice, even after deletion, so a bad release
+   is fixed by yanking it and publishing the next version.
 
 ## Release tooling
 
