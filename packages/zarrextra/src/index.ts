@@ -209,6 +209,8 @@ export function serializeZarrTree(obj: ZarrTree | unknown): unknown {
   return result;
 }
 
+export type { ChunkCache } from '@fideus-labs/fizarrita';
+export { getZarrChunk, type ZarrGetOptions } from './chunkDecode';
 export {
   createOpenJpegDecoder,
   createOpenJphDecoder,
