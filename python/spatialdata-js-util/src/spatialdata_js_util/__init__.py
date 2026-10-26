@@ -7,7 +7,9 @@ cheap to read incrementally over HTTP from `SpatialData.js`:
   browser (`recompress_spatialdata`).
 * **points** — Morton-sort Points Parquet with sentinel bounding-box rows and
   controlled row groups, so a viewport maps to a few row-group reads
-  (`write_morton_points_parquet`).
+  (`write_morton_points_parquet`); or write the experimental multiscale Zarr
+  layout, levels of uniform samples in tile and feature order
+  (`write_points_zarr_store`).
 * **tables** — convert AnnData matrices to CSC so reading one gene is one
   contiguous range read (`convert_store_tables_to_csc`).
 
@@ -52,6 +54,12 @@ from .points import (
     write_morton_points_parquet,
     write_multiscale_points_parquet,
 )
+from .points_zarr import (
+    POINTS_ZARR_VERSION,
+    add_points_zarr_to_store,
+    write_points_zarr,
+    write_points_zarr_store,
+)
 from .tables import (
     CscConversion,
     anndata_to_csc,
@@ -69,10 +77,12 @@ __all__ = [
     "MORTON_CODE_2D_COLUMN",
     "MORTON_CODE_EXTREME_VALUE_INDICATOR",
     "MORTON_COARSE_COLUMN",
+    "POINTS_ZARR_VERSION",
     "ColumnEncodingPlan",
     "CscConversion",
     "PyramidResult",
     "RecompressedSpatialData",
+    "add_points_zarr_to_store",
     "add_pyramids",
     "anndata_to_csc",
     "backend_report",
@@ -92,4 +102,6 @@ __all__ = [
     "to_csc",
     "write_morton_points_parquet",
     "write_multiscale_points_parquet",
+    "write_points_zarr",
+    "write_points_zarr_store",
 ]

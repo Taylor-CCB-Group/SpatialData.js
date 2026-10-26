@@ -84,6 +84,47 @@ export interface PointsTilingMetadata {
   rowGroupMortonExtents?: MortonRowGroupExtent[];
 }
 
+/**
+ * A multiscale points element stored as Zarr (points-zarr spec 0.1; see
+ * `pointsZarr.ts`). It is tileable by construction: the format's row index answers
+ * "which rows lie in this region" without reading any points.
+ *
+ * @experimental
+ */
+export interface PointsZarrTilingMetadata {
+  kind: 'points-zarr';
+  /** The element's path in the store, e.g. `points/transcripts`. */
+  elementPath: string;
+  /** `points:version` of the element. */
+  version: string;
+  axisNames: string[];
+  featureKey: string;
+  /** Points in level 0, which holds every point. */
+  totalRows: number;
+  levelCount: number;
+  /** Tile size of the level-0 grid: the finest unit a read is planned in. */
+  finestTileSize: number;
+  bounds: SpatialBounds;
+}
+
+/**
+ * What a tiling probe can find. The `kind` decides which loader reads it. Draft formats
+ * join this union rather than changing {@link PointsTilingMetadata}.
+ */
+export type AnyPointsTilingMetadata = PointsTilingMetadata | PointsZarrTilingMetadata;
+
+/**
+ * Whether the tile path can draw this element. A Morton artifact needs a store that
+ * serves row-group range reads; a points-zarr element is read chunk by chunk, which
+ * every zarr store can do.
+ */
+export function isTileablePointsMetadata(
+  metadata: AnyPointsTilingMetadata | null | undefined
+): metadata is AnyPointsTilingMetadata & { bounds: SpatialBounds } {
+  if (!metadata?.bounds) return false;
+  return metadata.kind === 'points-zarr' || metadata.supportsRowGroupRangeReads;
+}
+
 export type PointsInBoundsResponse = PointsColumnarData & {
   bounds: SpatialBounds;
   loadMode: 'row-groups' | 'full-filter';

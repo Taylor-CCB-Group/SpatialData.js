@@ -3,6 +3,7 @@ import type { PointsElement, PointsLoadMode, SpatialBounds } from '@spatialdata/
 export type PointsEncodingKind =
   | 'preloaded-columnar'
   | 'morton-tiled'
+  | 'points-zarr-tiled'
   | 'geoarrow-binary'
   | 'geoarrow-tiled';
 
@@ -21,6 +22,8 @@ export interface PointsLoaderCapabilities {
    * With {@link totalRows} and {@link bounds} it is what sizes the tile grid.
    */
   maxRowsPerGroup?: number;
+  /** Tile size of a multiscale artifact's finest grid; sizes the finest deck tile. */
+  finestTileSize?: number;
 }
 
 export interface ColumnarNdarrayPointsBatch {
@@ -49,6 +52,8 @@ export type PointsBatch = ColumnarNdarrayPointsBatch | ArrowRecordBatchPointsBat
 
 export interface PointsLoadInBoundsOptions {
   bounds: SpatialBounds;
+  /** The unclipped tile `bounds` was cut from, for loaders that choose a level of detail. */
+  tileBounds?: SpatialBounds;
   featureCodes?: readonly number[];
   signal?: AbortSignal;
 }

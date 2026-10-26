@@ -271,6 +271,35 @@ Use `--experimental` only for layouts standard readers cannot consume (see
 side by side for benchmarking. All of these are also available from the
 [TUI](#interactive-tui), which verifies the output after each write.
 
+### Multiscale Zarr points (experimental)
+
+`points zarr` writes the layout of merfisheyes'
+[points-zarr spec draft 0.1](https://github.com/kresnajenie/merfisheyes/blob/main/docs/points-zarr-spec.md):
+levels of uniform random samples (each a quarter of the one below), each stored in
+tile order and in feature order, with a row index. A viewer can then draw any zoom
+from a bounded read, and read only the rows of the genes selected.
+
+```bash
+# A new store: a standard points element, with the copy beside it
+spatialdata-js-util points zarr transcripts.parquet transcripts.zarr \
+  --feature-key feature_name --coordinates x_location,y_location
+
+# Add the copy to an existing store's points element, from its own points.parquet
+spatialdata-js-util points add-zarr ~/data/xenium.zarr --points-key transcripts
+```
+
+The copy is the element's `experimental.points-zarr` subgroup; the element itself stays
+an ordinary SpatialData points element, so spatialdata and other standard readers read
+the store as before ([ADR 0006](../../docs/adr/0006-experimental-formats-beside-the-standard.md)).
+Writing works out of core: Parquet input is read in batches, spilled to temporary files
+beside the output (about 18 bytes a point, plus one level's sorted copy) and sorted one
+band of tile rows at a time.
+
+On exFAT (and other filesystems without extended attributes) macOS writes a `._name`
+file beside each file that carries one, which doubles the file count and breaks
+readers that list a directory (pyarrow reads `._part.0.parquet` as a part). Delete
+them after writing: `find STORE -name '._*' -delete`.
+
 ## Tables
 
 ```bash

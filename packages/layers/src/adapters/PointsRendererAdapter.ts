@@ -1,4 +1,4 @@
-import type { PointsElement, PointsLoadResult, PointsTilingMetadata } from '@spatialdata/core';
+import type { AnyPointsTilingMetadata, PointsElement, PointsLoadResult } from '@spatialdata/core';
 import {
   columnarBatchFromPointData,
   type PointsLoader,
@@ -85,7 +85,7 @@ interface GrowingPartial {
  */
 interface TiledMemo {
   element: PointsElement;
-  metadata: PointsTilingMetadata;
+  metadata: AnyPointsTilingMetadata;
   resource: PointsRenderResource;
 }
 
@@ -215,7 +215,7 @@ export class PointsRendererAdapter {
   getTiledResource(
     element: PointsElement,
     key: string,
-    metadata: PointsTilingMetadata
+    metadata: AnyPointsTilingMetadata
   ): PointsRenderResource | null {
     const memo = this.tiled.get(key);
     if (memo && memo.element === element && memo.metadata === metadata) {

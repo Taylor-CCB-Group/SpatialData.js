@@ -1,4 +1,4 @@
-import type { PointsTilingMetadata } from './pointsTiling.js';
+import type { AnyPointsTilingMetadata } from './pointsTiling.js';
 
 /**
  * Which points loads to schedule at the start of a load pass.
@@ -10,7 +10,7 @@ import type { PointsTilingMetadata } from './pointsTiling.js';
 export interface PointsLoadPlanInput {
   wantsOptimized: boolean;
   metadataKnown: boolean;
-  tiledMetadata: PointsTilingMetadata | null | undefined;
+  tiledMetadata: AnyPointsTilingMetadata | null | undefined;
   hasPreloaded: boolean;
   /** Known row count from parquet metadata, when available. */
   totalRows?: number;

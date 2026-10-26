@@ -1,7 +1,8 @@
 import {
+  type AnyPointsTilingMetadata,
   createPointsLoaderForElement,
+  isTileablePointsMetadata,
   type PointsElement,
-  type PointsTilingMetadata,
 } from '@spatialdata/core';
 import type { PointsRenderResource } from './pointsLoader.js';
 import { createPointsRenderResource } from './pointsLoaderAdapter.js';
@@ -12,7 +13,7 @@ export interface ResolvePointsRenderResourceCache {
     data: ArrayLike<number>[];
     featureCodes?: ArrayLike<number>;
   } | null;
-  tilingMetadata?: PointsTilingMetadata | null;
+  tilingMetadata?: AnyPointsTilingMetadata | null;
   metadataKnown?: boolean;
 }
 
@@ -27,10 +28,7 @@ export function resolvePointsRenderResource(
 ): PointsRenderResource | null {
   const wantsOptimized = options.experimentalOptimizations !== 'off';
   const canTile =
-    wantsOptimized &&
-    cache.metadataKnown &&
-    cache.tilingMetadata?.supportsRowGroupRangeReads &&
-    cache.tilingMetadata.bounds;
+    wantsOptimized && cache.metadataKnown && isTileablePointsMetadata(cache.tilingMetadata);
 
   const loader = createPointsLoaderForElement(element, {
     preloaded: cache.preloaded ?? null,
@@ -59,8 +57,13 @@ export function pointsRenderResourceSignature(
     options.preloadCacheKey ?? '',
     options.experimentalOptimizations,
     cache.metadataKnown ? 'meta' : 'nometa',
-    cache.tilingMetadata?.parquetPath ?? '',
-    cache.tilingMetadata?.supportsRowGroupRangeReads ? 'rg' : '',
+    tilingSignature(cache.tilingMetadata),
     cache.preloaded ? `pre:${rowCount}` : 'nopre',
   ].join('|');
+}
+
+function tilingSignature(metadata: AnyPointsTilingMetadata | null | undefined): string {
+  if (!metadata) return '';
+  if (metadata.kind === 'points-zarr') return `zarr:${metadata.elementPath}`;
+  return `${metadata.parquetPath}|${metadata.supportsRowGroupRangeReads ? 'rg' : ''}`;
 }

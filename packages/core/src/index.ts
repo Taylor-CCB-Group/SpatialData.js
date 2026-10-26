@@ -53,6 +53,7 @@ export {
   type CorePointsLoader,
   createMortonTiledPointsLoader,
   createPointsLoaderForElement,
+  createPointsZarrTiledPointsLoader,
   createPreloadedColumnarPointsLoader,
   type PointsBatch,
   type PointsBatchFormat,
@@ -74,6 +75,16 @@ export {
 } from './pointsLoadPlan.js';
 export * from './pointsTileGrid.js';
 export * from './pointsTiling.js';
+export {
+  isPointsZarrAttrs,
+  POINTS_ZARR_SIDECAR,
+  POINTS_ZARR_SUPPORTED_VERSIONS,
+  type PointsZarrGrid,
+  type PointsZarrInBoundsOptions,
+  type PointsZarrInBoundsResult,
+  type PointsZarrLevel,
+  PointsZarrSource,
+} from './pointsZarr.js';
 // Render Stack schemas. Canonical here (ADR 0004 §5, amending ADR 0001): the
 // Resource Resolver takes a Render Stack as input, so dependency direction forces
 // the move. `layers` and `vis` retain their re-exports as compatibility shims —

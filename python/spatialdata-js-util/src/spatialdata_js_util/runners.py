@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import shutil
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence, TypeVar
 
 import pandas as pd
+import pyarrow.dataset as ds
 
 from .errors import WriterCommandError
 from .index_permutations import (
@@ -17,6 +19,14 @@ from .index_permutations import (
     write_index_permutations,
 )
 from .points import EncodingPolicy
+from .points_zarr import (
+    DEFAULT_CHUNK_ROWS,
+    DEFAULT_SHARD_CHUNKS,
+    SIDECAR_GROUP,
+    PointsSource,
+    add_points_zarr_to_store,
+    write_points_zarr_store,
+)
 from .points import (
     build_spatialdata_multiscale_metadata,
     write_morton_points_parquet,
@@ -100,6 +110,93 @@ def run_morton_points(
         "output": str(output_path),
         "row_group_size": row_group_size,
     }
+
+
+def run_points_zarr(
+    input_path: str | Path,
+    output_store: str | Path,
+    *,
+    feature_key: str,
+    coordinates: Sequence[str] = ("x", "y"),
+    points_key: str = "transcripts",
+    tile_size: float = 100.0,
+    n_levels: int | None = None,
+    seed: int = 0,
+    chunk_rows: int = DEFAULT_CHUNK_ROWS,
+    shard_chunks: int = DEFAULT_SHARD_CHUNKS,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    if Path(output_store).exists() and not overwrite:
+        raise WriterCommandError(
+            f"Output already exists: {output_store}\nChoose another path or enable overwrite."
+        )
+    source = _as_command_error(
+        lambda: _points_source(input_path, [*coordinates, feature_key])
+    )
+    return _as_command_error(
+        lambda: write_points_zarr_store(
+            source,
+            output_store,
+            points_key=points_key,
+            overwrite=overwrite,
+            feature_key=feature_key,
+            coordinates=coordinates,
+            tile_size=tile_size,
+            n_levels=n_levels,
+            seed=seed,
+            chunk_rows=chunk_rows,
+            shard_chunks=shard_chunks,
+            progress=lambda message: print(message, file=sys.stderr, flush=True),
+        )
+    )
+
+
+def run_add_points_zarr(
+    store: str | Path,
+    *,
+    points_key: str,
+    tile_size: float = 100.0,
+    n_levels: int | None = None,
+    seed: int = 0,
+    chunk_rows: int = DEFAULT_CHUNK_ROWS,
+    shard_chunks: int = DEFAULT_SHARD_CHUNKS,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    existing = Path(store) / "points" / points_key / SIDECAR_GROUP
+    if existing.exists() and not overwrite:
+        raise WriterCommandError(
+            f"Output already exists: {existing}\nChoose another element or enable overwrite."
+        )
+    return _as_command_error(
+        lambda: add_points_zarr_to_store(
+            None,
+            store,
+            points_key=points_key,
+            overwrite=overwrite,
+            tile_size=tile_size,
+            n_levels=n_levels,
+            seed=seed,
+            chunk_rows=chunk_rows,
+            shard_chunks=shard_chunks,
+            progress=lambda message: print(message, file=sys.stderr, flush=True),
+        )
+    )
+
+
+def _points_source(path: str | Path, columns: list[str]) -> pd.DataFrame | PointsSource:
+    """Parquet is streamed a batch at a time, so it need not fit in memory; CSV is read whole."""
+    input_path = Path(path)
+    if input_path.suffix.lower() == ".csv":
+        return read_input_dataframe(input_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input not found: {input_path}")
+    dataset = ds.dataset(input_path, format="parquet")
+
+    def batches() -> Iterator[pd.DataFrame]:
+        for batch in dataset.to_batches(columns=columns, batch_size=4_000_000):
+            yield batch.to_pandas()
+
+    return batches
 
 
 def run_multiscale_points(
