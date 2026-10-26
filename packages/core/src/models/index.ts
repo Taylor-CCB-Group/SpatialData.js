@@ -704,7 +704,7 @@ export class PointsElement extends AbstractSpatialElement<'points', PointsAttrs>
       return Promise.reject(new Error(`points/${this.key} has no points-zarr copy`));
     }
     // Its own chunk cache, shared by the element's tiles and its layers, and kept
-    // across a retried open. Points arrays are numeric, so every chunk is a typed array.
+    // across a retried open. Filled only when chunks decode on the codec workers. Points arrays are numeric, so every chunk is a typed array.
     this.zarrChunks ??= new ByteLruCache<zarr.Chunk<zarr.DataType>>({
       maxBytes: POINTS_ZARR_CACHE_BYTES,
       sizeOf: (chunk) => {

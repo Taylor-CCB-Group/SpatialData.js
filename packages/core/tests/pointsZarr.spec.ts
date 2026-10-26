@@ -2,10 +2,11 @@ import { execSync } from 'node:child_process';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Matrix4 } from '@math.gl/core';
 import { FileSystemStore } from '@zarrita/storage';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { disableWorkerChunkDecode, enableWorkerChunkDecode } from 'zarrextra/workers';
 import * as zarr from 'zarrita';
 import { PointsResolver } from '../src/engine/index.js';
 import { ByteLruCache } from '../src/memory/byteLruCache.js';
@@ -21,6 +22,9 @@ import { readZarr } from '../src/store/index.js';
  * that writer's output). The answers are computed from the input points, not from the
  * store. Reads are observed at the store, so "reads only what the view needs" is a
  * claim about requests, not about caches.
+ *
+ * Reads decode on codec workers, as in the viewer: only that backend keeps a chunk
+ * cache.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -115,9 +119,20 @@ beforeAll(async () => {
   fixtureDir = await mkdtemp(join(tmpdir(), 'points-zarr-'));
   const levels = writeFixture(fixtureDir);
   expected = { ...JSON.parse(await readFile(join(fixtureDir, 'expected.json'), 'utf8')), levels };
+  // fizarrita's own `worker_threads` entry: zarrextra's bundled worker is for browsers.
+  enableWorkerChunkDecode({
+    workers: 2,
+    workerUrl: pathToFileURL(
+      join(
+        __dirname,
+        '../../zarrextra/node_modules/@fideus-labs/fizarrita/dist/codec-worker-node.js'
+      )
+    ),
+  });
 }, 120_000);
 
 afterAll(async () => {
+  disableWorkerChunkDecode();
   await rm(fixtureDir, { recursive: true, force: true });
 });
 
@@ -568,4 +583,3 @@ describe('points-zarr through the resolver', () => {
     expect(store.pointColumnReads()).toEqual([]);
   });
 });
-

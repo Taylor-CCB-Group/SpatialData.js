@@ -67,9 +67,9 @@ local disk, one call each:
 
 A view is every deck tile it covers, read as the layers strategy reads them: all genes,
 tiles half the view's width, so 3×3 tiles. The cache is the element's own decoded-chunk
-cache (`POINTS_ZARR_CACHE_BYTES`, 256 MB), passed to zarrextra's `getZarrChunk` per read,
-so it works on the main thread and through fizarrita's workers alike; bytes are the same
-on both:
+cache (`POINTS_ZARR_CACHE_BYTES`, 256 MB), passed to zarrextra's `getZarrChunk` per read.
+It is filled only when chunks decode on the codec workers, as they do in the viewer; a
+headless read on the main thread caches nothing:
 
 | View (µm) | Tiles | Level | Points | No cache | Chunk cache | Held, decoded |
 |---|---|---|---|---|---|---|

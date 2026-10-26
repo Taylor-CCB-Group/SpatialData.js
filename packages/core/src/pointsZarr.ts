@@ -307,8 +307,8 @@ export class PointsZarrSource {
    * Open the element at `elementPath`. Reads the level-0 `feature_major` column names
    * and the feature column's `enum_values` — two small arrays — and nothing else.
    *
-   * `chunkCache` holds the decoded chunks of every numeric read; without one, no chunk
-   * is kept between reads.
+   * `chunkCache` holds the decoded chunks of every numeric read, when chunks decode on
+   * zarrextra's codec workers; on the main thread no chunk is kept between reads.
    */
   static async open(
     store: zarr.Readable,
