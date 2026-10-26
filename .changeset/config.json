@@ -23,6 +23,6 @@
   "ignore": ["docs"],
   "privatePackages": {
     "version": true,
-    "tag": false
+    "tag": true
   }
 }
