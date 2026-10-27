@@ -795,7 +795,7 @@ class RecompressImagesScreen(InputFormScreen):
             yield Input(value="2", id="pyramid-downscale")
             yield Label("Auto stops at this size (px)")
             yield Input(value=str(DEFAULT_PYRAMID_MIN_SIZE), id="pyramid-min-size")
-            yield Checkbox("Rebuild images that already have a pyramid", id="pyramid-force")
+            yield Checkbox("Rebuild images whose pyramid is already deep enough", id="pyramid-force")
         with Horizontal():
             yield Button("Run", variant="primary", id="run")
             yield Button("Back", id="back")

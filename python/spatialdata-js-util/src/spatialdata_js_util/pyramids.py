@@ -1,20 +1,30 @@
-"""Add multiscale pyramids to raster elements that lack them.
+"""Add multiscale pyramids to raster elements whose coarsest level is too large.
 
-Acquisition output is often written at a single resolution. A browser then has no
-choice but to fetch full-resolution chunks no matter how far out the user is
-zoomed, which is exactly the cost this package exists to avoid — so a store
-without a pyramid defeats the image codecs rather than complementing them.
+Acquisition output is often written at a single resolution, or with only one or
+two overviews. A browser then has no choice but to fetch near-full-resolution
+chunks no matter how far out the user is zoomed, which is exactly the cost this
+package exists to avoid — so a store without a deep enough pyramid defeats the
+image codecs rather than complementing them.
+
+An element needs work when the largest spatial axis of its *coarsest* level is
+bigger than `min_size` (see `needs_pyramid`); a single-level element is just the
+case where the coarsest level is full resolution. With an explicit level count,
+an element needs work when it has fewer levels than asked for.
 
 Levels are generated through SpatialData's own parsers rather than by writing
 `multiscales` metadata by hand. Each level carries a scale *and* a half-pixel
 translation (`s1` is offset by 0.5, `s2` by 1.5, …); getting those wrong
 misaligns every level against the full-resolution image, and the parsers already
-know the rule. Images are coarsened by averaging, labels by the label model's own
-downsampler, so label ids are never blended into ones that never existed.
+know the rule. That is why a shallow pyramid is rebuilt from full resolution
+rather than extended from its coarsest level: every level is recomputed, which
+costs a full read of `s0`. Images are coarsened by averaging, labels by the label
+model's own downsampler, so label ids are never blended into ones that never
+existed.
 
-Rebuilding is always copy-then-write: the element is read from the source store
-and written into a *different* store. SpatialData refuses to delete the files
-backing a live element, so genuine in-place rewriting is not available here.
+`ensure_pyramids` does this in memory, for a caller that is about to write the
+`SpatialData` object anyway. The path-based functions are copy-then-write: the
+element is read from the source store and written into a *different* store,
+because SpatialData refuses to delete the files backing a live element.
 """
 
 from __future__ import annotations
@@ -119,14 +129,62 @@ def resolve_scale_factors(
     return factors
 
 
-def _full_resolution(element: Any) -> Any:
-    """Return the full-resolution array, unwrapping an existing multiscale tree."""
+def _level_arrays(element: Any) -> list[Any]:
+    """Every resolution level of a raster, full resolution first."""
     from xarray import DataTree
 
     if isinstance(element, DataTree):
-        first = next(iter(element))
-        return element[first]["image"]
-    return element
+        return [element[name]["image"] for name in element]
+    return [element]
+
+
+def _full_resolution(element: Any) -> Any:
+    """Return the full-resolution array, unwrapping an existing multiscale tree."""
+    return _level_arrays(element)[0]
+
+
+def needs_pyramid(element: Any, *, min_size: int = DEFAULT_MIN_SIZE) -> bool:
+    """Whether a raster's coarsest level is still larger than *min_size*.
+
+    *element* is an in-memory image or labels element, single- or multiscale.
+    """
+    coarsest = min(max(_spatial_extent(level), default=0) for level in _level_arrays(element))
+    return coarsest > min_size
+
+
+def _plan_rebuild(
+    element: Any,
+    *,
+    levels: int | Literal["auto"],
+    downscale: int,
+    min_size: int,
+    force: bool,
+) -> tuple[list[int], str | None]:
+    """Return the scale factors to rebuild *element* with, or why it is skipped."""
+    factors = resolve_scale_factors(
+        _full_resolution(element), levels=levels, downscale=downscale, min_size=min_size
+    )
+    if not factors:
+        return [], (
+            "already at or below the target size"
+            if levels == "auto"
+            else "requested a single level"
+        )
+    if force:
+        return factors, None
+
+    existing = len(_level_arrays(element))
+    if levels != "auto":
+        if existing >= levels:
+            return [], f"already has {existing} levels"
+        return factors, None
+    if not needs_pyramid(element, min_size=min_size):
+        return [], "coarsest level within min size"
+    # A very thin raster, or MAX_LEVELS, can stop short of min_size. Rebuilding
+    # again would produce the same levels on every run.
+    if existing >= len(factors) + 1:
+        return [], "no further levels possible"
+    return factors, None
 
 
 def _rebuild_element(source_element: Any, scale_factors: list[int], chunks: Any) -> Any:
@@ -156,42 +214,29 @@ def build_pyramids_into(
 ) -> list[dict[str, Any]]:
     """Rebuild *keys* with pyramids, reading from one store and writing to another.
 
-    `dest_sdata` must be backed by a different path than `source_sdata`; see the
-    module docstring. Returns one report per key, including skipped ones.
+    Only elements that need it are rebuilt (see the module docstring), unless
+    *force* is set. `dest_sdata` must be backed by a different path than
+    `source_sdata`. Returns one report per key, including skipped ones.
     """
     reports: list[dict[str, Any]] = []
+    dest_path = Path(str(dest_sdata.path))
     dest_elements = getattr(dest_sdata, collection)
     source_elements = getattr(source_sdata, collection)
 
     for key in keys:
         source_element = source_elements[key]
-        existing = _multiscale_datasets(Path(str(dest_sdata.path)), collection, key)
-        if len(existing) > 1 and not force:
-            reports.append(
-                {
-                    "path": f"{collection}/{key}",
-                    "action": "skipped",
-                    "reason": "already multiscale",
-                    "levels": existing,
-                }
-            )
-            continue
-
         full_res = _full_resolution(source_element)
-        scale_factors = resolve_scale_factors(
-            full_res, levels=levels, downscale=downscale, min_size=min_size
+        scale_factors, skip_reason = _plan_rebuild(
+            source_element, levels=levels, downscale=downscale, min_size=min_size, force=force
         )
-        if not scale_factors:
+        if skip_reason is not None:
             reports.append(
                 {
                     "path": f"{collection}/{key}",
                     "action": "skipped",
-                    "reason": (
-                        "already at or below the target size"
-                        if levels == "auto"
-                        else "requested a single level"
-                    ),
+                    "reason": skip_reason,
                     "shape": list(full_res.shape),
+                    "levels": _multiscale_datasets(dest_path, collection, key),
                 }
             )
             continue
@@ -207,8 +252,101 @@ def build_pyramids_into(
                 "action": "rebuilt",
                 "shape": list(full_res.shape),
                 "scale_factors": scale_factors,
-                "levels": _multiscale_datasets(Path(str(dest_sdata.path)), collection, key),
+                "levels": _multiscale_datasets(dest_path, collection, key),
             }
+        )
+    return reports
+
+
+def _ensure_collection(
+    sdata: "SpatialData",
+    collection: RasterCollection,
+    keys: Sequence[str] | None,
+    *,
+    downscale: int,
+    min_size: int,
+) -> list[dict[str, Any]]:
+    elements = getattr(sdata, collection)
+    available = list(elements.keys())
+    if keys is None:
+        keys = available
+    unknown = [key for key in keys if key not in available]
+    if unknown:
+        raise WriterCommandError(
+            f"Unknown {collection} element(s): {', '.join(unknown)}. "
+            f"Available: {', '.join(available) or '(none)'}"
+        )
+
+    reports: list[dict[str, Any]] = []
+    for key in keys:
+        element = elements[key]
+        full_res = _full_resolution(element)
+        scale_factors, skip_reason = _plan_rebuild(
+            element, levels="auto", downscale=downscale, min_size=min_size, force=False
+        )
+        if skip_reason is not None:
+            reports.append(
+                {
+                    "path": f"{collection}/{key}",
+                    "action": "skipped",
+                    "reason": skip_reason,
+                    "shape": list(full_res.shape),
+                    "level_count": len(_level_arrays(element)),
+                }
+            )
+            continue
+
+        rebuilt = _rebuild_element(full_res, scale_factors, _element_chunks(full_res))
+        elements[key] = rebuilt
+        reports.append(
+            {
+                "path": f"{collection}/{key}",
+                "action": "rebuilt",
+                "shape": list(full_res.shape),
+                "scale_factors": scale_factors,
+                "level_count": len(_level_arrays(rebuilt)),
+            }
+        )
+    return reports
+
+
+def ensure_pyramids(
+    sdata: "SpatialData",
+    *,
+    include_labels: bool = False,
+    min_size: int = DEFAULT_MIN_SIZE,
+    downscale: int = 2,
+    image_keys: Sequence[str] | None = None,
+    label_keys: Sequence[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Give raster elements of an in-memory `SpatialData` the levels they lack.
+
+    Each image (and, with *include_labels*, each labels element) whose coarsest
+    level is larger than *min_size* is replaced in `sdata` by a multiscale rebuilt
+    from its full resolution. Nothing is written or recompressed; the new levels
+    are lazy dask arrays computed when `sdata` is written. *image_keys* and
+    *label_keys* limit which elements are considered.
+
+    Rebuilding recomputes every level from full resolution, including any
+    overviews the element already had, so writing a rebuilt element reads all of
+    `s0` once.
+
+    A rebuilt element still reads from the files backing the original, so write
+    `sdata` to a new path: SpatialData refuses to delete files backing a live
+    element.
+
+    Returns one report per element considered: ``action`` is ``"rebuilt"`` or
+    ``"skipped"`` (with a ``reason``), as from `build_pyramids_into`, except that
+    ``level_count`` replaces the on-disk ``levels`` names.
+    """
+    reports = _ensure_collection(
+        sdata, "images", image_keys, downscale=downscale, min_size=min_size
+    )
+    if include_labels:
+        reports.extend(
+            _ensure_collection(
+                sdata, "labels", label_keys, downscale=downscale, min_size=min_size
+            )
         )
     return reports
 
@@ -246,8 +384,8 @@ def add_pyramids(
 ) -> PyramidResult:
     """Copy a store and give its raster elements multiscale pyramids.
 
-    Elements that already have more than one level are left alone unless *force*
-    is set. Everything the store contains that is not being rebuilt — points,
+    Only elements that need more levels are rebuilt, unless *force* is set; see
+    the module docstring for the rule. Everything the store contains that is not being rebuilt — points,
     shapes, tables, other rasters — is preserved by the copy.
     """
     import spatialdata as sd

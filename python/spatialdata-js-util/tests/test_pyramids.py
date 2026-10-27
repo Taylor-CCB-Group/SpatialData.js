@@ -15,7 +15,9 @@ sd = pytest.importorskip("spatialdata")
 from spatialdata_js_util.pyramids import (  # noqa: E402
     MAX_LEVELS,
     add_pyramids,
+    ensure_pyramids,
     has_pyramid,
+    needs_pyramid,
     resolve_scale_factors,
 )
 
@@ -47,10 +49,14 @@ def _store(
     return path
 
 
-def _levels(store: Path, collection: str, key: str) -> list[str]:
+def _datasets(store: Path, collection: str, key: str) -> list[dict]:
     attrs = json.loads((store / collection / key / "zarr.json").read_text())["attributes"]
     ome = attrs.get("ome", attrs)
-    return [d["path"] for d in ome["multiscales"][0]["datasets"]]
+    return ome["multiscales"][0]["datasets"]
+
+
+def _levels(store: Path, collection: str, key: str) -> list[str]:
+    return [d["path"] for d in _datasets(store, collection, key)]
 
 
 class TestResolveScaleFactors:
@@ -147,7 +153,8 @@ class TestAddPyramids:
         after = get_transformation(sd.read_zarr(tmp_path / "out.zarr").images["morphology"], get_all=True)
         assert after == before
 
-    def test_already_multiscale_is_skipped(self, tmp_path: Path) -> None:
+    def test_adequate_pyramid_is_skipped(self, tmp_path: Path) -> None:
+        # 2048 -> 1024: the coarsest level is already within the default min size.
         source = _store(tmp_path / "src.zarr", scale_factors=[2])
         assert has_pyramid(source, "images", "morphology")
 
@@ -155,7 +162,35 @@ class TestAddPyramids:
 
         entry = result.manifest["rasters"][0]
         assert entry["action"] == "skipped"
-        assert entry["reason"] == "already multiscale"
+        assert entry["reason"] == "coarsest level within min size"
+        assert entry["levels"] == ["s0", "s1"]
+
+    def test_shallow_pyramid_is_extended(self, tmp_path: Path) -> None:
+        # 2048 -> 1024 is too shallow once the target is 512.
+        source = _store(tmp_path / "src.zarr", scale_factors=[2])
+
+        result = add_pyramids(source, tmp_path / "out.zarr", min_size=512)
+
+        entry = result.manifest["rasters"][0]
+        assert entry["action"] == "rebuilt"
+        assert entry["scale_factors"] == [2, 2]
+        assert _levels(tmp_path / "out.zarr", "images", "morphology") == ["s0", "s1", "s2"]
+
+    def test_explicit_levels_skip_a_pyramid_that_has_them(self, tmp_path: Path) -> None:
+        source = _store(tmp_path / "src.zarr", scale_factors=[2])
+
+        result = add_pyramids(source, tmp_path / "out.zarr", levels=2)
+
+        entry = result.manifest["rasters"][0]
+        assert entry["action"] == "skipped"
+        assert entry["reason"] == "already has 2 levels"
+
+    def test_explicit_levels_extend_a_shorter_pyramid(self, tmp_path: Path) -> None:
+        source = _store(tmp_path / "src.zarr", scale_factors=[2])
+
+        add_pyramids(source, tmp_path / "out.zarr", levels=3)
+
+        assert _levels(tmp_path / "out.zarr", "images", "morphology") == ["s0", "s1", "s2"]
 
     def test_force_rebuilds_an_existing_pyramid(self, tmp_path: Path) -> None:
         source = _store(tmp_path / "src.zarr", scale_factors=[2])
@@ -224,6 +259,138 @@ class TestAddPyramids:
     def test_rejects_a_non_store_path(self, tmp_path: Path) -> None:
         with pytest.raises(WriterCommandError, match="Not a zarr store"):
             add_pyramids(tmp_path, tmp_path / "out.zarr")
+
+
+class TestNeedsPyramid:
+    def test_single_level_above_min_size(self) -> None:
+        from spatialdata.models import Image2DModel
+
+        element = Image2DModel.parse(_image(), dims=("c", "y", "x"))
+        assert needs_pyramid(element)
+        assert not needs_pyramid(element, min_size=2048)
+
+    def test_judges_the_coarsest_level(self) -> None:
+        from spatialdata.models import Image2DModel
+
+        element = Image2DModel.parse(_image(), dims=("c", "y", "x"), scale_factors=[2])
+        assert not needs_pyramid(element)
+        assert needs_pyramid(element, min_size=512)
+
+
+class TestEnsurePyramids:
+    """The in-memory path: elements are replaced on the object, nothing is written."""
+
+    def test_single_level_element_gains_levels(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr"))
+
+        reports = ensure_pyramids(sdata)
+
+        assert reports == [
+            {
+                "path": "images/morphology",
+                "action": "rebuilt",
+                "shape": [1, 2048, 1536],
+                "scale_factors": [2],
+                "level_count": 2,
+            }
+        ]
+        sdata.write(tmp_path / "out.zarr")
+        assert _levels(tmp_path / "out.zarr", "images", "morphology") == ["s0", "s1"]
+
+    def test_full_resolution_is_untouched(self, tmp_path: Path) -> None:
+        pixels = _image()
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", pixels=pixels))
+
+        ensure_pyramids(sdata)
+
+        s0 = sdata.images["morphology"]["scale0"]["image"].data.compute()
+        assert np.array_equal(np.asarray(s0), pixels)
+
+    def test_shallow_pyramid_is_rebuilt(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", scale_factors=[2]))
+
+        [report] = ensure_pyramids(sdata, min_size=512)
+
+        assert report["action"] == "rebuilt"
+        assert report["scale_factors"] == [2, 2]
+        assert report["level_count"] == 3
+
+    def test_adequate_pyramid_is_left_alone(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", scale_factors=[2]))
+        before = sdata.images["morphology"]
+
+        [report] = ensure_pyramids(sdata)
+
+        assert report["action"] == "skipped"
+        assert report["reason"] == "coarsest level within min size"
+        assert report["level_count"] == 2
+        assert sdata.images["morphology"] is before
+
+    def test_small_single_level_element_is_left_alone(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", pixels=_image(256, 256)))
+        before = sdata.images["morphology"]
+
+        [report] = ensure_pyramids(sdata)
+
+        assert report["action"] == "skipped"
+        assert sdata.images["morphology"] is before
+
+    def test_level_transforms_match_the_parser(self, tmp_path: Path) -> None:
+        from spatialdata.models import Image2DModel
+        from spatialdata.transformations import Scale
+
+        transformations = {"global": Scale([2.0, 2.0], axes=("y", "x"))}
+        pixels = _image()
+        sdata = sd.read_zarr(
+            _store(tmp_path / "src.zarr", pixels=pixels, scale_factors=[2], transformations=transformations)
+        )
+
+        ensure_pyramids(sdata, min_size=512)
+        sdata.write(tmp_path / "out.zarr")
+
+        # The reference is what the parser writes when asked for this pyramid
+        # directly: same per-level scale and half-pixel translation.
+        reference = Image2DModel.parse(
+            pixels, dims=("c", "y", "x"), scale_factors=[2, 2], transformations=transformations
+        )
+        sd.SpatialData(images={"morphology": reference}).write(tmp_path / "ref.zarr")
+        assert _datasets(tmp_path / "out.zarr", "images", "morphology") == _datasets(
+            tmp_path / "ref.zarr", "images", "morphology"
+        )
+
+    def test_labels_only_with_include_labels(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", labels=_labels()))
+        labels_before = sdata.labels["cells"]
+
+        reports = ensure_pyramids(sdata)
+        assert [r["path"] for r in reports] == ["images/morphology"]
+        assert sdata.labels["cells"] is labels_before
+
+        reports = ensure_pyramids(sdata, include_labels=True)
+        [labels_report] = [r for r in reports if r["path"] == "labels/cells"]
+        assert labels_report["action"] == "rebuilt"
+        coarse = np.asarray(sdata.labels["cells"]["scale1"]["image"].data.compute())
+        assert set(np.unique(coarse).tolist()) <= set(np.unique(_labels()).tolist())
+
+    def test_keys_limit_the_elements_considered(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", labels=_labels()))
+
+        reports = ensure_pyramids(sdata, include_labels=True, image_keys=[])
+
+        assert [r["path"] for r in reports] == ["labels/cells"]
+
+    def test_rejects_unknown_keys(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr"))
+        with pytest.raises(WriterCommandError, match="Unknown images element"):
+            ensure_pyramids(sdata, image_keys=["nope"])
+
+    def test_writes_nothing(self, tmp_path: Path) -> None:
+        source = _store(tmp_path / "src.zarr")
+        before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
+
+        ensure_pyramids(sd.read_zarr(source))
+
+        assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
 
 class TestRecompressWithPyramid:

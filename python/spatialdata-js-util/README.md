@@ -205,8 +205,12 @@ spatial axis is `--pyramid-min-size` (1024) or smaller, so the coarsest level is
 roughly one chunk. Override with `--pyramid-levels N` (a *total* count including
 full resolution) and `--pyramid-downscale K`.
 
-Images that already have more than one level are **skipped**, and the manifest
-says so; `--pyramid-force` rebuilds them anyway. Pass `--labels` to
+An image is rebuilt only when its coarsest existing level is still larger than
+`--pyramid-min-size` (with `--pyramid-levels N`, when it has fewer than N
+levels), so a single-resolution image and a shallow pyramid both get levels.
+Others are **skipped**, and the manifest says why; `--pyramid-force` rebuilds
+them anyway. A shallow pyramid is rebuilt from full resolution, not extended from
+its coarsest level, so its existing overviews are recomputed too. Pass `--labels` to
 `add-pyramid` to include label elements — they are downsampled by the label
 model, so ids are never averaged into values that identify no object.
 
@@ -217,6 +221,9 @@ tends to misalign every level against the full-resolution image.
 
 Pyramids are always written to a **different** store than the source. SpatialData
 refuses to delete the files backing a live element, so there is no in-place mode.
+To avoid the copy when you are about to write a `SpatialData` object anyway, call
+`ensure_pyramids(sdata)`: it replaces the elements that need levels in memory and
+writes nothing.
 
 ### Other image notes
 
@@ -331,9 +338,11 @@ csc = to_csc(adata.X)                         # or just a matrix
 ## Python API
 
 ```python
+import spatialdata as sd
 from spatialdata_js_util import (
     recompress_spatialdata,
     add_pyramids,
+    ensure_pyramids,
     has_pyramid,
     write_morton_points_parquet,
     convert_store_tables_to_csc,
@@ -344,7 +353,7 @@ result = recompress_spatialdata(
     "input.zarr", "output-htj2k.zarr",
     codec="experimental.openjph_htj2k",
     preset="balanced",
-    pyramid=True,          # add levels to single-resolution images first
+    pyramid=True,          # add levels to images whose coarsest level is too large
     overwrite=True,
 )
 print(result.manifest_path)
@@ -352,6 +361,11 @@ print(result.manifest_path)
 # Or pyramids on their own
 has_pyramid("input.zarr", "images", "morphology")   # -> False
 add_pyramids("input.zarr", "output.zarr", levels=4)
+
+# Or in memory, before a write you were doing anyway
+sdata = sd.read_zarr("input.zarr")
+ensure_pyramids(sdata, include_labels=True)
+sdata.write("output.zarr")
 ```
 
 ## Monorepo development

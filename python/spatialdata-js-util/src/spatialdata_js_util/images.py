@@ -675,10 +675,11 @@ def recompress_spatialdata(
     shapes, points, and unconfigured rasters intact without loading the whole
     object.
 
-    With *pyramid*, any configured image that has only one resolution level is
-    given a multiscale pyramid before it is recompressed, so single-resolution
-    acquisition output becomes browser-ready in one pass. Images that already
-    have a pyramid are left alone unless *pyramid_force* is set. See
+    With *pyramid*, any configured image whose coarsest level is larger than
+    *pyramid_min_size* is given a rebuilt multiscale pyramid before it is
+    recompressed, so single-resolution or shallow-pyramid acquisition output
+    becomes browser-ready in one pass. Images whose pyramid is already deep
+    enough are left alone unless *pyramid_force* is set. See
     `spatialdata_js_util.pyramids` for how levels are chosen.
     """
 

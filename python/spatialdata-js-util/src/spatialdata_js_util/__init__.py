@@ -40,7 +40,9 @@ from .images import (
 from .pyramids import (
     PyramidResult,
     add_pyramids,
+    ensure_pyramids,
     has_pyramid,
+    needs_pyramid,
     resolve_scale_factors,
 )
 from .points import (
@@ -89,11 +91,13 @@ __all__ = [
     "build_spatialdata_multiscale_metadata",
     "convert_store_tables_to_csc",
     "dtype_quantum",
+    "ensure_pyramids",
     "has_pyramid",
     "htj2k_available",
     "htj2k_preset_quality",
     "is_htj2k_codec",
     "morton_sort_points",
+    "needs_pyramid",
     "plan_column_encodings",
     "recompress_spatialdata",
     "register_codecs",
