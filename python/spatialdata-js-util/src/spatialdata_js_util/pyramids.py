@@ -15,11 +15,13 @@ Levels are generated through SpatialData's own parsers rather than by writing
 `multiscales` metadata by hand. Each level carries a scale *and* a half-pixel
 translation (`s1` is offset by 0.5, `s2` by 1.5, …); getting those wrong
 misaligns every level against the full-resolution image, and the parsers already
-know the rule. That is why a shallow pyramid is rebuilt from full resolution
-rather than extended from its coarsest level: every level is recomputed, which
-costs a full read of `s0`. Images are coarsened by averaging, labels by the label
-model's own downsampler, so label ids are never blended into ones that never
-existed.
+know the rule. A single-level element is parsed with scale factors; a shallow
+pyramid keeps its existing levels and gains new ones parsed from its coarsest
+level, with the per-level transforms rederived from level shapes as SpatialData
+does for any multiscale. Extending reads only the coarsest level, not `s0`;
+`force` rebuilds every level from full resolution instead. Images are coarsened
+by averaging, labels by the label model's own downsampler, so label ids are never
+blended into ones that never existed.
 
 `ensure_pyramids` does this in memory, for a caller that is about to write the
 `SpatialData` object anyway. The path-based functions are copy-then-write: the
@@ -121,11 +123,11 @@ def resolve_scale_factors(
     factors: list[int] = []
     largest = max(extent)
     while largest > min_size and len(factors) < MAX_LEVELS - 1:
+        # A further level would shrink an axis below one pixel.
+        if min(extent) // (downscale ** (len(factors) + 1)) < 1:
+            break
         factors.append(downscale)
         largest //= downscale
-        # A further level would shrink an axis below one pixel.
-        if min(extent) // (downscale ** len(factors)) < 1:
-            break
     return factors
 
 
@@ -148,43 +150,53 @@ def needs_pyramid(element: Any, *, min_size: int = DEFAULT_MIN_SIZE) -> bool:
 
     *element* is an in-memory image or labels element, single- or multiscale.
     """
-    coarsest = min(max(_spatial_extent(level), default=0) for level in _level_arrays(element))
-    return coarsest > min_size
+    return max(_spatial_extent(_level_arrays(element)[-1]), default=0) > min_size
 
 
-def _plan_rebuild(
+PyramidAction = Literal["rebuilt", "extended", "skipped"]
+
+
+def _plan(
     element: Any,
     *,
     levels: int | Literal["auto"],
     downscale: int,
     min_size: int,
     force: bool,
-) -> tuple[list[int], str | None]:
-    """Return the scale factors to rebuild *element* with, or why it is skipped."""
-    factors = resolve_scale_factors(
-        _full_resolution(element), levels=levels, downscale=downscale, min_size=min_size
-    )
-    if not factors:
-        return [], (
+) -> tuple[PyramidAction, list[int], str | None]:
+    """Decide how to give *element* the levels it lacks.
+
+    Returns ``(action, scale_factors, skip_reason)``. Factors for ``"rebuilt"``
+    apply to full resolution, factors for ``"extended"`` to the coarsest level.
+    """
+    arrays = _level_arrays(element)
+    if force or len(arrays) == 1:
+        factors = resolve_scale_factors(
+            arrays[0], levels=levels, downscale=downscale, min_size=min_size
+        )
+        if factors:
+            return "rebuilt", factors, None
+        return "skipped", [], (
             "already at or below the target size"
             if levels == "auto"
             else "requested a single level"
         )
-    if force:
-        return factors, None
 
-    existing = len(_level_arrays(element))
+    existing = len(arrays)
     if levels != "auto":
         if existing >= levels:
-            return [], f"already has {existing} levels"
-        return factors, None
+            return "skipped", [], f"already has {existing} levels"
+        # Validates *levels*; the existing levels stand in for the first factors.
+        factors = resolve_scale_factors(arrays[-1], levels=levels, downscale=downscale)
+        return "extended", factors[existing - 1 :], None
     if not needs_pyramid(element, min_size=min_size):
-        return [], "coarsest level within min size"
-    # A very thin raster, or MAX_LEVELS, can stop short of min_size. Rebuilding
-    # again would produce the same levels on every run.
-    if existing >= len(factors) + 1:
-        return [], "no further levels possible"
-    return factors, None
+        return "skipped", [], "coarsest level within min size"
+    factors = resolve_scale_factors(arrays[-1], downscale=downscale, min_size=min_size)
+    factors = factors[: MAX_LEVELS - existing]
+    if not factors:
+        # A very thin raster, or one already at MAX_LEVELS.
+        return "skipped", [], "no further levels possible"
+    return "extended", factors, None
 
 
 def _rebuild_element(source_element: Any, scale_factors: list[int], chunks: Any) -> Any:
@@ -193,6 +205,38 @@ def _rebuild_element(source_element: Any, scale_factors: list[int], chunks: Any)
     model = get_model(source_element)
     # Transformations travel with the element; passing them again is an error.
     return model.parse(source_element, scale_factors=scale_factors, chunks=chunks)
+
+
+def _extend_element(element: Any, scale_factors: list[int]) -> Any:
+    """Append levels to a multiscale *element*, coarsened from its coarsest level.
+
+    The existing levels are kept as they are. New levels come from the model's
+    own parser, so images are averaged and labels keep valid ids.
+    """
+    from spatialdata.transformations import get_transformation, set_transformation
+
+    # Private, but it is what `model.parse` runs on every multiscale it builds;
+    # without it the new levels' coords are measured against the coarsest level.
+    from spatialdata.transformations._utils import compute_coordinates
+    from xarray import DataTree
+
+    coarsest = _level_arrays(element)[-1]
+    tail = _rebuild_element(coarsest, scale_factors, _element_chunks(coarsest))
+    nodes = {name: element[name].to_dataset() for name in element}
+    for index, name in enumerate(list(tail)[1:], start=len(nodes)):
+        nodes[f"scale{index}"] = tail[name].to_dataset()
+    extended = DataTree.from_dict(nodes)
+    # SpatialData derives each level's scale from its shape relative to the one
+    # above, which also yields the half-pixel translation once written.
+    set_transformation(extended, get_transformation(element, get_all=True), set_all=True)
+    return compute_coordinates(extended)
+
+
+def _apply_plan(element: Any, action: PyramidAction, scale_factors: list[int]) -> Any:
+    if action == "extended":
+        return _extend_element(element, scale_factors)
+    full_res = _full_resolution(element)
+    return _rebuild_element(full_res, scale_factors, _element_chunks(full_res))
 
 
 def _element_chunks(element: Any) -> tuple[int, ...] | None:
@@ -212,11 +256,13 @@ def build_pyramids_into(
     min_size: int = DEFAULT_MIN_SIZE,
     force: bool = False,
 ) -> list[dict[str, Any]]:
-    """Rebuild *keys* with pyramids, reading from one store and writing to another.
+    """Give *keys* pyramids, reading from one store and writing to another.
 
-    Only elements that need it are rebuilt (see the module docstring), unless
-    *force* is set. `dest_sdata` must be backed by a different path than
-    `source_sdata`. Returns one report per key, including skipped ones.
+    Only elements that need levels are touched, and a multiscale element is
+    extended from its coarsest level; *force* rebuilds every element from full
+    resolution instead (see the module docstring). `dest_sdata` must be backed
+    by a different path than `source_sdata`. Returns one report per key,
+    including skipped ones.
     """
     reports: list[dict[str, Any]] = []
     dest_path = Path(str(dest_sdata.path))
@@ -226,10 +272,10 @@ def build_pyramids_into(
     for key in keys:
         source_element = source_elements[key]
         full_res = _full_resolution(source_element)
-        scale_factors, skip_reason = _plan_rebuild(
+        action, scale_factors, skip_reason = _plan(
             source_element, levels=levels, downscale=downscale, min_size=min_size, force=force
         )
-        if skip_reason is not None:
+        if action == "skipped":
             reports.append(
                 {
                     "path": f"{collection}/{key}",
@@ -241,15 +287,14 @@ def build_pyramids_into(
             )
             continue
 
-        rebuilt = _rebuild_element(full_res, scale_factors, _element_chunks(full_res))
-        dest_elements[key] = rebuilt
+        dest_elements[key] = _apply_plan(source_element, action, scale_factors)
         dest_sdata.delete_element_from_disk(key)
         dest_sdata.write_element(key)
 
         reports.append(
             {
                 "path": f"{collection}/{key}",
-                "action": "rebuilt",
+                "action": action,
                 "shape": list(full_res.shape),
                 "scale_factors": scale_factors,
                 "levels": _multiscale_datasets(dest_path, collection, key),
@@ -281,10 +326,10 @@ def _ensure_collection(
     for key in keys:
         element = elements[key]
         full_res = _full_resolution(element)
-        scale_factors, skip_reason = _plan_rebuild(
+        action, scale_factors, skip_reason = _plan(
             element, levels="auto", downscale=downscale, min_size=min_size, force=False
         )
-        if skip_reason is not None:
+        if action == "skipped":
             reports.append(
                 {
                     "path": f"{collection}/{key}",
@@ -296,15 +341,15 @@ def _ensure_collection(
             )
             continue
 
-        rebuilt = _rebuild_element(full_res, scale_factors, _element_chunks(full_res))
-        elements[key] = rebuilt
+        updated = _apply_plan(element, action, scale_factors)
+        elements[key] = updated
         reports.append(
             {
                 "path": f"{collection}/{key}",
-                "action": "rebuilt",
+                "action": action,
                 "shape": list(full_res.shape),
                 "scale_factors": scale_factors,
-                "level_count": len(_level_arrays(rebuilt)),
+                "level_count": len(_level_arrays(updated)),
             }
         )
     return reports
@@ -322,22 +367,21 @@ def ensure_pyramids(
     """Give raster elements of an in-memory `SpatialData` the levels they lack.
 
     Each image (and, with *include_labels*, each labels element) whose coarsest
-    level is larger than *min_size* is replaced in `sdata` by a multiscale rebuilt
-    from its full resolution. Nothing is written or recompressed; the new levels
-    are lazy dask arrays computed when `sdata` is written. *image_keys* and
-    *label_keys* limit which elements are considered.
+    level is larger than *min_size* is replaced in `sdata`. A multiscale element
+    keeps its existing levels and gains new ones coarsened from its coarsest
+    level; a single-level element is rebuilt from full resolution. Nothing is
+    written or recompressed; the new levels are lazy dask arrays computed when
+    `sdata` is written. *image_keys* and *label_keys* limit which elements are
+    considered.
 
-    Rebuilding recomputes every level from full resolution, including any
-    overviews the element already had, so writing a rebuilt element reads all of
-    `s0` once.
+    A replaced element still reads from the files backing the original, so
+    write `sdata` to a new path: SpatialData refuses to delete files backing a
+    live element.
 
-    A rebuilt element still reads from the files backing the original, so write
-    `sdata` to a new path: SpatialData refuses to delete files backing a live
-    element.
-
-    Returns one report per element considered: ``action`` is ``"rebuilt"`` or
-    ``"skipped"`` (with a ``reason``), as from `build_pyramids_into`, except that
-    ``level_count`` replaces the on-disk ``levels`` names.
+    Returns one report per element considered: ``action`` is ``"rebuilt"``,
+    ``"extended"`` (``scale_factors`` then apply to the coarsest existing level)
+    or ``"skipped"`` (with a ``reason``), as from `build_pyramids_into`, except
+    that ``level_count`` replaces the on-disk ``levels`` names.
     """
     reports = _ensure_collection(
         sdata, "images", image_keys, downscale=downscale, min_size=min_size
@@ -384,7 +428,7 @@ def add_pyramids(
 ) -> PyramidResult:
     """Copy a store and give its raster elements multiscale pyramids.
 
-    Only elements that need more levels are rebuilt, unless *force* is set; see
+    Only elements that need more levels are touched, unless *force* is set; see
     the module docstring for the rule. Everything the store contains that is not being rebuilt — points,
     shapes, tables, other rasters — is preserved by the copy.
     """

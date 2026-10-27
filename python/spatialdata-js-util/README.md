@@ -205,19 +205,20 @@ spatial axis is `--pyramid-min-size` (1024) or smaller, so the coarsest level is
 roughly one chunk. Override with `--pyramid-levels N` (a *total* count including
 full resolution) and `--pyramid-downscale K`.
 
-An image is rebuilt only when its coarsest existing level is still larger than
+An image gets levels only when its coarsest existing level is still larger than
 `--pyramid-min-size` (with `--pyramid-levels N`, when it has fewer than N
-levels), so a single-resolution image and a shallow pyramid both get levels.
-Others are **skipped**, and the manifest says why; `--pyramid-force` rebuilds
-them anyway. A shallow pyramid is rebuilt from full resolution, not extended from
-its coarsest level, so its existing overviews are recomputed too. Pass `--labels` to
+levels). A single-resolution image is built from full resolution; a shallow
+pyramid keeps its existing levels and gains new ones coarsened from its coarsest
+level, so only that level is read. Others are **skipped**, and the manifest says
+why; `--pyramid-force` rebuilds every image from full resolution anyway. Pass `--labels` to
 `add-pyramid` to include label elements — they are downsampled by the label
 model, so ids are never averaged into values that identify no object.
 
-Full resolution is copied through unchanged; only the added levels are new.
-Levels are generated through SpatialData's own parsers, which get the per-level
-scale *and* half-pixel translation right — hand-written `multiscales` metadata
-tends to misalign every level against the full-resolution image.
+Existing levels are copied through unchanged; only the added levels are new.
+Levels are generated through SpatialData's own parsers and the per-level
+transforms are derived from level shapes, which gets the scale *and* half-pixel
+translation right — hand-written `multiscales` metadata tends to misalign every
+level against the full-resolution image.
 
 Pyramids are always written to a **different** store than the source. SpatialData
 refuses to delete the files backing a live element, so there is no in-place mode.

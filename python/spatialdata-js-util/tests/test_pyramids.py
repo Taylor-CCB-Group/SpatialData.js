@@ -89,6 +89,10 @@ class TestResolveScaleFactors:
         element = self._Element(c=1, y=4096, x=4096)
         assert resolve_scale_factors(element, downscale=4, min_size=1024) == [4]
 
+    def test_auto_stops_before_an_axis_reaches_zero(self) -> None:
+        element = self._Element(c=1, y=2, x=8192)
+        assert resolve_scale_factors(element, min_size=1024) == [2]
+
     def test_auto_is_bounded(self) -> None:
         element = self._Element(c=1, y=2**24, x=2**24)
         assert len(resolve_scale_factors(element, min_size=1)) <= MAX_LEVELS - 1
@@ -172,8 +176,8 @@ class TestAddPyramids:
         result = add_pyramids(source, tmp_path / "out.zarr", min_size=512)
 
         entry = result.manifest["rasters"][0]
-        assert entry["action"] == "rebuilt"
-        assert entry["scale_factors"] == [2, 2]
+        assert entry["action"] == "extended"
+        assert entry["scale_factors"] == [2]
         assert _levels(tmp_path / "out.zarr", "images", "morphology") == ["s0", "s1", "s2"]
 
     def test_explicit_levels_skip_a_pyramid_that_has_them(self, tmp_path: Path) -> None:
@@ -188,8 +192,9 @@ class TestAddPyramids:
     def test_explicit_levels_extend_a_shorter_pyramid(self, tmp_path: Path) -> None:
         source = _store(tmp_path / "src.zarr", scale_factors=[2])
 
-        add_pyramids(source, tmp_path / "out.zarr", levels=3)
+        result = add_pyramids(source, tmp_path / "out.zarr", levels=3)
 
+        assert result.manifest["rasters"][0]["action"] == "extended"
         assert _levels(tmp_path / "out.zarr", "images", "morphology") == ["s0", "s1", "s2"]
 
     def test_force_rebuilds_an_existing_pyramid(self, tmp_path: Path) -> None:
@@ -306,14 +311,48 @@ class TestEnsurePyramids:
         s0 = sdata.images["morphology"]["scale0"]["image"].data.compute()
         assert np.array_equal(np.asarray(s0), pixels)
 
-    def test_shallow_pyramid_is_rebuilt(self, tmp_path: Path) -> None:
+    def test_shallow_pyramid_is_extended(self, tmp_path: Path) -> None:
         sdata = sd.read_zarr(_store(tmp_path / "src.zarr", scale_factors=[2]))
+        before = sdata.images["morphology"]
+        existing = [before[name]["image"].data.name for name in ("scale0", "scale1")]
 
         [report] = ensure_pyramids(sdata, min_size=512)
 
-        assert report["action"] == "rebuilt"
-        assert report["scale_factors"] == [2, 2]
+        assert report["action"] == "extended"
+        assert report["scale_factors"] == [2]
         assert report["level_count"] == 3
+        # The existing levels are reused, not recomputed from full resolution.
+        after = sdata.images["morphology"]
+        assert [after[name]["image"].data.name for name in ("scale0", "scale1")] == existing
+
+    def test_new_level_averages_the_coarsest_level(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", scale_factors=[2]))
+        s1 = np.asarray(sdata.images["morphology"]["scale1"]["image"].data.compute())
+
+        ensure_pyramids(sdata, min_size=512)
+
+        s2 = np.asarray(sdata.images["morphology"]["scale2"]["image"].data.compute())
+        expected = s1.reshape(1, 512, 2, 384, 2).mean(axis=(2, 4)).astype(np.uint16)
+        assert np.array_equal(s2, expected)
+
+    def test_new_level_coords_are_in_full_resolution_pixels(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", scale_factors=[2]))
+
+        ensure_pyramids(sdata, min_size=512)
+
+        s2 = sdata.images["morphology"]["scale2"]["image"]
+        # Each s2 pixel covers 4 full-resolution pixels; its centre is at 2, 6, …
+        assert s2.coords["x"].values[:2].tolist() == [2.0, 6.0]
+
+    def test_a_raster_too_thin_to_extend_is_left_alone(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(
+            _store(tmp_path / "src.zarr", pixels=_image(2, 8192), scale_factors=[2])
+        )
+
+        [report] = ensure_pyramids(sdata)
+
+        assert report["action"] == "skipped"
+        assert report["reason"] == "no further levels possible"
 
     def test_adequate_pyramid_is_left_alone(self, tmp_path: Path) -> None:
         sdata = sd.read_zarr(_store(tmp_path / "src.zarr", scale_factors=[2]))
@@ -372,6 +411,17 @@ class TestEnsurePyramids:
         coarse = np.asarray(sdata.labels["cells"]["scale1"]["image"].data.compute())
         assert set(np.unique(coarse).tolist()) <= set(np.unique(_labels()).tolist())
 
+    def test_shallow_labels_pyramid_keeps_valid_ids(self, tmp_path: Path) -> None:
+        labels = _labels()
+        sdata = sd.read_zarr(_store(tmp_path / "src.zarr", labels=labels, scale_factors=[2]))
+
+        reports = ensure_pyramids(sdata, include_labels=True, min_size=512)
+
+        [labels_report] = [r for r in reports if r["path"] == "labels/cells"]
+        assert labels_report["action"] == "extended"
+        coarse = np.asarray(sdata.labels["cells"]["scale2"]["image"].data.compute())
+        assert set(np.unique(coarse).tolist()) <= set(np.unique(labels).tolist())
+
     def test_keys_limit_the_elements_considered(self, tmp_path: Path) -> None:
         sdata = sd.read_zarr(_store(tmp_path / "src.zarr", labels=_labels()))
 
@@ -427,6 +477,27 @@ class TestRecompressWithPyramid:
         image = sd.read_zarr(dest).images["morphology"]
         assert np.array_equal(np.asarray(image["scale0"]["image"].data.compute()), pixels)
         assert tuple(image["scale1"]["image"].shape) == (1, 1024, 768)
+
+    def test_extends_a_shallow_pyramid_and_encodes_every_level(self, tmp_path: Path) -> None:
+        from spatialdata_js_util import recompress_spatialdata
+
+        source = _store(tmp_path / "src.zarr", scale_factors=[2])
+        result = recompress_spatialdata(
+            source,
+            tmp_path / "out.zarr",
+            preset="lossless",
+            chunks="auto",
+            pyramid=True,
+            pyramid_min_size=512,
+            overwrite=True,
+        )
+
+        assert result.manifest["pyramids"][0]["action"] == "extended"
+        assert [r["path"] for r in result.manifest["images"]] == [
+            "images/morphology/s0",
+            "images/morphology/s1",
+            "images/morphology/s2",
+        ]
 
     def test_without_the_flag_nothing_is_rebuilt(self, tmp_path: Path) -> None:
         from spatialdata_js_util import recompress_spatialdata

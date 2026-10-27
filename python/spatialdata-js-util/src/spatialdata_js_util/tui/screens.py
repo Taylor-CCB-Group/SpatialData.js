@@ -795,7 +795,7 @@ class RecompressImagesScreen(InputFormScreen):
             yield Input(value="2", id="pyramid-downscale")
             yield Label("Auto stops at this size (px)")
             yield Input(value=str(DEFAULT_PYRAMID_MIN_SIZE), id="pyramid-min-size")
-            yield Checkbox("Rebuild images whose pyramid is already deep enough", id="pyramid-force")
+            yield Checkbox("Rebuild every pyramid from full resolution", id="pyramid-force")
         with Horizontal():
             yield Button("Run", variant="primary", id="run")
             yield Button("Back", id="back")
@@ -1209,9 +1209,9 @@ class VerifyReportScreen(WriterScreen):
             if backend:
                 yield Static(f"HTJ2K backend: {backend}")
             for entry in result.get("pyramids") or []:
-                if entry.get("action") == "rebuilt":
+                if entry.get("action") in ("rebuilt", "extended"):
                     built = ", ".join(entry.get("levels") or [])
-                    yield Static(f"  pyramid {entry['path']}: {built}")
+                    yield Static(f"  pyramid {entry['path']} {entry['action']}: {built}")
                 else:
                     yield Static(f"  pyramid {entry['path']}: skipped ({entry.get('reason')})")
         elif command == CommandId.TABLES_TO_CSC:
