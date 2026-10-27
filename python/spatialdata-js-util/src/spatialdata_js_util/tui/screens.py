@@ -786,7 +786,7 @@ class RecompressImagesScreen(InputFormScreen):
             yield Checkbox("Overwrite destination if it exists", id="overwrite")
             yield Static("Multiscale pyramid", classes="section-label")
             yield Checkbox(
-                "Build a pyramid for images that have only one resolution level",
+                "Add pyramid levels to images whose coarsest level exceeds the size below",
                 id="pyramid",
             )
             yield Label("Levels ('auto' halves until the largest axis fits the size below)")

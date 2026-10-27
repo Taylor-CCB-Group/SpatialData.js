@@ -78,7 +78,8 @@ The flow is the same for every command: **guided form → confirm → run → re
 - **Runs stream their JSON output** to a log pane, so a long recompression shows
   progress rather than appearing to hang.
 - The recompress form carries the [pyramid](#multiscale-pyramids) controls, so
-  single-resolution input can be made browser-ready without leaving the UI.
+  single-resolution or shallow-pyramid input can be made browser-ready without
+  leaving the UI.
 - **Writes are verified afterwards** and the report screen shows a pass/fail
   table. For Morton writes that means:
 

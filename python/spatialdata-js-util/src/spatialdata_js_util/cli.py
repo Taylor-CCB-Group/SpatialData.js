@@ -128,8 +128,10 @@ def _add_pyramid_args(parser: argparse.ArgumentParser, *, with_flag: bool) -> No
             "--pyramid",
             action="store_true",
             help=(
-                "Build a multiscale pyramid for any image that has only one resolution "
-                "level, before recompressing. Implied by the other --pyramid-* options."
+                "Before recompressing, add pyramid levels to any image whose coarsest "
+                "level is larger than --pyramid-min-size: a single-resolution image is "
+                "built from full resolution, a shallow pyramid is extended from its "
+                "coarsest level. Implied by the other --pyramid-* options."
             ),
         )
     parser.add_argument(
@@ -269,8 +271,8 @@ def _add_images_commands(subparsers: argparse._SubParsersAction) -> None:
         description=(
             "Copy a store and add pyramid levels to rasters whose coarsest level is "
             "larger than --pyramid-min-size (or that have fewer than --pyramid-levels "
-            "levels), keeping any levels they already have, so a zoomed-out browser view does not have to "
-            "read full-resolution chunks. Codecs are left unchanged; use "
+            "levels), keeping any levels they already have, so a zoomed-out browser "
+            "view does not have to read full-resolution chunks. Codecs are left unchanged; use "
             "'images recompress --pyramid' to do both in one pass."
         ),
     )
