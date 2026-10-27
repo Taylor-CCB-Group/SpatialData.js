@@ -74,6 +74,8 @@ interface ShapesEntry {
   tooltipSignature?: string;
   /** The column name `fillColor` was loaded for. */
   fillColorColumn?: string;
+  /** Set by `retry()`: `plan()` otherwise schedules geometry only while it is idle. */
+  retryGeometry?: boolean;
   bounds?: AxisAlignedBounds | null;
   boundsSource?: ShapesRenderData;
   /** The transform `bounds` was computed with — world bounds are transform-relative. */
@@ -132,7 +134,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     const entry = this.entries.get(key);
     const tasks: ResolveTask[] = [];
 
-    if (!entry || Resolution.isIdle(entry.geometry)) {
+    if (!entry || Resolution.isIdle(entry.geometry) || entry.retryGeometry) {
       tasks.push({ id: `${key}#geometry`, resource: 'geometry' });
     }
 
@@ -195,6 +197,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     // initial load that is aborted must fall back to `idle`, or `plan()` (which
     // only schedules idle geometry) never reschedules it and the entry hangs.
     const prior = entry[slot];
+    if (slot === 'geometry') entry.retryGeometry = false;
     // Retain the last good value across the refine, so a reload keeps drawing.
     const stale = Resolution.lastGood(entry[slot] as Resolution<never>);
     entry[slot] = Resolution.loading(stale !== undefined ? { stale } : {}) as never;
@@ -246,6 +249,16 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         fallback: slot === 'geometry' ? 'decode-failed' : 'load-failed',
       });
       entry[slot] = Resolution.failed(error, stale) as never;
+      // Record what failed, not just what succeeded: `plan()` reschedules whenever
+      // these differ from the config, and every settle triggers a reconcile, so
+      // leaving them unset re-requests the failing read in a loop.
+      if (slot === 'tooltip') {
+        entry.tooltipSignature = tooltipSignature(
+          (task.payload as { tooltipFields: string[] }).tooltipFields
+        );
+      } else if (slot === 'fillColor') {
+        entry.fillColorColumn = (task.payload as { column: string }).column;
+      }
       this.callbacks.onStatus?.(ctx.entryId, slot, 'error');
     } finally {
       this.notify();
@@ -348,6 +361,26 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   private notify(): void {
     this.version += 1;
     for (const listener of this.listeners) listener();
+  }
+
+  retry(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    let changed = false;
+    if (Resolution.isFailed(entry.geometry)) {
+      entry.retryGeometry = true;
+      changed = true;
+    }
+    // Forgetting what failed is enough: `plan()` reschedules on a mismatch.
+    if (Resolution.isFailed(entry.tooltip)) {
+      entry.tooltipSignature = undefined;
+      changed = true;
+    }
+    if (Resolution.isFailed(entry.fillColor)) {
+      entry.fillColorColumn = undefined;
+      changed = true;
+    }
+    if (changed) this.notify();
   }
 
   evict(key: string): void {

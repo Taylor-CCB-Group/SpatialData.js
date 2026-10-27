@@ -11,6 +11,7 @@ export {
   useSpatialCanvasStore,
   useSpatialCanvasStoreApi,
 } from './context';
+export type { EntryStatus, EntryStatusError } from './entryStatus';
 export type {
   FeatureColorResolver,
   FeatureColorResolverContext,
