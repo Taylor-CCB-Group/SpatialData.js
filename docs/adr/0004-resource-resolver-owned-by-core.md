@@ -329,23 +329,20 @@ repo's decision; it flags it as owed.
   `parquetTableCache` — both unbounded, never evicted) gain an owner. See
   [ADR 0005](0005-memory-accounting-before-management.md).
 - `useLayerData` moves toward a thin React binding: create, reconcile, project.
-  Not there yet — it is ~1,850 lines, with `getLayers()`'s points branches and the
-  tooltip/pick plumbing still in it.
+  Not there yet: `getLayers()`'s points branches and the tooltip/pick plumbing are
+  still in it.
 
-  **The hatches do not go with this work, and the original claim about them was
-  wrong.** It said "three `eslint-disable react-hooks/refs` render-phase ref
-  writes"; the code has **two** ref writes (the latest-`layers` and element-map
-  mirrors, both read during render by `hasRenderableLayerData` and the panels) plus
-  **three** ref *reads* (in `pointsTileProgress` and `isBlocking`). None is a
-  projection concern, so moving `project()` out removed none of them — they are
-  about reading an imperatively-maintained cache during render, which is a
-  different question.
-
-  Likewise `'use no memo'`: `useLayerData` carries **none**. The two mentions in it
-  are comments — one noting that the *consuming component* must opt out, one
-  recording that the points panel no longer needs the hook's re-render at all. The
-  live directives are in the points panels, and they are about React Compiler
-  memoising JSX built from engine getters, not about projection.
+  **The compiler and lint hatches are not part of that, and an earlier draft of
+  this bullet said they were.** They are listed here because measuring §4's
+  progress by hatch count sends the next reader after the wrong thing.
+  `useLayerData` has two render-phase ref writes — the latest-`layers` and
+  element-map mirrors, read during render by `hasRenderableLayerData` and the
+  panels — and three ref reads, in `pointsTileProgress` and `isBlocking`. All five
+  exist so the blocking overlay and the tile spinner can read an imperatively
+  maintained cache during render; none is a projection concern, and removing them
+  means lifting that cache, not moving `project()`. `useLayerData` carries no
+  `'use no memo'` directive at all. The live ones are in the points panels, where
+  React Compiler would otherwise memoise JSX built from engine getters.
 
 ## Provenance
 

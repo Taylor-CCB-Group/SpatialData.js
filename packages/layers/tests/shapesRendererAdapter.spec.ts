@@ -2,7 +2,7 @@ import type { ShapesRenderData } from '@spatialdata/core';
 import { describe, expect, it } from 'vitest';
 import {
   type ShapeFillColorEntry,
-  type ShapesProjectionConfig,
+  type ShapesEntryProps,
   ShapesRendererAdapter,
 } from '../src/adapters/ShapesRendererAdapter';
 
@@ -15,7 +15,7 @@ import {
  * different one when the data behind it did.
  */
 
-const config: ShapesProjectionConfig = {
+const config: ShapesEntryProps = {
   fillColorByColumn: { columnName: 'colY', mode: 'categorical' },
 };
 

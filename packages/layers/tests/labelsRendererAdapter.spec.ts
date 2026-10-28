@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLabelFillColorEntry,
   type LabelFillColorEntry,
-  type LabelsProjectionConfig,
+  type LabelsEntryProps,
   LabelsRendererAdapter,
 } from '../src/adapters/LabelsRendererAdapter';
 
@@ -26,7 +26,7 @@ const FIXED_PALETTE: [number, number, number][] = [
 
 const WHITE: [number, number, number] = [255, 255, 255];
 
-const config = (over: LabelsProjectionConfig = {}): LabelsProjectionConfig => ({ ...over });
+const config = (over: LabelsEntryProps = {}): LabelsEntryProps => ({ ...over });
 
 const rows = (column: string[]): AssociatedTableFeatureRows => ({
   rowIds: ['1', '2'],
