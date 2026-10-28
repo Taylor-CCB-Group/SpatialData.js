@@ -31,6 +31,18 @@ The writer works out of core, so the input may be far larger than memory:
    keeps the (feature, tile) order.
 
 Arrays are written a whole shard at a time, so nothing is read back and rewritten.
+
+Two opt-in departures from spec 0.1, both off by default (defaults write the spec's
+layout byte for byte):
+
+* ``sampling="hybrid"`` or ``"per-feature"``: a level's membership threshold depends on
+  the feature, so rare features survive to coarse levels (the idea is Christian La
+  France's). The fraction each feature was sampled at is stored per level as
+  ``index/feature_fraction`` (float32, one per feature); a renderer reweights density by
+  its reciprocal. Such levels are marked ``resampling_method: "random-per-feature"``,
+  which spec 0.1 does not define.
+* ``hash_r`` / ``id_key``: each point's draw ``r`` is a hash of a stable identifier, so
+  the sample does not depend on frame chunking.
 """
 
 from __future__ import annotations
@@ -39,9 +51,10 @@ import json
 import math
 import shutil
 import tempfile
+import warnings
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -62,6 +75,10 @@ COARSEST_LEVEL_TARGET = 1_000_000
 #: Points a spill band may be expected to hold. A level-0 band is sorted in memory,
 #: at roughly 70 bytes a point including the sort's temporaries.
 DEFAULT_BAND_POINTS = 50_000_000
+
+#: ``r`` is on a 2^-24 grid (a float32's mantissa), so a fraction is exact only there.
+_R_GRID = float(2**24)
+SamplingMode = Literal["global", "hybrid", "per-feature"]
 
 #: A re-iterable source of points: each call yields the same frames, in the same
 #: order. A frame may be one tile of a converter's input, or the whole input.
@@ -198,7 +215,9 @@ def _default_level_count(n_points: int) -> int:
 class _Survey:
     """What the first pass learns: extent, count and the feature names in order."""
 
-    def __init__(self, dims: int):
+    def __init__(self, dims: int, count_features: bool = False):
+        self.count_features = count_features
+        self.counts: dict[str, int] = {}
         self.lo = np.full(dims, np.inf)
         self.hi = np.full(dims, -np.inf)
         self.n_points = 0
@@ -221,6 +240,13 @@ class _Survey:
             names = pd.unique(feature)
         for name in names:
             self.names.setdefault(str(name), None)
+        if self.count_features:
+            if isinstance(feature.dtype, pd.CategoricalDtype):
+                tally = pd.Series(np.bincount(feature.cat.codes.to_numpy(), minlength=len(names)), index=names)
+            else:
+                tally = feature.value_counts()
+            for name, n in tally.items():
+                self.counts[str(name)] = self.counts.get(str(name), 0) + int(n)
 
     def features(self) -> list[str]:
         # A categorical's own order is kept; otherwise names are sorted, as
@@ -242,6 +268,77 @@ def _feature_codes(feature: pd.Series, code_of: pd.Index) -> np.ndarray:
     return codes
 
 
+def _splitmix64(x: np.ndarray) -> np.ndarray:
+    x = x + np.uint64(0x9E3779B97F4A7C15)
+    x = (x ^ (x >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+    x = (x ^ (x >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
+    return x ^ (x >> np.uint64(31))
+
+
+def _hashed_r(keys: np.ndarray, seed: int) -> np.ndarray:
+    """A uniform draw in [0, 1) per uint64 key: the top 24 bits of a mixed hash."""
+    salt = _splitmix64(np.array([seed], dtype=np.uint64))[0]
+    top = _splitmix64(keys ^ salt) >> np.uint64(40)
+    return top.astype(np.float32) * np.float32(1 / _R_GRID)
+
+
+def _id_keys(ids: pd.Series, id_key: str) -> np.ndarray:
+    if ids.isna().any():
+        raise ValueError(f"Column {id_key!r} has missing values")
+    if pd.api.types.is_integer_dtype(ids.dtype):
+        return ids.to_numpy(dtype=np.int64 if ids.dtype.kind == "i" else np.uint64).astype(np.uint64)
+    if pd.api.types.is_float_dtype(ids.dtype):
+        raise ValueError(f"Column {id_key!r} is floating point; ids must be integers or strings")
+    # Strings: a fixed-key hash, the same in every process.
+    return pd.util.hash_array(np.asarray(ids.astype(str), dtype=object))
+
+
+def _feature_fractions(
+    counts: np.ndarray, n_levels: int, mode: SamplingMode, budget: int
+) -> np.ndarray:
+    """(n_features, n_levels) float32: the fraction of each feature's points in each level.
+
+    ``hybrid``: max(4^-k, min(1, P * 4^(L-1-k) / N_g)), the global quarter-per-level
+    sample with a floor of P points per feature at the coarsest level. ``per-feature``
+    drops the 4^-k term. Level 0 always holds everything. Fractions are rounded up to
+    the grid ``r`` lives on, so each is exactly its feature's inclusion probability.
+    """
+    k = np.arange(n_levels)
+    if mode == "global":
+        f = np.broadcast_to(4.0**-k, (len(counts), n_levels))
+    else:
+        n = np.maximum(counts, 1).astype(np.float64)
+        f = np.minimum(1.0, budget * 4.0 ** (n_levels - 1 - k)[None, :] / n[:, None])
+        if mode == "hybrid":
+            f = np.maximum(f, 4.0**-k[None, :])
+        f[:, 0] = 1.0
+    f = np.minimum(1.0, np.ceil(f * _R_GRID) / _R_GRID) if mode != "global" else f
+    assert np.all(np.diff(f, axis=1) <= 0), "feature fractions must not grow with level"
+    return np.ascontiguousarray(f, dtype=np.float32)
+
+
+def _auto_level_count(counts: np.ndarray, mode: SamplingMode, budget: int) -> int:
+    """Levels until the coarsest holds about a million points, from the counts alone."""
+    n_points = int(counts.sum())
+    if mode == "global":
+        return _default_level_count(n_points)
+    if mode == "per-feature":
+        # The fewest levels at which the biggest feature is thinned to its budget at the
+        # coarsest, so that level 0 is where every feature is whole.
+        return 1 + max(0, math.ceil(math.log(max(int(counts.max()), 1) / budget, 4)))
+    # Hybrid: the coarsest level keeps at least min(N_g, P) of every feature, so it
+    # stops shrinking at a floor; stop adding levels once they no longer help.
+    previous = float("inf")
+    for n_levels in range(1, 33):
+        size = float((counts * _feature_fractions(counts, n_levels, mode, budget)[:, -1]).sum())
+        if size <= COARSEST_LEVEL_TARGET:
+            return n_levels
+        if size > 0.9 * previous:
+            return n_levels - 1
+        previous = size
+    return 32
+
+
 def write_points_zarr(
     data: pd.DataFrame | PointsSource,
     element_dir: str | Path,
@@ -252,6 +349,10 @@ def write_points_zarr(
     tile_size: float = 100.0,
     n_levels: int | None = None,
     seed: int = 0,
+    sampling: SamplingMode = "global",
+    feature_budget: int | None = None,
+    hash_r: bool = False,
+    id_key: str | None = None,
     units: str = "micrometer",
     coordinate_system: str = "global",
     transformations: list[dict[str, Any]] | None = None,
@@ -276,6 +377,23 @@ def write_points_zarr(
     given, stopping early at a level that would be empty. ``seed`` fixes the random
     sample, so a rerun on the same input writes the same rows.
 
+    ``sampling`` chooses how a level's sample is drawn. ``"global"`` (spec 0.1) keeps a
+    quarter of the level below, whatever the feature. ``"hybrid"`` adds a floor: each
+    feature keeps at least ``feature_budget`` points (or all of them, if fewer) down to
+    the coarsest level, so rare features do not vanish at overview zoom. ``"per-feature"``
+    has only that budgeted fraction, so the coarsest level holds about
+    ``feature_budget`` points of each feature and levels are added until the commonest
+    feature is thinned to it. ``feature_budget`` defaults to a million points shared
+    across the features. Both write ``index/feature_fraction`` per level, and mark the
+    levels ``random-per-feature``, which spec 0.1 does not define. Nesting and the
+    all-points level 0 are kept.
+
+    ``hash_r`` (implied by ``id_key``) derives each point's draw from a hash, so the
+    sample does not depend on how the input is split into frames. Given ``id_key``, a
+    column of integers or strings, it is hashed with ``seed``, and the sample follows
+    the transcripts whatever order they arrive in. Without one it is the point's row
+    in the input, which is stable only while the input's order is.
+
     ``transformations`` are written as the element's ``coordinateTransformations``,
     so an element converted from another keeps its placement (copy them from the
     source element's attrs); by default, identity into ``coordinate_system``.
@@ -299,14 +417,21 @@ def write_points_zarr(
 
     def frames():
         for frame in source():
-            missing = [c for c in (*coordinates, feature_key) if c not in frame.columns]
+            missing = [c for c in (*coordinates, feature_key, *([id_key] if id_key else [])) if c not in frame.columns]
             if missing:
                 raise ValueError(f"Missing columns: {', '.join(missing)}")
-            yield [frame[c].to_numpy(dtype=np.float32) for c in coordinates], frame[feature_key]
+            yield (
+                [frame[c].to_numpy(dtype=np.float32) for c in coordinates],
+                frame[feature_key],
+                frame[id_key] if id_key else None,
+            )
 
+    if sampling not in ("global", "hybrid", "per-feature"):
+        raise ValueError(f"sampling must be 'global', 'hybrid' or 'per-feature', got {sampling!r}")
+    hash_r = hash_r or id_key is not None
     say("surveying")
-    survey = _Survey(dims)
-    for coords, feature in frames():
+    survey = _Survey(dims, count_features=sampling != "global")
+    for coords, feature, _ in frames():
         survey.add(coords, feature, feature_key)
     if survey.n_points == 0:
         raise ValueError("No points to write")
@@ -317,7 +442,15 @@ def write_points_zarr(
     extent_min, extent_max = [float(v) for v in survey.lo], [float(v) for v in survey.hi]
     x0, y0 = extent_min[:2]
     x1, y1 = extent_max[:2]
-    level_count = n_levels if n_levels is not None else _default_level_count(n_points)
+    counts = np.array([survey.counts.get(name, 0) for name in feature_list], dtype=np.int64)
+    budget = feature_budget if feature_budget is not None else max(1, COARSEST_LEVEL_TARGET // len(feature_list))
+    if budget < 1:
+        raise ValueError("feature_budget must be at least 1")
+    if sampling == "global":
+        level_count = n_levels if n_levels is not None else _default_level_count(n_points)
+    else:
+        level_count = n_levels if n_levels is not None else _auto_level_count(counts, sampling, budget)
+    fractions = _feature_fractions(counts, level_count, sampling, budget)
 
     def grid(level: int) -> tuple[float, int, int]:
         size = tile_size * 2**level
@@ -346,14 +479,21 @@ def write_points_zarr(
             for name, _ in spill_fields
         }
         band_level_counts = np.zeros((n_bands, level_count), dtype=np.int64)
-        thresholds = np.array([4.0**-k for k in range(level_count)], dtype=np.float32)
+        first_row = 0
         try:
-            for frame_index, (coords, feature) in enumerate(frames()):
+            for frame_index, (coords, feature, ids) in enumerate(frames()):
                 if len(feature) == 0:
                     continue
                 codes = _feature_codes(feature, code_of)
-                # One uniform draw per point; level k is every point with r < 4^-k.
-                r = np.random.default_rng([seed, frame_index]).random(len(codes), dtype=np.float32)
+                # One uniform draw per point; level k is every point with r below its
+                # feature's fraction at k (4^-k, unless sampled per feature).
+                if not hash_r:
+                    r = np.random.default_rng([seed, frame_index]).random(len(codes), dtype=np.float32)
+                elif ids is not None:
+                    r = _hashed_r(_id_keys(ids, id_key), seed)
+                else:
+                    r = _hashed_r(np.arange(first_row, first_row + len(codes), dtype=np.uint64), seed)
+                first_row += len(codes)
                 ty0 = np.clip(((coords[1] - y0) // tile_size).astype(np.int64), 0, ny0 - 1)
                 band = ty0 >> band_shift
                 order = np.argsort(band, kind="stable")
@@ -363,13 +503,16 @@ def write_points_zarr(
                     rows = order[starts[b] : starts[b + 1]]
                     for name, dtype in spill_fields:
                         handles[(b, name)].write(np.ascontiguousarray(columns[name][rows], dtype=dtype).tobytes())
-                    band_level_counts[b] += (r[rows][:, None] < thresholds[None, :]).sum(axis=0)
+                    band_level_counts[b] += (r[rows][:, None] < fractions[codes[rows]]).sum(axis=0)
         finally:
             for handle in handles.values():
                 handle.close()
 
         level_sizes = band_level_counts.sum(axis=0)
         level_count = int(np.count_nonzero(level_sizes)) if level_sizes[-1] == 0 else level_count
+        fractions = fractions[:, :level_count]
+        if sampling != "global":
+            _check_group_sizes(band_level_counts[:, :level_count], band_shift, band_points)
         # Replaced only now that the input has been read and spilled, so a bad input
         # leaves the existing group as it was.
         if element_dir.exists():
@@ -383,6 +526,8 @@ def write_points_zarr(
                     level,
                     work=work,
                     n_rows=int(level_sizes[level]),
+                    fractions=fractions[:, level],
+                    per_feature=sampling != "global",
                     grid=grid(level),
                     origin=(x0, y0),
                     band_shift=band_shift,
@@ -415,6 +560,11 @@ def write_points_zarr(
             "points:units": units,
             "points:n_points": n_points,
             "points:extent": [extent_min, extent_max],
+            **(
+                {"points:sampling": {"mode": sampling, "feature_budget": budget}}
+                if sampling != "global"
+                else {}
+            ),
         }
     )
     return {
@@ -426,12 +576,35 @@ def write_points_zarr(
     }
 
 
+def _check_group_sizes(band_level_counts: np.ndarray, band_shift: int, band_points: int) -> None:
+    """Warn if a level's tile rows are too big to sort within ``band_points``.
+
+    Bands are sized from level 0, which bounds every level under global sampling (a
+    level-k group holds about 4^-k of its points). Under per-feature sampling a coarse
+    level keeps far more than that, and a group of whole level-k tile rows cannot be
+    split, so the bound can only be checked: here, against the counts the spill took.
+    """
+    n_bands, n_levels = band_level_counts.shape
+    for level in range(1, n_levels):
+        step = 2 ** max(0, level - band_shift)
+        biggest = int(max(band_level_counts[b : b + step, level].sum() for b in range(0, n_bands, step)))
+        if biggest > band_points:
+            warnings.warn(
+                f"level {level}: a group of tile rows holds {biggest:,} points, over band_points="
+                f"{band_points:,}; sorting it needs about {biggest * 70 / 2**30:.1f} GiB. "
+                "Raise band_points or lower tile_size.",
+                stacklevel=3,
+            )
+
+
 def _write_level(
     root: zarr.Group,
     level: int,
     *,
     work: Path,
     n_rows: int,
+    fractions: np.ndarray,
+    per_feature: bool,
     grid: tuple[float, int, int],
     origin: tuple[float, float],
     band_shift: int,
@@ -449,7 +622,6 @@ def _write_level(
     x0, y0 = origin
     n_tiles = nx * ny
     n_features = len(features)
-    threshold = np.float32(4.0**-level)
     # Whole level-k tile rows per group of bands; see the band comment above.
     group_bands = 2 ** max(0, level - band_shift)
     groups = [range(b, min(b + group_bands, n_bands)) for b in range(0, n_bands, group_bands)]
@@ -480,19 +652,24 @@ def _write_level(
     written = 0
 
     for g, bands in enumerate(groups):
-        loaded = {
-            name: np.concatenate([np.fromfile(work / f"band{b}.{name}", dtype=dtype) for b in bands])
-            for name, dtype in spill_fields
-        }
-        if level == 0:
-            ids = None
-        else:
-            ids = np.concatenate([np.fromfile(work / f"band{b}.id", dtype=np.uint64) for b in bands])
-        member = loaded["r"] < threshold
-        tx = np.clip(((loaded["x"][member] - x0) // size).astype(np.int64), 0, nx - 1)
-        ty = np.clip(((loaded["y"][member] - y0) // size).astype(np.int64), 0, ny - 1)
+        # Members only, band by band, so a coarse level never holds the points it drops.
+        parts: dict[str, list[np.ndarray]] = {name: [] for name, _ in spill_fields}
+        id_parts: list[np.ndarray] = []
+        for b in bands:
+            band = {name: np.fromfile(work / f"band{b}.{name}", dtype=dtype) for name, dtype in spill_fields}
+            member = band["r"] < fractions[band["code"]]
+            for name, _ in spill_fields:
+                parts[name].append(band[name][member])
+            if level > 0:
+                id_parts.append(np.fromfile(work / f"band{b}.id", dtype=np.uint64)[member])
+            del band
+        loaded = {name: np.concatenate(chunks) for name, chunks in parts.items()}
+        del parts
+        member_ids = np.concatenate(id_parts) if level > 0 else None
+        tx = np.clip(((loaded["x"] - x0) // size).astype(np.int64), 0, nx - 1)
+        ty = np.clip(((loaded["y"] - y0) // size).astype(np.int64), 0, ny - 1)
         tile = ty * nx + tx
-        codes = loaded["code"][member]
+        codes = loaded["code"]
         if level == 0:
             # (tile, feature, r): any prefix of a (tile, feature) run is a uniform sample.
             order = np.lexsort((loaded["r"], codes, tile))
@@ -500,12 +677,11 @@ def _write_level(
             # order, for the coarser levels to carry.
             ids = np.empty(len(codes), dtype=np.uint64)
             ids[order] = np.arange(written, written + len(codes), dtype=np.uint64)
-            (band,) = bands
-            ids.tofile(work / f"band{band}.id")
+            (band_index,) = bands
+            ids.tofile(work / f"band{band_index}.id")
             member_ids = ids
         else:
-            assert ids is not None
-            member_ids = ids[member]
+            assert member_ids is not None
             # (tile, feature, id): coarser levels are samples already; rising ids
             # compress well.
             order = np.lexsort((member_ids, codes, tile))
@@ -514,7 +690,7 @@ def _write_level(
         tm_tile = tile[order]
         tm_codes = codes[order]
         tm_ids = member_ids[order]
-        tm_coords = {a: loaded[a][member][order] for a in axes}
+        tm_coords = {a: loaded[a][order] for a in axes}
         for a in axes:
             tile_major[a].append(tm_coords[a])
         tile_major[feature_key].append(tm_codes)
@@ -538,7 +714,7 @@ def _write_level(
         (pair_keys % n_tiles).astype(np.uint32).tofile(level_work / f"g{g}.pair_tile")
         pair_counts.astype(np.uint32).tofile(level_work / f"g{g}.pair_count")
         group_pair_offsets.append(_offsets(np.bincount(pair_keys // n_tiles, minlength=n_features)))
-        del loaded, ids, member, order, tm_coords
+        del loaded, member_ids, order, tm_coords
 
     for writer in tile_major.values():
         writer.close()
@@ -592,6 +768,8 @@ def _write_level(
     _write_index(index, "tile_rows", _offsets(tile_counts), chunk_rows, shard_chunks)
     _write_index(index, "feature_rows", _offsets(feature_counts), chunk_rows, shard_chunks)
     _write_index(index, "feature_tile_ptr", _offsets(pair_totals), chunk_rows, shard_chunks)
+    if per_feature:
+        _write_index(index, "feature_fraction", fractions, chunk_rows, shard_chunks)
 
     entry: dict[str, Any] = {
         "asset": str(level),
@@ -602,7 +780,7 @@ def _write_level(
         entry |= {
             "derived_from": str(level - 1),
             "transform": {"scale": [1.0] * len(axes)},
-            "resampling_method": "random",
+            "resampling_method": "random-per-feature" if per_feature else "random",
         }
     return entry
 
@@ -785,7 +963,7 @@ def add_points_zarr_to_store(
         coordinates = kwargs.setdefault("coordinates", tuple(attrs["axes"]))
         kwargs.setdefault("transformations", attrs.get("coordinateTransformations"))
         dataset = ds.dataset(element_dir / "points.parquet", format="parquet", exclude_invalid_files=True)
-        columns = [*coordinates, feature_key]
+        columns = [*coordinates, feature_key, *([kwargs["id_key"]] if kwargs.get("id_key") else [])]
 
         def parquet_frames() -> Iterable[pd.DataFrame]:
             for batch in dataset.to_batches(columns=columns, batch_size=4_000_000):

@@ -345,3 +345,138 @@ def test_standard_parquet_keeps_every_feature_value_across_parts(tmp_path: Path)
     assert written["gene"].isna().sum() == 0
     assert list(written["gene"].astype(str)) == list(df["gene"].astype(str))
     assert list(written.index) == list(range(900))
+
+
+def _skewed(seed: int = 4) -> pd.DataFrame:
+    """One common gene and one rare gene, with transcript ids."""
+    rng = np.random.default_rng(seed)
+    counts = {"Common": 20_000, "Middling": 2_000, "Rare": 60}
+    gene = np.repeat(list(counts), list(counts.values()))
+    n = len(gene)
+    return pd.DataFrame(
+        {
+            "x": rng.uniform(0, 1000, n),
+            "y": rng.uniform(0, 600, n),
+            "gene": pd.Categorical(gene, categories=list(counts)),
+            "tid": rng.permutation(n).astype(np.uint64),
+        }
+    ).sample(frac=1, random_state=seed).reset_index(drop=True)
+
+
+def _per_feature_counts(group: zarr.Group, n_features: int) -> list[np.ndarray]:
+    return [
+        np.bincount(_column(group[e["asset"]]["feature_major"], "gene").astype(np.int64), minlength=n_features)
+        for e in group.attrs["multiscales"]["layout"]
+    ]
+
+
+def test_global_sampling_writes_no_fractions(tmp_path: Path) -> None:
+    write_points_zarr(_points(2000), tmp_path / "g", feature_key="gene", n_levels=2)
+    group = zarr.open_group(tmp_path / "g", mode="r")
+    assert "feature_fraction" not in group["1"]["index"]
+    assert group.attrs["multiscales"]["layout"][1]["resampling_method"] == "random"
+    assert "points:sampling" not in group.attrs
+
+
+@pytest.mark.parametrize("sampling", ["hybrid", "per-feature"])
+def test_per_feature_sampling_keeps_rare_features_and_records_fractions(
+    tmp_path: Path, sampling: str
+) -> None:
+    df = _skewed()
+    write_points_zarr(
+        df, tmp_path / "t", feature_key="gene", sampling=sampling, feature_budget=100, n_levels=4
+    )
+    group = zarr.open_group(tmp_path / "t", mode="r")
+    layout = group.attrs["multiscales"]["layout"]
+    totals = np.bincount(df["gene"].cat.codes)
+    per_level = _per_feature_counts(group, 3)
+    assert np.array_equal(per_level[0], totals)
+    assert group.attrs["points:sampling"] == {"mode": sampling, "feature_budget": 100}
+
+    previous: set[int] | None = None
+    for k, entry in enumerate(layout):
+        if k:
+            assert entry["resampling_method"] == "random-per-feature"
+        fractions = group[entry["asset"]]["index"]["feature_fraction"][:]
+        assert fractions.dtype == np.float32 and fractions.shape == (3,)
+        # The recorded fraction is the inclusion probability: counts sit within noise of it.
+        expected = totals * fractions.astype(np.float64)
+        sd = np.sqrt(totals * fractions * (1 - fractions.astype(np.float64)))
+        assert np.all(np.abs(per_level[k] - expected) <= 5 * sd + 1e-9)
+        ids = set(_column(group[entry["asset"]]["feature_major"], "id").astype(np.int64).tolist())
+        if previous is not None:
+            assert ids <= previous
+        previous = ids
+
+    # The rare gene is whole at every level here; the common one is thinned.
+    assert all(c[2] == 60 for c in per_level)
+    assert per_level[-1][0] < totals[0] / 4
+    if sampling == "hybrid":
+        # Never thinner than the global quarter-per-level sample.
+        assert all(per_level[k][0] >= totals[0] * 4.0**-k * 0.9 for k in range(4))
+
+
+def test_per_feature_levels_follow_the_counts(tmp_path: Path) -> None:
+    df = _skewed()
+    # No explicit n_levels: enough that the commonest feature is thinned to its budget.
+    summary = write_points_zarr(
+        df, tmp_path / "t", feature_key="gene", sampling="per-feature", feature_budget=100
+    )
+    assert len(summary["levels"]) == 1 + int(np.ceil(np.log(20_000 / 100) / np.log(4)))
+    assert summary["levels"] == sorted(summary["levels"], reverse=True)
+
+
+def test_per_feature_sampling_is_validated(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="sampling must be"):
+        write_points_zarr(_points(100), tmp_path / "a", feature_key="gene", sampling="nope")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="feature_budget"):
+        write_points_zarr(
+            _points(100), tmp_path / "b", feature_key="gene", sampling="hybrid", feature_budget=0
+        )
+
+
+def _level_ids(path: Path) -> list[bytes]:
+    group = zarr.open_group(path, mode="r")
+    return [
+        _column(group[e["asset"]]["feature_major"], "id").tobytes()
+        for e in group.attrs["multiscales"]["layout"]
+    ]
+
+
+@pytest.mark.parametrize("options", [{"id_key": "tid"}, {"hash_r": True}])
+def test_hashed_draws_do_not_depend_on_frame_chunking(tmp_path: Path, options: dict) -> None:
+    df = _skewed()
+    for name, data in (("one", df), ("many", _frames(df, 7))):
+        write_points_zarr(
+            data, tmp_path / name, feature_key="gene", n_levels=3, band_points=1 if name == "many" else 50_000_000, **options
+        )
+    assert _level_ids(tmp_path / "one") == _level_ids(tmp_path / "many")
+
+
+def test_id_key_ties_the_sample_to_the_transcripts_not_their_order(tmp_path: Path) -> None:
+    df = _skewed()
+    shuffled = df.sample(frac=1, random_state=9).reset_index(drop=True)
+
+    def sampled(frame: pd.DataFrame, name: str) -> list[set[int]]:
+        write_points_zarr(frame, tmp_path / name, feature_key="gene", n_levels=3, id_key="tid")
+        group = zarr.open_group(tmp_path / name, mode="r")
+        tm = group["0"]["tile_major"]
+        # Level-0 rows back to transcript ids, through the (unique) coordinates.
+        by_xy = {(np.float32(x), np.float32(y)): t for x, y, t in zip(frame["x"], frame["y"], frame["tid"])}
+        row_tid = np.array([by_xy[(x, y)] for x, y in zip(_column(tm, "x"), _column(tm, "y"))])
+        return [
+            set(row_tid[_column(group[e["asset"]]["feature_major"], "id").astype(np.int64)].tolist())
+            for e in group.attrs["multiscales"]["layout"][1:]
+        ]
+
+    assert sampled(df, "a") == sampled(shuffled, "b")
+
+
+def test_hashed_draws_are_uniform(tmp_path: Path) -> None:
+    from spatialdata_js_util.points_zarr import _hashed_r
+
+    r = _hashed_r(np.arange(200_000, dtype=np.uint64), seed=0)
+    assert r.dtype == np.float32 and r.min() >= 0 and r.max() < 1
+    assert abs(float(r.mean()) - 0.5) < 0.005
+    assert abs(float((r < 0.25).mean()) - 0.25) < 0.005
+    assert not np.array_equal(r, _hashed_r(np.arange(200_000, dtype=np.uint64), seed=1))
