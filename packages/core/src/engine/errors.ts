@@ -134,6 +134,13 @@ export type EntryNotice =
       readonly kind: 'channel-defaults-fallback';
       readonly message: string;
       readonly reason: string;
+    }
+  | {
+      /** An associated table was found, but none of its rows can be joined to the element. */
+      readonly kind: 'table-rows-unmatched';
+      readonly message: string;
+      readonly tableName: string;
+      readonly instanceKey: string;
     };
 
 /**

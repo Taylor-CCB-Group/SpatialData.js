@@ -347,6 +347,63 @@ describe('LabelsResolver', () => {
   });
 });
 
+describe('LabelsResolver — a table whose instance ids no label can carry', () => {
+  // Labels ids live in the raster, so "matches none" cannot be checked without
+  // reading pixels. What can be checked for free: whether any table id is even a
+  // value the raster's dtype can hold. Packed 64-bit cell ids against a uint32
+  // raster (the Atera reader's output) fail that check outright.
+  const spatialDataWithTable = (tableIds: string[]) =>
+    ({
+      getAssociatedTable: () => [
+        'table',
+        {
+          getTableKeys: () => ({
+            region: ['cell_labels'],
+            regionKey: 'region',
+            instanceKey: 'cell_id',
+          }),
+          loadObsIndex: async () => tableIds,
+          loadObsColumns: async (names: string[]) => names.map(() => tableIds.map(() => 'x')),
+        },
+      ],
+    }) as unknown as SpatialData;
+
+  const noticesAfterFillColour = async (tableIds: string[], dtype: string) => {
+    const resolver = new LabelsResolver({
+      spatialData: spatialDataWithTable(tableIds),
+      fetchMultiscales: vi.fn(async () => [{ labels: ['y', 'x'], shape: [64, 64], dtype }]),
+    });
+    const ctx = labelsCtx(labelsElement(), {
+      fillColorByColumn: { columnName: 'cell_type', mode: 'auto' },
+    });
+    for (const task of resolver.plan(ctx)) await resolver.load(task, ctx, signal());
+    return resolver.snapshot(ctx).notices;
+  };
+
+  it('raises a notice when no table id fits the label dtype', async () => {
+    const notices = await noticesAfterFillColour(['4294992761', '4295003241'], 'Uint32');
+
+    expect(notices).toEqual([
+      expect.objectContaining({
+        kind: 'table-rows-unmatched',
+        tableName: 'table',
+        instanceKey: 'cell_id',
+      }),
+    ]);
+    expect(notices[0]?.message).toContain('4294992761');
+  });
+
+  it('judges against the raster dtype, not a fixed ceiling', async () => {
+    expect(await noticesAfterFillColour(['70000'], 'Uint16')).toHaveLength(1);
+    expect(await noticesAfterFillColour(['70000'], 'Uint32')).toEqual([]);
+  });
+
+  it('treats non-integer ids as unmatched, and stays quiet when any id could be a label', async () => {
+    expect(await noticesAfterFillColour(['aaabbbcc-1', 'aaabbbcd-1'], 'Uint32')).toHaveLength(1);
+    expect(await noticesAfterFillColour(['aaabbbcc-1', '17'], 'Uint32')).toEqual([]);
+  });
+});
+
 describe('the store cannot tell where a resolver lives', () => {
   // The whole safety argument for placement-by-dependency. If the store could
   // distinguish a vis-resident resolver from a core-resident one, "images is

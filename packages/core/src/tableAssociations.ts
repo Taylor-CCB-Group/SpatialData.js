@@ -1,3 +1,4 @@
+import type { EntryNotice } from './engine/errors';
 import type { SpatialData } from './store';
 import type { ElementName, TableColumnData, TableColumnKind } from './types';
 
@@ -123,6 +124,70 @@ function alignFeatureRowIndicesByPosition(
     }
   }
   return rowIndexByFeatureIndex;
+}
+
+const MAX_LABEL_VALUE_BY_DTYPE: Readonly<Record<string, number>> = {
+  uint8: 0xff,
+  uint16: 0xffff,
+  uint32: 0xffffffff,
+  int8: 0x7f,
+  int16: 0x7fff,
+  int32: 0x7fffffff,
+};
+
+/**
+ * The largest label id a raster of this dtype can hold, or `undefined` for a dtype
+ * that is not an integer type we know. Accepts both zarr (`uint32`) and viv
+ * (`Uint32`) spellings.
+ */
+export function maxLabelValueForDtype(dtype: string | undefined): number | undefined {
+  return dtype ? MAX_LABEL_VALUE_BY_DTYPE[dtype.toLowerCase()] : undefined;
+}
+
+/**
+ * Could any of these table instance ids be a pixel value of a labels raster?
+ *
+ * Label ids are integers in `[1, maxLabelValue]` (0 is background). `false` proves
+ * no label can join to any row; `true` proves nothing, because the raster may still
+ * not contain the id. That asymmetry is the point: it is the strongest statement
+ * available without reading pixels.
+ */
+export function anyIdIsLabelValue(ids: Iterable<string>, maxLabelValue: number): boolean {
+  for (const id of ids) {
+    if (/^\d+$/.test(id)) {
+      const value = Number(id);
+      if (value >= 1 && value <= maxLabelValue) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The notice for an element none of whose ids join to its associated table — the
+ * case where table columns are offered in the UI and every lookup silently misses.
+ * `detail` says how we know, in terms of the ids involved.
+ */
+export function tableRowsUnmatchedNotice({
+  kind,
+  elementKey,
+  tableName,
+  instanceKey,
+  detail,
+}: {
+  kind: 'shapes' | 'labels';
+  elementKey: string;
+  tableName: string;
+  instanceKey: string;
+  detail: string;
+}): Extract<EntryNotice, { kind: 'table-rows-unmatched' }> {
+  return {
+    kind: 'table-rows-unmatched',
+    message:
+      `No ${kind} in "${elementKey}" match rows of table "${tableName}" by its instance_key ` +
+      `"${instanceKey}": ${detail}. Table colours and tooltip fields will not apply.`,
+    tableName,
+    instanceKey,
+  };
 }
 
 export function isSpatialData(value: unknown): value is SpatialData {
