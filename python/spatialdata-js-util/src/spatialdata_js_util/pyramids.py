@@ -23,14 +23,21 @@ does for any multiscale. Extending reads only the coarsest level, not `s0`;
 by averaging, labels by the label model's own downsampler, so label ids are never
 blended into ones that never existed.
 
-`ensure_pyramids` does this in memory, for a caller that is about to write the
-`SpatialData` object anyway. The path-based functions are copy-then-write: the
-element is read from the source store and written into a *different* store,
-because SpatialData refuses to delete the files backing a live element.
+Three entry points apply the rule:
+
+* `ensure_pyramids` works on an in-memory `SpatialData` and writes nothing, for a
+  caller that is about to write it anyway.
+* `add_pyramids_in_place` appends the missing levels to an existing store. Adding
+  levels deletes nothing, so it needs no copy: new arrays go beside the old ones
+  and only the metadata that declares them changes. It cannot replace levels.
+* `add_pyramids` (and `recompress_spatialdata(pyramid=True)`) write a *different*
+  store, which is the only way to replace levels — SpatialData refuses to delete
+  the files backing a live element — and is what `force` needs.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +45,13 @@ from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from .errors import WriterCommandError
 from .provenance import package_version
-from .store import read_json, refresh_consolidated_metadata, write_json
+from .store import (
+    drop_consolidated_metadata,
+    json_bytes,
+    read_json,
+    refresh_consolidated_metadata,
+    write_json,
+)
 
 if TYPE_CHECKING:
     from spatialdata import SpatialData
@@ -166,8 +179,11 @@ def _plan(
 ) -> tuple[PyramidAction, list[int], str | None]:
     """Decide how to give *element* the levels it lacks.
 
-    Returns ``(action, scale_factors, skip_reason)``. Factors for ``"rebuilt"``
-    apply to full resolution, factors for ``"extended"`` to the coarsest level.
+    Returns ``(action, scale_factors, skip_reason)``. ``"extended"`` keeps the
+    levels that exist and adds new ones, with factors that apply to the coarsest
+    existing level (for a single-level element that is full resolution).
+    ``"rebuilt"`` recomputes every level from full resolution, and only happens
+    under *force* on an element that already has several.
     """
     arrays = _level_arrays(element)
     if force or len(arrays) == 1:
@@ -175,7 +191,7 @@ def _plan(
             arrays[0], levels=levels, downscale=downscale, min_size=min_size
         )
         if factors:
-            return "rebuilt", factors, None
+            return ("extended" if len(arrays) == 1 else "rebuilt"), factors, None
         return "skipped", [], (
             "already at or below the target size"
             if levels == "auto"
@@ -233,7 +249,9 @@ def _extend_element(element: Any, scale_factors: list[int]) -> Any:
 
 
 def _apply_plan(element: Any, action: PyramidAction, scale_factors: list[int]) -> Any:
-    if action == "extended":
+    from xarray import DataTree
+
+    if action == "extended" and isinstance(element, DataTree):
         return _extend_element(element, scale_factors)
     full_res = _full_resolution(element)
     return _rebuild_element(full_res, scale_factors, _element_chunks(full_res))
@@ -367,21 +385,21 @@ def ensure_pyramids(
     """Give raster elements of an in-memory `SpatialData` the levels they lack.
 
     Each image (and, with *include_labels*, each labels element) whose coarsest
-    level is larger than *min_size* is replaced in `sdata`. A multiscale element
-    keeps its existing levels and gains new ones coarsened from its coarsest
-    level; a single-level element is rebuilt from full resolution. Nothing is
-    written or recompressed; the new levels are lazy dask arrays computed when
-    `sdata` is written. *image_keys* and *label_keys* limit which elements are
+    level is larger than *min_size* is replaced in `sdata` by one that keeps its
+    existing levels and gains new ones coarsened from its coarsest level (for a
+    single-level element, from full resolution). Nothing is written or
+    recompressed; the new levels are lazy dask arrays computed when `sdata` is
+    written. *image_keys* and *label_keys* limit which elements are
     considered.
 
     A replaced element still reads from the files backing the original, so
     write `sdata` to a new path: SpatialData refuses to delete files backing a
     live element.
 
-    Returns one report per element considered: ``action`` is ``"rebuilt"``,
-    ``"extended"`` (``scale_factors`` then apply to the coarsest existing level)
-    or ``"skipped"`` (with a ``reason``), as from `build_pyramids_into`, except
-    that ``level_count`` replaces the on-disk ``levels`` names.
+    Returns one report per element considered: ``action`` is ``"extended"``
+    (``scale_factors`` apply to the coarsest existing level) or ``"skipped"``
+    (with a ``reason``), as from `build_pyramids_into`, except that
+    ``level_count`` replaces the on-disk ``levels`` names.
     """
     reports = _ensure_collection(
         sdata, "images", image_keys, downscale=downscale, min_size=min_size
@@ -393,6 +411,264 @@ def ensure_pyramids(
             )
         )
     return reports
+
+
+def _level_names(datasets: list[dict[str, Any]]) -> list[str]:
+    return [str(dataset["path"]) for dataset in datasets]
+
+
+def _plain_zarr_codecs(array: Any) -> bool:
+    """Whether every codec of *array* ships with zarr or numcodecs.
+
+    Levels added in place must stay readable by any zarr reader, so they never
+    inherit an image codec (JPEG 2000, HTJ2K) from the level they were derived
+    from.
+    """
+    codecs = [*array.filters, array.serializer, *array.compressors]
+    return all(type(codec).__module__.split(".")[0] in {"zarr", "numcodecs"} for codec in codecs)
+
+
+def _write_levels_in_place(
+    store_path: Path,
+    collection: RasterCollection,
+    key: str,
+    levels: Sequence[Any],
+    shapes: list[tuple[int, ...]],
+) -> None:
+    """Append *levels* (lazy arrays) to an element group, then declare them.
+
+    Arrays are written before the group metadata names them, so a run that dies
+    part-way leaves undeclared arrays that the next run overwrites, never a
+    pyramid that points at missing data. Nothing that already exists is touched
+    except the group's `zarr.json`, which is replaced atomically.
+    """
+    import dask.array as da
+    import zarr
+    from ome_zarr.format import FormatV05
+    from zarr.core.metadata import ArrayV3Metadata
+
+    meta_path = store_path / collection / key / "zarr.json"
+    doc = read_json(meta_path)
+    if int(doc.get("zarr_format", 0)) != 3:
+        raise WriterCommandError(f"{collection}/{key} is not a Zarr v3 group; cannot extend in place.")
+    attrs = doc.get("attributes", {})
+    multiscale = (attrs.get("ome", attrs).get("multiscales") or [None])[0]
+    if multiscale is None:
+        raise WriterCommandError(f"{collection}/{key} declares no multiscales metadata.")
+    datasets: list[dict[str, Any]] = multiscale["datasets"]
+    existing = len(datasets)
+    names = _level_names(datasets)
+    if names != [f"s{i}" for i in range(existing)]:
+        raise WriterCommandError(
+            f"{collection}/{key} has levels named {names}; extending in place needs s0, s1, …"
+        )
+
+    # Level transforms are a function of the level shapes; SpatialData and
+    # ome-zarr derive them the same way on every write. A store whose existing
+    # entries disagree would get new levels that are misaligned against them.
+    transforms = FormatV05().generate_coordinate_transformations(shapes)
+    if transforms is None or not _same_transforms(
+        [dataset["coordinateTransformations"] for dataset in datasets], transforms[:existing]
+    ):
+        raise WriterCommandError(
+            f"{collection}/{key} has level transforms that do not follow its level shapes, "
+            "so new levels cannot be appended consistently. Write to a new store instead."
+        )
+
+    root = zarr.open_group(store_path, mode="r+", use_consolidated=False)
+    group = root.get(f"{collection}/{key}")
+    template = group.get(names[-1]) if isinstance(group, zarr.Group) else None
+    if not isinstance(group, zarr.Group) or not isinstance(template, zarr.Array):
+        raise WriterCommandError(f"{collection}/{key} is not laid out as a multiscale image group.")
+    template_meta = template.metadata
+    if not isinstance(template_meta, ArrayV3Metadata):
+        raise WriterCommandError(f"{collection}/{key}/{names[-1]} is not a Zarr v3 array.")
+    codecs: dict[str, Any] = (
+        {
+            "filters": template.filters,
+            "serializer": template.serializer,
+            "compressors": template.compressors,
+        }
+        if _plain_zarr_codecs(template)
+        else {}
+    )
+    targets = []
+    for offset, level in enumerate(levels):
+        targets.append(
+            group.create_array(
+                f"s{existing + offset}",
+                shape=tuple(level.shape),
+                dtype=level.dtype,
+                chunks=tuple(min(c, s) for c, s in zip(template.chunks, level.shape)),
+                fill_value=template.fill_value,
+                dimension_names=template_meta.dimension_names,
+                chunk_key_encoding=template_meta.chunk_key_encoding,
+                overwrite=True,
+                **codecs,
+            )
+        )
+    # One call, so dask computes an intermediate level once for the levels above it.
+    da.store(
+        [level.data.rechunk(target.chunks) for level, target in zip(levels, targets)],
+        targets,
+        lock=False,
+    )
+
+    datasets.extend(
+        {"path": f"s{existing + offset}", "coordinateTransformations": transforms[existing + offset]}
+        for offset in range(len(levels))
+    )
+    tmp_path = meta_path.with_name("zarr.json.tmp")
+    tmp_path.write_bytes(json_bytes(doc))
+    os.replace(tmp_path, meta_path)
+    drop_consolidated_metadata(meta_path.parent)
+
+
+def _same_transforms(declared: list[Any], expected: list[Any]) -> bool:
+    import numpy as np
+
+    if len(declared) != len(expected):
+        return False
+    for have, want in zip(declared, expected):
+        if [t["type"] for t in have] != [t["type"] for t in want]:
+            return False
+        for a, b in zip(have, want):
+            for field in ("scale", "translation"):
+                if field in b and not np.allclose(a[field], b[field]):
+                    return False
+    return True
+
+
+def _extend_collection_in_place(
+    store_path: Path,
+    sdata: "SpatialData",
+    collection: RasterCollection,
+    keys: Sequence[str],
+    *,
+    levels: int | Literal["auto"],
+    downscale: int,
+    min_size: int,
+) -> list[dict[str, Any]]:
+    elements = getattr(sdata, collection)
+    reports: list[dict[str, Any]] = []
+    for key in keys:
+        element = elements[key]
+        full_res = _full_resolution(element)
+        action, scale_factors, skip_reason = _plan(
+            element, levels=levels, downscale=downscale, min_size=min_size, force=False
+        )
+        if action == "skipped":
+            reports.append(
+                {
+                    "path": f"{collection}/{key}",
+                    "action": "skipped",
+                    "reason": skip_reason,
+                    "shape": list(full_res.shape),
+                    "levels": _multiscale_datasets(store_path, collection, key),
+                }
+            )
+            continue
+
+        updated = _level_arrays(_apply_plan(element, action, scale_factors))
+        existing = len(_level_arrays(element))
+        _write_levels_in_place(
+            store_path,
+            collection,
+            key,
+            updated[existing:],
+            [tuple(int(n) for n in level.shape) for level in updated],
+        )
+        reports.append(
+            {
+                "path": f"{collection}/{key}",
+                "action": action,
+                "shape": list(full_res.shape),
+                "scale_factors": scale_factors,
+                "levels": _multiscale_datasets(store_path, collection, key),
+            }
+        )
+    return reports
+
+
+def add_pyramids_in_place(
+    store: str | Path,
+    *,
+    image_keys: Sequence[str] | None = None,
+    label_keys: Sequence[str] | None = None,
+    include_labels: bool = False,
+    levels: int | Literal["auto"] = "auto",
+    downscale: int = 2,
+    min_size: int = DEFAULT_MIN_SIZE,
+    manifest: bool = True,
+) -> PyramidResult:
+    """Append the pyramid levels a store's rasters lack, without copying it.
+
+    The same rule as `add_pyramids`, applied to *store* itself: each raster whose
+    coarsest level is larger than *min_size* (or that has fewer than *levels*)
+    keeps every level it has and gains new ones coarsened from its coarsest
+    level, with a single-level raster coarsened from full resolution. Existing
+    arrays are never rewritten or deleted, and so are not recompressed; only the
+    element's group `zarr.json` and the store's consolidated metadata change.
+    Levels added here use zarr's own codecs — the coarsest level's if they are
+    plain zarr codecs, zarr's defaults if it uses an image codec — so they stay
+    readable by any zarr reader.
+
+    There is no *force*: replacing levels that exist means deleting files that
+    back them. Use `add_pyramids` for that, or when the store's existing levels
+    carry transforms that do not follow their shapes (this raises rather than
+    append levels that would be misaligned).
+
+    New arrays are written before the metadata that declares them, so an
+    interrupted run leaves a store that still reads as it did and that a rerun
+    completes. Do not run it while something else is writing the store.
+    """
+    import spatialdata as sd
+
+    store_path = Path(store)
+    if not (store_path / "zarr.json").is_file():
+        raise WriterCommandError(f"Not a zarr store (no zarr.json): {store_path}")
+
+    image_selection = _select_keys(store_path, "images", image_keys)
+    label_selection = _select_keys(store_path, "labels", label_keys) if include_labels else []
+    # Elements are opened lazily; tables and points are not read. read_zarr annotates
+    # `selection` as a 1-tuple but builds a set from it, so any length works.
+    selection = ("images", "labels") if include_labels else ("images",)
+    sdata = sd.read_zarr(store_path, selection=selection)  # pyright: ignore[reportArgumentType]
+
+    reports = _extend_collection_in_place(
+        store_path, sdata, "images", image_selection,
+        levels=levels, downscale=downscale, min_size=min_size,
+    )
+    if include_labels:
+        reports.extend(
+            _extend_collection_in_place(
+                store_path, sdata, "labels", label_selection,
+                levels=levels, downscale=downscale, min_size=min_size,
+            )
+        )
+    # A store that needed nothing is left byte-for-byte as it was.
+    if any(report["action"] != "skipped" for report in reports):
+        refresh_consolidated_metadata(store_path)
+
+    manifest_data = {
+        "format": "spatialdata-pyramids/v1",
+        "source": str(store_path),
+        "output": str(store_path),
+        "in_place": True,
+        "levels": levels,
+        "downscale": downscale,
+        "min_size": min_size,
+        "rasters": reports,
+        "packages": {
+            "spatialdata": package_version("spatialdata"),
+            "spatialdata-js-util": package_version("spatialdata-js-util"),
+            "zarr": package_version("zarr"),
+        },
+    }
+    manifest_path = store_path.with_suffix(".pyramid-manifest.json") if manifest else None
+    if manifest_path is not None:
+        write_json(manifest_path, manifest_data)
+    return PyramidResult(store_path, manifest_path, manifest_data)
 
 
 def _select_keys(

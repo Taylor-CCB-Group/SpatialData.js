@@ -166,13 +166,31 @@ def _add_pyramid_args(parser: argparse.ArgumentParser, *, with_flag: bool) -> No
 
 
 def _images_add_pyramid(args: argparse.Namespace) -> None:
-    from .pyramids import add_pyramids
+    from .pyramids import add_pyramids, add_pyramids_in_place
 
     def command() -> dict[str, Any]:
+        image_keys = args.image_key.split(",") if args.image_key else None
+        if args.in_place:
+            if args.dest is not None:
+                raise WriterCommandError("--in-place takes no destination; omit DEST.")
+            if args.overwrite or args.pyramid_force:
+                raise WriterCommandError(
+                    "--in-place only adds levels, so --overwrite and --pyramid-force do not apply."
+                )
+            return add_pyramids_in_place(
+                args.source,
+                image_keys=image_keys,
+                include_labels=args.labels,
+                levels=args.pyramid_levels,
+                downscale=args.pyramid_downscale,
+                min_size=args.pyramid_min_size,
+            ).manifest
+        if args.dest is None:
+            raise WriterCommandError("Give a destination store, or pass --in-place.")
         return add_pyramids(
             args.source,
             args.dest,
-            image_keys=args.image_key.split(",") if args.image_key else None,
+            image_keys=image_keys,
             include_labels=args.labels,
             levels=args.pyramid_levels,
             downscale=args.pyramid_downscale,
@@ -272,12 +290,26 @@ def _add_images_commands(subparsers: argparse._SubParsersAction) -> None:
             "Copy a store and add pyramid levels to rasters whose coarsest level is "
             "larger than --pyramid-min-size (or that have fewer than --pyramid-levels "
             "levels), keeping any levels they already have, so a zoomed-out browser "
-            "view does not have to read full-resolution chunks. Codecs are left unchanged; use "
-            "'images recompress --pyramid' to do both in one pass."
+            "view does not have to read full-resolution chunks. Codecs are left "
+            "unchanged; use 'images recompress --pyramid' to do both in one pass. "
+            "With --in-place the levels are appended to SOURCE itself and nothing is "
+            "copied or rewritten."
         ),
     )
     add_pyramid.add_argument("source", help="Existing SpatialData Zarr store")
-    add_pyramid.add_argument("dest", help="Output SpatialData Zarr store")
+    add_pyramid.add_argument(
+        "dest",
+        nargs="?",
+        help="Output SpatialData Zarr store (omit with --in-place)",
+    )
+    add_pyramid.add_argument(
+        "--in-place",
+        action="store_true",
+        help=(
+            "Append the missing levels to SOURCE instead of writing a copy. Existing "
+            "arrays are not touched; new levels use plain zarr codecs."
+        ),
+    )
     add_pyramid.add_argument(
         "--image-key",
         metavar="KEYS",

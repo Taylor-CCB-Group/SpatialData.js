@@ -40,6 +40,7 @@ from .images import (
 from .pyramids import (
     PyramidResult,
     add_pyramids,
+    add_pyramids_in_place,
     ensure_pyramids,
     has_pyramid,
     needs_pyramid,
@@ -86,6 +87,7 @@ __all__ = [
     "RecompressedSpatialData",
     "add_points_zarr_to_store",
     "add_pyramids",
+    "add_pyramids_in_place",
     "anndata_to_csc",
     "backend_report",
     "build_spatialdata_multiscale_metadata",

@@ -15,6 +15,7 @@ sd = pytest.importorskip("spatialdata")
 from spatialdata_js_util.pyramids import (  # noqa: E402
     MAX_LEVELS,
     add_pyramids,
+    add_pyramids_in_place,
     ensure_pyramids,
     has_pyramid,
     needs_pyramid,
@@ -293,7 +294,7 @@ class TestEnsurePyramids:
         assert reports == [
             {
                 "path": "images/morphology",
-                "action": "rebuilt",
+                "action": "extended",
                 "shape": [1, 2048, 1536],
                 "scale_factors": [2],
                 "level_count": 2,
@@ -407,7 +408,7 @@ class TestEnsurePyramids:
 
         reports = ensure_pyramids(sdata, include_labels=True)
         [labels_report] = [r for r in reports if r["path"] == "labels/cells"]
-        assert labels_report["action"] == "rebuilt"
+        assert labels_report["action"] == "extended"
         coarse = np.asarray(sdata.labels["cells"]["scale1"]["image"].data.compute())
         assert set(np.unique(coarse).tolist()) <= set(np.unique(_labels()).tolist())
 
@@ -443,6 +444,233 @@ class TestEnsurePyramids:
         assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
 
+def _snapshot(store: Path) -> dict[str, bytes]:
+    return {str(f.relative_to(store)): f.read_bytes() for f in store.rglob("*") if f.is_file()}
+
+
+class TestAddPyramidsInPlace:
+    """Levels are appended to the store itself; what exists is never rewritten."""
+
+    def test_single_level_store_gains_levels(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+
+        result = add_pyramids_in_place(store)
+
+        assert result.store_path == store
+        assert result.manifest["rasters"][0]["action"] == "extended"
+        assert _levels(store, "images", "morphology") == ["s0", "s1"]
+        assert not (tmp_path / "s.zarr.tmp").exists()
+
+    def test_existing_arrays_are_byte_identical(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr", scale_factors=[2])
+        before = _snapshot(store)
+
+        add_pyramids_in_place(store, min_size=512)
+
+        after = _snapshot(store)
+        changed = {name for name in before if after.get(name) != before[name]}
+        # Only the metadata that declares levels may change.
+        assert changed == {"zarr.json", "images/morphology/zarr.json"}
+        assert any(name.startswith("images/morphology/s2/") for name in after)
+
+    def test_levels_match_a_fresh_build(self, tmp_path: Path) -> None:
+        from spatialdata.models import Image2DModel
+        from spatialdata.transformations import Scale
+
+        transformations = {"global": Scale([2.0, 2.0], axes=("y", "x"))}
+        pixels = _image()
+        store = _store(
+            tmp_path / "s.zarr", pixels=pixels, scale_factors=[2], transformations=transformations
+        )
+
+        add_pyramids_in_place(store, min_size=512)
+
+        reference = Image2DModel.parse(
+            pixels, dims=("c", "y", "x"), scale_factors=[2, 2], transformations=transformations
+        )
+        sd.SpatialData(images={"morphology": reference}).write(tmp_path / "ref.zarr")
+        assert _datasets(store, "images", "morphology") == _datasets(
+            tmp_path / "ref.zarr", "images", "morphology"
+        )
+        ours = sd.read_zarr(store).images["morphology"]["scale2"]["image"].data.compute()
+        theirs = sd.read_zarr(tmp_path / "ref.zarr").images["morphology"]["scale2"]["image"].data.compute()
+        assert np.array_equal(np.asarray(ours), np.asarray(theirs))
+
+    def test_several_new_levels_match_a_fresh_build(self, tmp_path: Path) -> None:
+        from spatialdata.models import Image2DModel
+
+        pixels = _image(4096, 2048)
+        store = _store(tmp_path / "s.zarr", pixels=pixels)
+
+        add_pyramids_in_place(store, min_size=512)
+
+        assert _levels(store, "images", "morphology") == ["s0", "s1", "s2", "s3"]
+        reference = Image2DModel.parse(pixels, dims=("c", "y", "x"), scale_factors=[2, 2, 2])
+        sd.SpatialData(images={"morphology": reference}).write(tmp_path / "ref.zarr")
+        ours = sd.read_zarr(store).images["morphology"]
+        theirs = sd.read_zarr(tmp_path / "ref.zarr").images["morphology"]
+        for level in ("scale1", "scale2", "scale3"):
+            assert np.array_equal(
+                np.asarray(ours[level]["image"].data.compute()),
+                np.asarray(theirs[level]["image"].data.compute()),
+            ), level
+
+    def test_store_reads_back_with_consolidated_metadata_current(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+
+        add_pyramids_in_place(store)
+
+        root = json.loads((store / "zarr.json").read_text())
+        assert "images/morphology/s1" in root["consolidated_metadata"]["metadata"]
+        assert list(sd.read_zarr(store).images["morphology"]) == ["scale0", "scale1"]
+
+    def test_adequate_pyramid_leaves_every_file_alone(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr", scale_factors=[2])
+        before = _snapshot(store)
+
+        result = add_pyramids_in_place(store, manifest=False)
+
+        assert result.manifest["rasters"][0]["action"] == "skipped"
+        assert _snapshot(store) == before
+
+    def test_a_second_run_changes_nothing(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+        add_pyramids_in_place(store, min_size=512)
+        before = _snapshot(store)
+
+        result = add_pyramids_in_place(store, min_size=512, manifest=False)
+
+        assert result.manifest["rasters"][0]["action"] == "skipped"
+        assert _snapshot(store) == before
+
+    def test_labels_only_with_include_labels(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr", labels=_labels())
+
+        add_pyramids_in_place(store)
+        assert not has_pyramid(store, "labels", "cells")
+
+        add_pyramids_in_place(store, include_labels=True)
+        assert _levels(store, "labels", "cells") == ["s0", "s1"]
+        coarse = sd.read_zarr(store).labels["cells"]["scale1"]["image"].data.compute()
+        assert set(np.unique(np.asarray(coarse)).tolist()) <= set(np.unique(_labels()).tolist())
+
+    def test_other_elements_are_not_read_or_changed(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr", labels=_labels())
+        before = _snapshot(store / "labels")
+
+        add_pyramids_in_place(store)
+
+        assert _snapshot(store / "labels") == before
+
+    def test_an_interrupted_run_is_completed_by_the_next(self, tmp_path: Path) -> None:
+        import zarr
+
+        store = _store(tmp_path / "s.zarr")
+        # What a run that died after writing arrays but before declaring them leaves.
+        group = zarr.open_group(store, mode="r+", use_consolidated=False)["images"]["morphology"]
+        group.create_array("s1", shape=(1, 7, 7), dtype="uint16", chunks=(1, 7, 7))
+        assert _levels(store, "images", "morphology") == ["s0"]
+
+        add_pyramids_in_place(store)
+
+        assert _levels(store, "images", "morphology") == ["s0", "s1"]
+        s1 = sd.read_zarr(store).images["morphology"]["scale1"]["image"]
+        assert tuple(s1.shape) == (1, 1024, 768)
+        assert int(s1.data.compute().max()) > 0
+
+    def test_refuses_levels_whose_transforms_do_not_follow_their_shapes(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr", scale_factors=[2])
+        meta_path = store / "images" / "morphology" / "zarr.json"
+        doc = json.loads(meta_path.read_text())
+        ome = doc["attributes"]["ome"]["multiscales"][0]["datasets"][1]
+        ome["coordinateTransformations"][1]["translation"] = [0.0, 0.0, 0.0]
+        meta_path.write_text(json.dumps(doc))
+        before = _snapshot(store)
+
+        with pytest.raises(WriterCommandError, match="do not follow"):
+            add_pyramids_in_place(store, min_size=512)
+
+        assert _snapshot(store) == before
+
+    def test_new_levels_copy_the_coarsest_levels_plain_codecs(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+
+        add_pyramids_in_place(store)
+
+        def codecs(level: str) -> list:
+            meta = json.loads((store / "images" / "morphology" / level / "zarr.json").read_text())
+            return meta["codecs"]
+
+        assert codecs("s1") == codecs("s0")
+
+    def test_levels_added_below_an_image_codec_use_plain_codecs(self, tmp_path: Path) -> None:
+        from spatialdata_js_util import recompress_spatialdata
+        from spatialdata_js_util.codecs import CODEC_HTJ2K_OPENJPH, htj2k_available
+
+        if not htj2k_available():
+            pytest.skip("No HTJ2K backend available.")
+
+        source = _store(tmp_path / "src.zarr")
+        dest = tmp_path / "htj2k.zarr"
+        recompress_spatialdata(
+            source, dest, codec=CODEC_HTJ2K_OPENJPH, preset="lossless", chunks="auto", overwrite=True
+        )
+        s0 = json.loads((dest / "images" / "morphology" / "s0" / "zarr.json").read_text())
+        assert "htj2k" in json.dumps(s0["codecs"]).lower()
+
+        add_pyramids_in_place(dest)
+
+        s1 = json.loads((dest / "images" / "morphology" / "s1" / "zarr.json").read_text())
+        assert "htj2k" not in json.dumps(s1["codecs"]).lower()
+        assert [c["name"] for c in s1["codecs"]] == ["bytes", "zstd"]
+        # The encoded level is left exactly as it was.
+        assert np.array_equal(
+            np.asarray(sd.read_zarr(dest).images["morphology"]["scale0"]["image"].data.compute()),
+            _image(),
+        )
+
+    def test_rejects_a_non_store_path(self, tmp_path: Path) -> None:
+        with pytest.raises(WriterCommandError, match="Not a zarr store"):
+            add_pyramids_in_place(tmp_path)
+
+    def test_rejects_unknown_image_key(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+        with pytest.raises(WriterCommandError, match="Unknown images element"):
+            add_pyramids_in_place(store, image_keys=["nope"])
+
+
+class TestAddPyramidCli:
+    def _run(self, *argv: str) -> None:
+        from spatialdata_js_util.cli import main
+
+        main(["images", "add-pyramid", *argv])
+
+    def test_in_place_appends_to_the_source(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+
+        self._run(str(store), "--in-place")
+
+        assert _levels(store, "images", "morphology") == ["s0", "s1"]
+
+    def test_without_in_place_a_destination_is_required(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+        with pytest.raises(SystemExit, match="destination"):
+            self._run(str(store))
+
+    @pytest.mark.parametrize("extra", [["--overwrite"], ["--pyramid-force"]])
+    def test_in_place_rejects_options_that_replace_levels(
+        self, tmp_path: Path, extra: list[str]
+    ) -> None:
+        store = _store(tmp_path / "s.zarr")
+        with pytest.raises(SystemExit, match="only adds levels"):
+            self._run(str(store), "--in-place", *extra)
+
+    def test_in_place_rejects_a_destination(self, tmp_path: Path) -> None:
+        store = _store(tmp_path / "s.zarr")
+        with pytest.raises(SystemExit, match="no destination"):
+            self._run(str(store), str(tmp_path / "out.zarr"), "--in-place")
+
+
 class TestRecompressWithPyramid:
     """The one-pass path: single-resolution input to browser-ready output."""
 
@@ -471,7 +699,7 @@ class TestRecompressWithPyramid:
             "images/morphology/s0",
             "images/morphology/s1",
         ]
-        assert result.manifest["pyramids"][0]["action"] == "rebuilt"
+        assert result.manifest["pyramids"][0]["action"] == "extended"
 
         # Both levels must be readable, and full res still exact.
         image = sd.read_zarr(dest).images["morphology"]

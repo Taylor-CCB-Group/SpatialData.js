@@ -208,9 +208,9 @@ full resolution) and `--pyramid-downscale K`.
 
 An image gets levels only when its coarsest existing level is still larger than
 `--pyramid-min-size` (with `--pyramid-levels N`, when it has fewer than N
-levels). A single-resolution image is built from full resolution; a shallow
-pyramid keeps its existing levels and gains new ones coarsened from its coarsest
-level, so only that level is read. Others are **skipped**, and the manifest says
+levels). Existing levels are kept and new ones are coarsened from the coarsest
+level (full resolution, for a single-resolution image), so only that level is
+read. Others are **skipped**, and the manifest says
 why; `--pyramid-force` rebuilds every image from full resolution anyway. Pass `--labels` to
 `add-pyramid` to include label elements — they are downsampled by the label
 model, so ids are never averaged into values that identify no object.
@@ -221,9 +221,26 @@ transforms are derived from level shapes, which gets the scale *and* half-pixel
 translation right — hand-written `multiscales` metadata tends to misalign every
 level against the full-resolution image.
 
-Pyramids are always written to a **different** store than the source. SpatialData
-refuses to delete the files backing a live element, so there is no in-place mode.
-To avoid the copy when you are about to write a `SpatialData` object anyway, call
+`add-pyramid` and `recompress --pyramid` write to a **different** store than the
+source, because SpatialData refuses to delete the files backing a live element.
+Adding levels deletes nothing, though, so there are two ways to skip the copy:
+
+```bash
+spatialdata-js-util images add-pyramid store.zarr --in-place
+```
+
+`--in-place` appends the missing levels to the store itself. Existing arrays are
+not read back, rewritten or recompressed; the new arrays are written first and
+then declared in the element's `zarr.json` and the store's consolidated metadata,
+so an interrupted run leaves a store that still reads as before and that a rerun
+completes. New levels use the coarsest level's codecs when those are plain zarr
+codecs, and zarr's defaults (zstd) when it uses an image codec, so they never add
+JPEG 2000 or HTJ2K. It cannot replace levels, so `--pyramid-force` and
+`--overwrite` do not apply, and it stops rather than append to levels whose
+transforms do not follow their shapes. Do not run it while anything else writes
+the store.
+
+To avoid even that when you are about to write a `SpatialData` object anyway, call
 `ensure_pyramids(sdata)`: it replaces the elements that need levels in memory and
 writes nothing.
 
@@ -344,6 +361,7 @@ import spatialdata as sd
 from spatialdata_js_util import (
     recompress_spatialdata,
     add_pyramids,
+    add_pyramids_in_place,
     ensure_pyramids,
     has_pyramid,
     write_morton_points_parquet,
@@ -363,6 +381,7 @@ print(result.manifest_path)
 # Or pyramids on their own
 has_pyramid("input.zarr", "images", "morphology")   # -> False
 add_pyramids("input.zarr", "output.zarr", levels=4)
+add_pyramids_in_place("input.zarr")   # append levels to the store itself
 
 # Or in memory, before a write you were doing anyway
 sdata = sd.read_zarr("input.zarr")

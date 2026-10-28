@@ -356,7 +356,7 @@ class TestRecompressPyramidControls:
             report = await _run_to_report(pilot)
             assert report.error is None, report.error
             assert report.result is not None
-            assert report.result["pyramids"][0]["action"] == "rebuilt"
+            assert report.result["pyramids"][0]["action"] == "extended"
 
         assert has_pyramid(dest, "images", "morphology")
 
