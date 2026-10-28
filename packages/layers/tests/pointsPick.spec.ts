@@ -59,6 +59,27 @@ describe('pointsPickObjectFromDeckData', () => {
     expect(pointsPickObjectFromDeckData(data, 2)?.featureCode).toBe(7);
   });
 
+  it('reads a bare array-like code lane, as the batch type allows', () => {
+    const data = {
+      ...buildPointsDeckData(batch(), true, false),
+      pickFeatureCodes: { 0: 5, 1: 6, 2: 7, length: 3 },
+    };
+
+    expect(pointsPickObjectFromDeckData(data, 1)?.featureCode).toBe(6);
+  });
+
+  it('prefers the batch codes over the drawn attribute, which is a Float32 copy', () => {
+    // 2 ** 24 + 1 is the first integer a Float32 cannot hold; the attribute rounds
+    // it down to 2 ** 24, which would name a different feature.
+    const exactCode = 2 ** 24 + 1;
+    const data = {
+      ...buildPointsDeckData(batch(), true, true),
+      pickFeatureCodes: new Int32Array([exactCode, exactCode, exactCode]),
+    };
+
+    expect(pointsPickObjectFromDeckData(data, 0)?.featureCode).toBe(exactCode);
+  });
+
   it('returns nothing for an out-of-range index or foreign data', () => {
     const data = buildPointsDeckData(batch(), true, true);
 

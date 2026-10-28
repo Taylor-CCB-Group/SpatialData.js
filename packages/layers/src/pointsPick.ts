@@ -81,22 +81,26 @@ function readFloat32Attribute(
   return { value, size };
 }
 
-/** A typed array or plain array of numbers, narrowed without an assertion. */
-function isNumericArrayLike(value: unknown): value is ArrayLike<number> {
-  if (Array.isArray(value)) {
-    return true;
+/**
+ * Anything indexable by number, which is what `ArrayLike<number>` promises and all
+ * `ColumnarNdarrayPointsBatch.featureCodes` is required to be — a typed array, a
+ * plain array, or a bare `{ 0: 7, length: 1 }`. The element type cannot be checked
+ * here without walking the whole thing, so the ONE value a pick reads is checked
+ * at the point of use instead.
+ */
+function isIndexableByNumber(value: unknown): value is ArrayLike<number> {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
-  return ArrayBuffer.isView(value) && !(value instanceof DataView);
+  return typeof Reflect.get(value, 'length') === 'number';
 }
 
-function readPickFeatureCodes(
-  data: unknown
-): { value: ArrayLike<number>; size: number } | undefined {
+function readPickFeatureCodes(data: unknown): ArrayLike<number> | undefined {
   if (!data || typeof data !== 'object') {
     return undefined;
   }
   const value = Reflect.get(data, 'pickFeatureCodes');
-  return isNumericArrayLike(value) ? { value, size: 1 } : undefined;
+  return isIndexableByNumber(value) ? value : undefined;
 }
 
 /** Rebuild the picked row from the binary `data` prop the scatter layer drew. */
@@ -119,13 +123,15 @@ export function pointsPickObjectFromDeckData(
   const y = positions.value[base + 1];
   const z = positions.size >= 3 ? positions.value[base + 2] : 0;
 
-  // The drawn attribute when colour-by-feature is on, else the CPU-side lane the
-  // deck data carries for exactly this (see `PointsDeckData.pickFeatureCodes`), so
-  // the tooltip names the feature whether or not the layer is colouring by it.
-  const codes = readFloat32Attribute(data, 'getFeatureCode') ?? readPickFeatureCodes(data);
-  const rawCode = codes && index < codes.value.length ? codes.value[index] : undefined;
+  // The batch's own codes first (see `PointsDeckData.pickFeatureCodes`): they are
+  // there whether or not the layer is colouring by feature, and they are the
+  // original values — the drawn attribute is a Float32 copy, which cannot hold a
+  // code past 2^24 exactly. The attribute is the fallback, for data built without
+  // the lane.
+  const codes = readPickFeatureCodes(data) ?? readFloat32Attribute(data, 'getFeatureCode')?.value;
+  const rawCode = codes && index < codes.length ? codes[index] : undefined;
   // -1 is the extension's "no code" default (see pointsScatterLayer), not a feature.
-  const featureCode = rawCode !== undefined && rawCode >= 0 ? rawCode : undefined;
+  const featureCode = typeof rawCode === 'number' && rawCode >= 0 ? rawCode : undefined;
 
   return {
     kind: POINTS_PICK_KIND,

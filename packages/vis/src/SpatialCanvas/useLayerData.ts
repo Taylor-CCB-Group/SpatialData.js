@@ -383,6 +383,30 @@ function getWorldBoundsCacheKey(elem: AvailableElement): string {
   return `${elem.type}:${elem.key}`;
 }
 
+/**
+ * Id suffix of the overlay that draws the in-flight scan's growing buffer (see the
+ * `partialResource` layer in `getLayers`). It is a second deck layer for ONE config,
+ * so a pick on it carries an id nothing is keyed by.
+ */
+const PARTIAL_LAYER_SUFFIX = '__partial';
+
+export function partialLayerId(layerId: string): string {
+  return `${layerId}${PARTIAL_LAYER_SUFFIX}`;
+}
+
+/**
+ * The config's layer id for an id a pick came through — the scan overlay's own id
+ * maps back to the layer it is overlaying.
+ *
+ * Without this, hovering a point WHILE a feature scan is running resolves no
+ * element and the tooltip silently shows nothing, for as long as the scan runs.
+ */
+export function layerIdForPick(layerId: string): string {
+  return layerId.endsWith(PARTIAL_LAYER_SUFFIX)
+    ? layerId.slice(0, -PARTIAL_LAYER_SUFFIX.length)
+    : layerId;
+}
+
 export function resolveLayerElement(
   layerId: string,
   config: LayerConfig | undefined,
@@ -1514,7 +1538,7 @@ export function useLayerData(
             const partialRowCodes = pointsEngine.getMatchingPartialRowFeatureCodes(elem.key);
             deckLayers.push(
               new PointsLayer({
-                id: `${layerId}__partial`,
+                id: partialLayerId(layerId),
                 resource: partialResource,
                 // Stable resource across chunks; the revision bumps as the buffer
                 // grows so the overlay re-reads without a per-chunk teardown (D10).
@@ -1714,9 +1738,10 @@ export function useLayerData(
 
   const getFeatureTooltip = useCallback(
     (
-      layerId: string,
+      pickedLayerId: string,
       pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
     ): SpatialFeatureTooltipData | undefined => {
+      const layerId = layerIdForPick(pickedLayerId);
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
 
       // The tile-status overlay, before the element guards below: it is a debug view of
@@ -1895,9 +1920,10 @@ export function useLayerData(
 
   const getFeaturePickEvent = useCallback(
     (
-      layerId: string,
+      pickedLayerId: string,
       pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
     ): SpatialFeaturePickEventData | undefined => {
+      const layerId = layerIdForPick(pickedLayerId);
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem) {
         return undefined;
