@@ -40,7 +40,7 @@ const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
 const [viewState, setViewState] = useState<ViewState | null>(null);
 
 const renderStack: RenderStack = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   entries: [
     {
       kind: 'spatial',
@@ -139,7 +139,7 @@ const mdvScatter = new ScatterplotLayer({
 <SpatialCanvasViewer
   /* ...controlled props... */
   renderStack={{
-    schemaVersion: 1,
+    schemaVersion: 2,
     entries: [
       { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'my_image' } },
       { kind: 'host', id: 'deck:scatter', source: { hostLayerId: 'deck:scatter' } },

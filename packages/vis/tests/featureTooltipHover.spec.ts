@@ -11,6 +11,7 @@ import {
   resolveDeckPickLayerIds,
   resolveHoveredLabel,
   resolveHoverFeatureTooltip,
+  resolvePickedEntryId,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
 
 /** A real deck layer: `PickingInfo.layer` is a full `Layer`, which a `{ id }` literal is not. */
@@ -59,6 +60,11 @@ describe('pickedLayerId', () => {
 
   it('looks through an isolated group to the member the pick came through', () => {
     expect(pickedLayerId(pickThroughGroup('shapes-cells'))).toBe('shapes-cells');
+  });
+
+  it('resolves the entry id a Viv-style viewer tagged with its view token', () => {
+    expect(resolvePickedEntryId(pickThroughGroup('deck:scatter-#detail#'))).toBe('deck:scatter');
+    expect(resolvePickedEntryId({ layer: { id: 'deck:scatter-#detail#' } })).toBe('deck:scatter');
   });
 
   it('lets a labels pick inside a group resolve its label', () => {

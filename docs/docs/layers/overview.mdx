@@ -82,7 +82,7 @@ The public saved/render order is `renderStack.entries`, not a separate
 import type { RenderStack } from '@spatialdata/layers';
 
 const renderStack: RenderStack = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   entries: [
     {
       kind: 'spatial',
@@ -91,19 +91,22 @@ const renderStack: RenderStack = {
       props: { opacity: 0.8 },
     },
     {
-      kind: 'host',
-      id: 'deck:scatter',
-      source: { hostLayerId: 'deck:scatter' },
-    },
-    {
       kind: 'group',
-      id: 'group:future-blend',
-      children: ['image-morphology', 'deck:scatter'],
-      props: { blendMode: 'reserved' },
+      id: 'points',
+      props: { blendMode: 'screen', opacity: 0.5 },
+      children: [
+        { kind: 'host', id: 'deck:scatter', source: { hostLayerId: 'deck:scatter' } },
+      ],
     },
   ],
 };
 ```
+
+A group draws its children in order. A group whose blend mode isn't `pass-through`,
+or that sets `isolate`, draws them into its own target first and composites that with
+its opacity and blend mode. `renderStackSchema` upgrades a saved v1 stack, and
+`migrateRenderStack` does the same as a plain function, returning notices for any
+child ids it had to drop.
 
 `source` holds structural identity. `props` holds renderer inputs. The
 [Resource Resolver](../core/resource-resolver) and deck/Viv `updateTriggers` decide what actually invalidates IO,

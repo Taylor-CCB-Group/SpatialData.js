@@ -7,6 +7,7 @@
 
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
+import type { RenderStack } from '@spatialdata/layers';
 import type { RefObject } from 'react';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
@@ -28,6 +29,11 @@ export interface SpatialViewerProps {
   layers: Layer[];
   /** Global SpatialCanvas layer order, bottom to top. */
   layerOrder?: string[];
+  /**
+   * When given, layers are placed by this stack's tree instead of `layerOrder`, and its
+   * isolated groups are drawn. `layers` and `vivLayerProps` are matched to entries by id.
+   */
+  renderStack?: RenderStack;
   /** Optional: Viv layer props for image layers */
   vivLayerProps?: ImageLayerConfig[];
   /** Optional: Callback on hover */
@@ -53,6 +59,7 @@ export function SpatialViewer({
   onViewStateChange,
   layers,
   layerOrder,
+  renderStack,
   vivLayerProps,
   onHover,
   onClick,
@@ -68,6 +75,7 @@ export function SpatialViewer({
       vivLayerProps={vivLayerProps ?? NO_IMAGE_LAYERS}
       extraLayers={layers}
       layerOrder={layerOrder}
+      renderStack={renderStack}
       onHover={onHover}
       onClick={onClick}
       deckProps={deckProps}

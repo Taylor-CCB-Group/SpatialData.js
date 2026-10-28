@@ -10,9 +10,8 @@ import type { FeatureColorResolver } from './featureColorResolver';
 import {
   type HoverPointerEvent,
   isHoverDuringDrag,
-  normalizeDeckLayerId,
-  pickedLayerId,
   resolveHoveredLabel,
+  resolvePickedEntryId,
 } from './featureTooltipHover';
 import { ImageLayerContextProvider } from './ImageLayerContext';
 import {
@@ -80,6 +79,9 @@ export const DEFAULT_HOVER_TOOLTIP_MODE: HoverTooltipMode = 'aggregate';
 type SpatialFeaturePickEventRuntimeFields = {
   coordinateSystem: string | null;
   spatialData?: SpatialData | null;
+  /** The Render Stack entry the pick came from. Inside an isolated group,
+   *  `pickInfo.layer` names the group; this names the member. */
+  entryId: string;
   pickInfo: PickingInfo;
 };
 
@@ -603,8 +605,8 @@ function SpatialCanvasViewerInner({
         resolveHoveredLabel(info, (layerId) => layerInputs.layers[layerId]?.type === 'labels')
       );
       if (info.picked && typeof info.x === 'number' && typeof info.y === 'number') {
-        const normalizedLayerId = normalizeDeckLayerId(pickedLayerId(info));
-        const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
+        const entryId = resolvePickedEntryId(info);
+        const featurePickEvent = renderer.getFeaturePickEvent(entryId, {
           index: info.index,
           object: info.object,
         });
@@ -613,10 +615,11 @@ function SpatialCanvasViewerInner({
             ...featurePickEvent,
             coordinateSystem,
             spatialData,
+            entryId,
             pickInfo: info,
           });
         }
-        const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+        const shapePickEvent = renderer.getShapePickEvent(entryId, {
           index: info.index,
           object: info.object,
         });
@@ -649,8 +652,8 @@ function SpatialCanvasViewerInner({
       if (!info.picked) {
         return;
       }
-      const normalizedLayerId = normalizeDeckLayerId(pickedLayerId(info));
-      const featurePickEvent = renderer.getFeaturePickEvent(normalizedLayerId, {
+      const entryId = resolvePickedEntryId(info);
+      const featurePickEvent = renderer.getFeaturePickEvent(entryId, {
         index: info.index,
         object: info.object,
       });
@@ -659,10 +662,11 @@ function SpatialCanvasViewerInner({
           ...featurePickEvent,
           coordinateSystem,
           spatialData,
+          entryId,
           pickInfo: info,
         });
       }
-      const shapePickEvent = renderer.getShapePickEvent(normalizedLayerId, {
+      const shapePickEvent = renderer.getShapePickEvent(entryId, {
         index: info.index,
         object: info.object,
       });
@@ -723,6 +727,7 @@ function SpatialCanvasViewerInner({
               onViewStateChange={onViewStateChange}
               layers={renderer.deckLayers}
               layerOrder={renderer.layerOrder}
+              renderStack={renderStack}
               vivLayerProps={renderer.vivLayerProps.length > 0 ? renderer.vivLayerProps : undefined}
               onHover={hoverTooltipMode === 'off' ? undefined : handleHover}
               onClick={handleClick}

@@ -115,7 +115,7 @@ function HeadlessCodecFixtureViewer({
   const { spatialData, loading, error } = useSpatialData();
   const coordinateSystems = useMemo(() => spatialData?.coordinateSystems ?? [], [spatialData]);
   const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
-  const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 1, entries: [] });
+  const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 2, entries: [] });
   const [viewState, setViewState] = useState<ViewState | null>(null);
 
   useEffect(() => {

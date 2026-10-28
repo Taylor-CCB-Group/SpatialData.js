@@ -97,8 +97,18 @@ export function pickedLayerId(info: { layer?: { id?: unknown } | null }): string
   return typeof layer?.id === 'string' ? layer.id : '';
 }
 
+/** Strips the view token a Viv-style viewer appends to top-level layer ids. */
 export function normalizeDeckLayerId(rawLayerId: string): string {
   return rawLayerId.replace(/-#.*#$/, '');
+}
+
+/**
+ * The Render Stack entry id a pick came from, looking through isolated groups to
+ * the member. For hosts that compose the renderer themselves and read picks from
+ * deck directly; feature events already carry it as `entryId`.
+ */
+export function resolvePickedEntryId(info: { layer?: { id?: unknown } | null }): string {
+  return normalizeDeckLayerId(pickedLayerId(info));
 }
 
 function resolveLogicalLayerId(rawLayerId: string, logicalLayerIds: string[] | undefined): string {
