@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Any, Literal, Sequence
 from .errors import WriterCommandError
 from .provenance import package_version
 from .store import (
-    drop_consolidated_metadata,
+    consolidated_metadata_is_current,
     json_bytes,
     read_json,
     refresh_consolidated_metadata,
@@ -458,6 +458,11 @@ def _write_levels_in_place(
     datasets: list[dict[str, Any]] = multiscale["datasets"]
     existing = len(datasets)
     names = _level_names(datasets)
+    if existing + len(levels) != len(shapes):
+        raise WriterCommandError(
+            f"{collection}/{key} declares {existing} levels on disk, but {len(shapes) - len(levels)} "
+            "when it was opened; it changed in between. Rerun."
+        )
     if names != [f"s{i}" for i in range(existing)]:
         raise WriterCommandError(
             f"{collection}/{key} has levels named {names}; extending in place needs s0, s1, …"
@@ -475,10 +480,11 @@ def _write_levels_in_place(
             "so new levels cannot be appended consistently. Write to a new store instead."
         )
 
-    root = zarr.open_group(store_path, mode="r+", use_consolidated=False)
-    group = root.get(f"{collection}/{key}")
-    template = group.get(names[-1]) if isinstance(group, zarr.Group) else None
-    if not isinstance(group, zarr.Group) or not isinstance(template, zarr.Array):
+    # Opened as the element itself, not through the root: a nested listing left in
+    # its zarr.json can predate the arrays beside it, and zarr would trust it.
+    group = zarr.open_group(meta_path.parent, mode="r+", use_consolidated=False)
+    template = group.get(names[-1])
+    if not isinstance(template, zarr.Array):
         raise WriterCommandError(f"{collection}/{key} is not laid out as a multiscale image group.")
     template_meta = template.metadata
     if not isinstance(template_meta, ArrayV3Metadata):
@@ -518,10 +524,12 @@ def _write_levels_in_place(
         {"path": f"s{existing + offset}", "coordinateTransformations": transforms[existing + offset]}
         for offset in range(len(levels))
     )
+    # A nested listing would describe the levels as they were, and readers trust
+    # it over the files; dropping it in the same write keeps this one atomic.
+    doc.pop("consolidated_metadata", None)
     tmp_path = meta_path.with_name("zarr.json.tmp")
     tmp_path.write_bytes(json_bytes(doc))
     os.replace(tmp_path, meta_path)
-    drop_consolidated_metadata(meta_path.parent)
 
 
 def _same_transforms(declared: list[Any], expected: list[Any]) -> bool:
@@ -646,8 +654,12 @@ def add_pyramids_in_place(
                 levels=levels, downscale=downscale, min_size=min_size,
             )
         )
-    # A store that needed nothing is left byte-for-byte as it was.
-    if any(report["action"] != "skipped" for report in reports):
+    # Refreshed once, not per element: it walks the whole store. A run that finds
+    # nothing to do still heals a listing left behind by one that was interrupted,
+    # and otherwise leaves the store byte-for-byte as it was.
+    if any(
+        report["action"] != "skipped" for report in reports
+    ) or not consolidated_metadata_is_current(store_path):
         refresh_consolidated_metadata(store_path)
 
     manifest_data = {

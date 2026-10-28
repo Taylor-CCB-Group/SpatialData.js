@@ -515,6 +515,67 @@ class TestAddPyramidsInPlace:
                 np.asarray(theirs[level]["image"].data.compute()),
             ), level
 
+    def test_the_element_metadata_is_replaced_once_without_a_stale_nested_listing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os
+
+        from spatialdata_js_util import pyramids
+
+        store = _store(tmp_path / "s.zarr")
+        meta_path = store / "images" / "morphology" / "zarr.json"
+        doc = json.loads(meta_path.read_text())
+        doc["consolidated_metadata"] = {"kind": "inline", "must_understand": False, "metadata": {}}
+        meta_path.write_text(json.dumps(doc))
+        written: list[dict] = []
+        real_replace = os.replace
+
+        def capture(src: str | os.PathLike, dst: str | os.PathLike) -> None:
+            if Path(dst) == meta_path:
+                written.append(json.loads(Path(src).read_text()))
+            real_replace(src, dst)
+
+        monkeypatch.setattr(pyramids.os, "replace", capture)
+
+        add_pyramids_in_place(store)
+
+        # The single atomic write already carries the corrected document.
+        assert len(written) == 1
+        assert "consolidated_metadata" not in written[0]
+        assert "consolidated_metadata" not in json.loads(meta_path.read_text())
+
+    def test_a_stale_root_listing_is_healed_even_when_nothing_is_left_to_do(
+        self, tmp_path: Path
+    ) -> None:
+        store = _store(tmp_path / "s.zarr")
+        stale_root = (store / "zarr.json").read_bytes()
+        add_pyramids_in_place(store, manifest=False)
+        # What an interrupted run leaves: the element declares its new level, the
+        # root listing has not caught up.
+        (store / "zarr.json").write_bytes(stale_root)
+
+        result = add_pyramids_in_place(store, manifest=False)
+
+        assert result.manifest["rasters"][0]["action"] == "skipped"
+        root = json.loads((store / "zarr.json").read_text())
+        assert "images/morphology/s1" in root["consolidated_metadata"]["metadata"]
+
+    def test_refuses_to_write_when_the_level_count_changed_since_it_was_opened(
+        self, tmp_path: Path
+    ) -> None:
+        from spatialdata_js_util.pyramids import _write_levels_in_place
+
+        store = _store(tmp_path / "s.zarr")
+        before = _snapshot(store)
+
+        with pytest.raises(WriterCommandError, match="changed in between"):
+            # Disk declares one level; the caller thinks the element had two.
+            _write_levels_in_place(
+                store, "images", "morphology", [], [(1, 2048, 1536), (1, 1024, 768)]
+            )
+
+        assert _snapshot(store) == before
+
     def test_store_reads_back_with_consolidated_metadata_current(self, tmp_path: Path) -> None:
         store = _store(tmp_path / "s.zarr")
 
