@@ -31,6 +31,30 @@ export {
   spatialLayerPropsSchema,
   spatialSublayerSchema,
 } from '@spatialdata/core';
+// The Renderer Adapters (ADR 0004 §4): `project()` — resolved resources plus entry
+// props turned into the identity-stable, deck-ready inputs a render call consumes.
+// `PointsRendererAdapter` is not here because it is not reachable from outside:
+// `PointsDataEngine` owns one privately. Shapes and labels have no such owner — the
+// React binding in `@spatialdata/vis` holds them — so they are public.
+export {
+  buildLabelFillColorEntry,
+  type LabelFillColorEntry,
+  type LabelsChannelDefaults,
+  type LabelsChannelProps,
+  type LabelsEntryProps,
+  type LabelsFillColorColumnSpec,
+  LabelsRendererAdapter,
+  type LabelsRenderInput,
+} from './adapters/LabelsRendererAdapter.js';
+export {
+  type ShapeFillColorEntry,
+  type ShapesEntryProps,
+  type ShapesFillColorColumnSpec,
+  type ShapesProjectionFeatureState,
+  ShapesRendererAdapter,
+  type ShapesRenderInput,
+  shapeFillColorAlpha,
+} from './adapters/ShapesRendererAdapter.js';
 export {
   PointsDataEngine,
   type PointsDataEngineCallbacks,

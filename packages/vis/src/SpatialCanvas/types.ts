@@ -278,6 +278,17 @@ export interface ElementsByType {
   labels: AvailableElement[];
 }
 
+/**
+ * Re-exported, and the one thing in this module that is not framework-free: it
+ * carries a deck.gl `PickingInfo`.
+ *
+ * Everything else here — the layer config interfaces especially — is plain data,
+ * which is why the shapes and labels Renderer Adapters in `@spatialdata/layers` can
+ * declare the entry-prop shapes they read *structurally* and have these configs
+ * satisfy them. So if the configs ever do need to live in `layers` (ADR 0004 §4),
+ * move them without this line: taking the module wholesale would drag deck into
+ * whatever imports it.
+ */
 export type { ShapesLayerPickEvent };
 
 // ============================================
