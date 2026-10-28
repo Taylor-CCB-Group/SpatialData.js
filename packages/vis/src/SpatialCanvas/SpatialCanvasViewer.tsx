@@ -30,6 +30,7 @@ import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } fro
 import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import {
   type LabelFeaturePickEventData,
+  type PointsFeaturePickEventData,
   type ShapeFeaturePickEventData,
   useLayerData,
 } from './useLayerData';
@@ -88,7 +89,13 @@ export type ShapesSpatialFeaturePickEvent = ShapeFeaturePickEventData &
 export type LabelsSpatialFeaturePickEvent = LabelFeaturePickEventData &
   SpatialFeaturePickEventRuntimeFields;
 
-export type SpatialFeaturePickEvent = ShapesSpatialFeaturePickEvent | LabelsSpatialFeaturePickEvent;
+export type PointsSpatialFeaturePickEvent = PointsFeaturePickEventData &
+  SpatialFeaturePickEventRuntimeFields;
+
+export type SpatialFeaturePickEvent =
+  | ShapesSpatialFeaturePickEvent
+  | LabelsSpatialFeaturePickEvent
+  | PointsSpatialFeaturePickEvent;
 
 export interface SpatialCanvasViewerProps {
   spatialData?: SpatialData | null;

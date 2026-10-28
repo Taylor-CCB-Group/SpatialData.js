@@ -41,10 +41,13 @@ import {
   createTileDebugStore,
   featureFilterAwaitingRowCodes,
   formatPointsTileDebugTooltip,
+  formatPointsTooltip,
+  isPointsPickObject,
   isPointsTileDebugPickObject,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
+  type PointsPickObject,
   type PointsRenderResource,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
@@ -209,7 +212,30 @@ export interface LabelFeaturePickEventData {
   tooltip?: SpatialFeatureTooltipData;
 }
 
-export type SpatialFeaturePickEventData = ShapeFeaturePickEventData | LabelFeaturePickEventData;
+/**
+ * A picked point. No `rowIndex`: a points element carries no table association, and
+ * the index deck reports is a row in the DRAWN BATCH (one tile, on the tiled path) —
+ * it identifies nothing durable, so it is named `pointIndex` to say so. `featureId`
+ * is the feature NAME, which is what identifies a point to a reader, once the
+ * element's feature catalog has resolved its code.
+ */
+export interface PointsFeaturePickEventData {
+  elementKind: 'points';
+  layerId: string;
+  spatialElement: PointsElement;
+  featureId?: string;
+  featureCode?: number;
+  pointIndex: number;
+  /** Position in the element's own coordinate space, before its transform. */
+  position: [number, number, number];
+  object: PointsPickObject;
+  tooltip?: SpatialFeatureTooltipData;
+}
+
+export type SpatialFeaturePickEventData =
+  | ShapeFeaturePickEventData
+  | LabelFeaturePickEventData
+  | PointsFeaturePickEventData;
 
 interface UseLayerDataResult {
   /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
@@ -341,6 +367,16 @@ function isShapesAvailableElement(element: AvailableElement): element is Omit<
   element: ShapesElement;
 } {
   return element.type === 'shapes' && element.element.kind === 'shapes';
+}
+
+function isPointsAvailableElement(element: AvailableElement): element is Omit<
+  AvailableElement,
+  'type' | 'element'
+> & {
+  type: 'points';
+  element: PointsElement;
+} {
+  return element.type === 'points' && element.element.kind === 'points';
 }
 
 function getWorldBoundsCacheKey(elem: AvailableElement): string {
@@ -1712,6 +1748,29 @@ export function useLayerData(
         layerId,
       };
 
+      // Points carry no table association, so there is nothing to join and nothing
+      // to configure: the pick object itself holds everything the tooltip shows.
+      // The feature NAME is the one part that needs resolving — the point carries a
+      // code, and the catalog that maps it is per element and arrives when it arrives.
+      if (isPointsAvailableElement(elem)) {
+        if (!isPointsPickObject(pickInfo.object)) {
+          return undefined;
+        }
+        const pick = pickInfo.object;
+        const catalog = pointsEngine.getFeatureCatalog(elem.key);
+        const entry =
+          pick.featureCode === undefined
+            ? undefined
+            : pointsEngine.getFeatureEntry(elem.key, pick.featureCode);
+        return attachTooltipElementContext(
+          formatPointsTooltip(pick, {
+            ...(catalog?.featureKey ? { featureKey: catalog.featureKey } : {}),
+            ...(entry ? { entry } : {}),
+          }),
+          elementContext
+        );
+      }
+
       if (isLabelsAvailableElement(elem)) {
         const pickedLabel = getPickedLabelObject(pickInfo.object);
         if (!pickedLabel) {
@@ -1797,7 +1856,7 @@ export function useLayerData(
         elementContext
       );
     },
-    [shapesResolver, labelsResolver, getMergedShapeRenderData, getShapePrebuilt]
+    [shapesResolver, labelsResolver, pointsEngine, getMergedShapeRenderData, getShapePrebuilt]
   );
 
   const getShapePickEvent = useCallback(
@@ -1844,6 +1903,28 @@ export function useLayerData(
         return undefined;
       }
 
+      if (isPointsAvailableElement(elem)) {
+        if (!isPointsPickObject(pickInfo.object)) {
+          return undefined;
+        }
+        const pick = pickInfo.object;
+        const featureName =
+          pick.featureCode === undefined
+            ? undefined
+            : pointsEngine.getFeatureEntry(elem.key, pick.featureCode)?.name;
+        return {
+          elementKind: 'points',
+          layerId,
+          spatialElement: elem.element,
+          ...(featureName !== undefined ? { featureId: featureName } : {}),
+          ...(pick.featureCode !== undefined ? { featureCode: pick.featureCode } : {}),
+          pointIndex: pick.pointIndex,
+          position: pick.position,
+          object: pick,
+          tooltip: getFeatureTooltip(layerId, pickInfo),
+        };
+      }
+
       if (isLabelsAvailableElement(elem)) {
         const pickedLabel = getPickedLabelObject(pickInfo.object);
         if (!pickedLabel) {
@@ -1884,7 +1965,7 @@ export function useLayerData(
         tooltip: getFeatureTooltip(layerId, pickInfo),
       };
     },
-    [getFeatureTooltip, getShapePickEvent, labelsResolver]
+    [getFeatureTooltip, getShapePickEvent, labelsResolver, pointsEngine]
   );
 
   // Read during render, like the other resolver getters: every resolver settle

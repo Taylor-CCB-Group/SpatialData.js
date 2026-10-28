@@ -130,6 +130,14 @@ export {
 // docs/plans/layer-data-engine-decomposition.md — these are framework-agnostic
 // (no React) and belong in layers. Re-exported from vis for MDV compatibility.
 export * from './pointsLoadPlan.js';
+export {
+  formatPointsTooltip,
+  isPointsPickObject,
+  POINTS_PICK_KIND,
+  type PointsPickObject,
+  type PointsTooltipFeature,
+  pointsPickObjectFromDeckData,
+} from './pointsPick.js';
 export type { PointsRenderAttributes } from './pointsRenderAttributes.js';
 export { buildPointsAttributes } from './pointsRenderAttributes.js';
 export {

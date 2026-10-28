@@ -1,4 +1,4 @@
-import type { Accessor } from '@deck.gl/core';
+import type { Accessor, GetPickingInfoParams } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import type { Matrix4 } from '@math.gl/core';
 import type { FeatureColorOverrides } from './pointsFeatureColor.js';
@@ -7,6 +7,7 @@ import {
   PointsFeatureColorExtension,
 } from './pointsFeatureColorExtension.js';
 import type { ColumnarNdarrayPointsBatch } from './pointsLoader.js';
+import { pointsPickObjectFromDeckData } from './pointsPick.js';
 import { buildPointsAttributes, buildPointsDeckData } from './pointsRenderAttributes.js';
 
 /** Orthographic zoom at which configured pointSize applies at full scale. */
@@ -88,8 +89,9 @@ type PointsFeatureColorProps<DataT> = {
 };
 
 /**
- * deck's ScatterplotLayer with the feature-colour lookup added to its WGSL. The GLSL
- * path is untouched (the extension injects there), so this class serves both backends.
+ * deck's ScatterplotLayer with the feature-colour lookup added to its WGSL and a
+ * pick object for its binary rows. The GLSL path is untouched (the extension
+ * injects there), so this class serves both backends.
  */
 export class PointsScatterplotLayer<DataT = unknown> extends ScatterplotLayer<
   DataT,
@@ -100,6 +102,19 @@ export class PointsScatterplotLayer<DataT = unknown> extends ScatterplotLayer<
   getShaders() {
     const shaders = super.getShaders();
     return { ...shaders, source: injectPointsFeatureColorWGSL(shaders.source) };
+  }
+
+  // deck's default only fills `info.object` for indexable `props.data`; ours is a
+  // binary attribute bundle, so a pick would otherwise carry nothing but an index.
+  // Reading the row back from those same buffers costs two array reads per pick and
+  // keeps the position/feature-code pair out of the hover path's way until asked for.
+  getPickingInfo(params: GetPickingInfoParams) {
+    const info = super.getPickingInfo(params);
+    const object = pointsPickObjectFromDeckData(this.props.data, info.index);
+    if (object) {
+      info.object = object;
+    }
+    return info;
   }
 }
 

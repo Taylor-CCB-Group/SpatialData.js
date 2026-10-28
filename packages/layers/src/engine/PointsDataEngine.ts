@@ -1,6 +1,7 @@
 import {
   type PointsElement,
   type PointsFeatureCatalog,
+  type PointsFeatureEntry,
   type PointsLoadResult,
   PointsResolver,
 } from '@spatialdata/core';
@@ -76,6 +77,14 @@ export class PointsDataEngine {
    * none. Lives here — not in core — because it is a render concern the feature panel
    * writes and the render path reads through this one shared engine. */
   private readonly highlightByKey = new Map<string, number>();
+  /** Memo for {@link getFeatureEntry}, invalidated by catalog identity. */
+  private readonly entryByCodeMemo = new Map<
+    string,
+    {
+      catalog: PointsFeatureCatalog | null | undefined;
+      byCode: Map<number, PointsFeatureEntry>;
+    }
+  >();
   /** Memo for {@link getFeatureColorOverrideMap}, invalidated by config + catalog. */
   private readonly overrideMapMemo = new Map<
     string,
@@ -314,6 +323,29 @@ export class PointsDataEngine {
   }
 
   /**
+   * The catalog entry for one feature code, or `undefined` while the catalog is
+   * still loading or does not hold that code (both happen: a tile can arrive with
+   * codes before the full catalog settles).
+   *
+   * Memoised as a `code → entry` map on catalog identity, because the caller is a
+   * hover tooltip — a linear scan of a 500-gene catalog per pointer move would be
+   * paid on every move, not once.
+   */
+  getFeatureEntry(key: string, code: number): PointsFeatureEntry | undefined {
+    const catalog = this.resolver.getFeatureCatalog(key);
+    if (!catalog) {
+      return undefined;
+    }
+    const cached = this.entryByCodeMemo.get(key);
+    if (cached && cached.catalog === catalog) {
+      return cached.byCode.get(code);
+    }
+    const byCode = new Map(catalog.entries.map((entry) => [entry.code, entry]));
+    this.entryByCodeMemo.set(key, { catalog, byCode });
+    return byCode.get(code);
+  }
+
+  /**
    * Resolve config's by-NAME colour overrides to the `code → rgb` map the LUT builder
    * wants, using the current catalog's name↔code mapping. Returns null when there are
    * no overrides (or no catalog yet) — the palette then falls back to all defaults.
@@ -420,6 +452,7 @@ export class PointsDataEngine {
     this.resolver.evict(key);
     this.adapter.evict(key);
     this.codeSpaceMemo.delete(key);
+    this.entryByCodeMemo.delete(key);
     this.overrideMapMemo.delete(key);
     this.highlightByKey.delete(key);
   }
@@ -428,6 +461,7 @@ export class PointsDataEngine {
     this.resolver.dispose();
     this.adapter.dispose();
     this.codeSpaceMemo.clear();
+    this.entryByCodeMemo.clear();
     this.overrideMapMemo.clear();
     this.highlightByKey.clear();
   }
