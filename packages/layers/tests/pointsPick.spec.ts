@@ -3,6 +3,7 @@ import type { ColumnarNdarrayPointsBatch } from '../src/pointsLoader.js';
 import {
   formatPointsTooltip,
   isPointsPickObject,
+  type PointsPickObject,
   pointsPickObjectFromDeckData,
 } from '../src/pointsPick.js';
 import { buildPointsDeckData } from '../src/pointsRenderAttributes.js';
@@ -36,11 +37,26 @@ describe('pointsPickObjectFromDeckData', () => {
     expect(isPointsPickObject(pick)).toBe(true);
   });
 
+  it('refuses a pick-shaped object without a usable position', () => {
+    // A narrowed pick gets destructured, so the guard has to mean it.
+    expect(isPointsPickObject({ kind: 'spatialdata-points', pointIndex: 0 })).toBe(false);
+    expect(
+      isPointsPickObject({ kind: 'spatialdata-points', pointIndex: 0, position: [1, 2] })
+    ).toBe(false);
+  });
+
   it('omits the feature code when the batch carries none', () => {
     const { featureCodes: _dropped, ...withoutCodes } = batch();
     const data = buildPointsDeckData(withoutCodes, false, true);
 
     expect(pointsPickObjectFromDeckData(data, 0)?.featureCode).toBeUndefined();
+  });
+
+  it('reads the code from the CPU lane when the layer is not colouring by feature', () => {
+    const data = buildPointsDeckData(batch(), true, false);
+
+    expect(Reflect.get(data.attributes, 'getFeatureCode')).toBeUndefined();
+    expect(pointsPickObjectFromDeckData(data, 2)?.featureCode).toBe(7);
   });
 
   it('returns nothing for an out-of-range index or foreign data', () => {
@@ -54,11 +70,11 @@ describe('pointsPickObjectFromDeckData', () => {
 
 describe('formatPointsTooltip', () => {
   const pick = {
-    kind: 'spatialdata-points' as const,
+    kind: 'spatialdata-points',
     pointIndex: 1,
-    position: [1.23456789, 2, 0] as [number, number, number],
+    position: [1.23456789, 2, 0],
     featureCode: 4,
-  };
+  } satisfies PointsPickObject;
 
   it('leads with the feature name and titles the tooltip with it', () => {
     const tooltip = formatPointsTooltip(pick, {

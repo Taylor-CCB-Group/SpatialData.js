@@ -1348,7 +1348,7 @@ export function useLayerData(
                   ? { tileDebugSignature: tileDebugSignature(tileDebugStore) }
                   : {}),
                 ...(tiledFeatureCodes ? { featureCodes: tiledFeatureCodes } : {}),
-                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                colorByFeature: config.colorByFeature !== false,
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
                 highlightFeatureCode,
@@ -1452,10 +1452,12 @@ export function useLayerData(
             ? matchedBatch
             : (pointsEngine.getData(elem.key) ?? pointsEngine.getPreloadPartialBatch(elem.key));
 
-          // Colour-by-feature is ON BY DEFAULT (opt-out via `colorByFeature: false`), so
-          // thread the per-row codes whenever colour is not explicitly disabled — the
-          // "all features" view (no selection) needs them too, or it draws flat.
-          const wantsRowCodes = config.colorByFeature !== false || featureCodes !== undefined;
+          // Per-row codes say WHICH feature each point is, so they are not colour's
+          // input alone: the filter masks with them and the hover tooltip names the
+          // feature from them. Gating them on `colorByFeature` left a layer with
+          // colour turned off unable to say what the point under the cursor was.
+          // Colour is now switched by the layer prop below, not by withholding the
+          // codes, so threading them always does not turn colour back on.
           let basePreloadedCodes: ArrayLike<number> | undefined;
           let baseFilter: readonly number[] | undefined;
           if (useMatched) {
@@ -1471,9 +1473,7 @@ export function useLayerData(
             // Row codes drive both the in-memory filter (resident → selection) and
             // colour-by-feature. The row-codes LOAD is planned from the reconcile
             // effect (Track A), not kicked here.
-            basePreloadedCodes = wantsRowCodes
-              ? pointsEngine.getRowFeatureCodes(elem.key)
-              : undefined;
+            basePreloadedCodes = pointsEngine.getRowFeatureCodes(elem.key);
             baseFilter = featureCodes;
           }
 
@@ -1496,7 +1496,7 @@ export function useLayerData(
                 ...(baseFilter ? { featureCodes: baseFilter } : {}),
                 ...(basePreloadedCodes ? { preloadedFeatureCodes: basePreloadedCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
-                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                colorByFeature: config.colorByFeature !== false,
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
                 highlightFeatureCode,
@@ -1526,7 +1526,7 @@ export function useLayerData(
                 ...(featureCodes ? { featureCodes } : {}),
                 ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
-                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                colorByFeature: config.colorByFeature !== false,
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
                 highlightFeatureCode,
