@@ -786,7 +786,7 @@ class RecompressImagesScreen(InputFormScreen):
             yield Checkbox("Overwrite destination if it exists", id="overwrite")
             yield Static("Multiscale pyramid", classes="section-label")
             yield Checkbox(
-                "Build a pyramid for images that have only one resolution level",
+                "Add pyramid levels to images whose coarsest level exceeds the size below",
                 id="pyramid",
             )
             yield Label("Levels ('auto' halves until the largest axis fits the size below)")
@@ -795,7 +795,7 @@ class RecompressImagesScreen(InputFormScreen):
             yield Input(value="2", id="pyramid-downscale")
             yield Label("Auto stops at this size (px)")
             yield Input(value=str(DEFAULT_PYRAMID_MIN_SIZE), id="pyramid-min-size")
-            yield Checkbox("Rebuild images that already have a pyramid", id="pyramid-force")
+            yield Checkbox("Rebuild every pyramid from full resolution", id="pyramid-force")
         with Horizontal():
             yield Button("Run", variant="primary", id="run")
             yield Button("Back", id="back")
@@ -1209,9 +1209,9 @@ class VerifyReportScreen(WriterScreen):
             if backend:
                 yield Static(f"HTJ2K backend: {backend}")
             for entry in result.get("pyramids") or []:
-                if entry.get("action") == "rebuilt":
+                if entry.get("action") in ("rebuilt", "extended"):
                     built = ", ".join(entry.get("levels") or [])
-                    yield Static(f"  pyramid {entry['path']}: {built}")
+                    yield Static(f"  pyramid {entry['path']} {entry['action']}: {built}")
                 else:
                     yield Static(f"  pyramid {entry['path']}: skipped ({entry.get('reason')})")
         elif command == CommandId.TABLES_TO_CSC:

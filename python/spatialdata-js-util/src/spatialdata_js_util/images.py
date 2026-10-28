@@ -614,7 +614,7 @@ def _stage_pyramids(
 ) -> tuple[list[dict[str, Any]], dict[str, Path]]:
     """Build pyramids for *image_keys* into a staging store.
 
-    Returns the per-raster reports and, for each key that was actually rebuilt,
+    Returns the per-raster reports and, for each key that was given levels,
     the root to read its levels from.
     """
     import spatialdata as sd
@@ -635,7 +635,7 @@ def _stage_pyramids(
     roots = {
         report["path"].split("/", 1)[1]: staging_path
         for report in reports
-        if report.get("action") == "rebuilt"
+        if report.get("action") in ("rebuilt", "extended")
     }
     return reports, roots
 
@@ -675,10 +675,11 @@ def recompress_spatialdata(
     shapes, points, and unconfigured rasters intact without loading the whole
     object.
 
-    With *pyramid*, any configured image that has only one resolution level is
-    given a multiscale pyramid before it is recompressed, so single-resolution
-    acquisition output becomes browser-ready in one pass. Images that already
-    have a pyramid are left alone unless *pyramid_force* is set. See
+    With *pyramid*, any configured image whose coarsest level is larger than
+    *pyramid_min_size* is given the levels it lacks before it is recompressed,
+    so single-resolution or shallow-pyramid acquisition output becomes
+    browser-ready in one pass. Images whose pyramid is already deep enough are
+    left alone, and *pyramid_force* rebuilds them from full resolution. See
     `spatialdata_js_util.pyramids` for how levels are chosen.
     """
 

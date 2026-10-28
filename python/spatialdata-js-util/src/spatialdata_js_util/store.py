@@ -102,6 +102,31 @@ def consolidated_metadata_orphans(metadata: dict[str, Any]) -> list[str]:
     )
 
 
+def consolidated_metadata_is_current(store_path: str | Path) -> bool:
+    """Whether the store root's inline listing still matches the metadata on disk.
+
+    A store with no inline listing has nothing to go stale, so counts as current.
+    Group entries are compared without their own nested `consolidated_metadata`
+    block: zarr writes an empty one into the listing that the files never carry.
+    """
+    root = Path(store_path)
+    root_meta = read_json(root / "zarr.json")
+    declared = (root_meta.get("consolidated_metadata") or {}).get("metadata")
+    if declared is None:
+        return True
+    on_disk = _collect_consolidated_metadata(
+        root, zarr_format=int(root_meta.get("zarr_format", 3))
+    )
+
+    def strip(documents: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: {field: value for field, value in doc.items() if field != "consolidated_metadata"}
+            for key, doc in documents.items()
+        }
+
+    return strip(declared) == strip(on_disk)
+
+
 def refresh_consolidated_metadata(store_path: str | Path) -> None:
     """Rewrite the store root's inline consolidated metadata from disk.
 
