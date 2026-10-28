@@ -496,7 +496,7 @@ for (const { resource, error } of status?.errors ?? []) {
   // error.kind: 'element-not-found' | 'coordinate-system-not-found' | 'load-failed' | …
   if (error.retryable) showRetry(() => renderer.retryEntry(layerId));
 }
-// status.notices: e.g. 'preload-truncated', 'channel-defaults-fallback'
+// status.notices: e.g. 'preload-truncated', 'channel-defaults-fallback', 'table-rows-unmatched'
 ```
 
 Resources fail independently, so a shapes layer with a broken tooltip column

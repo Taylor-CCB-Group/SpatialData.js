@@ -141,6 +141,29 @@ const fullscreenOverlayStyle: CSSProperties = {
   backgroundColor: '#1a1a1a',
 };
 
+const layerNoticeStyle: CSSProperties = {
+  color: '#e8b04a',
+  fontSize: '11px',
+  lineHeight: 1.4,
+  padding: '6px 8px',
+  border: '1px solid #5a4520',
+  borderRadius: 4,
+  backgroundColor: '#2a2216',
+  overflowWrap: 'anywhere',
+};
+
+const layerErrorStyle: CSSProperties = {
+  ...layerNoticeStyle,
+  color: '#f08080',
+  border: '1px solid #5a2a2a',
+  backgroundColor: '#2a1818',
+};
+
+const layerRetryButtonStyle: CSSProperties = {
+  marginLeft: 8,
+  fontSize: '11px',
+};
+
 const placeholderStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -443,6 +466,7 @@ function SpatialCanvasInner({
     getFeatureTooltip,
     getImageLayerLoadedData,
     getLabelsLayerLoadedData,
+    getEntryStatus,
     getLayerLoadState,
     getWorldBoundsForLayer,
     getWorldBoundsForVisibleLayers,
@@ -454,6 +478,7 @@ function SpatialCanvasInner({
     isLoading,
     pointsEngine,
     resolvePointsTarget,
+    retryEntry,
     vivLayerProps,
   } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
@@ -545,6 +570,7 @@ function SpatialCanvasInner({
         ? spatialData?.getAssociatedTable('labels', selectedConfig.elementKey)?.[1]
         : undefined;
   const selectedLayerLoadState = getLayerLoadState(selectedConfig?.id);
+  const selectedLayerStatus = selectedConfig ? getEntryStatus(selectedConfig.id) : undefined;
 
   // The resource whose readiness means the layer has centerable geometry:
   // image/labels are raster (image status); shapes/points are geometry.
@@ -853,6 +879,28 @@ function SpatialCanvasInner({
                     updateLayer={actions.updateLayer}
                   />
                 )}
+                {selectedLayerStatus?.errors.map(({ resource, error }) => (
+                  <div key={`error:${resource}`} role="alert" style={layerErrorStyle}>
+                    {error.message}
+                    {error.retryable && (
+                      <button
+                        type="button"
+                        style={layerRetryButtonStyle}
+                        onClick={() => void retryEntry(selectedConfig.id)}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {/* The points panel already words its own notices (truncation, catalog
+                    preview), so only other kinds show them here. */}
+                {selectedConfig.type !== 'points' &&
+                  selectedLayerStatus?.notices.map((notice) => (
+                    <div key={notice.kind} role="status" style={layerNoticeStyle}>
+                      {notice.message}
+                    </div>
+                  ))}
                 {(selectedConfig.type === 'shapes' || selectedConfig.type === 'labels') && (
                   <ShapeFillColorPanel
                     tableName={associatedTable?.key}

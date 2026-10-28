@@ -10,6 +10,7 @@ import type { SpatialData } from '../store/index.js';
 import {
   type AssociatedTableFeatureRows,
   loadAssociatedTableFeatureRows,
+  tableRowsUnmatchedNotice,
 } from '../tableAssociations.js';
 import { loadShapesTooltipMetadata, type ShapesTooltipMetadata } from '../tooltip.js';
 import type { EntryNotice } from './errors.js';
@@ -80,7 +81,11 @@ interface ShapesEntry {
   boundsSource?: ShapesRenderData;
   /** The transform `bounds` was computed with — world bounds are transform-relative. */
   boundsTransform?: unknown;
+  /** Facts about the loaded geometry — today, only that no shape joins to its table. */
+  notices: readonly EntryNotice[];
 }
+
+const NO_NOTICES: readonly EntryNotice[] = [];
 
 const tooltipSignature = (fields: string[] | undefined): string => (fields ?? []).join('');
 
@@ -120,6 +125,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         tooltip: Resolution.idle(),
         fillColor: Resolution.idle(),
         inFlight: new Map(),
+        notices: NO_NOTICES,
       };
       this.entries.set(key, entry);
     }
@@ -208,6 +214,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       switch (slot) {
         case 'geometry': {
           const renderData = await ctx.element.loadRenderData();
+          entry.notices = await this.unmatchedTableNotices(key, renderData);
           entry.geometry = Resolution.ready(renderData);
           break;
         }
@@ -283,7 +290,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         tooltip: entry?.tooltip ?? Resolution.idle(),
         fillColor: entry?.fillColor ?? Resolution.idle(),
       },
-      notices: [] as readonly EntryNotice[],
+      notices: entry?.notices ?? NO_NOTICES,
       bounds: this.bounds(ctx),
       revision: this.version,
     };
@@ -324,6 +331,37 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     entry.boundsSource = data;
     entry.boundsTransform = ctx.transform;
     return computed;
+  }
+
+  /**
+   * A notice when the element has an associated table but not one shape joined to
+   * a row of it. The geometry load already did the join (`rowIndexByFeatureIndex`),
+   * so this only reads the result; the obs index it samples is cached by then.
+   */
+  private async unmatchedTableNotices(
+    key: string,
+    renderData: ShapesRenderData
+  ): Promise<readonly EntryNotice[]> {
+    const { featureIds, rowIndexByFeatureIndex } = renderData;
+    if (featureIds.length === 0 || rowIndexByFeatureIndex.some((row) => row >= 0)) {
+      return NO_NOTICES;
+    }
+    const associated = this.spatialData?.getAssociatedTable('shapes', key);
+    if (!associated) return NO_NOTICES;
+    const [tableName, table] = associated;
+    const [tableId] = await table.loadObsIndex();
+    return [
+      tableRowsUnmatchedNotice({
+        kind: 'shapes',
+        elementKey: key,
+        tableName,
+        instanceKey: table.getTableKeys().instanceKey,
+        detail:
+          tableId === undefined
+            ? 'the table has no rows'
+            : `shape ids look like "${featureIds[0]}", table ids like "${tableId}"`,
+      }),
+    ];
   }
 
   // --- Reads ------------------------------------------------------------------

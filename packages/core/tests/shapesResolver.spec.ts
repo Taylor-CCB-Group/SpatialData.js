@@ -421,3 +421,59 @@ describe('a failed load settles', () => {
     expect(loadFeatureIds).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('a table whose instance ids match none of the shapes', () => {
+  // The silent failure this guards: an associated table is found, its columns are
+  // offered in the UI, and every lookup misses — so colouring and tooltips do
+  // nothing and nothing says why.
+  const spatialDataWithTable = (tableIds: string[]) =>
+    ({
+      getAssociatedTable: () => [
+        'table',
+        {
+          getTableKeys: () => ({ region: ['cells'], regionKey: 'region', instanceKey: 'cell_id' }),
+          loadObsIndex: async () => tableIds,
+        },
+      ],
+    }) as unknown as SpatialData;
+
+  const loadGeometry = async (resolver: ShapesResolver, rowIndexByFeatureIndex: Int32Array) => {
+    const el = element({
+      loadRenderData: vi.fn(async () => renderData({ rowIndexByFeatureIndex })),
+    });
+    await resolver.load({ id: 'g', resource: 'geometry' }, ctx(el), signal());
+    return resolver.snapshot(ctx(el)).notices;
+  };
+
+  it('raises a notice naming the table, its instance_key, and an id from each side', async () => {
+    const resolver = new ShapesResolver({
+      spatialData: spatialDataWithTable(['4294992761', '4294992762']),
+    });
+
+    const notices = await loadGeometry(resolver, new Int32Array([-1, -1]));
+
+    expect(notices).toEqual([
+      expect.objectContaining({
+        kind: 'table-rows-unmatched',
+        tableName: 'table',
+        instanceKey: 'cell_id',
+      }),
+    ]);
+    expect(notices[0]?.message).toContain('"c1"');
+    expect(notices[0]?.message).toContain('"4294992761"');
+  });
+
+  it('stays quiet when even one shape matches', async () => {
+    const resolver = new ShapesResolver({ spatialData: spatialDataWithTable(['c1']) });
+
+    expect(await loadGeometry(resolver, new Int32Array([0, -1]))).toEqual([]);
+  });
+
+  it('stays quiet when there is no associated table', async () => {
+    const resolver = new ShapesResolver({
+      spatialData: { getAssociatedTable: () => undefined } as unknown as SpatialData,
+    });
+
+    expect(await loadGeometry(resolver, new Int32Array([-1, -1]))).toEqual([]);
+  });
+});

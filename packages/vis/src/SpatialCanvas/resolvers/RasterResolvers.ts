@@ -4,6 +4,7 @@ import type { OmeZarrMultiscalesSource } from '@spatialdata/avivatorish';
 import {
   type AssociatedTableFeatureRows,
   type AxisAlignedBounds,
+  anyIdIsLabelValue,
   boundsFromImagePixelExtents,
   type EntryNotice,
   type EntryResources,
@@ -13,12 +14,14 @@ import {
   type LabelsTooltipMetadata,
   loadAssociatedTableFeatureRows,
   loadLabelsTooltipMetadata,
+  maxLabelValueForDtype,
   Resolution,
   type ResolveContext,
   type ResolveTask,
   type ResourceResolver,
   SnapshotCache,
   type SpatialData,
+  tableRowsUnmatchedNotice,
   toSpatialEntryError,
 } from '@spatialdata/core';
 import {
@@ -110,6 +113,15 @@ function rasterBounds(loader: unknown, transform: Matrix4): AxisAlignedBounds | 
     return null;
   }
 }
+
+/** The dtype a Viv loader reports for its pixels (`Uint32`, …), if it reports one. */
+function rasterDtype(loader: unknown): string | undefined {
+  const source = Array.isArray(loader) ? loader[0] : loader;
+  if (typeof source !== 'object' || source === null || !('dtype' in source)) return undefined;
+  return typeof source.dtype === 'string' ? source.dtype : undefined;
+}
+
+const NO_NOTICES: readonly EntryNotice[] = [];
 
 // ---------------------------------------------------------------------------
 
@@ -374,6 +386,16 @@ export class LabelsResolver
     { column: string; resolution: Resolution<AssociatedTableFeatureRows> }
   >();
 
+  /**
+   * The table-join verdict per element, memoised on the two inputs it reads: the
+   * loader (for the dtype) and the table ids it was judged from. Rebuilt only when
+   * either changes identity, so the check is not rerun on every snapshot.
+   */
+  private readonly associationChecks = new Map<
+    string,
+    { loader: unknown; ids: unknown; notices: readonly EntryNotice[] }
+  >();
+
   /** Cache key for a (element, column) pair. NUL-joined: neither part can contain it. */
   private static fillColorKey(elementKey: string, column: string): string {
     return `${elementKey}\u0000${column}`;
@@ -489,6 +511,69 @@ export class LabelsResolver
     }
   }
 
+  /**
+   * Notices about this element's association with its table: today, only that no
+   * table instance id is a value the label raster's dtype can hold, so no label can
+   * join to any row. Judged from whichever table ids are already in hand (fill-colour
+   * rows or tooltip metadata), so it costs no extra I/O and says nothing until a
+   * table-driven feature has been asked for.
+   */
+  private associationNotices(key: string): readonly EntryNotice[] {
+    const loader = this.getLoadedData(key)?.loader;
+    const held = this.heldTableIds(key);
+    if (loader === undefined || held === undefined) return NO_NOTICES;
+    const cached = this.associationChecks.get(key);
+    if (cached?.loader === loader && cached.ids === held.source) return cached.notices;
+
+    const notices = this.judgeAssociation(key, loader, held.ids);
+    this.associationChecks.set(key, { loader, ids: held.source, notices });
+    return notices;
+  }
+
+  /**
+   * The table instance ids already loaded for this element, with the object they
+   * came from — that object's identity is what the verdict is memoised on.
+   */
+  private heldTableIds(key: string): { source: object; ids: () => Iterable<string> } | undefined {
+    for (const [cacheKey, held] of this.fillColors) {
+      if (!cacheKey.startsWith(`${key}\u0000`)) continue;
+      const rowIds = Resolution.lastGood(held.resolution)?.rowIds;
+      if (rowIds) return { source: rowIds, ids: () => rowIds };
+    }
+    const tooltip = this.tooltips.get(key);
+    const byId = tooltip
+      ? Resolution.lastGood(tooltip.resolution)?.tooltipRowIndexByFeatureId
+      : undefined;
+    return byId ? { source: byId, ids: () => byId.keys() } : undefined;
+  }
+
+  private judgeAssociation(
+    key: string,
+    loader: unknown,
+    ids: () => Iterable<string>
+  ): readonly EntryNotice[] {
+    const dtype = rasterDtype(loader);
+    const maxLabelValue = maxLabelValueForDtype(dtype);
+    if (dtype === undefined || maxLabelValue === undefined) return NO_NOTICES;
+    if (anyIdIsLabelValue(ids(), maxLabelValue)) return NO_NOTICES;
+    const associated = this.options.spatialData?.getAssociatedTable('labels', key);
+    if (!associated) return NO_NOTICES;
+    const [tableName, table] = associated;
+    const [sample] = ids();
+    return [
+      tableRowsUnmatchedNotice({
+        kind: 'labels',
+        elementKey: key,
+        tableName,
+        instanceKey: table.getTableKeys().instanceKey,
+        detail:
+          sample === undefined
+            ? 'the table has no rows'
+            : `its ids (e.g. ${sample}) are not ${dtype.toLowerCase()} label values`,
+      }),
+    ];
+  }
+
   getTooltipMetadata(key: string): LabelsTooltipMetadata | undefined {
     const held = this.tooltips.get(key);
     return held ? Resolution.lastGood(held.resolution) : undefined;
@@ -533,7 +618,7 @@ export class LabelsResolver
               ?.resolution ?? Resolution.idle())
           : Resolution.idle(),
       },
-      notices: entry?.notices ?? [],
+      notices: [...(entry?.notices ?? []), ...this.associationNotices(ctx.elementKey)],
       bounds: this.boundsFor(ctx.elementKey, ctx.transform),
       revision: this.version,
     };
@@ -561,6 +646,7 @@ export class LabelsResolver
   override evict(key: string): void {
     super.evict(key);
     this.tooltips.delete(key);
+    this.associationChecks.delete(key);
     // Keyed by element+column, so every column held for this element goes.
     for (const cacheKey of this.fillColors.keys()) {
       if (cacheKey.startsWith(`${key}\u0000`)) this.fillColors.delete(cacheKey);
@@ -571,5 +657,6 @@ export class LabelsResolver
     super.dispose();
     this.tooltips.clear();
     this.fillColors.clear();
+    this.associationChecks.clear();
   }
 }
