@@ -292,6 +292,7 @@ export function resolveHoverFeatureTooltip(
 
   const tooltips: SpatialFeatureTooltipData[] = [];
   const seenLayerIds = new Set<string>();
+  const seenTooltipKeys = new Set<string>();
 
   for (const pick of picks) {
     if (!pick.picked) {
@@ -309,7 +310,16 @@ export function resolveHoverFeatureTooltip(
     if (!tooltip) {
       continue;
     }
+    // One deck layer id is not one SECTION: a points layer mid-scan draws its
+    // resident batch and the scan's growing overlay as two layers of one config,
+    // and both resolve here. Key the section on what the tooltip says it is, so the
+    // same element is not listed twice.
+    const tooltipKey = `${tooltip.layerId ?? layerId}\u0000${tooltip.elementType ?? ''}/${tooltip.elementKey ?? ''}`;
+    if (seenTooltipKeys.has(tooltipKey)) {
+      continue;
+    }
     seenLayerIds.add(layerId);
+    seenTooltipKeys.add(tooltipKey);
     tooltips.push(tooltip);
   }
 

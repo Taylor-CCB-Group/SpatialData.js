@@ -41,10 +41,13 @@ import {
   createTileDebugStore,
   featureFilterAwaitingRowCodes,
   formatPointsTileDebugTooltip,
+  formatPointsTooltip,
+  isPointsPickObject,
   isPointsTileDebugPickObject,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
+  type PointsPickObject,
   type PointsRenderResource,
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
@@ -209,7 +212,30 @@ export interface LabelFeaturePickEventData {
   tooltip?: SpatialFeatureTooltipData;
 }
 
-export type SpatialFeaturePickEventData = ShapeFeaturePickEventData | LabelFeaturePickEventData;
+/**
+ * A picked point. No `rowIndex`: a points element carries no table association, and
+ * the index deck reports is a row in the DRAWN BATCH (one tile, on the tiled path) —
+ * it identifies nothing durable, so it is named `pointIndex` to say so. `featureId`
+ * is the feature NAME, which is what identifies a point to a reader, once the
+ * element's feature catalog has resolved its code.
+ */
+export interface PointsFeaturePickEventData {
+  elementKind: 'points';
+  layerId: string;
+  spatialElement: PointsElement;
+  featureId?: string;
+  featureCode?: number;
+  pointIndex: number;
+  /** Position in the element's own coordinate space, before its transform. */
+  position: [number, number, number];
+  object: PointsPickObject;
+  tooltip?: SpatialFeatureTooltipData;
+}
+
+export type SpatialFeaturePickEventData =
+  | ShapeFeaturePickEventData
+  | LabelFeaturePickEventData
+  | PointsFeaturePickEventData;
 
 interface UseLayerDataResult {
   /** Get deck.gl layers ready for rendering (shapes, points, etc.) */
@@ -343,8 +369,42 @@ function isShapesAvailableElement(element: AvailableElement): element is Omit<
   return element.type === 'shapes' && element.element.kind === 'shapes';
 }
 
+function isPointsAvailableElement(element: AvailableElement): element is Omit<
+  AvailableElement,
+  'type' | 'element'
+> & {
+  type: 'points';
+  element: PointsElement;
+} {
+  return element.type === 'points' && element.element.kind === 'points';
+}
+
 function getWorldBoundsCacheKey(elem: AvailableElement): string {
   return `${elem.type}:${elem.key}`;
+}
+
+/**
+ * Id suffix of the overlay that draws the in-flight scan's growing buffer (see the
+ * `partialResource` layer in `getLayers`). It is a second deck layer for ONE config,
+ * so a pick on it carries an id nothing is keyed by.
+ */
+const PARTIAL_LAYER_SUFFIX = '__partial';
+
+export function partialLayerId(layerId: string): string {
+  return `${layerId}${PARTIAL_LAYER_SUFFIX}`;
+}
+
+/**
+ * The config's layer id for an id a pick came through — the scan overlay's own id
+ * maps back to the layer it is overlaying.
+ *
+ * Without this, hovering a point WHILE a feature scan is running resolves no
+ * element and the tooltip silently shows nothing, for as long as the scan runs.
+ */
+export function layerIdForPick(layerId: string): string {
+  return layerId.endsWith(PARTIAL_LAYER_SUFFIX)
+    ? layerId.slice(0, -PARTIAL_LAYER_SUFFIX.length)
+    : layerId;
 }
 
 export function resolveLayerElement(
@@ -1312,7 +1372,7 @@ export function useLayerData(
                   ? { tileDebugSignature: tileDebugSignature(tileDebugStore) }
                   : {}),
                 ...(tiledFeatureCodes ? { featureCodes: tiledFeatureCodes } : {}),
-                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                colorByFeature: config.colorByFeature !== false,
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
                 highlightFeatureCode,
@@ -1416,10 +1476,12 @@ export function useLayerData(
             ? matchedBatch
             : (pointsEngine.getData(elem.key) ?? pointsEngine.getPreloadPartialBatch(elem.key));
 
-          // Colour-by-feature is ON BY DEFAULT (opt-out via `colorByFeature: false`), so
-          // thread the per-row codes whenever colour is not explicitly disabled — the
-          // "all features" view (no selection) needs them too, or it draws flat.
-          const wantsRowCodes = config.colorByFeature !== false || featureCodes !== undefined;
+          // Per-row codes say WHICH feature each point is, so they are not colour's
+          // input alone: the filter masks with them and the hover tooltip names the
+          // feature from them. Gating them on `colorByFeature` left a layer with
+          // colour turned off unable to say what the point under the cursor was.
+          // Colour is now switched by the layer prop below, not by withholding the
+          // codes, so threading them always does not turn colour back on.
           let basePreloadedCodes: ArrayLike<number> | undefined;
           let baseFilter: readonly number[] | undefined;
           if (useMatched) {
@@ -1435,9 +1497,7 @@ export function useLayerData(
             // Row codes drive both the in-memory filter (resident → selection) and
             // colour-by-feature. The row-codes LOAD is planned from the reconcile
             // effect (Track A), not kicked here.
-            basePreloadedCodes = wantsRowCodes
-              ? pointsEngine.getRowFeatureCodes(elem.key)
-              : undefined;
+            basePreloadedCodes = pointsEngine.getRowFeatureCodes(elem.key);
             baseFilter = featureCodes;
           }
 
@@ -1460,7 +1520,7 @@ export function useLayerData(
                 ...(baseFilter ? { featureCodes: baseFilter } : {}),
                 ...(basePreloadedCodes ? { preloadedFeatureCodes: basePreloadedCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
-                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                colorByFeature: config.colorByFeature !== false,
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
                 highlightFeatureCode,
@@ -1478,7 +1538,7 @@ export function useLayerData(
             const partialRowCodes = pointsEngine.getMatchingPartialRowFeatureCodes(elem.key);
             deckLayers.push(
               new PointsLayer({
-                id: `${layerId}__partial`,
+                id: partialLayerId(layerId),
                 resource: partialResource,
                 // Stable resource across chunks; the revision bumps as the buffer
                 // grows so the overlay re-reads without a per-chunk teardown (D10).
@@ -1490,7 +1550,7 @@ export function useLayerData(
                 ...(featureCodes ? { featureCodes } : {}),
                 ...(partialRowCodes ? { preloadedFeatureCodes: partialRowCodes } : {}),
                 ...(config.color ? { color: config.color } : {}),
-                ...(config.colorByFeature ? { colorByFeature: true } : {}),
+                colorByFeature: config.colorByFeature !== false,
                 featureCodeSpaceSize,
                 ...(featureColorOverrides ? { featureColorOverrides } : {}),
                 highlightFeatureCode,
@@ -1678,9 +1738,10 @@ export function useLayerData(
 
   const getFeatureTooltip = useCallback(
     (
-      layerId: string,
+      pickedLayerId: string,
       pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
     ): SpatialFeatureTooltipData | undefined => {
+      const layerId = layerIdForPick(pickedLayerId);
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
 
       // The tile-status overlay, before the element guards below: it is a debug view of
@@ -1711,6 +1772,29 @@ export function useLayerData(
         elementType: elem.type,
         layerId,
       };
+
+      // Points carry no table association, so there is nothing to join and nothing
+      // to configure: the pick object itself holds everything the tooltip shows.
+      // The feature NAME is the one part that needs resolving — the point carries a
+      // code, and the catalog that maps it is per element and arrives when it arrives.
+      if (isPointsAvailableElement(elem)) {
+        if (!isPointsPickObject(pickInfo.object)) {
+          return undefined;
+        }
+        const pick = pickInfo.object;
+        const catalog = pointsEngine.getFeatureCatalog(elem.key);
+        const entry =
+          pick.featureCode === undefined
+            ? undefined
+            : pointsEngine.getFeatureEntry(elem.key, pick.featureCode);
+        return attachTooltipElementContext(
+          formatPointsTooltip(pick, {
+            ...(catalog?.featureKey ? { featureKey: catalog.featureKey } : {}),
+            ...(entry ? { entry } : {}),
+          }),
+          elementContext
+        );
+      }
 
       if (isLabelsAvailableElement(elem)) {
         const pickedLabel = getPickedLabelObject(pickInfo.object);
@@ -1797,7 +1881,7 @@ export function useLayerData(
         elementContext
       );
     },
-    [shapesResolver, labelsResolver, getMergedShapeRenderData, getShapePrebuilt]
+    [shapesResolver, labelsResolver, pointsEngine, getMergedShapeRenderData, getShapePrebuilt]
   );
 
   const getShapePickEvent = useCallback(
@@ -1836,12 +1920,35 @@ export function useLayerData(
 
   const getFeaturePickEvent = useCallback(
     (
-      layerId: string,
+      pickedLayerId: string,
       pickInfo: Pick<{ index?: number; object?: unknown }, 'index' | 'object'>
     ): SpatialFeaturePickEventData | undefined => {
+      const layerId = layerIdForPick(pickedLayerId);
       const elem = resolveLayerElement(layerId, layersRef.current[layerId], elementMap.current);
       if (!elem) {
         return undefined;
+      }
+
+      if (isPointsAvailableElement(elem)) {
+        if (!isPointsPickObject(pickInfo.object)) {
+          return undefined;
+        }
+        const pick = pickInfo.object;
+        const featureName =
+          pick.featureCode === undefined
+            ? undefined
+            : pointsEngine.getFeatureEntry(elem.key, pick.featureCode)?.name;
+        return {
+          elementKind: 'points',
+          layerId,
+          spatialElement: elem.element,
+          ...(featureName !== undefined ? { featureId: featureName } : {}),
+          ...(pick.featureCode !== undefined ? { featureCode: pick.featureCode } : {}),
+          pointIndex: pick.pointIndex,
+          position: pick.position,
+          object: pick,
+          tooltip: getFeatureTooltip(layerId, pickInfo),
+        };
       }
 
       if (isLabelsAvailableElement(elem)) {
@@ -1884,7 +1991,7 @@ export function useLayerData(
         tooltip: getFeatureTooltip(layerId, pickInfo),
       };
     },
-    [getFeatureTooltip, getShapePickEvent, labelsResolver]
+    [getFeatureTooltip, getShapePickEvent, labelsResolver, pointsEngine]
   );
 
   // Read during render, like the other resolver getters: every resolver settle

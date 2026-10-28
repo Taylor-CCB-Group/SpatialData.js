@@ -125,6 +125,41 @@ describe('featureTooltipHover', () => {
     expect(getFeatureTooltip).toHaveBeenCalledTimes(2);
   });
 
+  it('lists an element once when two deck layers resolve to it', () => {
+    // A points layer mid-scan draws its resident batch and the scan's growing
+    // overlay; both picks resolve to the same config, and so to one tooltip.
+    const tooltipFor = (layerId: string) => ({
+      elementKey: 'transcripts',
+      elementType: 'points',
+      layerId: 'points:transcripts',
+      items: [{ label: 'element', value: `points/transcripts (${layerId})` }],
+    });
+    const getFeatureTooltip = vi.fn(tooltipFor);
+
+    const deck = {
+      pickMultipleObjects: () => [
+        {
+          picked: true,
+          x: 10,
+          y: 20,
+          layer: { id: 'points:transcripts__partial' },
+          index: 0,
+          object: {},
+        },
+        { picked: true, x: 10, y: 20, layer: { id: 'points:transcripts' }, index: 1, object: {} },
+      ],
+    };
+
+    const result = resolveHoverFeatureTooltip(
+      { picked: true, x: 10, y: 20, layer: { id: 'points:transcripts' }, index: 1, object: {} },
+      getFeatureTooltip,
+      { deck }
+    );
+
+    expect(result?.sections).toBeUndefined();
+    expect(result?.elementKey).toBe('transcripts');
+  });
+
   it('caps aggregate picking depth to candidate tooltip layers', () => {
     expect(getAggregateHoverPickDepth(['shapes:cells', 'labels:mask'])).toBe(2);
     expect(getAggregateHoverPickDepth(['shapes:cells'], 6)).toBe(6);

@@ -52,6 +52,7 @@ export {
 export type {
   HoverTooltipMode,
   LabelsSpatialFeaturePickEvent,
+  PointsSpatialFeaturePickEvent,
   ShapesSpatialFeaturePickEvent,
   SpatialCanvasViewerProps,
   SpatialCanvasViewerRenderTooltip,

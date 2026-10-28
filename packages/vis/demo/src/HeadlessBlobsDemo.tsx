@@ -269,7 +269,9 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
                 elementKind: lastFeatureHover.elementKind,
                 elementKey: lastFeatureHover.spatialElement.key,
                 featureId: lastFeatureHover.featureId,
-                rowIndex: lastFeatureHover.rowIndex,
+                // A points pick has no table row to point at.
+                rowIndex:
+                  lastFeatureHover.elementKind === 'points' ? undefined : lastFeatureHover.rowIndex,
               },
               null,
               2

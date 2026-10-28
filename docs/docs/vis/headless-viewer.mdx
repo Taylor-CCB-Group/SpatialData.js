@@ -207,11 +207,15 @@ Runtime attachments live beside the stack:
   in the serializable contract would be a lie about what a saved config is. See
   [Precomputed colour buffers](#precomputed-colour-buffers).
 - `onFeatureHover` / `onFeatureClick` receive a typed SpatialData feature event
-  for shapes and labels. The payload includes the stable stack `layerId`,
+  for shapes, labels and points. The payload includes the stable stack `layerId`,
   `elementKind` for TypeScript narrowing, resolved `spatialElement` (use
   `event.spatialElement.kind` and `event.spatialElement.key`), current
   `spatialData`, `featureId`, optional table `rowIndex`, the raw `pickInfo`, and
-  the same tooltip payload used by `SpatialFeatureTooltip` when available.
+  the same tooltip payload used by `SpatialFeatureTooltip` when available. A
+  points event carries no `rowIndex` (a points element has no associated table);
+  its `featureId` is the feature name, alongside `featureCode`, `position` and a
+  `pointIndex` that numbers the row within the drawn batch — one tile on the
+  tiled path, so it identifies nothing durable.
 - `onShapeHover` / `onShapeClick` remain as shape-only compatibility callbacks.
 - raw `onHover` / `onClick` remain available for host layers or lower-level deck
   integrations.

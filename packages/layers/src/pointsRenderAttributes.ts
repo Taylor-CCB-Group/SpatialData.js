@@ -35,6 +35,20 @@ export interface PointsDeckData {
     getPosition: { value: Float32Array; size: number };
     getFeatureCode?: { value: Float32Array; size: number };
   };
+  /**
+   * The same per-point codes, for reading on the CPU when a point is picked.
+   *
+   * Deliberately NOT an attribute: picking wants the code of ONE row, so uploading
+   * a second copy to the GPU would buy nothing, and `getFeatureCode` is withdrawn
+   * when colour-by-feature is off — which would otherwise take the tooltip's
+   * feature name with it, for a reason (a colour toggle) that has nothing to do
+   * with identifying what is under the cursor. deck reads only `length` and
+   * `attributes`, so this rides along ignored.
+   *
+   * The batch's own array, not the attribute's Float32 copy: a pick reads one
+   * element, so there is nothing to gain by converting 4M of them.
+   */
+  pickFeatureCodes?: ArrayLike<number>;
 }
 
 interface CacheEntry extends PointsRenderAttributes {
@@ -115,6 +129,8 @@ export function buildPointsDeckData(
       getPosition: { value: attributes.positions, size: 3 },
       ...(codes ? { getFeatureCode: { value: codes, size: 1 } } : {}),
     },
+    // Whatever the batch has, whether or not it is being drawn with it.
+    ...(batch.featureCodes ? { pickFeatureCodes: batch.featureCodes } : {}),
   };
   if (entry) {
     entry.deckData[slot] = data;

@@ -1,6 +1,11 @@
 import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it } from 'vitest';
-import { getCachedWorldBounds, resolveLayerElement } from '../src/SpatialCanvas/useLayerData.js';
+import {
+  getCachedWorldBounds,
+  layerIdForPick,
+  partialLayerId,
+  resolveLayerElement,
+} from '../src/SpatialCanvas/useLayerData.js';
 import { calculateInitialViewState } from '../src/SpatialCanvas/utils.js';
 
 describe('calculateInitialViewState (vis SpatialCanvas utils)', () => {
@@ -12,6 +17,19 @@ describe('calculateInitialViewState (vis SpatialCanvas utils)', () => {
 
   it('returns origin when bounds are null', () => {
     expect(calculateInitialViewState(null, 100, 100)).toEqual({ target: [0, 0], zoom: 0 });
+  });
+});
+
+describe('layerIdForPick', () => {
+  it('maps the scan overlay back to the layer it overlays', () => {
+    // The overlay is a second deck layer for one config, so a pick on it has to
+    // resolve to that config or the tooltip shows nothing while a scan runs.
+    expect(layerIdForPick(partialLayerId('points:transcripts'))).toBe('points:transcripts');
+  });
+
+  it('leaves every other layer id alone', () => {
+    expect(layerIdForPick('points:transcripts')).toBe('points:transcripts');
+    expect(layerIdForPick('shapes:cells')).toBe('shapes:cells');
   });
 });
 

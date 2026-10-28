@@ -70,6 +70,7 @@ export type {
   PointsFeatureStateProviderProps,
   PointsLayerConfig,
   PointsLoadTarget,
+  PointsSpatialFeaturePickEvent,
   RenderStackHostLayerResolver,
   RenderStackLayerInputs,
   ShapesLayerConfig,
