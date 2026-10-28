@@ -1,6 +1,8 @@
 # Points MVP & roadmap
 
-**Status:** agreed (grilling session 2026-07-06); implementation not started
+**Status:** MVP shipped — filter, colour + Feature Highlight, and the Identify
+tooltip (hover → Points Feature name and position) are in. What remains is the
+Deferred list below.
 **Related:** [CONTEXT.md](../../CONTEXT.md) (domain terms), [ADR 0002](../adr/0002-spatially-aware-vector-loading.md), [ADR 0003](../adr/0003-points-render-resource.md), [LayerDataEngine decomposition](layer-data-engine-decomposition.md), [points preload & feature filter status](points-preload-feature-filter-status.md)
 
 This document defines the **minimum viable feature set** for interactive points
@@ -84,7 +86,26 @@ load-bearing (it decides what MDV can drive live vs what a saved config carries)
   This is the only genuinely new *loader* work in the tooltip story, hence
   deferred. Reuses `TooltipFieldsPanel`, `SpatialFeatureTooltip`,
   `SpatialFeatureTooltipData`. When built, the tooltip-column set becomes
-  serializable config.
+  serializable config. What it needs, surveyed 2026-10-28:
+  - The tiled reader already serves extra columns (`PointsInBoundsOptions.columns`
+    → `PointsColumnarData.columns`), and whole row groups are read anyway, so
+    naming one costs decode and transfer, not bandwidth. The loader interface the
+    render path calls (`PointsLoadInBoundsOptions`) has no `columns`, so tiles
+    never ask.
+  - The preload path carries none: `PointsLoadOptions` / `PointsLoadResult` need
+    them, on all three `loadPoints` return paths.
+  - **The alignment risk, and the reason this is not a mechanical change:**
+    `filterColumnarByFeatureCodes` and `applyRenderCapToColumnar` rebuild the row
+    set and keep only x/y/z/codes, and the parquet worker's filter message ships
+    only those. A column that is not carried in lockstep through all three shows
+    another row's value, which is worse than showing none. Test it by observing a
+    value after a filter + cap, not by testing the plumbing.
+  - `PointsElement` has no column listing for the picker to offer; it would read
+    the parquet schema, whose footer the tiling probe already fetches.
+  - The columnar lane is numeric, so `qv`, `nucleus_distance` and
+    `overlaps_nucleus` fit. `cell_id` (string) and `transcript_id` (int64) do
+    not, and want a code + catalog lane like `featureCodes` — decide that before
+    starting, since "all available columns" reads as a promise to serve them.
 - **Lazy per-row attribute fetch** — "option B": fetch a single picked row's
   columns on demand. Needs **row-addressable parquet reads** (row-group +
   in-group offset), awkward for the dictionary/multipart layout. Post-MVP.
