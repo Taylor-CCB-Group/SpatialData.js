@@ -100,6 +100,7 @@ export {
 export type { GroupBlendMode } from './groups/groupBlend';
 export {
   getIsolatedGroupMember,
+  getIsolatedGroupMemberId,
   IsolatedGroupLayer,
   type IsolatedGroupLayerProps,
 } from './groups/IsolatedGroupLayer';

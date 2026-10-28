@@ -1,7 +1,7 @@
 import type { PickingInfo } from '@deck.gl/core';
 import type { DeckGLRef } from '@deck.gl/react';
 import { mergeSpatialFeatureTooltips, type SpatialFeatureTooltipData } from '@spatialdata/core';
-import { getIsolatedGroupMember, parseLabelId } from '@spatialdata/layers';
+import { getIsolatedGroupMemberId, parseLabelId } from '@spatialdata/layers';
 
 const DEFAULT_PICK_RADIUS = 4;
 const DEFAULT_PICK_DEPTH = 12;
@@ -93,8 +93,9 @@ export function getDeckFromDeckGlRef(
  * groups to the member the pick came through.
  */
 export function pickedLayerId(info: { layer?: { id?: unknown } | null }): string {
-  const layer = getIsolatedGroupMember(info) ?? info.layer;
-  return typeof layer?.id === 'string' ? layer.id : '';
+  const memberId = getIsolatedGroupMemberId(info);
+  if (memberId !== null) return memberId;
+  return typeof info.layer?.id === 'string' ? info.layer.id : '';
 }
 
 /** Strips the view token a Viv-style viewer appends to top-level layer ids. */

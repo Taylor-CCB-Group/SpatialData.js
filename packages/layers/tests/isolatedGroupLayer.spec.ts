@@ -1,7 +1,11 @@
-import type { Layer, PickingInfo } from '@deck.gl/core';
+import { Layer, type PickingInfo } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { describe, expect, it, vi } from 'vitest';
-import { getIsolatedGroupMember, IsolatedGroupLayer } from '../src/groups/IsolatedGroupLayer';
+import {
+  getIsolatedGroupMember,
+  getIsolatedGroupMemberId,
+  IsolatedGroupLayer,
+} from '../src/groups/IsolatedGroupLayer';
 
 function circles(id: string): ScatterplotLayer {
   return new ScatterplotLayer({ id, data: [{}], getPosition: [0, 0] });
@@ -68,6 +72,25 @@ describe('IsolatedGroupLayer picking', () => {
     tile.parent = entry;
     group('g', [entry]);
     expect(getIsolatedGroupMember(bubblePick(tile))).toBe(entry);
+  });
+
+  it('draws members under group-scoped ids, and resolves picks to the id as given', () => {
+    const g = new IsolatedGroupLayer({ id: 'g', layers: [circles('cells')] });
+    const drawn = g.renderLayers().flat()[0];
+    if (!(drawn instanceof Layer)) throw new Error('expected a member');
+    expect(drawn.id).toBe('g/cells');
+    drawn.parent = g;
+
+    const info = bubblePick(drawn);
+    expect(getIsolatedGroupMember(info)).toBe(drawn);
+    expect(getIsolatedGroupMemberId(info)).toBe('cells');
+  });
+
+  it('keeps the innermost record when a pick passes through nested groups', () => {
+    const cells = circles('cells');
+    const inner = group('inner', [cells]);
+    group('outer', [inner]);
+    expect(getIsolatedGroupMemberId(bubblePick(cells))).toBe('cells');
   });
 
   it('hands hover highlighting to the picked member only', () => {

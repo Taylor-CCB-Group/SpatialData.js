@@ -18,7 +18,7 @@ import { webgpuAdapter } from '@luma.gl/webgpu';
 import {
   applyWebGPUPickingFix,
   applyWebGPUViewFix,
-  getIsolatedGroupMember,
+  getIsolatedGroupMemberId,
   IsolatedGroupLayer,
   type IsolationRenderEvent,
   type IsolationRenderReason,
@@ -202,7 +202,7 @@ export default function GroupGridDemo() {
         setHover(
           info.picked
             ? `view=${info.viewport?.id} layer=${info.layer?.id} member=${
-                getIsolatedGroupMember(info)?.id ?? '-'
+                getIsolatedGroupMemberId(info) ?? '-'
               } index=${info.index}`
             : 'none'
         );
