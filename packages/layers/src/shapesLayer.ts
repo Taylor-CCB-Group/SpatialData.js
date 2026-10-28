@@ -34,7 +34,7 @@ export type ShapesGeometryRepresentationKind =
   | 'flat-polygons'
   | 'wkb-parquet'
   | 'geoarrow-table';
-export type ShapeStrokeWidthUnits = 'common' | 'pixels';
+export type { ShapeStrokeWidthUnits } from '@spatialdata/core';
 
 export interface ShapeCircleColumnarLike {
   positions: [Float32Array, Float32Array];

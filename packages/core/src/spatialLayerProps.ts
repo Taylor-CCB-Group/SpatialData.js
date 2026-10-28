@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+/**
+ * What a stroke width is measured in: `'common'` scales with the world, `'pixels'`
+ * stays constant on screen.
+ *
+ * A tuple so the schema below derives its enum from it rather than spelling the
+ * members a second time. `@spatialdata/layers` re-exports the type as its own
+ * `ShapeStrokeWidthUnits`.
+ */
+export const SHAPE_STROKE_WIDTH_UNITS = ['common', 'pixels'] as const;
+export type ShapeStrokeWidthUnits = (typeof SHAPE_STROKE_WIDTH_UNITS)[number];
+
 /** Current serialized props version; bump when adding breaking field changes. */
 export const SPATIAL_LAYER_PROPS_SCHEMA_VERSION = 1 as const;
 
@@ -34,7 +45,7 @@ export const spatialShapesSublayerSchema = sublayerBase
     defaultFillColor: rgbaColorSchema.optional(),
     defaultStrokeColor: rgbaColorSchema.optional(),
     defaultStrokeWidth: z.number().min(0).optional(),
-    defaultStrokeWidthUnits: z.enum(['common', 'pixels']).optional(),
+    defaultStrokeWidthUnits: z.enum(SHAPE_STROKE_WIDTH_UNITS).optional(),
     defaultStrokeWidthMinPixels: z.number().min(0).optional(),
     defaultStrokeWidthMaxPixels: z.number().min(0).optional(),
     featureState: z

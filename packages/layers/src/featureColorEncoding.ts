@@ -14,6 +14,7 @@
  * over the same table.
  */
 
+import type { TableColumnKind } from '@spatialdata/core';
 import { featureCodeToRgb } from './pointsFeatureColor';
 
 export type FeatureFillColorMode = 'auto' | 'categorical' | 'continuous';
@@ -382,11 +383,8 @@ function getFiniteExtent(values: Array<number | undefined>): [number, number] | 
   return min === Number.POSITIVE_INFINITY ? undefined : [min, max];
 }
 
-/**
- * What the store says the column is. Re-exported from `@spatialdata/core`'s
- * `TableColumnKind` so this module stays dependency-free.
- */
-export type FeatureColumnKind = 'numeric' | 'categorical' | 'string' | 'boolean';
+/** What the store says the column is. */
+export type FeatureColumnKind = TableColumnKind;
 
 /**
  * Resolve `'auto'`.
