@@ -2386,7 +2386,7 @@ dev = [
 requires-dist = [
     { name = "anndata", marker = "extra == 'write'", specifier = ">=0.12" },
     { name = "dask", extras = ["array"], marker = "extra == 'write'", specifier = ">=2026.7.1" },
-    { name = "imagecodecs", specifier = ">=2025.8.2" },
+    { name = "imagecodecs", specifier = ">=2026.6.26" },
     { name = "numcodecs", specifier = ">=0.16" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "ome-zarr", marker = "extra == 'write'", specifier = ">=0.16" },
