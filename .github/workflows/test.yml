@@ -127,6 +127,43 @@ jobs:
       - name: Build docs site
         run: pnpm docs:build
 
+  # spatialdata-js-util only encodes HTJ2K without Node.js if the `imagecodecs`
+  # it is installed with ships HTJ2K for that platform, and some releases left
+  # it out of some wheels. A resolver may keep any version the floor admits, so
+  # this installs every direct dependency at its declared minimum, rather than
+  # the lockfile's versions, on each platform with wheels.
+  python-dependency-floor:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: python/spatialdata-js-util
+    steps:
+      - name: Check out repository (python-dependency-floor)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup uv (python-dependency-floor)
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Install spatialdata-js-util at its dependency floors
+        run: |
+          uv venv --python 3.12 .floor-venv
+          uv pip install --python .floor-venv --resolution lowest-direct -r pyproject.toml --group dev
+          uv pip install --python .floor-venv --no-deps .
+
+      - name: Check the native HTJ2K backend works without Node.js
+        run: uv run --no-project --python .floor-venv python -m pytest -p no:cacheprovider tests/test_htj2k_native_floor.py
+
   test:
     runs-on: ubuntu-latest
     steps:

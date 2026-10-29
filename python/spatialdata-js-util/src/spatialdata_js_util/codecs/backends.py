@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
@@ -205,6 +206,17 @@ def resolve_backend() -> Htj2kBackend | None:
         # so it is trusted on availability; every other backend must prove it.
         if name == BACKEND_OPENJPH_WASM:
             if _BACKENDS[name].available():
+                if not requested:
+                    # Reaching here means `imagecodecs` failed, usually because the
+                    # installed release has no HTJ2K for this platform. Encoding
+                    # still works, but only while Node.js is on PATH.
+                    warnings.warn(
+                        "imagecodecs has no usable HTJ2K; falling back to the openjph-wasm "
+                        "backend, which needs Node.js. Upgrade imagecodecs to the version "
+                        "spatialdata-js-util requires to encode without Node.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
                 return _BACKENDS[name]
         elif backend_passes_probe(name):
             return _BACKENDS[name]
@@ -212,9 +224,12 @@ def resolve_backend() -> Htj2kBackend | None:
 
 
 def reset_backend_cache() -> None:
-    """Clear memoized backend selection (used by tests that flip the env var)."""
+    """Clear memoized backend selection (used by tests that flip the env var or PATH)."""
+    from .htj2k_wasm import wasm_encode_available
+
     resolve_backend.cache_clear()
     backend_passes_probe.cache_clear()
+    wasm_encode_available.cache_clear()
 
 
 def require_backend() -> Htj2kBackend:
