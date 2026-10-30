@@ -1,5 +1,7 @@
 # @spatialdata/avivatorish
 
+## 0.14.0
+
 ## 0.13.2
 
 ### Patch Changes

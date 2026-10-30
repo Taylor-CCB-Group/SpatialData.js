@@ -1,5 +1,22 @@
 # @spatialdata/layers
 
+## 0.14.0
+
+### Minor Changes
+
+- [#245](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/245) [`f3c6832`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/f3c6832731e4fce03db2ad6438de83d4d0421ef6) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Hovering a point now shows a tooltip with its feature name and position, on both the preloaded and tiled points paths. `onFeatureHover` / `onFeatureClick` emit the pick as well, so a host rendering its own tooltip gets it too.
+  
+  A points layer's per-row feature codes are now loaded whichever way `colorByFeature` is set, so the tooltip names the feature on a layer that is not coloured by it. For that to not turn colour on, `colorByFeature: false` now reaches the layer as a prop instead of being implied by withheld codes — a layer that asked for no colour-by-feature got it anyway when its codes were loaded for the filter, and now stays flat.
+  
+  `SpatialFeaturePickEvent` gains a `points` member: it has no `rowIndex` (a points element has no associated table), so reading `event.rowIndex` without narrowing on `elementKind` is now a type error.
+
+- [#246](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/246) [`6a31343`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/6a31343ea479ba0562ef7cac0b98792a9be611e1) Thanks [@xinaesthete](https://github.com/xinaesthete)! - New `ShapesRendererAdapter` and `LabelsRendererAdapter`. Hand either one a resolved element's data plus a layer's props, and `render()` returns the deck layers — the identity-stable projections in between (prebuilt feature arrays, table-column fill colours, the per-label colour LUT) are held for you, so a repeated render does not rebuild GPU attributes. A `@spatialdata/vis` layer config satisfies the props they read, so it passes straight through.
+
+### Patch Changes
+
+- Updated dependencies [[`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9), [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9), [`5abcb0d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5abcb0da0776e75cf3a569eabceabbdc8831c97f)]:
+  - @spatialdata/core@0.14.0
+
 ## 0.13.2
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @spatialdata/core
 
+## 0.14.0
+
+### Minor Changes
+
+- [#238](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/238) [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `SpatialEntryStore.retry(ctx)` re-runs an entry's failed resources. `ResourceResolver` gains a required `retry(elementKey)`, so a custom resolver must implement it: make its failed resources plannable again, since `plan()` should not reschedule a failure by itself.
+
+- [#242](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/242) [`5abcb0d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5abcb0da0776e75cf3a569eabceabbdc8831c97f) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Shapes and labels layers now report a `table-rows-unmatched` notice through `getEntryStatus` when the associated table's `instance_key` values can't join to the element, instead of silently drawing no table colours or tooltip fields. For labels this catches ids the raster's dtype can't hold, such as packed 64-bit cell ids against a uint32 raster. `SpatialCanvas` now shows each layer's errors and notices in its layer panel, with Retry for retryable errors.
+
+### Patch Changes
+
+- [#238](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/238) [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9) Thanks [@xinaesthete](https://github.com/xinaesthete)! - A shapes layer whose tooltip fields or fill-colour column fail to load no longer re-requests them on every render; the failure stays until the config changes.
+
 ## 0.13.2
 
 ### Patch Changes
