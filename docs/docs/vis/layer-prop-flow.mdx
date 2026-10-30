@@ -207,30 +207,47 @@ props (`opacity`, `radiusScale`, etc.) for cosmetic changes.
 | Change | Category | Expected work |
 |---|---|---|
 | `opacity`, `fillColor` / `strokeColor` defaults, stroke width clamps | Cosmetic | Deck uniform / attribute invalidation only; no geometry or feature-state rebuild |
-| `hiddenFeatureIds`, `fadedFeatureIds`, per-feature colour maps, table-driven fill column | Structural | Rebuild `shapePrebuiltData` and/or `ShapeFeatureStateRuntime` |
+| `hiddenFeatureIds`, `fadedFeatureIds`, per-feature colour maps, table-driven fill column | Structural | Rebuild the prebuilt feature array and/or the `ShapeFeatureStateRuntime` |
 | Geometry load, transform, element key | Structural | Reload / re-decode geometry |
 
 Cosmetic edits must **not** re-run `Record`→`Map` conversion, re-filter the
 feature list, or change `updateTriggers` keys that point at fresh objects every
 frame.
 
-### Producer contract (`useLayerData`)
+### Producer contract (`ShapesRendererAdapter`)
 
-- **`shapePrebuiltData`** (keyed by layer id): built when geometry loads and when
-  `hiddenFeatureIds` changes — not on opacity tweaks.
-- **`stableShapeFeatureStateRef`** (keyed by layer id): holds a
+The identity work is **not** in `useLayerData`. It lives in
+`ShapesRendererAdapter` (`@spatialdata/layers/src/adapters`), which ADR 0004 §4
+calls the Renderer Adapter: `ShapesResolver` in `@spatialdata/core` resolves the
+data, the adapter owns the identity the renderer needs, and the hook only passes
+resources in and pushes layers out. `LabelsRendererAdapter` is its twin, and
+`PointsRendererAdapter` — held privately by `PointsDataEngine` — is the same idea
+for points.
+
+- **`getPrebuilt`** (keyed by layer id): rebuilds when geometry identity or the
+  `hiddenFeatureIds` signature moves — not on opacity tweaks. The signature sorts
+  the ids, so a caller rebuilding that list per render costs nothing.
+- **`getFeatureStateRuntime`** (keyed by layer id): returns a
   `ShapeFeatureStateRuntime` (Maps/Sets) rebuilt only when the feature-state
   signature changes (hidden/faded ids, opacity multiplier, manual colour record
-  identity, table fill-colour signature). Pass this into
-  `renderShapesLayer({ featureStateRuntime })` so `getLayers()` does not allocate
-  on every render.
+  identity, table fill-colour signature) **or** the fill-colour entry's identity
+  does. Both terms are needed: a column change serves the previous column's rows
+  until the new ones land, so the entry's data can change while its signature
+  cannot.
 - **Merged feature-state objects must not be allocated each frame** when only
-  cosmetic layer props change. Table-driven fill colours are merged inside
-  `getStableShapeFeatureStateRuntime` only when the signature changes.
-- **Table-driven fill colours** should be computed from
-  `@spatialdata/core`-resolved `rowIndexByFeatureIndex` and the shared
-  `@spatialdata/layers` colour encoder. Do not add local feature-to-row
-  precedence rules in `SpatialCanvas` or layer modules.
+  cosmetic props change. Table-driven fill colours are merged inside
+  `getFeatureStateRuntime`, only when one of those two terms moves.
+- **Table-driven fill colours** are computed from `@spatialdata/core`-resolved
+  `rowIndexByFeatureIndex` and the shared `@spatialdata/layers` colour encoder. Do
+  not add local feature-to-row precedence rules in `SpatialCanvas` or layer modules.
+- **The adapter reads entry props structurally** (`ShapesEntryProps`), not the
+  `ShapesLayerConfig` interface itself — `layers` importing from `vis` would be a
+  cycle. A vis config satisfies the shape, so it passes straight through.
+- **`getRenderData` is the geometry/tooltip join.** The resolver keeps the two
+  independent so a broken tooltip column still draws geometry; the adapter merges
+  `tooltipRowIndices` into `rowIndexByFeatureIndex` and memoises on both
+  identities, because a fresh merged object per `getLayers()` is a deck teardown
+  per frame.
 
 ### Runtime attachments are not layer props
 
@@ -343,7 +360,7 @@ nothing.
   in the first and dead in the second precisely because of that. `resolveHoveredLabel` in
   `featureTooltipHover.ts` is the single implementation both must call — when adding hover
   behaviour, add it there, not in one `handleHover`.
-- **Hover is runtime render state, never Render Stack config.** `useLayerData` keeps it on
+- **Hover is runtime render state, never Render Stack config.** The hook keeps it on
   a ref plus a version counter (`setHoveredLabel`) so a saved view can never carry it, and
   so pointer motion *within* one label schedules no re-render. Points already carry their
   highlight the same way.
@@ -397,6 +414,8 @@ lightens the fill.
 
 ## See also
 
+- [`packages/layers/src/adapters/ShapesRendererAdapter.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/adapters/ShapesRendererAdapter.ts)
+- [`packages/layers/src/adapters/LabelsRendererAdapter.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/adapters/LabelsRendererAdapter.ts)
 - [`packages/vis/src/SpatialCanvas/useLayerData.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/useLayerData.ts)
 - [`packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx)
 - [`packages/layers/src/LabelsLayer.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/LabelsLayer.ts)

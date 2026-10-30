@@ -1,6 +1,6 @@
 # Resource Resolver Owned By Core
 
-**Status:** proposed
+**Status:** accepted
 **Amends:** [ADR 0001](0001-render-stack-owned-by-layers.md) — its *package-placement* claim only; its substance stands.
 **Builds on:** [ADR 0002](0002-spatially-aware-vector-loading.md), [ADR 0003](0003-points-render-resource.md)
 
@@ -97,6 +97,21 @@ concept.
    requirement** — deck tears a layer down when its data identity changes — so it
    belongs on the renderer side, memoising against core's per-entry snapshot
    identity.
+
+   **Landed** as `PointsRendererAdapter` (held privately by `PointsDataEngine`),
+   `ShapesRendererAdapter` and `LabelsRendererAdapter`, all in
+   `layers/src/adapters/`. Each owns both halves for its kind: the projection memos
+   and `render()`. Images keep their renderer in `vis`, with the Viv and
+   `avivatorish` dependencies the amendment below keeps out of `layers`.
+
+   Each adapter declares the entry props it reads **structurally**
+   (`ShapesEntryProps`, `LabelsEntryProps`) rather than importing
+   `ShapesLayerConfig` / `LabelsLayerConfig` from `vis`, which would be a cycle. A
+   vis config satisfies the shape, so it passes straight through and no exported
+   type moved. Relocating the config interfaces themselves is possible but has no
+   consumer asking for it; if it ever happens, `vis`'s `SpatialCanvas/types.ts`
+   must be split first — it also re-exports `ShapesLayerPickEvent`, which carries a
+   deck `PickingInfo`, so moving the module wholesale would drag deck along.
 
 5. **`RenderStack` moves to `core`.** Forced by dependency direction: the
    Resolver takes a Render Stack as input. This also lands where the schemas
@@ -313,10 +328,21 @@ repo's decision; it flags it as owed.
 - The unmanaged caches already living in `core` (`parquetTableBytes`,
   `parquetTableCache` — both unbounded, never evicted) gain an owner. See
   [ADR 0005](0005-memory-accounting-before-management.md).
-- `useLayerData` collapses to a thin React binding: create, reconcile,
-  `useSyncExternalStore`, project. The three `eslint-disable react-hooks/refs`
-  render-phase ref writes and the `'use no memo'` React-Compiler opt-outs go with
-  it.
+- `useLayerData` moves toward a thin React binding: create, reconcile, project.
+  Not there yet: `getLayers()`'s points branches and the tooltip/pick plumbing are
+  still in it.
+
+  **The compiler and lint hatches are not part of that, and an earlier draft of
+  this bullet said they were.** They are listed here because measuring §4's
+  progress by hatch count sends the next reader after the wrong thing.
+  `useLayerData` has two render-phase ref writes — the latest-`layers` and
+  element-map mirrors, read during render by `hasRenderableLayerData` and the
+  panels — and three ref reads, in `pointsTileProgress` and `isBlocking`. All five
+  exist so the blocking overlay and the tile spinner can read an imperatively
+  maintained cache during render; none is a projection concern, and removing them
+  means lifting that cache, not moving `project()`. `useLayerData` carries no
+  `'use no memo'` directive at all. The live ones are in the points panels, where
+  React Compiler would otherwise memoise JSX built from engine getters.
 
 ## Provenance
 

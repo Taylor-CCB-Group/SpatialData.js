@@ -32,9 +32,8 @@ import { SnapshotCache } from './snapshotCache.js';
  *  - `fillColor`  — `loadAssociatedTableFeatureRows()`. Keyed by the column name.
  *
  * All three loaders already lived in `core`; only the orchestration was stranded in
- * a React hook. This absorbs `loadShapesData` from `vis`'s `shapesRenderer` — a
- * try/catch that re-threw with a nicer message — and replaces the re-throw with a
- * `SpatialEntryError`, which is what the classifier is for.
+ * a React hook. A failed load surfaces as a `SpatialEntryError`, which is what the
+ * classifier is for, rather than a re-throw with a nicer message.
  *
  * ## What is deliberately NOT here
  *
@@ -42,18 +41,29 @@ import { SnapshotCache } from './snapshotCache.js';
  * RGBA is `buildShapeFillColorByFeatureId` in `layers`, and it stays there. That
  * is not a dependency dodge — it is the phase separation working: fetching rows is
  * I/O, and mapping a column through a palette is a pure projection *for a
- * renderer*. It belongs in `project()`. Same for `buildShapesPrebuiltData`.
+ * renderer*. It belongs in `project()`, which `ShapesRendererAdapter` in `layers`
+ * now owns. Same for `buildShapesPrebuiltData`.
  *
  * So this resolver's `fillColor` resource is the **rows**, not the colours.
  *
  * ## Known bug, preserved
  *
- * Tooltip metadata is cached per **element**, but requested per **layer config**.
- * Two layers over one element with different `tooltipFields` therefore invalidate
- * each other forever — a ping-pong. (`shapePrebuiltData` and `shapeFillColorData`
- * were deliberately keyed by layer id to avoid exactly this; the tooltip cache was
- * missed.) Step 1 is a re-housing, so the behaviour is preserved as-is. **Track B
- * owns the fix**, and it is on the punchlist. Labels have the identical shape.
+ * Tooltip metadata and fill-colour rows are cached per **element**, but requested per
+ * **layer config** — `buildResolveContext` builds one context per layer. Two layers
+ * over one element that differ in `tooltipFields`, or in
+ * `fillColorByColumn.columnName`, therefore invalidate each other forever: a
+ * ping-pong, after which `getFillColorRows` hands back whichever column landed last.
+ *
+ * Keying the projections by layer id (`ShapesRendererAdapter`'s caches, as
+ * `shapePrebuiltData` and `shapeFillColorData` did before it) stops two layers sharing
+ * one colour map, but it cannot help when the rows underneath are the wrong column's —
+ * so the fill-colour half of this is not avoided either.
+ * `LabelsResolver` in `vis` already has the shape of the fix: `fillColors` is keyed by
+ * element *and* column, and `getFillColorRows(key, column)` takes the column. Its
+ * tooltips are per element, so that half is shared.
+ *
+ * Step 1 is a re-housing, so the behaviour is preserved as-is. **Track B owns the
+ * fix**: the fill-colour half is tracked as #253.
  */
 
 export interface ShapesResolveConfig {

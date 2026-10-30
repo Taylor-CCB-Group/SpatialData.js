@@ -31,6 +31,27 @@ export {
   spatialLayerPropsSchema,
   spatialSublayerSchema,
 } from '@spatialdata/core';
+// The shapes and labels Renderer Adapters (ADR 0004 §4). `PointsRendererAdapter` is
+// absent because nothing outside holds one: `PointsDataEngine` owns it privately.
+export {
+  buildLabelFillColorEntry,
+  type LabelFillColorEntry,
+  type LabelsChannelDefaults,
+  type LabelsChannelProps,
+  type LabelsEntryProps,
+  type LabelsFillColorColumnSpec,
+  LabelsRendererAdapter,
+  type LabelsRenderInput,
+} from './adapters/LabelsRendererAdapter.js';
+export {
+  type ShapeFillColorEntry,
+  type ShapesEntryProps,
+  type ShapesFillColorColumnSpec,
+  type ShapesProjectionFeatureState,
+  ShapesRendererAdapter,
+  type ShapesRenderInput,
+  shapeFillColorAlpha,
+} from './adapters/ShapesRendererAdapter.js';
 export {
   PointsDataEngine,
   type PointsDataEngineCallbacks,

@@ -36,14 +36,13 @@ import {
   unionBoundsList,
 } from '@spatialdata/core';
 import {
-  buildShapeFillColorByFeatureId,
-  buildShapesPrebuiltData,
   createTileDebugStore,
   featureFilterAwaitingRowCodes,
   formatPointsTileDebugTooltip,
   formatPointsTooltip,
   isPointsPickObject,
   isPointsTileDebugPickObject,
+  LabelsRendererAdapter,
   PointsDataEngine,
   PointsLayer,
   type PointsLoadTarget,
@@ -53,7 +52,7 @@ import {
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
   type ShapeFeatureRenderDatum,
-  type ShapeFeatureStateRuntime,
+  ShapesRendererAdapter,
   type TileDebugStore,
 } from '@spatialdata/layers';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -61,42 +60,21 @@ import { type EntryStatus, EntryStatusCache } from './entryStatus';
 import { createFeatureColorStabilizer, type FeatureColorResolver } from './featureColorResolver';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
 import {
-  buildLabelFillColorEntry,
-  getLabelFillColorSignature,
-  getStableLabelColorLut,
-  type LabelColorLutEntry,
-  type LabelFillColorEntry,
-  lastGoodLabelFillColorEntry,
-} from './labelsProjection';
-import {
   aggregatePointsTileLoadProgress,
   isPointsTileLoading,
   type PointsTileLoadProgress,
   pointsTileLoadProgressFromStore,
   tileDebugSignature,
 } from './pointsTileProgress';
-import { renderLabelsLayer } from './renderers/labelsRenderer';
-import { renderShapesLayer } from './renderers/shapesRenderer';
 import { describeResolveInputs } from './resolveInputs';
 import { createNonOwningResolver } from './resolvers/nonOwningResolver';
 import { ImagesResolver, LabelsResolver } from './resolvers/RasterResolvers';
-import {
-  getShapeFillColorAlpha,
-  getShapeFillColorSignature,
-  getStableShapeFeatureStateRuntime,
-  lastGoodShapeFillColorEntry,
-  type ShapeFillColorEntry,
-  type ShapePrebuiltEntry,
-  serializeHiddenIds,
-} from './shapesProjection';
 import type {
   AvailableElement,
   ChannelConfig,
   ElementsByType,
-  LabelsLayerConfig,
   LayerConfig,
   PointsLayerConfig,
-  ShapesLayerConfig,
 } from './types';
 import { useVivLoaderRegistry } from './VivLoaderRegistry';
 import {
@@ -123,35 +101,8 @@ export interface WorldBoundsCacheEntry {
 }
 
 interface LoadedData {
-  // Kind-owned data lives in its resolver/engine, not here: shapes geometry/tooltip/
-  // fill-colour rows in `shapesResolver`, images in `imagesResolver`, labels in
-  // `labelsResolver`, points in `pointsEngine`. What remains are vis-side render
-  // projections keyed by layer id, plus the world-bounds cache.
-  /**
-   * Pre-built deck.gl `data` arrays keyed by **layer id** (not element key).
-   * Each entry holds the O(n-features) array produced by `buildShapesPrebuiltData`
-   * so that `getLayers()` never has to allocate it.  Invalidated only when
-   * `hiddenFeatureIds` changes.
-   */
-  shapePrebuiltData: Map<string, ShapePrebuiltEntry>;
-  /**
-   * Per-layer table-column fill colour maps. Kept separate from element-keyed
-   * geometry because two layers may render the same shapes with different
-   * table columns.
-   */
-  shapeFillColorData: Map<string, ShapeFillColorEntry>;
-  /**
-   * Per-layer table-column colours for labels, keyed by the label's instance id.
-   * The labels twin of `shapeFillColorData`, separate for the same reason: two
-   * layers may render one labels element through different table columns.
-   */
-  labelFillColorData: Map<string, LabelFillColorEntry>;
-  /**
-   * Per-layer per-label colour lookup tables. Identity-stable while the
-   * feature-state they encode is unchanged, so `LabelsLayer` re-uploads its GPU
-   * texture only on a real change and never on a hover/pan re-render.
-   */
-  labelColorLutData: Map<string, LabelColorLutEntry>;
+  // Kind-owned data lives in its resolver/engine and the projections built on it in
+  // that kind's Renderer Adapter (ADR 0004 §4). What remains here is world bounds.
   /**
    * World bounds keyed by element identity. Bounds depend on loaded geometry /
    * loader source and transform, not cosmetic layer props such as opacity.
@@ -555,36 +506,23 @@ export function useLayerData(
 
   // Cache for loaded data
   const loadedDataRef = useRef<LoadedData>({
-    shapePrebuiltData: new Map(),
-    shapeFillColorData: new Map(),
-    labelFillColorData: new Map(),
-    labelColorLutData: new Map(),
     worldBounds: new Map(),
   });
-  // Vis-side projection cache for coupling #1: the shapes resolver keeps raw
-  // geometry and tooltip metadata independent, but the render/pick sites need the
-  // geometry with `rowIndexByFeatureIndex` overwritten by the tooltip's
-  // `tooltipRowIndices` (when present). Keyed by element key, memoised on
-  // (raw identity, tooltipRowIndices identity) so a fresh merged object is not
-  // produced per `getLayers()` call (that would be a deck teardown per frame).
-  const mergedShapeRenderDataRef = useRef<
-    Map<
-      string,
-      { raw: ShapesRenderData; tooltipRowIndices: Int32Array | undefined; merged: ShapesRenderData }
-    >
-  >(new Map());
+  // Hook lifetime, not `spatialData` lifetime, matching the `loadedDataRef` caches
+  // these replaced: safe across a dataset swap because every memo inside keys on its
+  // source object's identity. Points has no equivalent here — `PointsDataEngine`
+  // owns its adapter privately.
+  const shapesAdapter = useMemo(() => new ShapesRendererAdapter(), []);
+  const labelsAdapter = useMemo(() => new LabelsRendererAdapter(), []);
+  useEffect(
+    () => () => {
+      shapesAdapter.dispose();
+      labelsAdapter.dispose();
+    },
+    [shapesAdapter, labelsAdapter]
+  );
   const stableSelectionArraysRef = useRef<
     Map<string, { signature: string; value: RasterSelection[] }>
-  >(new Map());
-  const stableShapeFeatureStateRef = useRef<
-    Map<
-      string,
-      {
-        signature: string;
-        runtime: ShapeFeatureStateRuntime;
-        fillColorEntry: ShapeFillColorEntry | undefined;
-      }
-    >
   >(new Map());
 
   // Mirror the latest `layers` into a ref. This is read both by async loaders
@@ -890,158 +828,30 @@ export function useLayerData(
     pointsEngine,
   ]);
 
-  // --- Shapes projection memos (Renderer Adapter side, kept in vis) -------------
+  // --- Renderer Adapter bindings ------------------------------------------------
+  // Thin pass-throughs: each resolves what its adapter needs out of the resolver and
+  // hands it over. Caches, signatures and identity rules live in the adapter.
 
-  // Coupling #1: geometry with `rowIndexByFeatureIndex` patched by the tooltip's
-  // `tooltipRowIndices`. Identity-stable per (raw, tooltipRowIndices) so deck does
-  // not tear the layer down between frames. Returns raw identity when no patch.
+  // Coupling #1: the resolver keeps geometry and tooltip metadata independent, so
+  // the render/pick sites need geometry with `rowIndexByFeatureIndex` patched by the
+  // tooltip's `tooltipRowIndices`. The adapter memoises the join.
   const getMergedShapeRenderData = useCallback(
     (key: string): ShapesRenderData | undefined => {
       const raw = shapesResolver.getRenderData(key);
       if (!raw) return undefined;
-      const tooltipRowIndices = shapesResolver.getTooltipMetadata(key)?.tooltipRowIndices;
-      const cached = mergedShapeRenderDataRef.current.get(key);
-      if (cached && cached.raw === raw && cached.tooltipRowIndices === tooltipRowIndices) {
-        return cached.merged;
-      }
-      const merged = tooltipRowIndices
-        ? { ...raw, rowIndexByFeatureIndex: tooltipRowIndices }
-        : raw;
-      mergedShapeRenderDataRef.current.set(key, { raw, tooltipRowIndices, merged });
-      return merged;
+      return shapesAdapter.getRenderData(
+        key,
+        raw,
+        shapesResolver.getTooltipMetadata(key)?.tooltipRowIndices
+      );
     },
-    [shapesResolver]
+    [shapesResolver, shapesAdapter]
   );
 
-  // Pre-filtered feature arrays for deck, keyed by layer id. Lazy: (re)built only
-  // when the merged render data identity or the `hiddenFeatureIds` signature moves.
   const getShapePrebuilt = useCallback(
-    (layerId: string, renderData: ShapesRenderData, hiddenIds: string[] | undefined) => {
-      const signature = serializeHiddenIds(hiddenIds);
-      const cache = loadedDataRef.current.shapePrebuiltData;
-      const cached = cache.get(layerId);
-      if (cached && cached.signature === signature && cached.source === renderData) {
-        return cached.prebuilt;
-      }
-      const prebuilt = buildShapesPrebuiltData(renderData, hiddenIds);
-      cache.set(layerId, { prebuilt, signature, source: renderData });
-      return prebuilt;
-    },
-    []
-  );
-
-  // Per-layer table-column fill-colour map, built from the resolver's raw rows.
-  // Returns undefined (and drops any cached entry) when the layer has no fill
-  // column, matching the old "no entry" state the feature-state helpers expect.
-  const getShapeFillColorEntry = useCallback(
-    (
-      layerId: string,
-      key: string,
-      config: ShapesLayerConfig,
-      renderData: ShapesRenderData
-    ): ShapeFillColorEntry | undefined => {
-      const fillColorByColumn = config.fillColorByColumn;
-      const cache = loadedDataRef.current.shapeFillColorData;
-      if (!fillColorByColumn?.columnName) {
-        cache.delete(layerId);
-        return undefined;
-      }
-      // No NEW entry until the resolver's rows are actually loaded. The feature-state
-      // runtime is memoised on a signature whose only fill term is this entry's
-      // presence (`fillColorEntry?.signature`), so an eager empty-map entry with the
-      // full signature would suppress the rebuild that makes fill colours appear when
-      // the rows settle. Mirrors the old async path: entry exists only once loaded.
-      const rows = shapesResolver.getFillColorRows(key);
-      const cached = cache.get(layerId);
-      // Rows pending (or the column's load failed): keep the colours already on
-      // screen instead of blinking back to the flat fill. A failed load is not
-      // retried from here; it surfaces through the resolver's own notices.
-      if (!rows) return lastGoodShapeFillColorEntry(cached, key);
-      const signature = getShapeFillColorSignature(config);
-      if (
-        cached &&
-        cached.signature === signature &&
-        cached.rowsSource === rows &&
-        cached.renderSource === renderData
-      ) {
-        return cached;
-      }
-      const entry: ShapeFillColorEntry = {
-        signature,
-        elementKey: key,
-        fillColorByFeatureId: buildShapeFillColorByFeatureId({
-          featureIds: renderData.featureIds,
-          rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
-          column: rows.extraColumns?.[0],
-          mode: fillColorByColumn.mode,
-          alpha: getShapeFillColorAlpha(config),
-          ...(rows.extraColumnKinds?.[0] ? { columnKind: rows.extraColumnKinds[0] } : {}),
-          ...(fillColorByColumn.missingValues
-            ? { missingValues: fillColorByColumn.missingValues }
-            : {}),
-          ...(fillColorByColumn.categoricalPalette
-            ? { categoricalPalette: fillColorByColumn.categoricalPalette }
-            : {}),
-          ...(fillColorByColumn.numericRamp ? { numericRamp: fillColorByColumn.numericRamp } : {}),
-          ...(fillColorByColumn.numericDomain
-            ? { numericDomain: fillColorByColumn.numericDomain }
-            : {}),
-          ...(fillColorByColumn.numericScale
-            ? { numericScale: fillColorByColumn.numericScale }
-            : {}),
-        }),
-        rowsSource: rows,
-        renderSource: renderData,
-      };
-      cache.set(layerId, entry);
-      return entry;
-    },
-    [shapesResolver]
-  );
-
-  // Per-layer table-column colours for labels, built from the resolver's raw rows.
-  // Mirrors `getShapeFillColorEntry`, including its "no entry until the rows have
-  // actually loaded" rule: the LUT is memoised on a signature whose only fill term
-  // is this entry, so an eager empty entry would suppress the rebuild that makes
-  // the colours appear when the rows settle.
-  const getLabelFillColorEntry = useCallback(
-    (layerId: string, key: string, config: LabelsLayerConfig): LabelFillColorEntry | undefined => {
-      const cache = loadedDataRef.current.labelFillColorData;
-      if (!config.fillColorByColumn?.columnName) {
-        cache.delete(layerId);
-        return undefined;
-      }
-      // Ask for THIS layer's column: two layers may colour one element differently,
-      // and the resolver holds their rows separately.
-      const rows = labelsResolver.getFillColorRows(key, config.fillColorByColumn.columnName);
-      const cached = cache.get(layerId);
-      // Rows pending (or the column's load failed): keep the colours already on
-      // screen. This is the ordinary first frame of a column SWITCH here — the
-      // resolver holds rows per element+column, so the new column has nothing yet
-      // and the old column's entry is the only thing standing between the user and
-      // a flash back to the channel colour.
-      if (!rows) return lastGoodLabelFillColorEntry(cached, key);
-      const signature = getLabelFillColorSignature(config);
-      // Both terms are needed: the rows change when the COLUMN changes, and the
-      // signature changes when the mode does (same rows, different encoding).
-      if (
-        cached &&
-        cached.elementKey === key &&
-        cached.rowsSource === rows &&
-        cached.signature === signature
-      ) {
-        return cached;
-      }
-      const built = buildLabelFillColorEntry(config, rows);
-      if (!built) {
-        cache.delete(layerId);
-        return undefined;
-      }
-      const entry: LabelFillColorEntry = { ...built, elementKey: key };
-      cache.set(layerId, entry);
-      return entry;
-    },
-    [labelsResolver]
+    (layerId: string, renderData: ShapesRenderData, hiddenIds: string[] | undefined) =>
+      shapesAdapter.getPrebuilt(layerId, renderData, hiddenIds),
+    [shapesAdapter]
   );
 
   const reloadElement = useCallback(
@@ -1049,13 +859,12 @@ export function useLayerData(
       const loaded = loadedDataRef.current;
       if (type === 'shapes') {
         shapesResolver.evict(key);
-        mergedShapeRenderDataRef.current.delete(key);
+        shapesAdapter.evictElement(key);
         loaded.worldBounds.delete(`shapes:${key}`);
-        // Clear per-layer projection caches for every layer that maps to this key.
+        // Clear per-layer projections for every layer that maps to this key.
         for (const [layerId, config] of Object.entries(layersRef.current)) {
           if (config.type === 'shapes' && config.elementKey === key) {
-            loaded.shapePrebuiltData.delete(layerId);
-            loaded.shapeFillColorData.delete(layerId);
+            shapesAdapter.evictLayer(layerId);
           }
         }
       } else if (type === 'points') {
@@ -1076,14 +885,21 @@ export function useLayerData(
         loaded.worldBounds.delete(`labels:${key}`);
         for (const [layerId, config] of Object.entries(layersRef.current)) {
           if (config.type === 'labels' && config.elementKey === key) {
-            loaded.labelFillColorData.delete(layerId);
-            loaded.labelColorLutData.delete(layerId);
+            labelsAdapter.evictLayer(layerId);
           }
         }
       }
       // The resolver/engine effects will pick up the missing data and reload
     },
-    [pointsEngine, shapesResolver, imagesResolver, labelsResolver, forgetTileDebugStore]
+    [
+      pointsEngine,
+      shapesResolver,
+      imagesResolver,
+      labelsResolver,
+      shapesAdapter,
+      labelsAdapter,
+      forgetTileDebugStore,
+    ]
   );
 
   const getStableSelections = useCallback((key: string, selections: RasterSelection[]) => {
@@ -1279,7 +1095,6 @@ export function useLayerData(
         if (config.type === 'shapes') {
           const renderData = getMergedShapeRenderData(elem.key);
           if (renderData) {
-            const fillColorEntry = getShapeFillColorEntry(layerId, elem.key, config, renderData);
             // Host-computed colours, indexed by feature index. The resolver is given
             // the ordering it must build against — a shape's index belongs to the
             // loaded geometry, not to the data.
@@ -1292,30 +1107,13 @@ export function useLayerData(
                 featureIds: renderData.featureIds,
               })
             );
-            const layer = renderShapesLayer({
-              element: elem.element as ShapesElement,
-              id: layerId,
-              modelMatrix: elem.transform,
-              opacity: config.opacity,
-              visible: config.visible,
-              fillColor: config.fillColor,
-              strokeColor: config.strokeColor,
-              strokeWidth: config.strokeWidth,
-              strokeWidthUnits: config.strokeWidthUnits,
-              strokeWidthMinPixels: config.strokeWidthMinPixels,
-              strokeWidthMaxPixels: config.strokeWidthMaxPixels,
-              featureStateRuntime: getStableShapeFeatureStateRuntime(
-                layerId,
-                config,
-                fillColorEntry,
-                stableShapeFeatureStateRef.current
-              ),
+            const layer = shapesAdapter.render({
+              layerId,
+              elementKey: elem.key,
+              props: config,
               renderData,
-              prebuilt: getShapePrebuilt(
-                layerId,
-                renderData,
-                config.featureState?.hiddenFeatureIds
-              ),
+              fillColorRows: shapesResolver.getFillColorRows(elem.key),
+              modelMatrix: elem.transform,
               ...(hostFeatureColors ? { featureColors: hostFeatureColors } : {}),
               pickingEnabled,
             });
@@ -1560,6 +1358,8 @@ export function useLayerData(
         } else if (config.type === 'labels') {
           const labelsData = labelsResolver.getLoadedData(elem.key);
           if (labelsData) {
+            // Selections are resolved here, not in the adapter: the clamp lives in
+            // `@spatialdata/avivatorish`, which `layers` does not depend on.
             const ch = config.channels;
             const rawSelections =
               ch?.selections && ch.selections.length > 0
@@ -1569,71 +1369,30 @@ export function useLayerData(
               labelsData.selectionAxisSizes !== undefined
                 ? clampVivSelectionsToAxes(rawSelections, labelsData.selectionAxisSizes)
                 : rawSelections;
-            const stableSelections = getStableSelections(`labels:${layerId}`, selections);
 
-            const channelColors =
-              ch?.colors && ch.colors.length > 0
-                ? ch.colors
-                : (labelsData.colors ?? [[255, 255, 255]]);
-
-            // Per-label filtering/colouring. A host-supplied buffer wins outright —
-            // it is already the exact table the shader samples, indexed by the
-            // raster's own pixel value, so there is nothing to merge and nothing to
-            // build. Otherwise the config drives it, and the default colour is the
-            // layer's own channel colour, so a label the feature-state says nothing
-            // about draws exactly as it would with the LUT switched off.
             const hostFeatureColors = stabilizeFeatureColors(
               layerId,
               featureColorResolver?.({ layerId, elementKey: elem.key, kind: 'labels' })
             );
-            const featureColorLut =
-              hostFeatureColors ??
-              getStableLabelColorLut(
-                layerId,
-                config,
-                getLabelFillColorEntry(layerId, elem.key, config),
-                channelColors[0] ?? [255, 255, 255],
-                loadedDataRef.current.labelColorLutData
-              );
-
-            // Fallbacks mirror `buildLabelsChannelDefaults`: the resolver always
-            // populates these, but its `LabelsChannelDefaults` types them optional.
             // Only the layer actually under the cursor highlights; a stale id from a
             // layer that is no longer hovered must not tint a second element.
             const hoveredLabel = hoveredLabelRef.current;
             const highlightedLabelId =
               hoveredLabel?.layerId === layerId ? hoveredLabel.labelId : undefined;
 
-            const layer = renderLabelsLayer({
-              id: layerId,
+            const layer = labelsAdapter.render({
+              layerId,
+              elementKey: elem.key,
+              props: config,
               loader: labelsData.loader,
+              channelDefaults: labelsData,
+              selections: getStableSelections(`labels:${layerId}`, selections),
+              fillColorRows: config.fillColorByColumn?.columnName
+                ? labelsResolver.getFillColorRows(elem.key, config.fillColorByColumn.columnName)
+                : undefined,
               modelMatrix: elem.transform,
-              opacity: config.opacity,
-              visible: config.visible,
-              channelColors,
-              ...(featureColorLut ? { featureColorLut } : {}),
+              ...(hostFeatureColors ? { featureColors: hostFeatureColors } : {}),
               ...(highlightedLabelId !== undefined ? { highlightedLabelId } : {}),
-              channelsVisible:
-                ch?.channelsVisible && ch.channelsVisible.length > 0
-                  ? ch.channelsVisible
-                  : (labelsData.channelsVisible ?? [true]),
-              channelOpacities:
-                ch?.channelOpacities && ch.channelOpacities.length > 0
-                  ? ch.channelOpacities
-                  : (labelsData.channelOpacities ?? [0.18]),
-              channelOutlineOpacities:
-                ch?.channelOutlineOpacities && ch.channelOutlineOpacities.length > 0
-                  ? ch.channelOutlineOpacities
-                  : (labelsData.channelOutlineOpacities ?? [0.95]),
-              channelsFilled:
-                ch?.channelsFilled && ch.channelsFilled.length > 0
-                  ? ch.channelsFilled
-                  : (labelsData.channelsFilled ?? [true]),
-              channelStrokeWidths:
-                ch?.channelStrokeWidths && ch.channelStrokeWidths.length > 0
-                  ? ch.channelStrokeWidths
-                  : (labelsData.channelStrokeWidths ?? [1.5]),
-              selections: stableSelections,
             });
             if (layer) deckLayers.push(layer);
           }
@@ -1650,9 +1409,9 @@ export function useLayerData(
       pointsEngine,
       getTileDebugStore,
       getMergedShapeRenderData,
-      getShapeFillColorEntry,
-      getShapePrebuilt,
-      getLabelFillColorEntry,
+      shapesAdapter,
+      labelsAdapter,
+      shapesResolver,
       labelsResolver,
       featureColorResolver,
       stabilizeFeatureColors,
