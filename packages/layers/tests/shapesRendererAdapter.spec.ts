@@ -205,6 +205,19 @@ describe('ShapesRendererAdapter.getPrebuilt', () => {
     expect(adapter.getPrebuilt('layer-1', data, ['f2', 'f1'])).toBe(a);
   });
 
+  it('distinguishes hidden sets whose ids contain the delimiter', () => {
+    // A feature id is an arbitrary table index, so it can contain whatever byte the
+    // signature joins on. Hiding one id spelled "f1\x00f2" must not be read as hiding
+    // both "f1" and "f2".
+    const adapter = new ShapesRendererAdapter();
+    const data = renderData(['f1', 'f2', 'f1\x00f2']);
+    const joined = adapter.getPrebuilt('layer-1', data, ['f1\x00f2']);
+    expect(joined.data).toHaveLength(2);
+    const separate = adapter.getPrebuilt('layer-1', data, ['f1', 'f2']);
+    expect(separate).not.toBe(joined);
+    expect(separate.data).toHaveLength(1);
+  });
+
   it('forgets a layer’s projections on eviction', () => {
     const adapter = new ShapesRendererAdapter();
     const data = renderData(['f1', 'f2']);

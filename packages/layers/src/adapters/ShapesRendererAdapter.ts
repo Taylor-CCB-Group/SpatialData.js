@@ -129,10 +129,17 @@ export function shapeFillColorAlpha(config: ShapesEntryProps): number {
   return config.fillColor?.[3] ?? 180;
 }
 
-/** Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison. */
+/**
+ * Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison.
+ *
+ * JSON rather than a delimiter join, matching {@link serializeColorByFeatureId}: a
+ * feature id is an arbitrary table index, so a delimiter can appear inside one and let
+ * two different hidden sets share a cache key. No slower — `JSON.stringify` over a
+ * string array measures at or below `join` from 1k ids to 500k.
+ */
 export function serializeHiddenIds(ids?: string[]): string {
   if (!ids || ids.length === 0) return '';
-  return ids.slice().sort().join('\x00');
+  return JSON.stringify(ids.slice().sort());
 }
 
 function serializeColorByFeatureId(
@@ -262,6 +269,9 @@ export class ShapesRendererAdapter {
    * While rows are pending the previous entry is re-served, so a column switch does not
    * blank the colours already on screen — but only while the element matches, since
    * feature ids are unique only within an element.
+   *
+   * The rows themselves can still be the wrong column's: `ShapesResolver` caches them
+   * per element, not per element and column. See its "Known bug, preserved".
    */
   getFillColorEntry(
     layerId: string,

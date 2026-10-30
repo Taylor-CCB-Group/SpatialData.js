@@ -48,12 +48,22 @@ import { SnapshotCache } from './snapshotCache.js';
  *
  * ## Known bug, preserved
  *
- * Tooltip metadata is cached per **element**, but requested per **layer config**.
- * Two layers over one element with different `tooltipFields` therefore invalidate
- * each other forever — a ping-pong. (`shapePrebuiltData` and `shapeFillColorData`
- * were deliberately keyed by layer id to avoid exactly this; the tooltip cache was
- * missed.) Step 1 is a re-housing, so the behaviour is preserved as-is. **Track B
- * owns the fix**, and it is on the punchlist. Labels have the identical shape.
+ * Tooltip metadata and fill-colour rows are cached per **element**, but requested per
+ * **layer config** — `buildResolveContext` builds one context per layer. Two layers
+ * over one element that differ in `tooltipFields`, or in
+ * `fillColorByColumn.columnName`, therefore invalidate each other forever: a
+ * ping-pong, after which `getFillColorRows` hands back whichever column landed last.
+ *
+ * Keying the projections by layer id (`ShapesRendererAdapter`'s caches, as
+ * `shapePrebuiltData` and `shapeFillColorData` did before it) stops two layers sharing
+ * one colour map, but it cannot help when the rows underneath are the wrong column's —
+ * so the fill-colour half of this is not avoided either.
+ * `LabelsResolver` in `vis` already has the shape of the fix: `fillColors` is keyed by
+ * element *and* column, and `getFillColorRows(key, column)` takes the column. Its
+ * tooltips are per element, so that half is shared.
+ *
+ * Step 1 is a re-housing, so the behaviour is preserved as-is. **Track B owns the
+ * fix**, and it is on the punchlist.
  */
 
 export interface ShapesResolveConfig {
