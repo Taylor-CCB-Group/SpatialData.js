@@ -14,28 +14,19 @@ import {
 } from '../labelColorEncoding.js';
 
 /**
- * The deck Renderer Adapter for labels — the labels twin of
- * {@link ShapesRendererAdapter}, and the `project()` half of ADR 0004's phase
- * separation for this kind.
+ * The deck Renderer Adapter for labels — the labels twin of {@link ShapesRendererAdapter}.
  *
- * A label has no geometry; it *is* a raster pixel value. So where a shapes
- * projection produces a per-feature array, this produces a per-label lookup table
- * indexed by the label's own integer instance id, which the bitmask fragment shader
- * samples.
- *
- * The identity discipline is the whole point. `getLayers()` runs on every render (a
- * hover re-renders for the tooltip) and the LUT can be megabytes for a large
- * segmentation, so `LabelsLayer` decides whether to re-upload its GPU texture by
- * comparing the LUT it is handed **by identity**. A fresh object per render is a
- * texture upload per frame.
+ * A label has no geometry; it *is* a raster pixel value, so this produces a per-label lookup
+ * table indexed by the label’s own integer instance id rather than a per-feature array.
+ * `LabelsLayer` compares that LUT **by identity** to decide whether to re-upload its GPU
+ * texture, and it can be megabytes for a large segmentation — so a fresh object per render
+ * is a texture upload per frame.
  */
 
 /**
- * A column plus how to encode it, as the adapter reads it off a layer config.
- *
- * Declared structurally rather than imported from `@spatialdata/vis`, which would
- * be a dependency cycle. `FillColorByColumn<LabelFillColorMode>` there satisfies
- * this, so a caller passes its config straight through.
+ * A column plus how to encode it, as the adapter reads it off a layer config. Declared
+ * structurally rather than imported from `@spatialdata/vis`, which would be a dependency
+ * cycle; `FillColorByColumn<LabelFillColorMode>` there satisfies it.
  */
 export interface LabelsFillColorColumnSpec extends FeatureColorScheme {
   columnName: string;
@@ -53,10 +44,8 @@ export interface LabelsChannelProps {
 }
 
 /**
- * The entry props the adapter reads — not the whole layer config, so the seam
- * states exactly what rendering a labels entry depends on. `LabelsLayerConfig` in
- * `@spatialdata/vis` satisfies it structurally, so a caller passes its config
- * straight through.
+ * The entry props the adapter reads, so the seam states exactly what rendering a labels
+ * entry depends on. `LabelsLayerConfig` in `@spatialdata/vis` satisfies it structurally.
  */
 export interface LabelsEntryProps {
   visible?: boolean;
@@ -67,12 +56,10 @@ export interface LabelsEntryProps {
 }
 
 /**
- * The channel defaults the resolver derives from the element's own metadata, which
- * an entry's `channels` override term by term.
- *
- * Declared structurally: `LabelsResolver` lives in `@spatialdata/vis` (ADR 0004's
- * 2026-07-14 amendment keeps it next to its Viv and `avivatorish` dependencies),
- * so importing its result type here would be a cycle.
+ * The channel defaults the resolver derives from the element’s own metadata, which an
+ * entry’s `channels` override term by term. Declared structurally because `LabelsResolver`
+ * lives in `@spatialdata/vis` (ADR 0004’s 2026-07-14 amendment), so importing its result
+ * type here would be a cycle.
  */
 export type LabelsChannelDefaults = LabelsChannelProps;
 
@@ -86,28 +73,23 @@ export interface LabelsRenderInput {
   /** The resolver's per-element channel defaults, overridden by `props.channels`. */
   channelDefaults: LabelsChannelDefaults;
   /**
-   * The raster selections to draw, already clamped to the element's axes.
-   *
-   * Resolved by the caller rather than here: the clamp lives in
-   * `@spatialdata/avivatorish`, which ADR 0004 treats as a holding pen rather than
-   * a stable dependency, and `layers` deliberately does not depend on it.
+   * The raster selections to draw, already clamped to the element’s axes. Clamped by the
+   * caller because the clamp lives in `@spatialdata/avivatorish`, which `layers`
+   * deliberately does not depend on.
    */
   selections: Array<Partial<{ z: number; c: number; t: number }>>;
   /** The resolver's fill-colour table rows for this layer's column, if any. */
   fillColorRows: AssociatedTableFeatureRows | undefined;
   modelMatrix: Matrix4;
   /**
-   * A host-supplied per-label colour table. Wins outright over the config-driven
-   * LUT: it is already the exact table the shader samples, indexed by the raster's
-   * own pixel value, so there is nothing to merge and nothing to build.
+   * A host-supplied per-label colour table. Wins outright over the config-driven LUT: it is
+   * already the exact table the shader samples, indexed by the raster’s own pixel value.
    */
   featureColors?: LabelColorLut;
   /**
-   * The label id under the cursor, or omitted for none.
-   *
-   * Runtime render state rather than entry config — it changes on every pointer
-   * move and must never reach a saved Render Stack. It becomes a shader uniform,
-   * so hovering re-uploads neither the LUT nor the tiles.
+   * The label id under the cursor, or omitted for none. Runtime render state, not entry
+   * config — it changes on every pointer move and must never reach a saved Render Stack.
+   * It becomes a shader uniform, so hovering re-uploads neither the LUT nor the tiles.
    */
   highlightedLabelId?: number;
 }
@@ -119,10 +101,9 @@ export interface LabelFillColorEntry {
   /** The resolver fill-colour rows this map was built from. Rebuild on identity change. */
   rowsSource?: unknown;
   /**
-   * The element these colours were built against. Label ids are only unique within
-   * an element (they are small integers, so they collide freely across elements),
-   * so a cached entry may be re-served as last-good only while the layer still
-   * points at the same element.
+   * The element these colours were built against. Label ids are small integers that collide
+   * freely across elements, so an entry is re-served as last-good only while the layer
+   * still points at the same one.
    */
   elementKey?: string;
 }
@@ -135,21 +116,16 @@ interface ColorLutEntry {
 }
 
 /**
- * Alpha written into table-derived label colours.
- *
- * Fully opaque on purpose: a labels layer already exposes fill and outline opacity
- * per channel, and the LUT's alpha is a *filter* modulation. Baking a translucent
- * fill in here (as shapes does, where fill alpha is the only opacity control) would
- * silently halve the channel sliders' range.
+ * Alpha written into table-derived label colours. Fully opaque on purpose: a labels layer
+ * already exposes fill and outline opacity per channel, so baking a translucent fill in here
+ * (as shapes does, where fill alpha is the only opacity control) would halve their range.
  */
 const LABEL_FILL_COLOR_ALPHA = 255;
 
 /**
- * Last-resort channel defaults, for an element whose resolver supplied none.
- *
- * Single stable references on purpose, for the reason `DEFAULT_SHAPE_FILL_COLOR`
- * gives: these reach deck as props it diffs shallowly, so a fresh literal per
- * render reads as a changed value every frame.
+ * Last-resort channel defaults, for an element whose resolver supplied none. Single stable
+ * references on purpose, for the reason `DEFAULT_SHAPE_FILL_COLOR` gives: deck diffs these
+ * props shallowly, so a fresh literal per render reads as a changed value every frame.
  */
 const FALLBACK_CHANNEL_COLORS: [number, number, number][] = [[255, 255, 255]];
 const FALLBACK_WHITE: LabelRgbColor = [255, 255, 255];
@@ -186,9 +162,8 @@ function serializeColorByFeatureId(
 }
 
 /**
- * The feature-state a labels layer actually renders: the caller's own state with
- * the table-column colours merged in. Column colours lose to explicit per-label
- * overrides, matching how a shapes layer resolves the same conflict.
+ * The feature-state a labels layer actually renders: the caller’s own state with the
+ * table-column colours merged in, where column colours lose to explicit per-label overrides.
  */
 function mergeFeatureStateForRender(
   config: LabelsEntryProps,
@@ -197,11 +172,9 @@ function mergeFeatureStateForRender(
   if (!config.fillColorByColumn?.columnName) {
     return config.featureState;
   }
-  // A column is selected but its rows have not landed yet (no entry, and no
-  // last-good entry to fall back on). Return the caller's feature-state untouched
-  // rather than writing an empty map: an empty `fillColorByFeatureId` is a real
-  // instruction to the LUT builder, so it clears the colours currently drawn for
-  // the whole load window and the labels flash back to their channel colour.
+  // A column is selected but its rows have not landed, and there is no last-good entry.
+  // Return the caller’s feature-state untouched: an empty `fillColorByFeatureId` is a real
+  // instruction to the LUT builder, so it clears the colours drawn for the whole window.
   if (!fillColorEntry) {
     return config.featureState;
   }
@@ -233,10 +206,8 @@ function featureStateSignature(
 }
 
 /**
- * Per-label colours from one obs column, keyed by the label's instance id.
- *
- * Exported for the adapter's own tests: it is the pure half of
- * {@link LabelsRendererAdapter.getFillColorEntry}, with no cache involved.
+ * Per-label colours from one obs column, keyed by the label’s instance id. Exported for
+ * tests: the pure, cache-free half of {@link LabelsRendererAdapter.getFillColorEntry}.
  */
 export function buildLabelFillColorEntry(
   config: LabelsEntryProps,
@@ -271,29 +242,23 @@ export function buildLabelFillColorEntry(
 
 export class LabelsRendererAdapter {
   /**
-   * Per-layer table-column colours, keyed by the label's instance id. Keyed by layer
-   * id, not element key: two layers may colour one labels element by different
-   * table columns.
+   * Keyed by layer id, not element key: two layers may colour one labels element by
+   * different table columns.
    */
   private readonly fillColors = new Map<string, LabelFillColorEntry>();
   private readonly colorLuts = new Map<string, ColorLutEntry>();
 
   /**
-   * This layer's table-column label colours, built from the resolver's rows.
+   * This layer’s table-column label colours, built from the resolver’s rows.
    *
-   * Mirrors {@link ShapesRendererAdapter.getFillColorEntry}, including its "no entry
-   * until the rows have actually loaded" rule: the LUT is memoised on a signature
-   * whose only fill term is this entry, so an eager empty entry would suppress the
-   * rebuild that makes the colours appear when the rows settle.
+   * Mirrors {@link ShapesRendererAdapter.getFillColorEntry}, including its "no entry until
+   * the rows have actually loaded" rule. Re-serving the previous entry while rows are
+   * pending matters more here: `LabelsResolver` caches rows per element *and* column with
+   * no cross-column stale value, so a plain column switch has a window with no rows at all,
+   * and dropping the entry there flashes every label back to its channel colour.
    *
-   * Re-serving the previous entry while rows are pending is more load-bearing here
-   * than it is for shapes. `LabelsResolver` caches rows per element *and* column
-   * with no cross-column stale value, so a plain column switch has a window with no
-   * rows at all — and dropping the entry there flashes every label back to its
-   * channel colour until the new column settles.
-   *
-   * The element must match to re-serve: label ids are small integers that collide
-   * freely across elements, so another element's entry would colour the wrong labels.
+   * The element must match to re-serve — label ids are small integers that collide freely
+   * across elements.
    */
   getFillColorEntry(
     layerId: string,
@@ -331,14 +296,11 @@ export class LabelsRendererAdapter {
   }
 
   /**
-   * The layer's per-label LUT, with an identity that changes only when its contents
-   * do — so `LabelsLayer` re-uploads its texture exactly when it must, and never on
-   * a bare re-render.
+   * The layer’s per-label LUT, with an identity that changes only when its contents do, so
+   * `LabelsLayer` re-uploads its texture exactly when it must.
    *
-   * The cached entry holds the `fillColorEntry` identity as well as the signature,
-   * for the same reason {@link ShapesRendererAdapter.getFeatureStateRuntime} does: a
-   * column change serves the PREVIOUS column's rows until the new ones load, so the
-   * entry's data can change while its signature does not.
+   * Keyed on the `fillColorEntry` identity as well as its signature, for the reason
+   * {@link ShapesRendererAdapter.getFeatureStateRuntime} gives.
    */
   getColorLut(
     layerId: string,
@@ -358,11 +320,9 @@ export class LabelsRendererAdapter {
   }
 
   /**
-   * `render()` — one labels entry's deck output.
-   *
-   * The other half of ADR 0004 §4. The channel ladder lives here because it is
-   * exactly "resolved resources plus entry props": each channel term is the entry's
-   * own value when it has one, and the resolver's element-derived default otherwise.
+   * One labels entry’s deck output — ADR 0004 §4’s `render()` half. The channel ladder
+   * lives here because it is exactly "resolved resources plus entry props": each term is
+   * the entry’s own value when it has one, the resolver’s element-derived default otherwise.
    *
    * Returns `null` for a hidden layer, or one whose loader has not resolved.
    */

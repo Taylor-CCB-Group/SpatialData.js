@@ -101,11 +101,8 @@ export interface WorldBoundsCacheEntry {
 }
 
 interface LoadedData {
-  // Kind-owned data lives in its resolver/engine, not here: shapes geometry/tooltip/
-  // fill-colour rows in `shapesResolver`, images in `imagesResolver`, labels in
-  // `labelsResolver`, points in `pointsEngine`. The render projections built on top
-  // of them live in their Renderer Adapters (`shapesAdapter`, `labelsAdapter`,
-  // `pointsEngine`'s own) — ADR 0004 §4. What remains here is the world-bounds cache.
+  // Kind-owned data lives in its resolver/engine and the projections built on it in
+  // that kind's Renderer Adapter (ADR 0004 §4). What remains here is world bounds.
   /**
    * World bounds keyed by element identity. Bounds depend on loaded geometry /
    * loader source and transform, not cosmetic layer props such as opacity.
@@ -511,18 +508,10 @@ export function useLayerData(
   const loadedDataRef = useRef<LoadedData>({
     worldBounds: new Map(),
   });
-  // The shapes and labels Renderer Adapters (ADR 0004 §4): the `project()` half, in
-  // `@spatialdata/layers` where the deck dependency already is. Everything the
-  // render path needs that is neither resolved data nor a raw config prop — merged
-  // geometry, prebuilt feature arrays, fill-colour maps, the feature-state runtime,
-  // the per-label LUT — is held there, keyed and identity-stable.
-  //
-  // Hook lifetime, not `spatialData` lifetime: the caches these replaced lived in
-  // `loadedDataRef`, which a dataset swap does not rebuild. Keeping that is safe
-  // because every memo inside keys on its source object's identity, so a swap
-  // (which replaces those sources) cannot serve a stale value — see the adapters'
-  // own notes. Points is the exception only in where its adapter hangs:
-  // `PointsDataEngine` owns one privately.
+  // Hook lifetime, not `spatialData` lifetime, matching the `loadedDataRef` caches
+  // these replaced: safe across a dataset swap because every memo inside keys on its
+  // source object's identity. Points has no equivalent here — `PointsDataEngine`
+  // owns its adapter privately.
   const shapesAdapter = useMemo(() => new ShapesRendererAdapter(), []);
   const labelsAdapter = useMemo(() => new LabelsRendererAdapter(), []);
   useEffect(
@@ -840,10 +829,8 @@ export function useLayerData(
   ]);
 
   // --- Renderer Adapter bindings ------------------------------------------------
-  //
-  // Thin pass-throughs: each resolves the resources its adapter needs out of the
-  // resolver and hands them over. The caches, signatures and identity rules all
-  // live in the adapter (`@spatialdata/layers`).
+  // Thin pass-throughs: each resolves what its adapter needs out of the resolver and
+  // hands it over. Caches, signatures and identity rules live in the adapter.
 
   // Coupling #1: the resolver keeps geometry and tooltip metadata independent, so
   // the render/pick sites need geometry with `rowIndexByFeatureIndex` patched by the

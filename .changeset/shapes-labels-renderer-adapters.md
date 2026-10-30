@@ -2,6 +2,4 @@
 "@spatialdata/layers": minor
 ---
 
-`ShapesRendererAdapter` and `LabelsRendererAdapter` turn a resolved entry's resources plus its props into deck layers, holding the identity-stable projections in between — prebuilt feature arrays, the feature-state runtime, table-column fill colours, the per-label colour LUT. Both expose `render()`, and shapes also exposes `getRenderData` / `getPrebuilt` for callers that need the same geometry for picking. Each declares the entry props it reads structurally, so a `@spatialdata/vis` layer config satisfies it without the two packages depending on each other.
-
-Nothing moved out of any package's public surface: this is additive, and `@spatialdata/vis` exports exactly what it did before.
+New `ShapesRendererAdapter` and `LabelsRendererAdapter`. Hand either one a resolved element's data plus a layer's props, and `render()` returns the deck layers — the identity-stable projections in between (prebuilt feature arrays, table-column fill colours, the per-label colour LUT) are held for you, so a repeated render does not rebuild GPU attributes. A `@spatialdata/vis` layer config satisfies the props they read, so it passes straight through.
