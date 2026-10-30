@@ -12,7 +12,7 @@
  *    colour can flip as loads settle. `fetches` keeps climbing instead of stopping.
  */
 
-import { SpatialData } from '@spatialdata/core';
+import type { SpatialData } from '@spatialdata/core';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useMemo, useState } from 'react';
 import { type RenderStack, SpatialCanvasViewer, type ViewState } from '../../src/index';
