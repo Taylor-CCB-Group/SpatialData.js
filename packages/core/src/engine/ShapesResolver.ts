@@ -63,7 +63,7 @@ import { SnapshotCache } from './snapshotCache.js';
  * tooltips are per element, so that half is shared.
  *
  * Step 1 is a re-housing, so the behaviour is preserved as-is. **Track B owns the
- * fix**, and it is on the punchlist.
+ * fix**: the fill-colour half is tracked as #253.
  */
 
 export interface ShapesResolveConfig {
