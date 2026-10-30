@@ -352,6 +352,51 @@ describe('a failed load settles', () => {
     expect(resolver.snapshot(c).resources.fillColor?.status).toBe('failed');
   });
 
+  it('serves each layer its own column when two layers share an element', async () => {
+    // Each column's rows are told apart by the extra column the loader was asked for.
+    const loadObsColumns = vi.fn(async (names: string[]) => names.map((n) => [`${n}-value`]));
+    const spatialData = {
+      getAssociatedTable: () => [
+        'table',
+        {
+          getTableKeys: () => ({ region: ['cells'], regionKey: 'region', instanceKey: 'id' }),
+          loadObsIndex: async () => ['c1'],
+          loadObsColumns,
+        },
+      ],
+    } as unknown as SpatialData;
+    const resolver = new ShapesResolver({ spatialData });
+    const byType = {
+      ...ctx(element()),
+      entryId: 'a',
+      config: { fillColorByColumn: { columnName: 'type', mode: 'auto' } },
+    };
+    const byArea = {
+      ...ctx(element()),
+      entryId: 'b',
+      config: { fillColorByColumn: { columnName: 'area', mode: 'auto' } },
+    };
+
+    for (let pass = 0; pass < 3; pass++) {
+      await reconcile(resolver, byType);
+      await reconcile(resolver, byArea);
+    }
+
+    // Loaded once per column, not once per pass.
+    const fetchedColumns = loadObsColumns.mock.calls.map(([names]) => names.join());
+    expect(fetchedColumns.filter((c) => c.includes('type'))).toHaveLength(1);
+    expect(fetchedColumns.filter((c) => c.includes('area'))).toHaveLength(1);
+
+    const typeRows = resolver.getFillColorRows('cells', 'type');
+    const areaRows = resolver.getFillColorRows('cells', 'area');
+    expect(typeRows).toBeDefined();
+    expect(areaRows).toBeDefined();
+    expect(typeRows).not.toBe(areaRows);
+    expect(resolver.snapshot(byType).resources.fillColor).not.toBe(
+      resolver.snapshot(byArea).resources.fillColor
+    );
+  });
+
   it('retry() re-requests a failed tooltip once, and leaves good geometry alone', async () => {
     const resolver = new ShapesResolver();
     let tooltipCalls = 0;

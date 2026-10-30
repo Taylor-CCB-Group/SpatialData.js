@@ -951,7 +951,7 @@ export function useLayerData(
       // presence (`fillColorEntry?.signature`), so an eager empty-map entry with the
       // full signature would suppress the rebuild that makes fill colours appear when
       // the rows settle. Mirrors the old async path: entry exists only once loaded.
-      const rows = shapesResolver.getFillColorRows(key);
+      const rows = shapesResolver.getFillColorRows(key, fillColorByColumn.columnName);
       const cached = cache.get(layerId);
       // Rows pending (or the column's load failed): keep the colours already on
       // screen instead of blinking back to the flat fill. A failed load is not
