@@ -1,0 +1,89 @@
+---
+sidebar_position: 7
+---
+
+# WebGPU
+
+deck.gl 9.4 can run on WebGPU. The renderers in `@spatialdata/layers` have a
+WebGPU path, selected by `device.type`, in a separate part of the code
+(`packages/layers/src/webgpu/`). WebGPU support is experimental and off by
+default; WebGL remains the default backend.
+
+## Using it
+
+Pass a WebGPU device to deck through `deckProps`:
+
+```tsx
+import { webgpuAdapter } from '@luma.gl/webgpu';
+
+<SpatialCanvasViewer
+  /* ... */
+  deckProps={{ deviceProps: { type: 'webgpu', adapters: [webgpuAdapter] } }}
+/>
+```
+
+The vis viewers apply the workarounds below themselves. A host that builds its
+own `Deck` must call `applyWebGPUPickingFix(device)` and
+`applyWebGPUViewFix(device)` from `@spatialdata/layers` in
+`onDeviceInitialized`. The demo switches to WebGPU with `?webgpu`, and
+`?antialias=0` turns off WebGL's MSAA for a like-for-like comparison.
+
+## What renders
+
+- **Images** override Viv's tile sublayers (`renderSubLayers`) with `RasterTileLayer`, a WGSL
+  channel composite. Viv has no WebGPU path (`setParametersWebGL` throws).
+- **Labels** use the same raster layer (integer texture plus a colour lookup); the
+  edge rendering of the WebGL bitmask shader is not reproduced.
+- **Shapes** use a WGSL `FlatPolygonLayer`. Edge anti-aliasing is shader-only
+  and inward-only; seams on tiled shapes are unchecked.
+- **Points** splice WGSL into deck's scatterplot layer at two anchors.
+
+deck 9.4 has no WGSL shader hooks, so a `LayerExtension` that injects GLSL
+(Viv's colour extensions, our points colour-by-feature) has no WebGPU
+equivalent: each becomes a layer with its own WGSL. See
+[WebGPU and Viv: what could move upstream](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/plans/webgpu-viv-upstream.md).
+
+WebGPU canvases are not multisampled, which is most of why they look and feel
+faster than WebGL's default 4× MSAA.
+
+## deck issues not yet filed
+
+Two bugs in `@deck.gl/core` 9.4.0 (and, on 2026-10-08, master) need workarounds.
+Both are drafted with repros in
+[`docs/plans/deck-webgpu-issues.md`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/plans/deck-webgpu-issues.md)
+and neither is filed.
+
+**Picking reads the vertically mirrored pixel.** `deck-picker.ts` passes
+`yInvert = true` to `cssToDevicePixels`, WebGL's bottom-left origin, on WebGPU
+too, so every pick (`pickObject`, `pickMultipleObjects`, hover) reads the
+mirrored row. A labels raster picked on a 40×40 grid: 58 correct on WebGPU, 305
+on WebGL, 315/315 with the flip undone. In `_canvases` multi-canvas mode the
+same bug looks like "the second canvas picks nothing". Fix: pass
+`device.type !== 'webgpu'`, as luma's own picker does. Workaround:
+`applyWebGPUPickingFix`; the spec `labels-pick-webgpu.spec.ts` is `test.fail()`
+until deck is fixed.
+
+**Views are mirrored and `clear: true` views never draw.** In
+`passes/layers-pass.ts`, `getGLViewport` returns a bottom-left y that WebGPU
+mirrors for any view shorter than the canvas, and a view with `clear: true`
+opens a second render pass inside its own, which invalidates the command
+buffer. Viv's `OverviewView` sets `clear: true`, so its overview is blank on
+WebGPU. Workaround: `applyWebGPUViewFix` patches
+`_LayersPass.prototype._drawLayersInViewport`. Unlike the picking fix it
+**double-flips once deck fixes the viewport**; `views-webgpu.spec.ts` is a
+`test.fail()` tripwire, and the fix and the spec go in the same change as the
+deck upgrade.
+
+Smaller points to confirm before filing: `pickObjectAsync({ viewId })` ignores
+`viewId` and picks the default canvas in `_canvases` mode. Related multi-canvas
+issues already open upstream are visgl/deck.gl#10602 (reordering `_canvases`
+leaves default views on a stale canvas) and #10603 (overlay events with a
+shared `.deck-events-root`). `<DeckGL>` cannot use `_canvases` because it
+always passes `canvas`, so multi-canvas needs an imperative `Deck`.
+
+## Not done
+
+- Anti-aliased shape edges that match WebGL.
+- WGSL hooks or a shared channel-composite module across Viv, MDV and
+  intraspatial.
+- 3D on WebGPU, planned on the intraspatial side.
