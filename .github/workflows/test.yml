@@ -52,9 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Biome lint/format gate over the library source (packages/*/src). The error
-    # backlog there has been cleared, so `biome ci` fails on any new error.
-    # noExplicitAny is configured as a non-blocking warning. Demo, scripts, and
+    # Biome lint/format gate over the library source (packages/*/src). The
+    # backlog there has been cleared, so `biome ci --error-on-warnings` fails on any
+    # new finding; existing `any`s carry a biome-ignore tracked in #257. Demo, scripts, and
     # tests are intentionally out of scope (still carry findings), so this gate is
     # narrower than `pnpm lint` (biome check .).
     steps:
