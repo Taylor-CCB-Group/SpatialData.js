@@ -186,14 +186,18 @@ describe('load() — the only place I/O starts', () => {
     const el = element();
     const signal = new AbortController().signal;
 
-    await resolver.load({ id: 'a', resource: 'preload' }, ctx(el), signal);
+    await resolver.load(
+      { id: 'a', resource: 'preload', payload: { memoryCap: 4_000_000 } },
+      ctx(el),
+      signal
+    );
     expect(el.loadPoints).toHaveBeenCalledTimes(1);
 
     await resolver.load({ id: 'b', resource: 'catalog' }, ctx(el), signal);
     expect(el.listFeaturesWithCounts).toHaveBeenCalledTimes(1);
 
     await resolver.load(
-      { id: 'c', resource: 'matching', payload: { featureCodes: [0] } },
+      { id: 'c', resource: 'matching', payload: { featureCodes: [0], memoryCap: 4_000_000 } },
       ctx(el),
       signal
     );

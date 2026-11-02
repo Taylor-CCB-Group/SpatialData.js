@@ -76,7 +76,18 @@ export interface ResolveContext<TConfig = unknown, TElement = unknown> {
  * `plan()` returns these instead of starting work, which is what makes `plan()`
  * safely callable during render.
  */
-export interface ResolveTask {
+export type ResourcePayloads = Readonly<Record<string, unknown>>;
+
+/**
+ * `TPayloads` maps each resource a resolver plans to its payload type (`undefined`
+ * for none), so a `switch (task.resource)` narrows `task.payload`. The default is
+ * the untyped shape the store sees.
+ */
+export type ResolveTask<TPayloads extends ResourcePayloads = ResourcePayloads> = {
+  [R in keyof TPayloads & string]: ResolveTaskOf<R, TPayloads[R]>;
+}[keyof TPayloads & string];
+
+type ResolveTaskOf<TResource extends string, TPayload> = {
   /**
    * Identifies this request. Stable within (entry, resource) for as long as the
    * request means the same thing: **same id ⇒ dedup; different id ⇒ supersede**.
@@ -92,10 +103,13 @@ export interface ResolveTask {
    */
   readonly id: string;
   /** Which resource of the entry — 'preload' | 'catalog' | 'geometry' | 'tooltip' | … */
-  readonly resource: string;
-  /** Opaque to the store; only the resolver that planned it reads it. */
-  readonly payload?: unknown;
-}
+  readonly resource: TResource;
+} & (undefined extends TPayload
+  ? {
+      /** Opaque to the store; only the resolver that planned it reads it. */
+      readonly payload?: TPayload;
+    }
+  : { readonly payload: TPayload });
 
 /**
  * A resolver's per-entry output. Frozen, identity-stable, and safe to read during
@@ -119,7 +133,11 @@ export interface EntryResources {
   readonly revision: number;
 }
 
-export interface ResourceResolver<TConfig = unknown, TElement = unknown> {
+export interface ResourceResolver<
+  TConfig = unknown,
+  TElement = unknown,
+  TPayloads extends ResourcePayloads = ResourcePayloads,
+> {
   readonly kind: SpatialEntryKind;
 
   /**
@@ -138,7 +156,7 @@ export interface ResourceResolver<TConfig = unknown, TElement = unknown> {
    * Called on every reconcile, so it must be cheap and idempotent: returning a
    * task whose `id` matches an in-flight one is how dedup happens.
    */
-  plan(ctx: ResolveContext<TConfig, TElement>): readonly ResolveTask[];
+  plan(ctx: ResolveContext<TConfig, TElement>): readonly ResolveTask<TPayloads>[];
 
   /**
    * Do the work. **The only place I/O may start.**
@@ -148,7 +166,7 @@ export interface ResourceResolver<TConfig = unknown, TElement = unknown> {
    * aborted load is a non-event and must not paint an error. It must not throw.
    */
   load(
-    task: ResolveTask,
+    task: ResolveTask<TPayloads>,
     ctx: ResolveContext<TConfig, TElement>,
     signal: AbortSignal
   ): Promise<void>;

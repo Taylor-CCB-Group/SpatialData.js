@@ -64,6 +64,13 @@ export interface ShapesResolveConfig {
   fillColorByColumn?: { columnName: string; mode: string };
 }
 
+/** Payload per planned resource; see {@link ResolveTask}. */
+export type ShapesPayloads = {
+  geometry: undefined;
+  tooltip: { tooltipFields: string[] };
+  fillColor: { column: string };
+};
+
 export interface ShapesResolverCallbacks {
   onStatus?: (layerId: string, resource: string, status: 'loading' | 'ready' | 'error') => void;
 }
@@ -123,7 +130,9 @@ const NO_NOTICES: readonly EntryNotice[] = [];
 
 const tooltipSignature = (fields: string[] | undefined): string => (fields ?? []).join('');
 
-export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, ShapesElement> {
+export class ShapesResolver
+  implements ResourceResolver<ShapesResolveConfig, ShapesElement, ShapesPayloads>
+{
   readonly kind = 'shapes' as const;
   /**
    * **Nothing blocks.** Shapes load non-blocking: geometry refines an
@@ -169,10 +178,12 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   // --- ResourceResolver -------------------------------------------------------
 
   /** PURE, SYNC. Starts nothing. */
-  plan(ctx: ResolveContext<ShapesResolveConfig, ShapesElement>): readonly ResolveTask[] {
+  plan(
+    ctx: ResolveContext<ShapesResolveConfig, ShapesElement>
+  ): readonly ResolveTask<ShapesPayloads>[] {
     const key = ctx.elementKey;
     const entry = this.entries.get(key);
-    const tasks: ResolveTask[] = [];
+    const tasks: ResolveTask<ShapesPayloads>[] = [];
 
     if (!entry || Resolution.isIdle(entry.geometry) || entry.retryGeometry) {
       tasks.push({ id: `${key}#geometry`, resource: 'geometry' });
@@ -207,7 +218,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
 
   /** ASYNC. The only place I/O starts. Never throws — failures become Resolutions. */
   async load(
-    task: ResolveTask,
+    task: ResolveTask<ShapesPayloads>,
     ctx: ResolveContext<ShapesResolveConfig, ShapesElement>,
     signal: AbortSignal
   ): Promise<void> {
@@ -224,7 +235,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   }
 
   private async run(
-    task: ResolveTask,
+    task: ResolveTask<ShapesPayloads>,
     ctx: ResolveContext<ShapesResolveConfig, ShapesElement>,
     entry: ShapesEntry,
     _signal: AbortSignal
@@ -239,7 +250,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
           return renderData;
         });
       case 'tooltip': {
-        const fields = (task.payload as { tooltipFields: string[] }).tooltipFields;
+        const fields = task.payload.tooltipFields;
         return this.settle(
           ctx,
           'tooltip',
@@ -255,7 +266,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
         );
       }
       case 'fillColor': {
-        const column = (task.payload as { column: string }).column;
+        const column = task.payload.column;
         return this.settle(ctx, 'fillColor', fillColorSlot(entry, column), 'load-failed', () =>
           loadAssociatedTableFeatureRows({
             spatialData: this.spatialData,

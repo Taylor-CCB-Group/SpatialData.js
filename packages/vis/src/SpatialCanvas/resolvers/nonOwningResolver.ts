@@ -1,4 +1,9 @@
-import type { PointsElement, PointsResolveConfig, ResourceResolver } from '@spatialdata/core';
+import type {
+  PointsElement,
+  PointsResolveConfig,
+  ResourcePayloads,
+  ResourceResolver,
+} from '@spatialdata/core';
 
 /**
  * Wrap a resolver so a {@link import('@spatialdata/core').SpatialEntryStore} can
@@ -69,9 +74,9 @@ import type { PointsElement, PointsResolveConfig, ResourceResolver } from '@spat
  * the store itself. Both are larger than Step 1; until then, a no-op `dispose` on one
  * edge is the smallest cut that keeps the store honest and the engine intact.
  */
-export function createNonOwningResolver(
-  inner: ResourceResolver<PointsResolveConfig, PointsElement>
-): ResourceResolver<PointsResolveConfig, PointsElement> {
+export function createNonOwningResolver<TPayloads extends ResourcePayloads>(
+  inner: ResourceResolver<PointsResolveConfig, PointsElement, TPayloads>
+): ResourceResolver<PointsResolveConfig, PointsElement, TPayloads> {
   return {
     kind: inner.kind,
     blockingResources: inner.blockingResources,
