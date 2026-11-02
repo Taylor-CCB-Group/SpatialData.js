@@ -131,7 +131,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
    * shows immediately and the geometry pops in when it settles. (Tooltip and fill
    * colour never blocked either.) This is the whole point of the non-blocking
    * pass — `blockingResources` is empty *data*, not a kind-switch, so
-   * `store.isBlocking` reports shapes as never-blocking with no special case.
+   * `store.isBlocking` never reports shapes as blocking with no special case.
    *
    * The wait is still visible: the resolver reports `geometry: 'loading'` via
    * `onStatus`, which drives the host's non-modal `isLoading` indicator — just
