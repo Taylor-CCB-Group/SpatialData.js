@@ -25,7 +25,8 @@ All element classes share these properties:
 interface BaseElement {
   readonly kind: ElementName;  // 'images' | 'shapes' | 'labels' | 'points' | 'tables'
   readonly key: string;        // The element's name within its category
-  readonly url: string;        // Full URL to the element's zarr group
+  readonly path: string;       // Path of the element's zarr group within the store, e.g. 'images/my_image'
+  readonly url?: string;       // Full URL to the group; undefined for zip and folder stores
   readonly attrs: object;      // Validated attributes (type varies by element)
 }
 ```
@@ -64,10 +65,12 @@ image.scaleLevels;                 // ['0', '1', '2', ...] paths to each level
 
 // Spatial properties
 image.spatialAxes;                // Only space-type axes
+image.getStore();                 // zarr store rooted at this element, for opening arrays
 
 // Get transformation including per-resolution-level transforms
 const transforms = image.getTransformationForLevel(0, 'global');
-// Returns { element: Result<BaseTransformation>, dataset: BaseTransformation }
+// Returns { element: Result<BaseTransformation>, dataset: BaseTransformation },
+// or undefined if the level does not exist
 ```
 
 ### Attributes Schema
@@ -99,10 +102,9 @@ type RasterAttrs = {
 
 Labels are segmentation masks stored as OME-NGFF multiscale rasters, identical in structure to images.
 
-Conceptually, labels and shapes are both ways of encoding spatial features. For
-labels, the picked feature identity will come from raster values such as
-`ObjectID`-style segment ids. For shapes, feature identity comes from the
-element's index / instance ids.
+Labels are rendered from raster values, and a label's feature id is its integer
+instance id. Unlike shapes, `LabelsElement` has no feature-id loading method:
+ids come from picked pixels at render time.
 
 ```ts
 const labels = sdata.labels?.['my_segmentation'];
@@ -112,12 +114,6 @@ labels.scaleLevels;
 labels.ndim;
 labels.getTransformation('global');
 ```
-
-Current implementation note:
-labels currently expose picked feature identity from raster values (for example
-segment/object ids) at render-time. A dedicated `LabelsElement` feature-id
-loading API, parallel to `ShapesElement.loadFeatureIds()`, is planned but not
-yet part of the public surface.
 
 ## ShapesElement
 
@@ -139,13 +135,7 @@ shapes.attrs.coordinateTransformations;
 ```
 
 `loadFeatureIds()` is the method to use when you want to associate picked
-shapes with table rows.
-
-Implementation note:
-`ShapesElement.loadFeatureIds()` currently relies on a lightly adapted
-Vitessce-derived loader under the hood. We intentionally allow newer
-`ngff:shapes` metadata revisions to use the same parquet-backed feature-id path
-rather than keying support to one exact version string.
+shapes with table rows. See [Loading points and shapes](./points-and-shapes).
 
 ### Attributes Schema
 
@@ -165,11 +155,15 @@ Points represent point cloud data such as transcript locations.
 ```ts
 const points = sdata.points?.['transcripts'];
 
-// Access metadata
 points.attrs.axes;                     // e.g., ['x', 'y']
-points.attrs.coordinateTransformations;
 points.coordinateSystems;              // Available coordinate systems
+points.storage;                        // 'parquet' | 'points-zarr'
+
+const result = await points.loadPoints();   // columnar { shape, data }, capped in memory
 ```
+
+Loading, streaming, feature selection and tiled stores are covered in
+[Loading points and shapes](./points-and-shapes).
 
 ## TableElement
 
@@ -210,54 +204,14 @@ reading `table.attrs` directly when matching tables to spatial elements.
 `SpatialData.getAssociatedTables()` / `getAssociatedTable()` use the same
 normalization and ignore tables without association metadata.
 
-### Experimental extension idea: equivalent region encodings
+### Equivalent region encodings (not implemented)
 
-The SpatialData table contract currently maps each row to a single target
-region+instance pair via `region_key` + `instance_key`. For some workflows, we
-may want to assert that one row can be interpreted across multiple equivalent
-elements (for example both `labels/cell_labels` and `shapes/cell_shapes`), then choose
-whichever runtime representation is more appropriate for a task.
-
-This is not part of the SpatialData spec today. In this repo, a possible
-experimental approach is to keep the canonical mapping unchanged and add
-optional sidecar metadata under `table.uns.spatialdata_attrs`, for example:
-
-```ts
-table.uns.spatialdata_attrs.experimental_equivalent_mappings = {
-  canonical: {
-    region_key: 'region',
-    instance_key: 'instance_id',
-  },
-  aliases: {
-    labels: {
-      region: 'labels/cell_labels',
-      // Optional: when labels use a different obs column than canonical.
-      region_key: 'label_region_key',
-      instance_key: 'label_instance_id',
-    },
-    shapes: {
-      region: 'shapes/cell_shapes',
-      // Omit keys when canonical columns already apply.
-    },
-  },
-};
-```
-
-Guidelines for experimentation:
-
-- Treat this metadata as optional and non-authoritative.
-- Preserve normal `region_key`/`instance_key` behavior when it is absent.
-- Prefer column-level equivalence (`*_region_key`, `*_instance_key`) over
-  per-id dictionaries.
-- Keep one canonical identity per row to avoid ambiguous write/update paths.
-- Do not assume other SpatialData tools will read this field.
-
-Alternative worth discussing upstream:
-for common cases where an alias always targets one fixed region, it may be
-simpler to store only `region: '<fixed-region-name>'` for that alias (without a
-`region_key` column reference). This is more divergent from today's
-`region`/`region_key`/`instance_key` table-keys contract, but could reduce
-friction for simple one-region equivalence workflows.
+The table contract maps each row to one region and instance. A table could
+assert that a row is equivalent across elements (for example
+`labels/cell_labels` and `shapes/cell_shapes`) by carrying optional, advisory
+metadata under `table.uns.spatialdata_attrs`, keeping the canonical
+`region_key` / `instance_key` mapping unchanged. Nothing reads such metadata
+today and it is not part of the SpatialData spec.
 
 Implementation note:
 `loadObsIndex()` and `loadObsColumns()` are used by the feature-association
@@ -276,26 +230,9 @@ classifier reads both zarr generations (v3 spells dtypes out, v2 uses numpy
 typestrings). Kinds are best-effort: a source that cannot report one yields
 `undefined` and consumers fall back to inspecting values.
 
-Planned API evolution:
-the current `loadObsColumns()` helper is optimized for association / tooltip
-lookups and should be treated as a convenience API. We expect the coherent
-AnnData access story here to grow beyond `obs` columns:
-
-- typed access to `obs` and `var` columns
-- access to selected `X` columns for chosen `var` rows
-- access to `obsm` entries
-- access to `obsp` entries for future graph/network-style visualisation
-- access to `uns`
-
-In principle, the richer APIs here should probably live in `anndata.js`
-rather than becoming a permanently separate query surface in this package.
-If we find `anndata.js` is currently inadequate or awkward for these use cases, we
-should treat that as upstream pressure and try to clarify or improve it there.
-For now, the intent is still that SpatialData.js should expose coherent access
-patterns for these AnnData surfaces without forcing integrators to drop
-immediately to `getAnnDataJS()` or encode everything as ad hoc string column
-lookups. Value-to-string formatting should still remain at the rendering
-boundary rather than in the query layer.
+`loadObsColumns()` is a convenience for association and tooltip lookups. Access
+to `var`, `X`, `obsm`, `obsp` and `uns` is only through `getAnnDataJS()`;
+richer query APIs are expected to land upstream in `anndata.js` rather than here.
 
 ### Attributes Schema
 

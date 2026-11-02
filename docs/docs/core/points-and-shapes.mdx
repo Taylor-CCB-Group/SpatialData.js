@@ -1,0 +1,111 @@
+---
+sidebar_position: 3
+---
+
+# Loading points and shapes
+
+Points and shapes are parquet-backed and can be large. Both are read lazily,
+with the parquet decode optionally moved off the main thread.
+
+## Shapes
+
+```ts
+const shapes = sdata.shapes?.['cell_boundaries'];
+
+const renderData = await shapes.loadRenderData();
+renderData.featureIds;            // stable ids, one per shape
+renderData.rowIndexByFeatureIndex; // Int32Array into the associated table, -1 where unmatched
+```
+
+`loadRenderData()` detects polygons, circles and points, decodes the geometry,
+and joins the feature ids to the associated table (see
+[`loadFeatureRowIndexByFeatureIndex`](./overview#quick-start)).
+`loadPolygonShapes()`, `loadCircleShapes()` and `loadFeatureIds()` are the
+narrower reads. Shapes are always loaded whole; `createShapesLoaderForElement`
+wraps that in the `CoreShapesLoader` interface a viewport-tiled loader will
+share.
+
+## Points
+
+```ts
+const points = sdata.points?.['transcripts'];
+
+const result = await points.loadPoints({ includeFeatureCodes: true });
+result.shape;           // [axisCount, rowCount]
+result.data;            // one array per axis (x, y, optionally z)
+result.featureCodes;    // per-row feature code, with includeFeatureCodes
+result.featureCatalog;  // names present in the loaded rows
+result.preloadTruncated; // true when the memory cap cut the load short
+```
+
+`memoryCap` bounds the rows retained (default `DEFAULT_POINTS_MEMORY_CAP`,
+4,000,000). A load over the cap truncates and sets `preloadTruncated`.
+
+### Streaming
+
+`streamPoints()` is the same load as an async iterable yielding the growing
+result; `loadPoints()` drains it. Cancellation is `break` or an `AbortSignal`.
+
+```ts
+for await (const progress of points.streamPoints({ includeFeatureCodes: true })) {
+  draw(progress.partialResult);
+}
+```
+
+`onProgress` on `PointsLoadOptions` still works but is deprecated in favour of
+the stream. `coalesceLatest`, `sampleByStep` and `drainStream` are combinators
+for the iterable (rate control, final value).
+
+### Features
+
+A points element's categorical identity is the `feature_key` column (a gene,
+say). Codes are authoritative only when the file has an explicit
+`{feature_key}_codes` column; otherwise they are assigned by the application
+while building the catalog and are stable only within that catalog. Persist
+feature **names**, and convert with `resolveFeatureSelectionCodes` /
+`featureNamesForCodes`.
+
+```ts
+const catalog = await points.listFeaturesWithCounts({
+  onPartialCatalog: (names) => showNames(names), // names before counts
+});
+
+// Points for a selection from the whole dataset, not just the resident window.
+const selected = await points.loadPointsMatchingFeatureCodes({
+  memoryCap: 1_000_000,
+  featureCodes: [3, 17],
+});
+```
+
+For a feature-ordered file the row-group statistics let the scan skip every
+group the selection cannot be in; otherwise it reads everything.
+`loadPointsMatchingFeatureCodes` has no main-thread fallback, so it needs the
+parquet worker.
+
+### Tiled stores
+
+Beyond the memory cap, points are read per viewport. `getPointsTilingMetadata()`
+reports what the element offers, and `createPointsLoaderForElement` returns the
+matching `CorePointsLoader` (`loadInBounds`, optionally `loadAll`):
+
+| Encoding | Source |
+| --- | --- |
+| `morton-tiled` | A Morton-sorted `points.parquet` with row-group range reads |
+| `points-zarr-tiled` | A points-zarr group, or one beside `points.parquet` ([ADR 0006](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0006-experimental-formats-beside-the-standard.md)); experimental |
+| `preloaded-columnar` | The resident preload above |
+
+`PointsElement.storage` says whether the element itself is `'parquet'` or
+`'points-zarr'`; the parquet-only methods (`loadPoints`, `streamPoints`, …)
+throw for the latter.
+
+## The parquet worker
+
+`enableParquetWorker({ workerUrl })` moves decode and scans off the main thread;
+without it everything but the feature scan falls back to the main thread. See
+[Bundling into an application](../bundling) for the URL.
+
+## Failures
+
+Loaders throw plain `Error`s. A renderer should not classify them itself: the
+[Resource Resolver](./resource-resolver) turns them into typed
+`SpatialEntryError`s.

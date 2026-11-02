@@ -4,21 +4,14 @@ sidebar_position: 1
 
 # Core Package Overview
 
-The `@spatialdata/core` package provides a TypeScript/JavaScript interface for reading and working with [SpatialData](https://spatialdata.scverse.org/en/stable/) Zarr stores. It mostly mirrors the Python library's API design while adapting to TypeScript idioms and the asynchronous nature of browser-based data loading. Hot-paths should make use of WASM with safe and ergonomic TypeScript interfaces where appropriate.
-
-The bundle should be tree-shakeable and avoid loading heavy dependencies before they are needed (please raise an issue if this is found not to be the case - it's not something that's been given much attention in the initial implementation).
+The `@spatialdata/core` package provides a TypeScript/JavaScript interface for reading and working with [SpatialData](https://spatialdata.scverse.org/en/stable/) Zarr stores. It mostly mirrors the Python library's API design while adapting to TypeScript idioms and the asynchronous nature of browser-based data loading. Hot paths (parquet decode) use WASM behind TypeScript interfaces.
 
 ## Installation
 
-:::info alpha prerelease
+:::info alpha
 
-The first npm line is an MDV-targeted alpha prerelease. Install from the
-`next` tag until the public API is declared stable.
-
-You're more than welcome to clone the git repo and do what you will with it.
-
-Known risks and release-readiness notes are tracked in the
-[MDV release checklist](../vis/mdv-release-checklist).
+The API is still alpha: expect breaking changes between minor versions.
+Known risks are tracked in the [MDV release checklist](../vis/mdv-release-checklist).
 
 :::
 
@@ -61,15 +54,14 @@ const rowIndexByFeatureIndex = await loadFeatureRowIndexByFeatureIndex({
 ```
 
 Tables load through **`anndata.js`** on **`zarrita`** stores. Association helpers
-today use targeted obs-column loaders; the roadmap is a unified AnnData.js /
-zarrita **`DataLoader`** surface for richer `obs` / `var` / `X` / `obsm` access
-(see [MDV integration — tables](../vis/mdv-integration#tables-anndatajs-and-zarrita-dataloader)).
+use targeted obs-column loaders rather than `anndata.js`; see
+[Element classes](./elements#tableelement).
 
 ## Design Philosophy
 
 The library follows several key principles:
 
-1. **Read-Only (for now)**: The current API is focused on reading and representing SpatialData stores as essentially immutable. You can load stores, access elements, query transformations, and load data—but not create or modify stores. Write operations may be added in a future revision.
+1. **Read-only**: You can load stores, access elements, query transformations, and load data, but not create or modify stores.
 
 2. **Python API Familiarity**: Method and class names mirror the Python `spatialdata` library where practical, making it easy to translate workflows.
 
@@ -92,6 +84,8 @@ The main entry points for application code are:
 | Element classes | `ImageElement`, `ShapesElement`, `LabelsElement`, `PointsElement`, `TableElement` |
 | `Result` utilities | `Ok`, `Err`, `isOk`, `isErr`, `unwrap`, `unwrapOr` |
 | `getTransformMatrix()` | Convenience function for getting Matrix4 transforms |
+| Points and shapes loading | `PointsElement.loadPoints()` / `streamPoints()`, `ShapesElement.loadRenderData()`; see [Loading points and shapes](./points-and-shapes) |
+| Resource Resolver | `SpatialEntryStore`, `PointsResolver`, `ShapesResolver`, `Resolution`, `SpatialEntryError`, `EntryNotice`; see [Resource Resolver](./resource-resolver) |
 | Table association helpers | `TableElement.getTableKeys()`, `SpatialData.getAssociatedTable(s)`, `loadAssociatedTableFeatureRows`, `loadFeatureRowIndexByFeatureIndex`, `createFeatureTableAlignment` |
 
 The table association helpers follow Python `spatialdata` semantics: regions
@@ -124,6 +118,8 @@ These have coordinate transformations and can be rendered in shared coordinate s
 ## Next Steps
 
 - [Element Classes](./elements) - Working with different element types
+- [Loading points and shapes](./points-and-shapes) - Memory caps, streaming, feature selection, tiled stores
 - [Transformations](./transformations) - Understanding coordinate systems and transforms
 - [Error Handling](./error-handling) - Using the Result type pattern
+- [Resource Resolver](./resource-resolver) - Cached, cancellable loading with typed errors and notices
 - [Internals](./internals) - Architecture and internal APIs (for contributors)

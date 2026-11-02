@@ -10,7 +10,8 @@ This document describes how **`@spatialdata/vis`** fits into the wider visualiza
 
 **2D only** — no 3D orbit/volume rendering yet (see [SpatialCanvas status](./spatial-canvas-status#known-limitations)).
 
-- **SpatialCanvas** — Main React surface: coordinate system, layer toggles, pan/zoom, OME-Zarr images (Viv) with shapes/points (deck.gl).
+- **SpatialCanvas** — Main React surface: coordinate system, layer toggles, pan/zoom, OME-Zarr images (Viv) with labels, shapes and points (deck.gl).
+- **SpatialCanvasViewer** — The same render path as a headless, controlled component ([guide](./headless-viewer)).
 - **ImageView** — Deprecated; use **SpatialCanvas** with an image layer. Removal is tracked in [#215](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/215).
 - **Sketch / demo app** — Prototyping and docs examples.
 
@@ -24,7 +25,7 @@ semantics, see [Feature table associations and annotation columns](./feature-tab
 
 - **`SpatialLayer`** `CompositeLayer` and versioned **`SpatialLayerProps`** (Zod + `schemaVersion` + **`migrateSpatialLayerProps`**).
 - The canonical home for **`RenderStack`** saved/render order, including SpatialData entries, host overlay descriptors, and reserved group entries.
-- The deck-native place for **sub**layers: image, scatter, shapes, points, contours — including future **GeoArrow / Parquet** paths for vectors. (Sublayer factories are still being wired; the schema and class are scaffolded.)
+- Deck renderers for shapes, labels and points. `SpatialLayer` itself renders shapes sublayers only; vis composes the rest.
 - **No MobX**; plain TypeScript and deck APIs.
 
 Details: [Layers package overview](../layers/overview).
@@ -37,8 +38,8 @@ Details: [Layers package overview](../layers/overview).
 
 ## `@spatialdata/core`
 
-- **Semantic** SpatialData-on-Zarr: elements, transforms, tables, metadata.
-- Not responsible for every GPU buffer layout; **`layers`** (and bridges from **core**) deliver columnar / Arrow views when needed.
+- **Semantic** SpatialData-on-Zarr: elements, transforms, tables, metadata, and the renderer-agnostic [Resource Resolver](../core/resource-resolver) that vis consumes.
+- Not responsible for GPU buffer layouts; **`layers`** owns those.
 
 ## API tiers (summary)
 

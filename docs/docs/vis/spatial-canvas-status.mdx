@@ -20,15 +20,8 @@ sidebar_position: 1
 - **Channel UI is basic:** the properties pane exposes per-channel RGB (0–255), contrast min/max, `z`/`c`/`t`, and visibility (up to six channels). There is **no histogram** or brush yet; defaults from automatic stats can still look wrong until you tune values.
 - **Single primary image** path in the Viv viewer composition (first enabled image layer drives `DetailView.getLayers`).
 - **`useLayerData`** prefers explicit `LayerConfig.channels` when arrays are non-empty; further **override flags** may still be useful for edge cases.
-- **Points render through a data engine, not a raw scatter path:**
-  `PointsElement.loadPoints()` feeds `PointsDataEngine` (in `@spatialdata/layers`,
-  with its cache/lifecycle half — `PointsResolver` — in `@spatialdata/core`), which
-  owns a resident preload window with a configurable memory cap, a full-dataset
-  feature catalog, per-row feature codes, and a whole-dataset feature-index scan that
-  streams matching points in progressively. Rendering is via the `@spatialdata/layers`
-  `PointsLayer` composite with table-backed feature state (filter and colour by
-  feature). Still open: a GeoArrow-backed fast path, and viewport/tile-based loading
-  for points (shapes and points tiling are marked *Future* in ADR 0002/0003).
+- **Points** are loaded by core's `PointsResolver` and drawn by `PointsLayer` through `PointsDataEngine` (both described in [layers](../layers/overview#shapes-labels-and-points)): a resident preload window under a memory cap, or viewport tiles for Morton-sorted and points-zarr elements, with a feature catalog and filter and colour by feature. See [Loading points and shapes](../core/points-and-shapes). A GeoArrow-backed fast path is still open.
+- **Shapes** load non-blocking: geometry refines an already-painted canvas.
 
 ## Upstream Viv Follow-ups
 
@@ -45,25 +38,12 @@ sidebar_position: 1
 - [`packages/core/src/tableAssociations.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/core/src/tableAssociations.ts) — feature/table row alignment following Python `spatialdata` semantics
 - [`packages/layers/src/shapeColorEncoding.ts`](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/packages/layers/src/shapeColorEncoding.ts) — renderer-agnostic shape column-to-colour encoding over resolved row alignment
 
-## Recently landed (check repo for details)
+## Architecture
 
-- **Resource Resolver + reconcile loop (ADR 0004).** `@spatialdata/core` defines the
-  `ResourceResolver` interface, `Resolution<T>`, `SpatialEntryError` / `EntryNotice`,
-  and a kind-blind `SpatialEntryStore` reconcile loop. `useLayerData` now *consumes*
-  per-kind resolvers — `PointsResolver` / `ShapesResolver` in `core`, `ImagesResolver`
-  / `LabelsResolver` in `vis` — through a single `store.reconcile()` commit-effect
-  instead of a per-kind load switch, with its 17-member public surface unchanged. See
-  [ADR 0004](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0004-resource-resolver-owned-by-core.md)
-  and the resolver handoff / Step 1 consumption plans; Step 2 (points state model,
-  shapes loader seam, memory) and Step 3 (renderer-adapter cleanup) remain.
-- **`@spatialdata/avivatorish`** — shared loaders and Zustand stores; SpatialCanvas / ImageView import from the package.
-- **`@spatialdata/layers`** — **`SpatialLayer`** + Zod **`SpatialLayerProps`** + **`migrateSpatialLayerProps`** (sublayer wiring still to grow).
-- **Feature/table split** — `@spatialdata/core` now exposes a
-  `FeatureTableAlignment` resolver shape, and `@spatialdata/layers` owns the
-  reusable shape column-to-colour encoder. `SpatialCanvas` consumes these
-  helpers rather than owning the fill-colour association rule.
-- **SpatialCanvas** — loader registry context (**`VivLoaderRegistryProvider`** / **`useVivLoaderRegistry`**), **layers / properties** sidebars, **DnD** layer order, **fullscreen** toggle, **channel** controls for image layers.
-- **Demo / Sketch** — full-height shell for the vis demo.
+- **Resource Resolver (ADR 0004).** `useLayerData` drives a kind-blind `SpatialEntryStore.reconcile()` over per-kind resolvers (`PointsResolver` / `ShapesResolver` in core, `ImagesResolver` / `LabelsResolver` in vis). See [Resource Resolver](../core/resource-resolver) and [ADR 0004](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0004-resource-resolver-owned-by-core.md). Per-layer typed errors and notices surface as `getEntryStatus` ([headless guide](./headless-viewer#layer-errors-and-notices)).
+- **Feature/table split.** Core owns row alignment (`FeatureTableAlignment`); `@spatialdata/layers` owns the column-to-colour encoders; `SpatialCanvas` consumes both ([details](./feature-table-associations)).
+- **`@spatialdata/avivatorish`** holds the shared loaders and Zustand stores.
+- **SpatialCanvas** has a loader registry context (`VivLoaderRegistryProvider`), layers and properties sidebars, drag-and-drop layer order, fullscreen, and channel controls for image layers.
 
 ## Headless embedding
 
@@ -84,17 +64,13 @@ controlled, UI-free embedding (MDV, Vitessce, local experiments). See
 
 ## Medium-term roadmap
 
-- Flesh out **`SpatialLayer`** sublayers (image, scatter, shapes, …) and keep **`SpatialLayerProps`** migrations honest as kinds grow.
+- Grow **`SpatialLayer`** beyond shapes sublayers, keeping **`SpatialLayerProps`** migrations honest.
 - Harden **`@spatialdata/avivatorish`** for MDV adoption (telemetry hooks, docs).
 - **MDV integration** checklist: replace vendored avivatorish, adopt shared layers, scatter/table-backed props, phased contour extraction.
-- **Points parity with shapes:** move point rendering into
-  `@spatialdata/layers`, add stable point ids plus hide/fade/color/radius
-  feature state, and make multi-file Parquet stores render progressively before
-  adopting GeoArrow as a fast-path adapter.
 - **GeoArrow / Parquet** paths for shapes and points; clarify **`@spatialdata/core`** vs deck-facing buffers.
 - **3D view mode** and **time (`t`)** in the public scene contract.
 
 ## Core and fixtures
 
-- Test fixtures and docs track **spatialdata 0.7.2** alongside older versions.
+- Test fixtures cover spatialdata 0.5.0, 0.6.1, 0.7.2 and 0.8.0.
 - **NGFF unit schemas** and **axis-aware** translation/scale transforms live in `@spatialdata/core` (see [Transformations](../core/transformations)).

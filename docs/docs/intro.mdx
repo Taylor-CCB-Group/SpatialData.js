@@ -23,8 +23,8 @@ There are several packages that aim to facilitate the use and development of thi
 | `@spatialdata/avivatorish` | Viv loaders, channel stats, image Zustand stores | No | Alpha |
 | `@spatialdata/vis` | `SpatialCanvas` UI + headless `SpatialCanvasViewer` | Yes | Alpha |
 
-These packages are published to npm under the default `latest` tag. The API is
-still alpha, so expect breaking changes between minor versions:
+These packages are published to npm. The API is still alpha, so expect
+breaking changes between minor versions:
 
 ```bash
 pnpm add @spatialdata/vis
@@ -40,16 +40,15 @@ Vanilla-JS library for loading SpatialData Zarr stores. Mirrors the Python
 loads, and table–feature association (`region` / `region_key` / `instance_key`).
 
 Built on **`zarrita`** for Zarr I/O and **`anndata.js`** for AnnData-backed
-tables. Table obs-column helpers used today (`loadObsColumns`, association
-resolvers) sit on a direct loader path; the roadmap is a coherent
-**`TableElement` → AnnData.js / zarrita `DataLoader`** surface for `obs`,
-`var`, `X`, `obsm`, and related AnnData views without every integrator calling
-`getAnnDataJS()` directly.
+tables. The obs-column helpers (`loadObsColumns`, association resolvers) use a
+direct loader path; other AnnData views are reached through `getAnnDataJS()`.
 
 See [Core Package documentation](./core/overview):
 - [Element Classes](./core/elements) — images, shapes, labels, points, tables
+- [Loading points and shapes](./core/points-and-shapes) — memory caps, streaming, tiled stores
 - [Transformations](./core/transformations) — coordinate systems and spatial transforms
 - [Error Handling](./core/error-handling) — the `Result` type pattern
+- [Resource Resolver](./core/resource-resolver) — cached loading with typed errors and notices
 - [Internals](./core/internals) — architecture (for contributors)
 
 ### Core-only example
@@ -88,10 +87,11 @@ What it owns today:
 
 - **`createShapesDeckLayer`** / **`buildShapesPrebuiltData`** — polygon, circle, and GeoArrow-table shape paths with feature-state styling (hide, fade, per-id colours)
 - **`buildShapeFillColorByFeatureId`** — table column → per-feature colours (consumes core row alignment; does not resolve associations itself)
-- **`SpatialLayer`** + **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — versioned, JSON-serializable composite-layer contract (image/points sublayers still maturing)
+- **`SpatialLayer`** + **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — versioned, JSON-serializable composite-layer contract (renders shapes sublayers)
+- **`LabelsLayer`**, **`PointsLayer`** / **`PointsDataEngine`** — labels and points renderers
 - Pick/tooltip helpers keyed by stable **`featureId`**
 
-`@spatialdata/vis` calls into `@spatialdata/layers` for shapes; MDV can drive
+`@spatialdata/vis` calls into `@spatialdata/layers` for shapes, labels and points; MDV can drive
 the same contracts by updating layer config / feature state without importing vis
 internals.
 

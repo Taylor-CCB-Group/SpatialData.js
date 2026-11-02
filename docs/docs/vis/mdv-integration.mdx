@@ -25,14 +25,11 @@ The near-term target is not a full replacement for every MDV spatial feature. Th
 
 **Remaining MDV blockers** are packaging and polish, not the absence of a headless component:
 
-- publish and smoke-test the npm `next` prerelease in MDV
+- smoke-test the published `@spatialdata/vis` in MDV
 - tooltip/pick row resolution should finish converging on the shared core resolver
-- points layer is minimal scatter only (v1.1 for MDV parity)
+- points are v1.1 for MDV parity: feature selection and colour are config-driven, and the remaining gap is index strategies for very large elements
 
-**Viv/deck stack:** this repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9`. MDV's
-matching upgrade is almost ready to merge — treat shared Viv/deck/luma versions as
-**effectively aligned** for the first `@spatialdata/vis` smoke test. Residual risk is
-extension-specific visual regression, not version skew between the two codebases.
+**Viv/deck stack:** this repo selects the versions (`@hms-dbmi/viv@0.23.0`, deck.gl `~9.4.0`; see the catalog in `pnpm-workspace.yaml`) and MDV follows. The residual risk is extension-specific visual regression, not version skew.
 
 `SpatialCanvas` still owns a full UI shell for demos. MDV should embed **`SpatialCanvasViewer`** and drive view state, layers, style, filtering, highlighting, and custom overlays from chart/data-store state.
 
@@ -40,9 +37,7 @@ extension-specific visual regression, not version skew between the two codebases
 
 The top priority is a headless viewer path. Before MDV or Vitessce integration work gets clever, this repository should prove that the renderer can be driven by external state and external controls.
 
-The first implementation should use a **bridge path** rather than a full layers-first rewrite: expose a public React `SpatialCanvasViewer` that reuses the existing Viv/deck rendering stack, accepts externally controlled state, and composes caller-provided deck.gl layers above SpatialData-rendered layers. This keeps MDV progress unblocked while preserving a migration path toward `@spatialdata/layers`.
-
-The layers-first direction is still likely the cleaner long-term architecture, especially for MDV and Vitessce. For now, `@spatialdata/layers` should mature through narrow renderer slices rather than becoming the blocking path for headless mode: the current `SpatialLayer` package defines a schema/contract, but real image, labels, shapes, and points sublayer factories still need to be ported deliberately.
+`SpatialCanvasViewer` is the bridge path: it reuses the Viv/deck rendering stack in `@spatialdata/vis`, accepts externally controlled state, and composes host overlays among SpatialData-rendered layers. `@spatialdata/layers` matures through narrow renderer slices (shapes, labels and points renderers exist; `SpatialLayer` renders shapes sublayers only) rather than being the blocking path for headless mode. Layers-first remains the likely long-term architecture for MDV and Vitessce.
 
 Useful in-repo validation demos (see [Headless viewer guide](./headless-viewer)):
 
@@ -65,8 +60,8 @@ Acceptance signal: demos should import the same public API MDV uses (`SpatialCan
   - lower-level dependency: `zarrextra`
 - [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
 - [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
-- [x] Upgrade to `@hms-dbmi/viv@0.21.0` / deck.gl `9.2.9` in this repo (Viv PR [hms-dbmi/viv#924](https://github.com/hms-dbmi/viv/pull/924): uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts).
-- [x] MDV Viv/deck/luma upgrade to the same stack — **almost ready to merge**; treat as done for integration planning.
+- [x] Move to Viv `0.23.0` / deck.gl `~9.4.0` in this repo (uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts).
+- [ ] MDV on the same Viv/deck/luma stack.
 - [ ] Residual extension audit on both sides after MDV merge (shader-input paths, channel-count assumptions, extension prop passthrough through `deckProps` / `SpatialCanvasViewer`).
 - [ ] Run a clean `pnpm build` and pack the packages, then install them into `~/code/www/MDV`.
 - [ ] Add one minimal MDV smoke chart that imports the package and renders a known fixture before attempting a full chart replacement.
@@ -99,7 +94,7 @@ Implementation status:
 - [x] Host overlay descriptors plus `hostLayerResolver` for MDV scatter, gates, contours, ROI overlays.
 - [x] Deprecated compatibility path for `layers`, `layerOrder`, and `deckLayers`.
 - [x] `showLoadingOverlay` and `renderTooltip={false}` for external tooltip ownership.
-- [x] `onFeatureHover` / `onFeatureClick` for shape and label picking, with `onShapeHover` / `onShapeClick` kept as compatibility callbacks.
+- [x] `onFeatureHover` / `onFeatureClick` for shape, label and point picking, with `onShapeHover` / `onShapeClick` kept as compatibility callbacks.
 - [ ] Stable externally supplied Viv/deck view id or layer id suffix (`getVivId` compatibility).
 - [x] Viv extension passthrough: `ImageLayerConfig.vivLayerProps`, `vivImageExtensionResolver`, `vivImagePropsResolver` on `SpatialCanvasViewer` (see [Issue #56 APIs](#issue-56-channel-and-extension-apis) below).
 
@@ -206,7 +201,7 @@ Listeners follow the same split. Saved `renderStack.entries[*].props` should
 contain serializable renderer input only. MDV-owned callbacks such as
 `onFeatureHover` / `onFeatureClick`, tooltip portal wiring, and host overlay
 factories are runtime attachments supplied beside the stack. The feature events
-cover shapes and labels and include the same tooltip payload that built-in
+cover shapes, labels and points and include the same tooltip payload that built-in
 SpatialData.js tooltips use, so MDV does not need to decode deck.gl pick objects
 for normal table-backed hover/click interactions.
 
@@ -351,10 +346,9 @@ Current upstream read:
 - `geoarrow/deck.gl-geoarrow` is the renamed home for the former
   `geoarrow/deck.gl-layers` project. The published package to evaluate is
   `@geoarrow/deck.gl-geoarrow`; it targets deck.gl 9 and Apache Arrow JS.
-- The useful layer for SpatialData points is likely `GeoArrowScatterplotLayer`,
-  but it expects GeoArrow point/multipoint data, not arbitrary `x` / `y`
-  columns. SpatialData points currently store coordinate columns in Parquet, so
-  an adapter still has to build or expose a GeoArrow point column/batch.
+- `GeoArrowScatterplotLayer` expects GeoArrow point/multipoint data, not
+  arbitrary `x` / `y` columns, so an adapter would have to build a GeoArrow
+  point column from the Parquet coordinates. It is not used today.
 - The library is most useful when we can keep Arrow chunks columnar all the way
   to deck.gl's binary attribute interface. It is less compelling if we first
   materialise every point as JS objects or as the current ndarray-ish wrapper.
@@ -365,37 +359,12 @@ Current upstream read:
 
 Current local state:
 
-- `@spatialdata/core` currently loads Parquet bytes/tables through `parquet-wasm` in `VTableSource`, inherited by points and shapes sources.
-- points currently return an ndarray-ish `{ shape, data }` object with axis columns loaded from Parquet.
-- shapes currently expose a render-oriented core payload with stable feature ids, shared row-index alignment, and a mixed backend path in `@spatialdata/layers`.
-- labels are still their own image/tile rendering path.
-- Vitessce-derived code already has more advanced point handling in places, including tiled point loading, viewport filtering, feature-index filtering, and `DataFilterExtension` use.
-- `VTableSource` recognises `points/<key>/points.parquet` and
-  `points/<key>/points.parquet/part.0.parquet`, but it does not yet model a
-  multi-file Parquet dataset as multiple chunks/batches. That is the wrong
-  shape for large point stores.
-
-Points-specific target shape:
-
-- `core` should expose a `PointsRenderData`-style payload, parallel to
-  `ShapesRenderData`, with stable point ids, row-index alignment, coordinate
-  axis names, optional `feature_key` / `instance_key` columns, and the original
-  Arrow table or record batches when available.
-- `layers` should own a shared points renderer. The renderer should choose
-  between:
-  - a current fallback `ScatterplotLayer` over typed coordinate arrays
-  - a binary deck.gl attribute path for `x` / `y` / optional `z`
-  - a `GeoArrowScatterplotLayer` path when data is already GeoArrow point
-    encoded, or when the adapter can build that point column without copying too
-    much
-- Points need the same feature-state language as shapes: hide, fade, color,
-  radius, and filtered opacity by stable point id or row index. MDV/Vitessce
-  filters should update feature-state or filter columns; they should not force a
-  full Parquet reload.
-- Viewport/row-group filtering belongs behind the points data adapter, not in
-  `SpatialCanvas` UI code. A multi-file Parquet directory can naturally map to
-  progressive chunks/layers first, then later to row-group or bounding-box
-  pruning when metadata is available.
+- `@spatialdata/core` loads Parquet through `parquet-wasm` (optionally in a worker), shared by points, shapes and tables.
+- points return a columnar `{ shape, data }` result, as a stream of growing partials or via viewport tiles (Morton-sorted parquet, points-zarr); multi-file `part.N.parquet` directories are read. See [Loading points and shapes](../core/points-and-shapes).
+- points are drawn by `PointsLayer` over typed coordinate arrays with deck binary attributes; filter and colour by feature are runtime state, not a Parquet reload.
+- shapes expose a render-oriented core payload with stable feature ids, shared row-index alignment, and a mixed backend path in `@spatialdata/layers`.
+- labels are their own image/tile rendering path.
+- Vitessce-derived code has more advanced point handling in places, including tiled loading, viewport filtering and `DataFilterExtension` use.
 
 Upstream signals to monitor:
 
@@ -431,7 +400,7 @@ Boundary options:
 
 Recommended direction for now:
 
-- [ ] Keep `@spatialdata/core` free of deck.gl dependencies.
+- [x] Keep `@spatialdata/core` free of deck.gl dependencies.
 - [ ] Align `@spatialdata/core`'s points and shapes support with Vitessce's SpatialData-derived loaders so we do not fall behind format coverage while the rendering backend evolves.
 - [ ] Move toward `core` exposing Arrow-ish columnar primitives for
   points/shapes/tables, while preserving convenience methods for simple JS
@@ -445,10 +414,7 @@ Recommended direction for now:
   - future Arrow/community-layer backends without changing the public shapes config
 - [x] Keep feature identity, table association, coordinate transforms, and metadata interpretation in `core`; keep GPU filtering, tiling, layer construction, and picking/render props in `layers`.
 - [ ] Avoid baking `parquet-wasm` as the only long-term path. Treat it as the current implementation behind a replaceable interface.
-- [ ] Upgrade points before adopting GeoArrow broadly: first add stable point
-  identity, row-index alignment, feature-state filtering/styling, and multi-part
-  Parquet discovery; then add the GeoArrow renderer as an adapter behind the
-  same public points config.
+- [ ] Adopt GeoArrow for points only as an adapter behind the existing public points config (feature-state filtering and styling and multi-part discovery are in place).
 
 One more API-design note to preserve: the current table-association helpers are still `obs`-oriented and string-column-oriented because that is enough for the first feature-id join path. A future revision should widen the shared contract so style/filter inputs can come coherently from all of the AnnData surfaces we care about: `obs`, `var`, selected `X` columns for chosen `var` rows, `obsm`, potential future `obsp` graph/network data, and `uns`, without forcing integrators to encode everything as ad hoc string column lookups. In principle, many of those richer access patterns should likely be pushed upstream into `anndata.js` rather than duplicated forever in SpatialData.js.
 - [ ] Treat Vitessce parity tests as compatibility fixtures: when Vitessce supports a points/shapes SpatialData layout, `core` should either support it too or document why not.
@@ -461,9 +427,6 @@ One more API-design note to preserve: the current table-association helpers are 
 Open questions:
 
 - Should `PointsElement.loadPoints()` return Arrow vectors/tables in addition to typed arrays?
-- Should `PointsElement` expose a chunked/multipart API (`loadPointBatches`) so
-  large `points.parquet/part-*.parquet` directories can progressively render
-  without pretending they are one file?
 - Should `ShapesElement.loadPolygonShapes()` preserve feature ids alongside geometry in a first-class row object or columnar structure?
 - Where should row-group / viewport filtering live: `core`, `vis`, or app adapter?
 - Can deck.gl-community Arrow layers become a dependency of `@spatialdata/vis`, or should they be optional peer/adapter code?
@@ -576,7 +539,7 @@ Open questions:
 
 ## Compatibility risks
 
-- **Viv/deck version skew:** largely resolved — both codebases target Viv `0.21.0` / deck.gl `9.2.9`; MDV's upgrade PR is almost ready to merge. Remaining risk is extension-specific regression, not mismatched package versions.
+- **Viv/deck version skew:** this repo selects the versions and MDV follows; the remaining risk is extension-specific regression.
 - **Arrow/Parquet churn:** loaders.gl Parquet and deck.gl-community Arrow layers are promising but still moving targets. We should avoid locking public `core` APIs to one loader implementation too early.
 - **Raster backend churn:** `deck.gl-raster` may absorb image/Zarr responsibilities that currently sit in Viv or custom labels layers. Public props should leave room for a backend swap.
 - **Image format/codecs uncertainty:** OME-TIFF, JP2K-compressed TIFF, OME-Zarr, SpatialData Zarr, and future Zarr image codecs may all matter. Avoid encoding one storage format too deeply into viewer props.
