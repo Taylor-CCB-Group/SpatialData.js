@@ -207,8 +207,13 @@ describe('load() — the only place I/O starts', () => {
   it('ignores an unknown resource rather than throwing', async () => {
     const resolver = new PointsResolver();
 
+    // Deliberately outside the typed resource union: this is the runtime guard.
+    const task = { id: 'z', resource: 'nonsense' } as unknown as Parameters<
+      PointsResolver['load']
+    >[0];
+
     await expect(
-      resolver.load({ id: 'z', resource: 'nonsense' }, ctx(element()), new AbortController().signal)
+      resolver.load(task, ctx(element()), new AbortController().signal)
     ).resolves.toBeUndefined();
   });
 });
