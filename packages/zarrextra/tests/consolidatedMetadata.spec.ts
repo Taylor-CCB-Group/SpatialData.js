@@ -35,3 +35,43 @@ describe('openExtraConsolidated on consolidated v2 metadata', () => {
     expect(requested.filter((key) => /\.(zarray|zgroup|zattrs)$/.test(key))).toEqual([]);
   });
 });
+
+describe('openExtraConsolidated on consolidated v3 metadata', () => {
+  it('prefers zarr.json over .zmetadata and reads the tree from one request', async () => {
+    const { store: v2Store } = consolidatedV2();
+    const requested: string[] = [];
+    const files: Record<string, Uint8Array> = {
+      '/zarr.json': json({
+        zarr_format: 3,
+        node_type: 'group',
+        attributes: { title: 'v3' },
+        consolidated_metadata: {
+          kind: 'inline',
+          must_understand: false,
+          metadata: {
+            values: {
+              zarr_format: 3,
+              node_type: 'array',
+              shape: [8],
+              data_type: 'float32',
+              attributes: { unit: 'mm' },
+            },
+          },
+        },
+      }),
+    };
+    const store: zarr.AsyncReadable = {
+      async get(key) {
+        requested.push(key);
+        return files[key] ?? v2Store.get(key);
+      },
+    };
+    const result = await openExtraConsolidated(store);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { tree } = result.value;
+    expect(getNodeAttrs(tree)).toEqual({ title: 'v3' });
+    expect(getNodeAttrs(tree.values)).toEqual({ unit: 'mm' });
+    expect(requested).toEqual(['/zarr.json']);
+  });
+});

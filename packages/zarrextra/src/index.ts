@@ -1,4 +1,5 @@
 import * as zarr from 'zarrita';
+import { isRecord, loadConsolidatedMetadata, type NodeEntry } from './consolidated';
 import { FolderStore } from './folderStore';
 import { Err, Ok, type Result } from './result';
 import { getArrayMetadata, getNodeAttrs } from './treeNodes';
@@ -28,10 +29,6 @@ function normalizeStringSource(source: string): string {
 
 function describeSource(source: StoreReference): string {
   return typeof source === 'string' ? source : '[store instance]';
-}
-
-function isRecord(value: unknown): value is ZAttrsAny {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 type MetadataFormat = 'v2' | 'v3';
@@ -77,27 +74,37 @@ async function readNodeMetadata(
   return { metadata, attrs: attrs ?? {} };
 }
 
-function sortContentsByDepth(
-  a: { path: zarr.AbsolutePath },
-  b: { path: zarr.AbsolutePath }
-): number {
+/** Node documents for a store that can list itself but has no consolidated metadata: one read per node. */
+async function readListedNodes(store: zarr.Listable<zarr.Readable>): Promise<NodeEntry[]> {
+  const format = await detectMetadataFormat(store);
+  const listed = store.contents();
+  if (!listed.some(({ path }) => path === '/')) listed.push({ path: '/', kind: 'group' });
+  return Promise.all(
+    listed.map(async ({ path, kind }) => ({
+      path,
+      kind,
+      ...(await readNodeMetadata(store, path, kind, format)),
+    }))
+  );
+}
+
+function sortByDepth(a: NodeEntry, b: NodeEntry): number {
   const depthA = a.path.split('/').filter(Boolean).length;
   const depthB = b.path.split('/').filter(Boolean).length;
   return depthA - depthB;
 }
 
-async function parseStoreContents(
-  store: zarr.Listable<zarr.Readable>,
-  knownFormat: MetadataFormat | undefined
-): Promise<ZarrTree> {
-  const format = knownFormat ?? (await detectMetadataFormat(store));
+function buildTree(store: zarr.Readable, nodes: NodeEntry[]): ZarrTree {
+  const rootNode = nodes.find(({ path }) => path === '/');
+  if (rootNode?.kind !== 'group') {
+    throw new Error('The store root is not a group');
+  }
   const root = zarr.root(store);
   const tree: ZarrTree = {
-    [ATTRS_KEY]: (await readNodeMetadata(store, '/', 'group', format)).attrs,
+    [ATTRS_KEY]: rootNode.attrs,
   };
-  const contents = store.contents().sort(sortContentsByDepth);
 
-  for (const { path, kind } of contents) {
+  for (const { path, kind, metadata, attrs } of [...nodes].sort(sortByDepth)) {
     if (path === '/') continue;
 
     const pathParts = path.split('/').filter(Boolean);
@@ -109,22 +116,17 @@ async function parseStoreContents(
 
         if (!isLeaf) {
           currentNode[part] = {};
+        } else if (kind === 'array') {
+          const leafNode: LazyZarrArray<zarr.DataType> = {
+            [ATTRS_KEY]: attrs,
+            [ZARRAY_KEY]: metadata,
+            get: () => zarr.open(root.resolve(path), { kind: 'array' }),
+          };
+          currentNode[part] = leafNode;
         } else {
-          const absolutePath = `/${pathParts.slice(0, index + 1).join('/')}` as zarr.AbsolutePath;
-          const { metadata, attrs } = await readNodeMetadata(store, absolutePath, kind, format);
-
-          if (kind === 'array') {
-            const leafNode: LazyZarrArray<zarr.DataType> = {
-              [ATTRS_KEY]: attrs,
-              [ZARRAY_KEY]: metadata,
-              get: () => zarr.open(root.resolve(absolutePath), { kind: 'array' }),
-            };
-            currentNode[part] = leafNode;
-          } else {
-            currentNode[part] = {
-              [ATTRS_KEY]: attrs,
-            };
-          }
+          currentNode[part] = {
+            [ATTRS_KEY]: attrs,
+          };
         }
       }
 
@@ -135,13 +137,9 @@ async function parseStoreContents(
   return tree;
 }
 
-type ListableStore = {
-  store: zarr.Listable<zarr.Readable>;
-  /** Set when the store's consolidated metadata says which format it is. */
-  format?: MetadataFormat;
-};
-
-async function resolveListableStore(source: StoreReference): Promise<ListableStore> {
+async function resolveStoreNodes(
+  source: StoreReference
+): Promise<{ store: zarr.Listable<zarr.Readable>; nodes: NodeEntry[] }> {
   const store = isReadableStore(source)
     ? source
     : isZipUrl(source)
@@ -149,36 +147,20 @@ async function resolveListableStore(source: StoreReference): Promise<ListableSto
       : new zarr.FetchStore(normalizeStringSource(source));
 
   if (isListableStore(store)) {
-    return { store };
+    return { store, nodes: await readListedNodes(store) };
   }
 
-  // One format at a time rather than letting zarrita auto-detect, so the format
-  // that loaded is the one the tree is read in. v3 first: `zarr.json` is
-  // preferred where a store has both.
-  const attempts: { format: MetadataFormat; metadataKey?: string }[] = [
-    { format: 'v3' },
-    { format: 'v2' },
-    { format: 'v2', metadataKey: 'zmetadata' },
-  ];
-  let firstError: unknown;
-  for (const { format, metadataKey } of attempts) {
-    try {
-      const consolidated = await zarr.withConsolidatedMetadata(store as zarr.AsyncReadable, {
-        format,
-        metadataKey,
-      });
-      return { store: consolidated, format };
-    } catch (error) {
-      firstError ??= error;
+  try {
+    return await loadConsolidatedMetadata(store as zarr.AsyncReadable);
+  } catch (error) {
+    // Consolidated metadata comes first even for stores that can list their
+    // files: listing means one read per node, where consolidated metadata is one.
+    if (store instanceof ZipStore || store instanceof FolderStore) {
+      const listable = await store.withListing();
+      return { store: listable, nodes: await readListedNodes(listable) };
     }
+    throw error;
   }
-  // Consolidated metadata comes first even for stores that can list their
-  // files: the tree walk below opens every listed node, one read each,
-  // where consolidated metadata is a single read.
-  if (store instanceof ZipStore || store instanceof FolderStore) {
-    return { store: await store.withListing() };
-  }
-  throw firstError;
 }
 
 /**
@@ -188,9 +170,8 @@ export async function openExtraConsolidated(
   source: StoreReference
 ): Promise<Result<ConsolidatedStore>> {
   try {
-    const { store: zarritaStore, format } = await resolveListableStore(source);
-    const tree = await parseStoreContents(zarritaStore, format);
-    return Ok({ zarritaStore, tree });
+    const { store: zarritaStore, nodes } = await resolveStoreNodes(source);
+    return Ok({ zarritaStore, tree: buildTree(zarritaStore, nodes) });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return Err(new Error(`Failed to open zarr store '${describeSource(source)}': ${errorMessage}`));
