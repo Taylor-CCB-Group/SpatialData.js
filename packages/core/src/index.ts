@@ -9,6 +9,7 @@
 export { coalesceLatest, drainStream, sampleByStep } from './asyncStream.js';
 // Resource Resolver contracts (ADR 0004).
 export * from './engine/index.js';
+export * from './issues.js';
 // Memory accounting (ADR 0005).
 export * from './memory/index.js';
 export * from './models/index.js';
@@ -86,6 +87,7 @@ export {
   type PointsZarrLevel,
   PointsZarrSource,
 } from './pointsZarr.js';
+export * from './rasterLayout.js';
 // Render Stack schemas. Canonical here (ADR 0004 §5, amending ADR 0001): the
 // Resource Resolver takes a Render Stack as input, so dependency direction forces
 // the move. `layers` and `vis` retain their re-exports as compatibility shims —

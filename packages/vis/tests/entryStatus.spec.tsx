@@ -24,6 +24,7 @@ function imageElement(key: string, transform: 'global' | 'none' = 'global') {
     attrs: {},
     // Tagged so a test's fetch can tell the elements apart.
     getStore: () => ({ key }),
+    getIssues: () => [],
     getTransformation: (cs: string) =>
       transform === 'global' && cs === 'global'
         ? { ok: true, value: { toMatrix: () => new Matrix4() } }

@@ -1,6 +1,7 @@
 import * as ad from 'anndata.js';
 import { createPrefixedStore } from 'zarrextra';
 import type * as zarr from 'zarrita';
+import { type ElementIssue, NO_ISSUES } from '../issues';
 import { ByteLruCache } from '../memory/byteLruCache.js';
 import type { PointsLoadOptions, PointsLoadProgress } from '../pointsLoadOptions.js';
 import type { AnyPointsTilingMetadata, PointsFeatureCatalog } from '../pointsTiling.js';
@@ -12,6 +13,7 @@ import {
   type PointsZarrInBoundsResult,
   PointsZarrSource,
 } from '../pointsZarr.js';
+import { assessRasterLevels, rasterLevelsFromTree } from '../rasterLayout';
 import {
   type CoordinateTransformation,
   type PointsAttrs,
@@ -78,6 +80,19 @@ abstract class AbstractElement<T extends ElementName> {
    * cannot read, not a case to handle further down.
    */
   protected readonly parsed: ZarrTree;
+
+  /** Issues with how this element is stored; see {@link ElementIssue}. None unless a subclass judges some. */
+  getIssues(): readonly ElementIssue[] {
+    return NO_ISSUES;
+  }
+
+  /**
+   * {@link getIssues} plus any issue that can only be judged by reading from the store.
+   * A subclass with such issues overrides this; the default has none.
+   */
+  async assessIssues(): Promise<readonly ElementIssue[]> {
+    return this.getIssues();
+  }
 
   constructor({ sdata, name, key }: ElementParams<T>) {
     this.sdata = sdata;
@@ -509,6 +524,17 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
   getStore(): zarr.AsyncReadable {
     this.prefixedStore ??= createPrefixedStore(this.sdata.rootStore.zarritaStore, this.path);
     return this.prefixedStore;
+  }
+
+  private issues?: readonly ElementIssue[];
+
+  /**
+   * Layout problems that make this element slow however well the client behaves,
+   * judged from the consolidated metadata. Memoized, so the array identity is stable.
+   */
+  override getIssues(): readonly ElementIssue[] {
+    this.issues ??= assessRasterLevels(rasterLevelsFromTree(this.parsed, this.scaleLevels));
+    return this.issues;
   }
 
   /**

@@ -32,6 +32,7 @@ function renderImageLayer(fetch: () => Promise<unknown>) {
     path: 'images/img',
     attrs: {},
     getStore: () => ({}),
+    getIssues: () => [],
     getTransformation: () => ({ ok: true, value: { toMatrix: () => new Matrix4() } }),
   };
   // A stub: the renderer reads only `images` and each element's transform here.

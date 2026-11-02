@@ -6,8 +6,10 @@ import {
   type AxisAlignedBounds,
   anyIdIsLabelValue,
   boundsFromImagePixelExtents,
+  describeRasterLayoutIssue,
   type EntryNotice,
   type EntryResources,
+  elementIssuesNotice,
   type ImageElement,
   isCancellation,
   type LabelsElement,
@@ -122,6 +124,12 @@ function rasterDtype(loader: unknown): string | undefined {
 }
 
 const NO_NOTICES: readonly EntryNotice[] = [];
+
+/** Issues with how the element is stored are a caveat on healthy data, so a notice, not a failure. */
+function issueNotices(element: ImageElement | LabelsElement): EntryNotice[] {
+  const notice = elementIssuesNotice(element.getIssues(), describeRasterLayoutIssue);
+  return notice ? [notice] : [];
+}
 
 // ---------------------------------------------------------------------------
 
@@ -337,7 +345,7 @@ export class ImagesResolver
       // Channel-default computation reads pixels and can fail on a store that served
       // its metadata fine. That is healthy-data-with-a-caveat, so it surfaces as a
       // NOTICE, not a failed loader — the image still draws with fallback channels.
-      const notices: EntryNotice[] = [];
+      const notices = issueNotices(ctx.element);
       const data = await buildImageChannelDefaults(loader, ctx.element, (reason) => {
         notices.push({
           kind: 'channel-defaults-fallback',
@@ -453,7 +461,10 @@ export class LabelsResolver
       const entry = this.entry(key);
       await this.runLoad(entry, task, ctx, async () => {
         const loader = await createImageLoader(ctx.element, this.options.fetchMultiscales);
-        return { data: buildLabelsChannelDefaults(loader, ctx.element) };
+        return {
+          data: buildLabelsChannelDefaults(loader, ctx.element),
+          notices: issueNotices(ctx.element),
+        };
       });
       return;
     }
