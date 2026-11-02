@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { readZarrMock } = vi.hoisted(() => ({
   readZarrMock: vi.fn(),
@@ -35,7 +35,7 @@ describe('SpatialDataProvider', () => {
       </SpatialDataProvider>
     );
 
-    expect(readZarrMock).toHaveBeenCalledWith(source, undefined);
+    expect(readZarrMock).toHaveBeenCalledWith(source, undefined, expect.any(Function));
   });
 
   it('accepts a string source directly', () => {
@@ -45,7 +45,11 @@ describe('SpatialDataProvider', () => {
       </SpatialDataProvider>
     );
 
-    expect(readZarrMock).toHaveBeenCalledWith('https://example.com/my.zarr', undefined);
+    expect(readZarrMock).toHaveBeenCalledWith(
+      'https://example.com/my.zarr',
+      undefined,
+      expect.any(Function)
+    );
   });
 
   it('does not load when source is omitted', () => {

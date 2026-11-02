@@ -8,7 +8,9 @@ import {
   openExtraConsolidated,
   serializeZarrTree,
 } from 'zarrextra';
+import type { StoreIssue } from '../issues';
 import {
+  type AnyElement,
   type ElementInstanceMap,
   loadElements,
   type SpatialElement,
@@ -34,10 +36,15 @@ function describeStoreSource(url?: StoreLocation): string {
   return url ?? '[store instance]';
 }
 
+export type BadFile = { path: string; error: Error };
+
 export class SpatialData {
   readonly source: StoreReference;
   readonly url?: StoreLocation;
-  readonly onBadFiles?: BadFileHandler;
+  /** Elements that were in the store but failed to load, in the order found. */
+  readonly badFiles: readonly BadFile[] = [];
+  /** Records each bad file in {@link badFiles}, then calls the handler given at construction (or logs). */
+  readonly onBadFiles: BadFileHandler;
   rootStore: ConsolidatedStore;
   // metadata: Record<string, unknown>; //todo: add this, with type (validated by zod)
 
@@ -56,7 +63,13 @@ export class SpatialData {
     this.source = source;
     // Element URLs are derived from this, and a path inside a zip is not fetchable.
     this.url = typeof source === 'string' && !isZipUrl(source) ? source : undefined;
-    this.onBadFiles = onBadFiles;
+    const badFiles: BadFile[] = [];
+    this.badFiles = badFiles;
+    this.onBadFiles = (path, error) => {
+      badFiles.push({ path, error });
+      if (onBadFiles) onBadFiles(path, error);
+      else console.error(error);
+    };
     this.rootStore = rootStore;
     const _selection = selection || ElementNames;
     for (const elementType of _selection) {
@@ -68,6 +81,33 @@ export class SpatialData {
         elementType
       );
     }
+  }
+
+  private *_genElements(): Generator<AnyElement> {
+    for (const name of ElementNames) {
+      const group = this[name];
+      if (group) yield* Object.values(group);
+    }
+  }
+
+  /**
+   * Issues with how any element is stored, judged from consolidated metadata alone.
+   * See {@link ElementIssue}; {@link assessIssues} also covers those that need a read.
+   */
+  getIssues(): StoreIssue[] {
+    return [...this._genElements()].flatMap((element) =>
+      element.getIssues().map((issue) => ({ path: element.path, issue }))
+    );
+  }
+
+  /** {@link getIssues}, plus issues that can only be judged by reading from the store. */
+  async assessIssues(): Promise<StoreIssue[]> {
+    const perElement = await Promise.all(
+      [...this._genElements()].map(async (element) =>
+        (await element.assessIssues()).map((issue) => ({ path: element.path, issue }))
+      )
+    );
+    return perElement.flat();
   }
 
   private *_genSpatialElementValues() {

@@ -42,6 +42,29 @@ describe('SpatialData bad-file handling', () => {
       expect(onBadFiles).toHaveBeenCalledTimes(1);
       expect(onBadFiles).toHaveBeenCalledWith('images/broken_image', expect.any(Error));
       expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(sdata.badFiles).toEqual([{ path: 'images/broken_image', error: expect.any(Error) }]);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('records bad files without a handler, and logs them', () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const rootStore: ConsolidatedStore = {
+        tree: { images: { broken_image: { [ATTRS_KEY]: {} } } },
+        zarritaStore: {
+          async get() {
+            return undefined;
+          },
+          contents() {
+            return [];
+          },
+        },
+      };
+      const sdata = new SpatialData('https://example.com/mock.zarr', rootStore, ['images']);
+      expect(sdata.badFiles.map((b) => b.path)).toEqual(['images/broken_image']);
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
     } finally {
       consoleErrorSpy.mockRestore();
     }

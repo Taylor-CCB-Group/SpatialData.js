@@ -1,0 +1,52 @@
+---
+sidebar_position: 5
+---
+
+# Element Issues
+
+Some stores are slow or awkward however well the client behaves, because of how they are laid out on disk. An element reports these as **issues**: structured facts about the store that a host can show next to the element list or word its own way. The data conforms to the spec; it just has a caveat.
+
+```ts
+const sdata = await readZarr(url);
+
+sdata.getIssues();
+// [{ path: 'images/he', issue: { kind: 'no-pyramid', width: 8192, height: 8192, remedy: {...} } }]
+
+sdata.images?.he.getIssues(); // the same, for one element
+```
+
+## Sync and async
+
+`getIssues()` is synchronous and reports what the consolidated metadata alone can say, so it needs no read. `assessIssues()` returns those plus any issue that has to be read from the store; it is async, and only the element types that have such issues do anything extra. Both exist on each element and on `SpatialData`, where results carry the element's `path`.
+
+## Raster layout
+
+Images and labels are checked for two layouts, from the array metadata of each level (v2 `.zarray` or v3 `zarr.json`, using the inner chunk of a `sharding_indexed` codec):
+
+| Issue | Meaning |
+| --- | --- |
+| `no-pyramid` | A single level larger than `COARSEST_LEVEL_PIXEL_BUDGET` (2048 × 2048 px). Channel stats and the zoomed-out view read all of it. |
+| `coarsest-level-large` | Several levels, but the coarsest is still over that budget. |
+| `oversized-chunks` | One chunk of the finest level decodes to more than `CHUNK_DECODED_BYTES_BUDGET` (16 MiB), so each tile decodes far more than it shows and few chunks fit in the cache. |
+
+`assessRasterLevels(levels, budgets)` takes custom budgets, since what counts as slow depends on the host.
+
+## Remedies
+
+Each issue carries a `remedy`: the operation that would move the data to a preferred form, described as data rather than as advice.
+
+```ts
+type Remedy =
+  | { op: 'build-pyramid'; factor: number; coarsestAtMostPixels: number }
+  | {
+      op: 'rechunk';
+      chunkPixels: { min: number; max: number };
+      decodedBytesAtMost: number; // over all dimensions, from the budget in use
+    };
+```
+
+The set of issues and remedies is expected to grow with the spec and with other element types; treat both unions as open.
+
+## In `SpatialCanvas`
+
+The image and labels resolvers surface an element's issues as an `element-issues` `EntryNotice` on its layer, alongside the other notices (see [Spatial canvas status](../vis/spatial-canvas-status)). A load is never failed because of an issue.

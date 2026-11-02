@@ -28,6 +28,10 @@ interface BaseElement {
   readonly path: string;       // Path of the element's zarr group within the store, e.g. 'images/my_image'
   readonly url?: string;       // Full URL to the group; undefined for zip and folder stores
   readonly attrs: object;      // Validated attributes (type varies by element)
+
+  // Problems with how the element is stored; see Element Issues
+  getIssues(): readonly ElementIssue[];
+  assessIssues(): Promise<readonly ElementIssue[]>;
 }
 ```
 
