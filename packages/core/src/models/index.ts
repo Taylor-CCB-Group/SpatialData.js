@@ -549,7 +549,8 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
    * Returns both element-level and dataset-level transforms.
    */
   getTransformationForLevel(level: number | string, toCoordinateSystem?: string) {
-    const datasets = this.attrs.multiscales[0]?.datasets ?? [];
+    const multiscale = this.attrs.multiscales[0];
+    const datasets = multiscale?.datasets ?? [];
     const dataset =
       typeof level === 'number' ? datasets[level] : datasets.find((d) => d.path === level);
 
@@ -559,7 +560,9 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
 
     return {
       element: this.getTransformation(toCoordinateSystem),
-      dataset: datasetTransforms ? parseTransforms(datasetTransforms) : new Identity(),
+      dataset: datasetTransforms
+        ? parseTransforms(datasetTransforms, multiscale?.axes)
+        : new Identity(),
     };
   }
 }

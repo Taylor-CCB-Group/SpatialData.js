@@ -503,12 +503,18 @@ type TransformEntry = CoordinateTransformation[number];
 /**
  * Parse a single transformation entry from the schema into a BaseTransformation instance.
  */
-export function parseTransformEntry(t: TransformEntry): BaseTransformation {
+export function parseTransformEntry(
+  t: TransformEntry,
+  defaultInputAxes?: Axis[]
+): BaseTransformation {
   if (!('type' in t)) {
     return new Identity();
   }
 
-  const input = (t as { input?: CoordinateSystemRef }).input;
+  // Multiscale dataset transforms omit `input`; their values are ordered by the multiscale axes.
+  const input =
+    (t as { input?: CoordinateSystemRef }).input ??
+    (defaultInputAxes ? { name: 'intrinsic', axes: defaultInputAxes } : undefined);
   const output = (t as { output?: CoordinateSystemRef }).output;
 
   switch (t.type) {
@@ -531,7 +537,9 @@ export function parseTransformEntry(t: TransformEntry): BaseTransformation {
       return new MapAxis(t.mapAxis, input, output);
 
     case 'sequence': {
-      const children = t.transformations.map((sub: TransformEntry) => parseTransformEntry(sub));
+      const children = t.transformations.map((sub: TransformEntry) =>
+        parseTransformEntry(sub, input?.axes)
+      );
       return new Sequence(children, input, output);
     }
 
@@ -547,19 +555,24 @@ export function parseTransformEntry(t: TransformEntry): BaseTransformation {
  * If there are multiple, wraps them in a Sequence.
  *
  * @param transforms - Array of transformation objects from the schema
+ * @param defaultInputAxes - Axes ordering the values of entries that declare no `input`
+ *   (multiscale dataset transforms are ordered by the multiscale axes)
  * @returns A BaseTransformation instance
  */
-export function parseTransforms(transforms: CoordinateTransformation): BaseTransformation {
+export function parseTransforms(
+  transforms: CoordinateTransformation,
+  defaultInputAxes?: Axis[]
+): BaseTransformation {
   if (transforms.length === 0) {
     return new Identity();
   }
 
   if (transforms.length === 1) {
-    return parseTransformEntry(transforms[0]);
+    return parseTransformEntry(transforms[0], defaultInputAxes);
   }
 
   // Multiple transforms → wrap in a Sequence
-  const parsed = transforms.map(parseTransformEntry);
+  const parsed = transforms.map((t) => parseTransformEntry(t, defaultInputAxes));
   // Use the first transform's input and last transform's output
   const input = parsed[0].input;
   const output = parsed[parsed.length - 1].output;
