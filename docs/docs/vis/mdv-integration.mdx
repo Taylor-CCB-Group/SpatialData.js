@@ -58,7 +58,7 @@ Acceptance signal: demos should import the same public API MDV uses (`SpatialCan
   - `@spatialdata/vis`
   - optional: `@spatialdata/avivatorish`
   - lower-level dependency: `zarrextra`
-- [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published prerelease.
+- [ ] Decide whether MDV first consumes via local `npm link` / packed tarballs / workspace path / published release.
 - [ ] Treat this repo as the place where Viv/deck/luma versions are selected. MDV should follow those versions, not constrain them.
 - [x] Move to Viv `0.23.0` / deck.gl `~9.4.0` in this repo (uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts).
 - [ ] MDV on the same Viv/deck/luma stack.
@@ -555,7 +555,7 @@ Open questions:
 
 ## First-pass acceptance criteria
 
-- [ ] MDV can import `@spatialdata/vis` from a packed or prerelease package.
+- [ ] MDV can import `@spatialdata/vis` from a packed or published package.
 - [ ] This repo has at least one headless demo whose state is driven from an external UI rather than from `SpatialCanvas`'s built-in panels.
 - [ ] The same headless API can be described in terms of Vitessce coordination values without requiring MDV chart classes or MobX concepts.
 - [ ] A new MDV chart can render a SpatialData-backed image layer using the same region/view size as the current Viv chart.

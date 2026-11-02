@@ -174,16 +174,16 @@ Practical checks:
 
 ## Release checklist
 
-### 0) npm prerelease setup
+### 0) npm release setup
 
 - [x] `zarrextra` is published outside the `@spatialdata/*` namespace.
-- [x] Changesets is configured with a fixed `@spatialdata/*` prerelease suite:
+- [x] Changesets is configured with a fixed `@spatialdata/*` suite:
   - `@spatialdata/core`
   - `@spatialdata/react`
   - `@spatialdata/layers`
   - `@spatialdata/avivatorish`
   - `@spatialdata/vis`
-- [x] `zarrextra` participates in the initial prerelease but can version independently in future releases.
+- [x] `zarrextra` is released with the suite but can version independently in future releases.
 - [x] Release automation creates the Changesets version PR only; npm publishing is manual for now.
 - [x] No npm publish token is required in GitHub repository secrets.
 - [x] Publish manually from a clean local checkout using `pnpm publish:latest` (default `latest` dist-tag).
@@ -231,10 +231,9 @@ Practical checks:
 - [ ] No in-repo implementation of broad GIS support in this release.
 - [ ] No hard coupling of `core` API to deck-specific loaders for this release.
 
-## Known alpha risks
+## Known risks
 
-Track these as explicit prerelease risks rather than blockers to the first MDV
-smoke package:
+Tracked issues that are not blockers for MDV:
 
 - [#41](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/41) — very large shape/image inputs can exhaust browser memory; add resource estimates and guard rails before broad use.
 - [#33](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/33) — stale elements can appear after switching stores when element names overlap.
@@ -242,7 +241,7 @@ smoke package:
 - [#13](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/13) — image source changes can temporarily hit an invalid source and surface runtime errors.
 - [#24](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/24) — points parquet loading should fail gracefully when server responses are directory listings or otherwise misconfigured.
 
-Post-prerelease unless MDV needs them immediately:
+Later unless MDV needs them immediately:
 
 - [#11](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/11) — multipart parquet sources (`part.N.parquet` directories are read; the issue is open).
 - [#16](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/16) — 3D volumetric state/UI.

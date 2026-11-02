@@ -14,17 +14,16 @@ There are several packages that aim to facilitate the use and development of thi
 
 ## Package map
 
-| Package | Role | React? | npm status |
-|---------|------|--------|------------|
-| `zarrextra` | Lower-level zarr metadata helpers used by core | No | Alpha |
-| `@spatialdata/core` | Load SpatialData Zarr stores; elements, transforms, table association | No | Alpha |
-| `@spatialdata/react` | Thin hooks around core (`useSpatialData`, provider) | Yes | Alpha |
-| `@spatialdata/layers` | deck.gl layers, shape/point renderers, versioned layer props | No | Alpha |
-| `@spatialdata/avivatorish` | Viv loaders, channel stats, image Zustand stores | No | Alpha |
-| `@spatialdata/vis` | `SpatialCanvas` UI + headless `SpatialCanvasViewer` | Yes | Alpha |
+| Package | Role | React? |
+|---------|------|--------|
+| `zarrextra` | Lower-level zarr metadata helpers used by core | No |
+| `@spatialdata/core` | Load SpatialData Zarr stores; elements, transforms, table association | No |
+| `@spatialdata/react` | Thin hooks around core (`useSpatialData`, provider) | Yes |
+| `@spatialdata/layers` | deck.gl layers, shape/point renderers, versioned layer props | No |
+| `@spatialdata/avivatorish` | Viv loaders, channel stats, image Zustand stores | No |
+| `@spatialdata/vis` | `SpatialCanvas` UI + headless `SpatialCanvasViewer` | Yes |
 
-These packages are published to npm. The API is still alpha, so expect
-breaking changes between minor versions:
+These packages are published to npm:
 
 ```bash
 pnpm add @spatialdata/vis
@@ -140,10 +139,8 @@ React components and the SpatialCanvas stack (Viv images + deck vectors).
 1. **Batteries included** — `SpatialCanvas` with coordinate-system picker, layer list, properties panels, tooltips.
 2. **Headless / controlled** — `SpatialCanvasViewer` or `useSpatialCanvasRenderer`: same render path, **your** state for `renderStack.entries` and `viewState`, plus host overlay descriptors resolved by your app at runtime.
 
-The vis package is more experimental than `core`/`layers` because of the
-Viv/deck/luma dependency stack. The near-term goal is an MDV-consumable
-prerelease with headless embedding first; API stability guarantees come after
-that smoke test.
+The vis package carries the most moving parts because of the Viv/deck/luma
+dependency stack.
 
 - [Headless viewer guide](./vis/headless-viewer) — practical guide for controlled / MDV-style embedding
 - [SpatialCanvas status and roadmap](./vis/spatial-canvas-status) — what works, known gaps
