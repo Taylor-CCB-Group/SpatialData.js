@@ -1,0 +1,57 @@
+---
+sidebar_position: 4
+---
+
+# Python package: spatialdata-js-util
+
+`spatialdata-js-util` rewrites SpatialData stores so the browser reads a viewport
+as a few small ranged requests instead of whole elements. It also reads them back
+in ordinary `spatialdata.read_zarr`. The full reference is the
+[package README](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/python/spatialdata-js-util/README.md);
+this page says what each optimisation buys on the JavaScript side.
+
+| Command group | Rewrites | Used by |
+| --- | --- | --- |
+| `images recompress` | Rasters as JPEG 2000 or HTJ2K | The codec worker in `zarrextra` ([codec fixtures](./vis/codec-fixtures)) |
+| `images add-pyramid` | Adds missing multiscale levels | Zoomed-out views, which otherwise fetch full-resolution chunks |
+| `points morton-from-zarr`, `points morton` | Morton-sorts points parquet with sentinel bounds rows and controlled row groups | The `morton-tiled` points loader ([tiled stores](./core/points-and-shapes#tiled-stores)) |
+| `points zarr`, `points add-zarr` | Writes an experimental points-zarr copy beside the standard element | The `points-zarr-tiled` loader |
+| `tables to-csc` | `X` and layers from CSR to CSC | Reading one gene as one contiguous range |
+
+Stores keep their standard layout (`--sibling` keeps each original image and adds a compressed copy beside it), and the
+points-zarr copy lives in a subgroup ([ADR 0006](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0006-experimental-formats-beside-the-standard.md)),
+so tools that don't know about it read the store as before. HTJ2K is the
+exception: its codec identifier is not a standard OME-Zarr codec, so readers need
+SpatialData.js or this package installed.
+
+The layouts it fixes are the ones [element issues](./core/element-issues) report,
+such as an image with no pyramid.
+
+## Install and run
+
+```bash
+pip install spatialdata-js-util            # reading stores
+pip install 'spatialdata-js-util[write]'   # writing (spatialdata, anndata, dask, scipy)
+pip install 'spatialdata-js-util[tui]'     # interactive UI
+```
+
+It needs Python 3.12+ and `spatialdata >= 0.8.0`. Every command is available as
+a terminal UI (`spatialdata-js-util tui`, the easiest start), as a CLI, and as a
+Python API:
+
+```bash
+spatialdata-js-util codecs info
+spatialdata-js-util images recompress in.zarr out.zarr \
+  --codec experimental.openjph_htj2k --preset balanced --pyramid --overwrite
+spatialdata-js-util points morton-from-zarr in.zarr --points-key transcripts
+spatialdata-js-util tables to-csc in.zarr
+```
+
+Run `codecs info` first: HTJ2K goes through either native OpenJPH
+(`imagecodecs`) or the vendored WASM build (needs Node.js), and a backend is
+only used if it decodes a multi-component test codestream correctly. Installing the package
+registers the image codecs with zarr, so
+`sd.read_zarr("store-htj2k.zarr")` decodes them with no extra import.
+
+`points morton-from-zarr` and `tables to-csc` rewrite the store in place unless
+you give an output path; the TUI asks before anything overwrites.
