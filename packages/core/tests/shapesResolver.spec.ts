@@ -5,6 +5,7 @@ import {
   type ResolveContext,
   type ShapesResolveConfig,
   ShapesResolver,
+  SpatialEntryStore,
 } from '../src/engine/index.js';
 import type { ShapesElement } from '../src/models/index.js';
 import type { ShapesRenderData } from '../src/shapes.js';
@@ -350,6 +351,60 @@ describe('a failed load settles', () => {
 
     expect(getAssociatedTable).toHaveBeenCalledTimes(1);
     expect(resolver.snapshot(c).resources.fillColor?.status).toBe('failed');
+  });
+
+  it('serves each layer its own column when two layers share an element', async () => {
+    // Table reads are held open so both layers' fill-colour loads overlap, as they do
+    // when one `reconcile` call carries both layers.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loadObsColumns = vi.fn(async (names: string[]) => {
+      await gate;
+      return names.map((n) => [`${n}-value`]);
+    });
+    const spatialData = {
+      getAssociatedTable: () => [
+        'table',
+        {
+          getTableKeys: () => ({ region: ['cells'], regionKey: 'region', instanceKey: 'id' }),
+          loadObsIndex: async () => ['c1'],
+          loadObsColumns,
+        },
+      ],
+    } as unknown as SpatialData;
+    const resolver = new ShapesResolver({ spatialData });
+    const store = new SpatialEntryStore({ shapes: resolver });
+    const byType = {
+      ...ctx(element()),
+      entryId: 'a',
+      config: { fillColorByColumn: { columnName: 'type', mode: 'auto' } },
+    };
+    const byArea = {
+      ...ctx(element()),
+      entryId: 'b',
+      config: { fillColorByColumn: { columnName: 'area', mode: 'auto' } },
+    };
+
+    const pending = store.reconcile([byType, byArea]);
+    release();
+    await pending;
+    // Settling replans; nothing should be left to load.
+    await store.reconcile([byType, byArea]);
+    await store.reconcile([byType, byArea]);
+
+    // Loaded once per column, not once per pass.
+    const fetchedColumns = loadObsColumns.mock.calls.map(([names]) => names.join());
+    expect(fetchedColumns.filter((c) => c.includes('type'))).toHaveLength(1);
+    expect(fetchedColumns.filter((c) => c.includes('area'))).toHaveLength(1);
+
+    const typeRows = resolver.getFillColorRows('cells', 'type');
+    const areaRows = resolver.getFillColorRows('cells', 'area');
+    expect(typeRows?.extraColumns?.[0]).toEqual(['type-value']);
+    expect(areaRows?.extraColumns?.[0]).toEqual(['area-value']);
+    expect(Resolution.lastGood(resolver.snapshot(byType).resources.fillColor)).toBe(typeRows);
+    expect(Resolution.lastGood(resolver.snapshot(byArea).resources.fillColor)).toBe(areaRows);
   });
 
   it('retry() re-requests a failed tooltip once, and leaves good geometry alone', async () => {

@@ -7,6 +7,7 @@ const MultiCanvasDemo = lazy(() => import('./MultiCanvasDemo'));
 const PickDiagnosticDemo = lazy(() => import('./PickDiagnosticDemo'));
 const GroupBlendDemo = lazy(() => import('./GroupBlendDemo'));
 const GroupGridDemo = lazy(() => import('./GroupGridDemo'));
+const SharedElementDemo = lazy(() => import('./SharedElementDemo'));
 
 type DemoRoute =
   | 'sketch'
@@ -15,7 +16,8 @@ type DemoRoute =
   | 'multicanvas'
   | 'pickdiag'
   | 'groups'
-  | 'groupgrid';
+  | 'groupgrid'
+  | 'sharedelement';
 
 function getDemoRoute(): DemoRoute {
   if (typeof window === 'undefined') {
@@ -28,6 +30,7 @@ function getDemoRoute(): DemoRoute {
   if (pathname.endsWith('/pickdiag')) return 'pickdiag';
   if (pathname.endsWith('/groups')) return 'groups';
   if (pathname.endsWith('/groupgrid')) return 'groupgrid';
+  if (pathname.endsWith('/sharedelement')) return 'sharedelement';
   return 'sketch';
 }
 
@@ -62,6 +65,9 @@ function DemoNav({ route }: { route: DemoRoute }) {
       <a href="/groupgrid" style={linkStyle(route === 'groupgrid')}>
         Group grid
       </a>
+      <a href="/sharedelement" style={linkStyle(route === 'sharedelement')}>
+        Shared element
+      </a>
     </nav>
   );
 }
@@ -81,6 +87,10 @@ function App() {
         ) : route === 'pickdiag' ? (
           <Suspense fallback={null}>
             <PickDiagnosticDemo />
+          </Suspense>
+        ) : route === 'sharedelement' ? (
+          <Suspense fallback={null}>
+            <SharedElementDemo />
           </Suspense>
         ) : route === 'groupgrid' ? (
           <Suspense fallback={null}>
