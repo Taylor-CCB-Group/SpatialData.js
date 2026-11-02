@@ -91,7 +91,7 @@ function shapesElement(key: string): AvailableElement {
   return { key, type: 'shapes', element, transform: new Matrix4() };
 }
 
-const pointsConfig = (id: string, elementKey: string): LayerConfig => ({
+const pointsConfig = (id: string, elementKey: string): LayerConfig<'points'> => ({
   id,
   type: 'points',
   elementKey,
@@ -99,7 +99,7 @@ const pointsConfig = (id: string, elementKey: string): LayerConfig => ({
   opacity: 1,
 });
 
-const shapesConfig = (id: string, elementKey: string): LayerConfig => ({
+const shapesConfig = (id: string, elementKey: string): LayerConfig<'shapes'> => ({
   id,
   type: 'shapes',
   elementKey,
@@ -669,7 +669,7 @@ describe('useLayerData — a caller that mutates its layer configs in place', ()
     const elements: ElementsByType = { ...EMPTY_ELEMENTS, shapes: [shapesElement('cells')] };
     // ONE config object, ONE record — both keep their identity for the whole test,
     // exactly as they do under the render-stack adapter.
-    const config: LayerConfig = {
+    const config: LayerConfig<'shapes'> = {
       ...shapesConfig('layer-1', 'cells'),
       fillColorByColumn: { columnName: 'colA', mode: 'categorical' },
     };
@@ -788,11 +788,15 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
       ...EMPTY_ELEMENTS,
       points: [tileablePointsElement('transcripts')],
     };
-    const tiled = { ...pointsConfig('layer-p', 'transcripts'), pointsTiling: 'auto' as const };
+    const tiled: LayerConfig<'points'> = {
+      ...pointsConfig('layer-p', 'transcripts'),
+      pointsTiling: 'auto',
+    };
+    const initialLayers: Record<string, LayerConfig> = { 'layer-p': tiled };
     const { result, rerender } = renderHook(
       ({ layers }: { layers: Record<string, LayerConfig> }) =>
         useLayerData(layers, Object.keys(layers), elements, null),
-      { initialProps: { layers: { 'layer-p': tiled } } }
+      { initialProps: { layers: initialLayers } }
     );
 
     await waitFor(() => {
@@ -813,7 +817,7 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
       expect(result.current.isLoading).toBe(true);
     });
 
-    rerender({ layers: { 'layer-p': { ...tiled, pointsTiling: 'off' as const } } });
+    rerender({ layers: { 'layer-p': { ...tiled, pointsTiling: 'off' } } });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -825,11 +829,15 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
       ...EMPTY_ELEMENTS,
       points: [tileablePointsElement('transcripts')],
     };
-    const tiled = { ...pointsConfig('layer-p', 'transcripts'), pointsTiling: 'auto' as const };
+    const tiled: LayerConfig<'points'> = {
+      ...pointsConfig('layer-p', 'transcripts'),
+      pointsTiling: 'auto',
+    };
+    const initialLayers: Record<string, LayerConfig> = { 'layer-p': tiled };
     const { result, rerender } = renderHook(
       ({ layers }: { layers: Record<string, LayerConfig> }) =>
         useLayerData(layers, Object.keys(layers), elements, null),
-      { initialProps: { layers: { 'layer-p': tiled } } }
+      { initialProps: { layers: initialLayers } }
     );
 
     await waitFor(() => {

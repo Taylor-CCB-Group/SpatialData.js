@@ -25,12 +25,15 @@ import {
  * it shows up as "my gene has no points" rather than as plausible-looking data.
  */
 
-function scan(columns: Record<string, unknown>, over: Record<string, unknown> = {}) {
+/** What `tableFromArrays` accepts, so fixtures need no cast. */
+type ColumnInput = Parameters<typeof tableFromArrays>[0];
+
+function scan(columns: ColumnInput, over: Record<string, unknown> = {}) {
   const xs = new Float32PointBuffer();
   const ys = new Float32PointBuffer();
   const zs = new Float32PointBuffer();
   scanMortonTableInBounds({
-    table: tableFromArrays(columns as never),
+    table: tableFromArrays(columns),
     rowGroupIndex: 1, // past the sentinel window, so no rows are skipped for it
     bounds: { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 },
     axisNames: ['x', 'y'],
@@ -100,7 +103,7 @@ describe('morton scan — passthrough columns', () => {
    * which follows it, would stop testing `precision`. The boundary has its own test.
    */
   function fixtureTable() {
-    return tableFromArrays(table as never).assign(
+    return tableFromArrays(table).assign(
       new Table({ cell_id: vectorFromArray(['a', 'b', 'c', 'd'], new Utf8()) })
     );
   }
@@ -172,13 +175,13 @@ describe('morton scan — passthrough columns', () => {
       y: Float32Array.from([0, 1]),
       morton: Int32Array.from([10, 11]),
       qv: Float32Array.from([10, 11]),
-    } as never);
+    });
     const groupTwo = tableFromArrays({
       x: Float32Array.from([2, 3]),
       y: Float32Array.from([2, 3]),
       morton: Int32Array.from([12, 13]),
       qv: Float32Array.from([22, 33]),
-    } as never);
+    });
 
     const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
     const resolved = resolvePassthroughColumns(groupOne, ['qv'], context);
@@ -222,7 +225,7 @@ describe('morton scan — passthrough columns', () => {
       nucleus_distance: Float32Array.from([5, 6]),
       feature_name: ['ARFGEF3', 'MET'],
       qv: Float32Array.from([40, 41]),
-    } as never);
+    });
     // `tableFromArrays` infers a dictionary for a string array, which is exactly the
     // pandas-categorical shape the real file has; assert it rather than assume it.
     expect(DataType.isDictionary(arrow.schema.fields[4]?.type as DataType)).toBe(true);
@@ -246,7 +249,7 @@ describe('morton scan — passthrough columns', () => {
       y: Float32Array.from([0, 1]),
       morton: Int32Array.from([10, 11]),
       overlaps_nucleus: [true, false],
-    } as never);
+    });
     const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
     const resolved = resolvePassthroughColumns(arrow, ['overlaps_nucleus'], context);
     const xs = new Float32PointBuffer();
@@ -284,7 +287,7 @@ describe('morton scan — passthrough columns', () => {
       x: Float32Array.from([0, 1, 2]),
       y: Float32Array.from([0, 1, 2]),
       morton: Int32Array.from([10, 11, 12]),
-    } as never).assign(new Table({ qv: half }));
+    }).assign(new Table({ qv: half }));
     expect(withHalf.getChild('qv')?.nullCount).toBe(0);
     expect(withHalf.getChild('qv')?.type).toBeInstanceOf(Float16);
 
@@ -315,7 +318,7 @@ describe('morton scan — passthrough columns', () => {
       y: Float32Array.from([0]),
       morton: Int32Array.from([10]),
       codeword_index: Int32Array.from([exact]),
-    } as never);
+    });
     const context = { axisNames: ['x', 'y'], mortonCodeColumnName: 'morton' };
     const resolved = resolvePassthroughColumns(arrow, ['codeword_index'], context);
     const xs = new Float32PointBuffer();

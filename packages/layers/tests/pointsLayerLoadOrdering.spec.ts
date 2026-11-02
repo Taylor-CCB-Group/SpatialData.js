@@ -57,10 +57,11 @@ function deferredLoader(batch: ColumnarNdarrayPointsBatch): {
  * the await/setState ordering.
  */
 function harness(initialLoader: PointsLoader) {
-  const layer = Object.create(PointsLayer.prototype) as PointsLayer & {
+  // The reads are private on PointsLayer, so the harness types only the surface it drives.
+  const layer: {
     ensurePreloadedBatch(): Promise<void>;
     refreshPreloadedBatch(): Promise<void>;
-  };
+  } = Object.create(PointsLayer.prototype);
   let state: Record<string, unknown> = { filterGeneration: 0 };
   let props: Record<string, unknown> = {
     resource: { loader: initialLoader },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyRenderCapToColumnar } from '../src/pointsLimits.js';
+import { applyRenderCapToColumnar, type PointsColumnarLike } from '../src/pointsLimits.js';
 
 describe('applyRenderCapToColumnar', () => {
   it('returns the batch untouched when under the cap', () => {
@@ -24,7 +24,7 @@ describe('applyRenderCapToColumnar', () => {
   });
 
   it('leaves codes absent when the batch has none', () => {
-    const batch = {
+    const batch: PointsColumnarLike = {
       shape: [2, 4],
       data: [new Float32Array([0, 1, 2, 3]), new Float32Array([0, 10, 20, 30])],
     };

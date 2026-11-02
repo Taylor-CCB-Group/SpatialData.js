@@ -30,6 +30,7 @@
     "validate:datasets:js": "node scripts/validate-datasets-js.js",
     "lint": "biome check .",
     "lint:biome": "biome ci packages/*/src",
+    "typecheck": "pnpm -r --filter='!docs' run typecheck",
     "lint:release-toolchain": "node scripts/check-release-toolchain.mjs",
     "lint:react": "eslint \"packages/react/src/**/*.{ts,tsx}\" \"packages/vis/src/**/*.{ts,tsx}\"",
     "format": "biome format --write .",

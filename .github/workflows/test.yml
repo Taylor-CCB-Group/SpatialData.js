@@ -80,6 +80,40 @@ jobs:
       - name: Biome lint/format (packages/*/src)
         run: pnpm lint:biome
 
+  typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The package build only typechecks `src` (declaration emit), and vitest strips
+    # types without resolving them, so a spec importing a renamed or removed type
+    # still passes. This gate typechecks src and tests together.
+    steps:
+      - name: Check out repository (typecheck)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.14.1'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Cross-package types resolve through each package's built dist/*.d.ts.
+      - name: Build packages
+        run: pnpm build
+
+      - name: Typecheck packages (src and tests)
+        run: pnpm typecheck
+
   docs:
     runs-on: ubuntu-latest
     permissions:

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import SpatialDataPointsSource from '../src/models/VPointsSource.js';
+import { ExposedPointsSource } from './exposedPointsSource.js';
 import type { PointsLoadProgress } from '../src/pointsLoadOptions.js';
 import * as parquetWorkerClient from '../src/workers/parquetWorkerClient.js';
 import type { ParquetWorkerStreamChunk } from '../src/workers/parquetWorkerProtocol.js';
@@ -32,8 +32,8 @@ function chunk(rows: number, feature: { code: number; name: string }): ParquetWo
 /** A source whose element metadata and part URLs are stubbed, so only the read
  * strategy under test is exercised. */
 function pointsSource() {
-  const source = new SpatialDataPointsSource({
-    store: { get: async () => null },
+  const source = new ExposedPointsSource({
+    store: { get: async () => undefined },
     fileType: '.zarr',
   });
   vi.spyOn(source, 'loadSpatialDataElementAttrs').mockResolvedValue({

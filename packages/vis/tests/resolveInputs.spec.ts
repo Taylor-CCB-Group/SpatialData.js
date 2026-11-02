@@ -95,7 +95,7 @@ describe('describeResolveInputs — what does not', () => {
       fillColorByColumn: {
         columnName: 'colA',
         mode: 'categorical',
-        categoricalPalette: { A: [1, 2, 3] },
+        categoricalPalette: { byValue: { A: [1, 2, 3] } },
       },
     });
 

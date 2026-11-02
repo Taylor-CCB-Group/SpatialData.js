@@ -1,12 +1,12 @@
 import { tableFromArrays } from 'apache-arrow';
 import { describe, expect, it, vi } from 'vitest';
-import SpatialDataPointsSource from '../src/models/VPointsSource.js';
+import { ExposedPointsSource } from './exposedPointsSource.js';
 import * as parquetWorkerClient from '../src/workers/parquetWorkerClient.js';
 
 describe('points preload read strategy', () => {
   it('does not prefetch row-group bytes for geometry preload', async () => {
-    const source = new SpatialDataPointsSource({
-      store: { get: async () => null },
+    const source = new ExposedPointsSource({
+      store: { get: async () => undefined },
       fileType: '.zarr',
     });
 
@@ -38,8 +38,8 @@ describe('points preload read strategy', () => {
   });
 
   it('uses full-file capped decode for preload fallback, not row groups', async () => {
-    const source = new SpatialDataPointsSource({
-      store: { get: async () => null },
+    const source = new ExposedPointsSource({
+      store: { get: async () => undefined },
       fileType: '.zarr',
     });
 

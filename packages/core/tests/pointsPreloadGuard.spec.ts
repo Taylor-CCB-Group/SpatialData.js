@@ -1,12 +1,12 @@
 import { tableFromArrays } from 'apache-arrow';
 import { describe, expect, it, vi } from 'vitest';
-import SpatialDataPointsSource from '../src/models/VPointsSource.js';
+import { ExposedPointsSource } from './exposedPointsSource.js';
 import { POINTS_PRELOAD_MAX_ROWS, preloadedColumnarPointCount } from '../src/pointsLimits.js';
 
 describe('points preload cap', () => {
   it('loads a capped subset when parquet row count exceeds the cap', async () => {
-    const source = new SpatialDataPointsSource({
-      store: { get: async () => null },
+    const source = new ExposedPointsSource({
+      store: { get: async () => undefined },
       fileType: '.zarr',
     });
 

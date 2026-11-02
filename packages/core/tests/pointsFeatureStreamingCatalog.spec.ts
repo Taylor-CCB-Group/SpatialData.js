@@ -1,4 +1,4 @@
-import { Dictionary, Int32, tableFromArrays, Utf8, vectorFromArray } from 'apache-arrow';
+import { Dictionary, Int32, Table, Utf8, vectorFromArray } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import { supportsParquetStreaming } from '../src/parquetWasmLoader.js';
 import {
@@ -10,7 +10,7 @@ const FEATURE_KEY = 'feature_name';
 
 /** A dictionary-typed feature column — the case row-group reads cannot decode. */
 function dictionaryFeatureTable(names: string[]) {
-  return tableFromArrays({
+  return new Table({
     [FEATURE_KEY]: vectorFromArray(names, new Dictionary(new Utf8(), new Int32())),
   });
 }

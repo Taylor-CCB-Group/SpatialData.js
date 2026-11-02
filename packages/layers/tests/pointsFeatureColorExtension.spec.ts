@@ -13,7 +13,12 @@ describe('PointsFeatureColorExtension', () => {
   const ext = new PointsFeatureColorExtension();
   // getShaders reads `this` only for super.getShaders(); a bare object with a
   // no-op getShaders stands in for the host layer.
-  const shaders = ext.getShaders.call({ getShaders: () => ({}) } as never, ext);
+  const hostShaders = ext.getShaders.call({ getShaders: () => ({}) } as never, ext);
+  // The WebGPU branch returns no `inject`; these specs exercise the GLSL one.
+  if (!('inject' in hostShaders)) {
+    throw new Error('expected the GLSL shader injection');
+  }
+  const shaders = hostShaders;
 
   it('declares getFeatureCode as an accessor in defaultProps', () => {
     // Without this, deck treats the attribute as constant and never reads the

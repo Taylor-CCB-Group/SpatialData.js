@@ -244,7 +244,7 @@ function createStore(files: Record<string, Uint8Array>) {
     store: {
       async get(path: string) {
         getCalls += 1;
-        return files[path.slice(1)] ?? null;
+        return files[path.slice(1)];
       },
       async getRange(
         path: string,
@@ -253,7 +253,7 @@ function createStore(files: Record<string, Uint8Array>) {
         getRangeCalls += 1;
         const bytes = files[path.slice(1)];
         if (!bytes) {
-          return null;
+          return undefined;
         }
         if (range.suffixLength !== undefined) {
           const start = Math.max(0, bytes.length - range.suffixLength);
@@ -322,8 +322,8 @@ describe('Morton points tiling (canonical parquet)', () => {
     const full = await source.loadPoints('points/transcripts');
     const xs = full.data[0];
     const ys = full.data[1];
-    const minX = Math.min(...xs);
-    const minY = Math.min(...ys);
+    const minX = Math.min(...Array.from(xs));
+    const minY = Math.min(...Array.from(ys));
     // A rectangle deliberately spanning several row groups' Morton ranges.
     const bounds = { minX: minX + 10, maxX: minX + 80, minY: minY + 10, maxY: minY + 80 };
 
@@ -343,22 +343,22 @@ describe('Morton points tiling (canonical parquet)', () => {
     const result = await source.loadPointsInBounds('points/transcripts', { bounds });
 
     expect(result.loadMode).toBe('row-groups');
-    expect(result.shape[1]).toBe(expected);
+    expect(result.shape?.[1]).toBe(expected);
   });
 
   // An empty tile is an answer, not a failure: falling back to the full-file load
   // made each empty tile at a tissue edge cost ~15x a full one.
   it('answers an empty tile from row groups, without falling back to the whole file', async () => {
     const full = await source.loadPoints('points/transcripts');
-    const minX = Math.min(...full.data[0]);
-    const minY = Math.min(...full.data[1]);
+    const minX = Math.min(...Array.from(full.data[0]));
+    const minY = Math.min(...Array.from(full.data[1]));
     // The fixture sits on an integer grid, so this box touches row groups but holds no point.
     const bounds = { minX: minX + 10.2, maxX: minX + 10.8, minY: minY + 10.2, maxY: minY + 10.8 };
 
     const result = await source.loadPointsInBounds('points/transcripts', { bounds });
 
     expect(result.loadMode).toBe('row-groups');
-    expect(result.shape[1]).toBe(0);
+    expect(result.shape?.[1]).toBe(0);
   });
 
   /**
@@ -377,12 +377,12 @@ describe('Morton points tiling (canonical parquet)', () => {
     const full = await source.loadPoints('points/transcripts');
     const xs = full.data[0];
     const ys = full.data[1];
-    const minX = Math.min(...xs);
-    const minY = Math.min(...ys);
+    const minX = Math.min(...Array.from(xs));
+    const minY = Math.min(...Array.from(ys));
     const bounds = { minX: minX + 10, maxX: minX + 80, minY: minY + 10, maxY: minY + 80 };
 
     const result = await source.loadPointsInBounds('points/transcripts', { bounds });
-    const pointCount = result.shape[1] ?? 0;
+    const pointCount = result.shape?.[1] ?? 0;
     expect(pointCount).toBeGreaterThan(0);
 
     expect(result.featureCodes).toBeDefined();
@@ -404,15 +404,15 @@ describe('Morton points tiling (canonical parquet)', () => {
     expect(wanted).toBeDefined();
 
     const full = await source.loadPoints('points/transcripts');
-    const minX = Math.min(...full.data[0]);
-    const minY = Math.min(...full.data[1]);
+    const minX = Math.min(...Array.from(full.data[0]));
+    const minY = Math.min(...Array.from(full.data[1]));
     const bounds = { minX: minX + 10, maxX: minX + 80, minY: minY + 10, maxY: minY + 80 };
 
     const result = await source.loadPointsInBounds('points/transcripts', {
       bounds,
       featureCodes: [wanted as number],
     });
-    const pointCount = result.shape[1] ?? 0;
+    const pointCount = result.shape?.[1] ?? 0;
 
     expect(result.featureCodes?.length).toBe(pointCount);
     for (let i = 0; i < pointCount; i += 1) {
@@ -504,10 +504,10 @@ describe('Morton points tiling (canonical parquet)', () => {
     const full = await source.loadPoints('points/transcripts');
     const xs = full.data[0];
     const ys = full.data[1];
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
+    const minX = Math.min(...Array.from(xs));
+    const maxX = Math.max(...Array.from(xs));
+    const minY = Math.min(...Array.from(ys));
+    const maxY = Math.max(...Array.from(ys));
     const bounds = {
       minX: minX + 5,
       maxX: minX + 15,
@@ -518,8 +518,8 @@ describe('Morton points tiling (canonical parquet)', () => {
     mockStore.resetCalls();
     const loadTable = vi.spyOn(source, 'loadParquetTable');
     const result = await source.loadPointsInBounds('points/transcripts', { bounds });
-    expect(result.shape[1]).toBeGreaterThan(0);
-    expect(result.shape[1]).toBeLessThan(full.shape[1]);
+    expect(result.shape?.[1]).toBeGreaterThan(0);
+    expect(result.shape?.[1]).toBeLessThan(full.shape[1]);
     expect(['row-groups', 'full-filter']).toContain(result.loadMode);
     if (result.loadMode === 'full-filter') {
       expect(loadTable).toHaveBeenCalled();
@@ -532,10 +532,10 @@ describe('Morton points tiling (canonical parquet)', () => {
     const xs = full.data[0];
     const ys = full.data[1];
     const bounds = {
-      minX: Math.min(...xs),
-      maxX: Math.max(...xs),
-      minY: Math.min(...ys),
-      maxY: Math.max(...ys),
+      minX: Math.min(...Array.from(xs)),
+      maxX: Math.max(...Array.from(xs)),
+      minY: Math.min(...Array.from(ys)),
+      maxY: Math.max(...Array.from(ys)),
     };
 
     const unfiltered = await source.loadPointsInBounds('points/transcripts', { bounds });
@@ -543,8 +543,8 @@ describe('Morton points tiling (canonical parquet)', () => {
       bounds,
       featureCodes: [0],
     });
-    expect(filtered.shape[1]).toBeGreaterThan(0);
-    expect(filtered.shape[1]).toBeLessThan(unfiltered.shape[1] ?? Number.MAX_SAFE_INTEGER);
+    expect(filtered.shape?.[1]).toBeGreaterThan(0);
+    expect(filtered.shape?.[1]).toBeLessThan(unfiltered.shape?.[1] ?? Number.MAX_SAFE_INTEGER);
   });
 
   it('uses row-group reads when parquet-wasm exposes row-group APIs', async () => {

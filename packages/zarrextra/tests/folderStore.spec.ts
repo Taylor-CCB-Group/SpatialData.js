@@ -5,7 +5,7 @@ import { readValues, VALUES, v2Files, v3Files } from './zarrFixtures';
 /** Files as `<input webkitdirectory>` reports them, relative to the picked folder's parent. */
 function picked(folder: string, files: Record<string, Uint8Array>): PickedFile[] {
   return Object.entries(files).map(([path, bytes]) =>
-    Object.assign(new Blob([bytes]), {
+    Object.assign(new Blob([new Uint8Array(bytes)]), {
       name: path.split('/').at(-1) ?? path,
       webkitRelativePath: `${folder}/${path}`,
     })

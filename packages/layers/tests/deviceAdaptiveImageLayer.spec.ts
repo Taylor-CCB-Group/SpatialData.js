@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { renderRasterImageTile } from '../src/webgpu/deviceAdaptiveImageLayer';
 import { RasterTileLayer } from '../src/webgpu/RasterTileLayer';
 
+/**
+ * `renderRasterImageTile` returns a plain deck `Layer`, whose declared props lack
+ * RasterTileLayer's own; read them through this view.
+ */
+interface RasterTileProps {
+  channelData: { data: Uint8Array[] };
+  contrastLimits: number[][];
+}
+
+function rasterProps(layer: ReturnType<typeof renderRasterImageTile>): RasterTileProps | undefined {
+  // RasterTileLayer is an untyped (`any`-based) deck subclass, so the compiler cannot see its props.
+  return layer ? (layer.props as unknown as RasterTileProps) : undefined;
+}
+
 function tileProps(data: unknown) {
   return {
     id: 'image',
@@ -18,12 +32,12 @@ describe('renderRasterImageTile', () => {
     const layer = renderRasterImageTile(tileProps({ data: interleaved, width: 2, height: 1 }));
 
     expect(layer).toBeInstanceOf(RasterTileLayer);
-    expect(layer?.props.channelData.data.map((plane: Uint8Array) => [...plane])).toEqual([
+    expect(rasterProps(layer)?.channelData.data.map((plane) => [...plane])).toEqual([
       [255, 0],
       [0, 128],
       [0, 128],
     ]);
-    expect(layer?.props.contrastLimits).toEqual([
+    expect(rasterProps(layer)?.contrastLimits).toEqual([
       [0, 255],
       [0, 255],
       [0, 255],
@@ -34,11 +48,11 @@ describe('renderRasterImageTile', () => {
     const data = { data: new Uint8Array(2 * 2 * 3), width: 2, height: 2 };
     const first = renderRasterImageTile(tileProps(data));
     const second = renderRasterImageTile(tileProps(data));
-    expect(second?.props.channelData).toBe(first?.props.channelData);
+    expect(rasterProps(second)?.channelData).toBe(rasterProps(first)?.channelData);
   });
 
   it('passes channel planes through unchanged', () => {
     const data = { data: [new Uint16Array(4), new Uint16Array(4)], width: 2, height: 2 };
-    expect(renderRasterImageTile(tileProps(data))?.props.channelData).toBe(data);
+    expect(rasterProps(renderRasterImageTile(tileProps(data)))?.channelData).toBe(data);
   });
 });

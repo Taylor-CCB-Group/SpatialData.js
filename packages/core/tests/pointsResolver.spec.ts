@@ -894,7 +894,10 @@ describe('D5 step 1 — Morton tiling metadata probe', () => {
     await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
 
     expect(resolver.isTiled('transcripts')).toBe(true);
-    expect(resolver.getTilingMetadata('transcripts')?.totalRowGroups).toBe(96);
+    expect(resolver.getTilingMetadata('transcripts')).toMatchObject({
+      kind: 'morton-points',
+      totalRowGroups: 96,
+    });
     // The preload, its row codes and the matching scan are all resident-batch
     // notions, and a tiled element has none of them. The catalog IS planned: it is
     // the only way a name-based selection becomes the codes the tile scan filters on

@@ -24,9 +24,12 @@ vi.mock('../src/workers/index.js', () => ({
 
 const { default: SpatialDataShapesSource } = await import('../src/models/VShapesSource.js');
 
-function toBytes(written: string | Uint8Array): Uint8Array {
+function toBytes(written: string | ArrayBuffer | Uint8Array): Uint8Array {
   if (written instanceof Uint8Array) {
     return written;
+  }
+  if (typeof written !== 'string') {
+    return new Uint8Array(written);
   }
   const bytes = new Uint8Array(written.length / 2);
   for (let i = 0; i < bytes.length; i += 1) {

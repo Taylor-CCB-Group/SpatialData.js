@@ -67,7 +67,7 @@ function createStore(root: string, { ignoresRange }: { ignoresRange: boolean }) 
       return false;
     }
   };
-  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | undefined> => {
     reads.push(relativePath);
     if (await isDirectory(relativePath)) {
       // A static server answers a directory with an HTML listing, 200. Any bytes
@@ -79,7 +79,7 @@ function createStore(root: string, { ignoresRange }: { ignoresRange: boolean }) 
     try {
       return await readFile(join(root, relativePath));
     } catch {
-      return null; // missing file → 404 → null (this is how part enumeration stops)
+      return undefined; // missing file → 404 → undefined (this is how part enumeration stops)
     }
   };
 
@@ -97,7 +97,7 @@ function createStore(root: string, { ignoresRange }: { ignoresRange: boolean }) 
     ) {
       const bytes = await readStoreBytes(strip(path));
       if (!bytes) {
-        return null;
+        return undefined;
       }
       if (ignoresRange) {
         return bytes; // the whole body, whatever was asked for

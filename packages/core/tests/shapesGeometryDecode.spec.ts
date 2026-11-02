@@ -17,9 +17,12 @@ import {
  * ol's own WKB writer so it exercises the real parse, not a hand-rolled fixture.
  */
 
-function toBytes(written: string | Uint8Array): Uint8Array {
+function toBytes(written: string | ArrayBuffer | Uint8Array): Uint8Array {
   if (written instanceof Uint8Array) {
     return written;
+  }
+  if (typeof written !== 'string') {
+    return new Uint8Array(written);
   }
   // ol writes WKB as a hex string; parquet delivers bytes, so decode to match.
   const bytes = new Uint8Array(written.length / 2);

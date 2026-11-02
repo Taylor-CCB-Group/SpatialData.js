@@ -7,6 +7,7 @@ import { FileSystemStore } from '@zarrita/storage';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import SpatialDataTableSource from '../src/models/VTableSource.js';
 import { readZarr } from '../src/store/index.js';
+import type { TableColumnData } from '../src/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
@@ -87,16 +88,16 @@ PY`,
 }
 
 function createFilesystemStore(root: string) {
-  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | undefined> => {
     const fullPath = join(root, relativePath);
     try {
       const info = await stat(fullPath);
       if (info.isDirectory()) {
-        return null;
+        return undefined;
       }
       return await readFile(fullPath);
     } catch {
-      return null;
+      return undefined;
     }
   };
 
@@ -112,7 +113,7 @@ function createFilesystemStore(root: string) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
       const bytes = await readStoreBytes(relativePath);
       if (!bytes) {
-        return null;
+        return undefined;
       }
       if (range.suffixLength != null) {
         return bytes.subarray(bytes.length - range.suffixLength);
@@ -122,6 +123,22 @@ function createFilesystemStore(root: string) {
       return bytes.subarray(offset, offset + length);
     },
   };
+}
+
+/**
+ * `loadObsColumns` is typed for nested path lists too; these specs pass flat paths,
+ * which yield one flat column each. A column holds primitives, so an object entry
+ * would mean a nested result.
+ */
+function flatColumn(
+  column: TableColumnData | TableColumnData[] | undefined
+): TableColumnData | undefined {
+  if (column !== undefined && !isFlat(column)) throw new Error('expected a flat column');
+  return column;
+}
+
+function isFlat(column: TableColumnData | TableColumnData[]): column is TableColumnData {
+  return !(Array.isArray(column) && column.some((v) => typeof v === 'object' && v !== null));
 }
 
 describe('nullable-encoded AnnData columns', () => {
@@ -150,7 +167,7 @@ describe('nullable-encoded AnnData columns', () => {
 
   it('reads a nullable-string-array obs index', async () => {
     const [ids] = await source.loadObsColumns(['tables/table/obs/_index']);
-    expect(Array.from(ids ?? [])).toEqual([
+    expect(Array.from(flatColumn(ids) ?? [])).toEqual([
       'cell0',
       'cell1',
       'cell2',
@@ -173,13 +190,13 @@ describe('nullable-encoded AnnData columns', () => {
 
   it('decodes a zarr v3 categorical to labels rather than raw codes', async () => {
     const [family] = await source.loadVarColumns(['tables/table/var/family']);
-    expect(Array.from(family ?? [])).toEqual(['kinase', 'kinase', null, 'gpcr', 'gpcr', 'kinase']);
+    expect(Array.from(flatColumn(family) ?? [])).toEqual(['kinase', 'kinase', null, 'gpcr', 'gpcr', 'kinase']);
   });
 
   it('reads a nullable integer column, preserving the missing entry as null', async () => {
     const [measured] = await source.loadVarColumns(['tables/table/var/measured']);
     // Masked entries must stay distinguishable from a real zero.
-    expect(Array.from(measured ?? [], (v) => (v === null ? null : Number(v)))).toEqual([
+    expect(Array.from(flatColumn(measured) ?? [], (v) => (v === null ? null : Number(v)))).toEqual([
       1,
       2,
       null,

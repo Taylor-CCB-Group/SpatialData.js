@@ -20,8 +20,11 @@ const throwingReadParquet = (() => {
   intoIPCStream(): Uint8Array;
 };
 
-function singleRowGroup(columns: Record<string, unknown>) {
-  const table = tableFromArrays(columns as never);
+/** What `tableFromArrays` accepts, so fixtures need no cast. */
+type ColumnInput = Parameters<typeof tableFromArrays>[0];
+
+function singleRowGroup(columns: ColumnInput) {
+  const table = tableFromArrays(columns);
   const read = () => ({ intoIPCStream: () => tableToIPC(table) });
   return {
     read,
@@ -297,11 +300,11 @@ describe('scanTableByFeatureCodes over a multi-chunk table', () => {
   });
 
   it('reads the same rows from a chunked table as from a contiguous one', () => {
-    const whole = tableFromArrays(rows(0, 40) as never);
+    const whole = tableFromArrays(rows(0, 40));
     // One record batch per source table — the shape a multi-row-group or
     // multi-part read produces, and what makes the columns multi-chunk.
-    const chunked = tableFromArrays(rows(0, 20) as never).concat(
-      tableFromArrays(rows(20, 20) as never)
+    const chunked = tableFromArrays(rows(0, 20)).concat(
+      tableFromArrays(rows(20, 20))
     );
     expect(chunked.numRows).toBe(40);
     // Guard the premise: if this were single-chunk the test would prove nothing.

@@ -1,4 +1,8 @@
-import type { ShapesRenderData } from '@spatialdata/core';
+import type {
+  AssociatedTableFeatureRows,
+  ShapesRenderData,
+  TableColumnData,
+} from '@spatialdata/core';
 import { describe, expect, it } from 'vitest';
 import {
   type ShapeFillColorEntry,
@@ -105,7 +109,7 @@ describe('ShapesRendererAdapter.getFeatureStateRuntime', () => {
 });
 
 describe('ShapesRendererAdapter.getFillColorEntry', () => {
-  const rows = (column: unknown[]) => ({
+  const rows = (column: TableColumnData): AssociatedTableFeatureRows => ({
     rowIds: ['0', '1'],
     extraColumns: [column],
   });
