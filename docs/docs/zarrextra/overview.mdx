@@ -16,10 +16,10 @@ what an image or a table is. If you are reading SpatialData stores, you want
 need. If you are reading some other zarr hierarchy and want the same tree and codec
 machinery, you can depend on `zarrextra` alone.
 
-:::info alpha prerelease
+:::info
 
 Versioned alongside the `@spatialdata/*` packages for now, but able to version
-independently in future releases. The API described here is not yet stable.
+independently in future releases.
 
 :::
 
@@ -150,9 +150,9 @@ Measured from the current build:
 | `zarrextra` | 20.9 kB | 7.0 kB |
 | `zarrextra/codec-worker` | 3.2 MB | 899 kB |
 
-The main entry is small, and the WASM codec packages are `optionalDependencies` whose
-decoders are injected by the caller — so importing `zarrextra` does not drag
-OpenJPEG or OpenJPH in. What is heavy is the codec worker, and it is one bundle
+The main entry is small, and the WASM codec packages (OpenJPEG, OpenJPH) are
+`optionalDependencies` whose decoders are injected by the caller, so importing
+`zarrextra` does not pull them in. What is heavy is the codec worker, and it is one bundle
 carrying every codec: enabling worker decode for JP2K also ships OpenJPH, and vice
 versa. An application reading uncompressed or blosc-compressed stores — which is most
 of them — gets no benefit from either.
@@ -160,14 +160,6 @@ of them — gets no benefit from either.
 `zarrita` and `unzipit` stay external to that build. `openExtraConsolidated`
 recognises a [`ZipStore`](#zipped-stores), so unzipit (about 15 kB minified, 5 kB
 gzipped) reaches every bundle that imports `zarrextra`.
-
-The install footprint is also larger than the import graph suggests. `zod` is a hard
-dependency reached by a single internal schema module that nothing currently calls,
-so every consumer installs it whether or not anything uses it. Which way that should
-resolve is open: array metadata is read from a store with a bare `JSON.parse` today
-and typed as [an unvalidated record](./tree-nodes#array-metadata-types), so there is
-at least as good a case for validating more at that boundary — and earning the
-dependency — as for dropping it.
 
 :::caution subject to redesign
 

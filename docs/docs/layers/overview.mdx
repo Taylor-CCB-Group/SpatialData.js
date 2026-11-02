@@ -10,38 +10,42 @@ ordered **`RenderStack`** contract, a top-level **`SpatialLayer`**
 
 ## Role
 
-- **`SpatialLayer`** — validates props and will orchestrate Viv / scatter / shapes sublayers as they are ported from `@spatialdata/vis` and MDV-style stacks.
+- **`SpatialLayer`** — validates props and renders `shapes` sublayers. Images,
+  labels and points are composed by `@spatialdata/vis` from the layers below.
 - **`RenderStack`** — ordered saved/render state for SpatialData entries, host
   overlay descriptors, and reserved group entries. This replaces public
   dependence on parallel `layers` maps plus `layerOrder` arrays.
 - **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — runtime validation and migrations for saved views, URL state, and integrators (e.g. MDV chart config).
+- **Renderers** — `createShapesDeckLayer`, `LabelsLayer`, and `PointsLayer`
+  with its `PointsDataEngine`.
 
 ## Relationships
 
 | Package | Responsibility |
 |--------|-----------------|
-| `@spatialdata/core` | SpatialData on Zarr: elements, transforms, read APIs |
+| `@spatialdata/core` | SpatialData on Zarr: elements, transforms, read APIs, the Resource Resolver |
 | `@spatialdata/avivatorish` | OME loaders, tile cache, channel stats, Zustand image state |
-| `@spatialdata/layers` | Canonical render-stack schema and how data enters **deck** via `SpatialLayer` + props |
+| `@spatialdata/layers` | Canonical render-stack schema and deck renderers for shapes, labels and points |
 | `@spatialdata/vis` | **SpatialCanvas** React/Viv adapter: render stack ↔ resources ↔ viewport |
 
 ## API tiers
 
 See also the [visualization overview](../vis/overview): deck-only integrators can use **`@spatialdata/layers`** without React; headless loader usage is **`@spatialdata/avivatorish`**; full UI is **`@spatialdata/vis`**.
 
-## Status
+## Shapes, labels and points
 
-`SpatialLayer` now includes the first shared **shapes** path:
+Shapes rendering lives in this package rather than in `@spatialdata/vis`:
 
-- shapes rendering is owned primarily at the `@spatialdata/layers` tier rather than `@spatialdata/vis`
-- the current shipping path is mixed-mode: polygon fallback for JS/WKB payloads and a shared columnar backend branch for `geoarrow-table` runtime data
-- row alignment, picking, and tooltip resolution are now driven by stable feature identity plus shared row-index metadata
+- polygon fallback for JS/WKB payloads and a columnar branch for `geoarrow-table` runtime data
+- row alignment, picking, and tooltip resolution are driven by stable feature identity plus shared row-index metadata
 - `buildShapeFillColorByFeatureId()` turns a table column plus already-resolved
   `rowIndexByFeatureIndex` into per-feature colour maps; it deliberately does
   not resolve SpatialData table associations itself
-- the public shapes config stays representation-agnostic so a stronger future `deck.gl-geoarrow` backend can slot in without changing saved props
+- the public shapes config is representation-agnostic, so the backend can change
+  without changing saved props. `@geoarrow/deck.gl-geoarrow` cannot do dynamic
+  per-feature hide/fade, so shapes stay on our own binary layer over a GeoArrow data plane
 
-For shapes, the important contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.
+For shapes, the contract is stable feature identity plus table-join-driven styling/filtering. `@spatialdata/core` loads render-oriented shape data, `@spatialdata/layers` turns that into deck layers, and `@spatialdata/vis` consumes the shared behavior for viewer use.
 
 **Labels** now follow that same contract. The colour-encoding core is shared
 rather than duplicated per kind:
@@ -62,22 +66,12 @@ The default categorical palette is `DEFAULT_FEATURE_CATEGORICAL_PALETTE`
 cannot repeat — see the
 [behaviour-change note](../vis/headless-viewer#choosing-the-colour-scheme).
 
-Points should follow the same package split before we make a GeoArrow migration
-load-bearing:
-
-- `@spatialdata/core` discovers SpatialData points stores and exposes coordinate
-  columns, stable point ids, row-index alignment, and Arrow batches/vectors when
-  available
-- `@spatialdata/layers` owns the deck-facing points renderer, including
-  filtering/styling feature state and backend choice
-- the initial backend can remain `ScatterplotLayer` over typed coordinate
-  arrays, but the public points config should be representation-agnostic enough
-  to add `@geoarrow/deck.gl-geoarrow` / `GeoArrowScatterplotLayer` when point
-  data is GeoArrow-encoded or cheaply adaptable
-
-The migration test is the same as shapes: MDV or Vitessce should be able to
-drive hide/fade/color/radius state without knowing whether the renderer used JS
-arrays, deck binary attributes, or GeoArrow batches underneath.
+**Points** follow the same split. `@spatialdata/core` loads and tiles the data
+([Loading points and shapes](../core/points-and-shapes)) and its `PointsResolver`
+owns the cache and lifecycle. `PointsDataEngine` and `PointsLayer` here own the
+deck-facing renderer: feature filtering and colour-by-feature, resident and
+viewport-tiled render strategies, and picking. Per-layer runtime state such as
+the hovered feature rides the engine rather than the saved config.
 
 ## Render stack contract
 
@@ -111,8 +105,8 @@ const renderStack: RenderStack = {
 };
 ```
 
-`source` holds structural identity. `props` holds renderer inputs. Resource
-resolvers and deck/Viv `updateTriggers` decide what actually invalidates IO,
+`source` holds structural identity. `props` holds renderer inputs. The
+[Resource Resolver](../core/resource-resolver) and deck/Viv `updateTriggers` decide what actually invalidates IO,
 geometry, attributes, or tile data; do not add a second visual-vs-structural
 prop registry.
 

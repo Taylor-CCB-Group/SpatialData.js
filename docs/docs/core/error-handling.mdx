@@ -8,15 +8,13 @@ The `@spatialdata/core` package uses a `Result` type pattern inspired by Rust fo
 
 :::info Error types and safety
 
-The use of this pattern in some parts of the code should not be taken as an assertion that all possible exceptions are handled in this way.
-
-This aspect of the design may be subject to review, and community feedback is encouraged.
+`Result` is used where a failure is expected, such as coordinate-system lookups and store opening. Loaders still throw, and `readZarr` throws if the store cannot be opened. In a renderer, loader failures are classified into typed errors by the [Resource Resolver](./resource-resolver).
 
 :::
 
 :::note Result implementation
 
-The `Result` type is implemented in `zarrextra` and re-exported from `@spatialdata/core` for convenience. This is currently a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow`) in the future, but for now this provides a lightweight, dependency-free solution.
+`Result` is a small dependency-free implementation in `zarrextra`, re-exported from `@spatialdata/core`.
 
 :::
 
@@ -161,7 +159,7 @@ const transform = unwrapOr(
 When you prefer exception-based handling in try/catch blocks:
 
 ```ts
-import { unwrap } from '@spatialdata/core';
+import { unwrap, CoordinateSystemNotFoundError } from '@spatialdata/core';
 
 try {
   const transform = unwrap(element.getTransformation('global'));
@@ -181,13 +179,10 @@ Process multiple results together:
 ```ts
 const elements = Object.values(sdata.images ?? {});
 
-const transforms = elements
-  .map(el => ({ element: el, result: el.getTransformation('global') }))
-  .filter(({ result }) => result.ok)
-  .map(({ element, result }) => ({
-    key: element.key,
-    matrix: (result as { ok: true; value: BaseTransformation }).value.toMatrix()
-  }));
+const transforms = elements.flatMap((element) => {
+  const result = element.getTransformation('global');
+  return result.ok ? [{ key: element.key, matrix: result.value.toMatrix() }] : [];
+});
 ```
 
 ### Pattern 5: Aggregate Errors

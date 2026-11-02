@@ -1,0 +1,106 @@
+---
+sidebar_position: 5
+---
+
+# Resource Resolver
+
+The Resource Resolver turns the entries of a [Render Stack](../layers/overview#render-stack-contract)
+into loaded resources a renderer can draw. It owns caching, request
+supersession, cancellation, streaming partials and world bounds, and knows
+nothing about deck.gl, React or Viv, so any renderer can consume it
+([ADR 0004](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0004-resource-resolver-owned-by-core.md)).
+`@spatialdata/vis` is the consumer today; the status and notice channels it
+exposes are described in the [headless viewer guide](../vis/headless-viewer#layer-errors-and-notices).
+
+## Resolvers and the store
+
+A `ResourceResolver` handles one entry kind (`'points' | 'shapes' | 'images' |
+'labels'`). `PointsResolver` and `ShapesResolver` live in core; the image and
+labels resolvers live in vis, beside Viv. Every method has a fixed role:
+
+| Method | Does |
+| --- | --- |
+| `plan(ctx)` | Pure and synchronous. Returns the `ResolveTask`s the entry needs; starts nothing, so it is safe during render. |
+| `load(task, ctx, signal)` | The only place I/O starts. Must not throw: failures become a `Resolution.failed`. |
+| `snapshot(ctx)` | The entry's `EntryResources`, identity-stable until something changes. |
+| `retry(elementKey)` / `evict(elementKey)` | Make failed resources plannable again; drop a cached element. |
+
+A task's `id` carries everything the request depends on: the same id
+deduplicates, a different one supersedes.
+
+`SpatialEntryStore` is the kind-blind reconcile loop over a
+`Record<kind, ResourceResolver>`:
+
+```ts
+import { SpatialEntryStore, PointsResolver, ShapesResolver } from '@spatialdata/core';
+
+const store = new SpatialEntryStore({ points, shapes, images, labels }); // one resolver per kind
+
+// commit-phase effect, never render:
+await store.reconcile(contexts);   // plan, then load whatever is new
+
+// render:
+const resources = store.snapshot(ctx);
+store.isBlocking(ctx);             // still waiting on a resource it cannot first-paint without?
+await store.retry(ctx);            // re-run failed resources
+```
+
+`subscribe` / `getVersion` fit `useSyncExternalStore`. Each `ResolveContext`
+carries the `entryId`, `elementKey` (the cache key; several entries may share
+one element), the element, the entry's serialisable `config`, and the
+element-to-coordinate-system `transform`.
+
+## Resolutions
+
+Each resource of an entry (`preload`, `catalog`, `geometry`, `tooltip`, …) is a
+`Resolution<T>`: `idle`, `loading`, `ready` or `failed`. They are per resource,
+not per entry, so a shapes entry with a broken tooltip column still draws its
+geometry.
+
+- `loading` carries `partial` (what this load has produced so far) and `stale`
+  (the last good value from the previous load).
+- `Resolution.lastGood(r)` is the newest drawable value. `stale` is retained
+  while a refine is in flight or has failed, and dropped on eviction and on a
+  non-retryable failure, so callers must handle its absence.
+- A `Resolution` is created when state changes and returned by reference.
+  Building one during render would give deck a new data identity per frame.
+
+## Errors and notices
+
+Two channels, so healthy data never renders as an error.
+
+**`SpatialEntryError`** is a typed failure of a resource. `kind` is one of
+`coordinate-system-not-found`, `element-not-found`, `unsupported-format`,
+`points-preload-too-large`, `worker-unavailable`, `decode-failed` or
+`load-failed`; each carries what a UI needs to explain itself
+(`availableCoordinateSystems`, `rowCount` / `maxRows`, …) and a `retryable`
+flag that gates a Retry affordance.
+
+**`EntryNotice`** is a non-fatal fact about an entry that resolved:
+
+| `kind` | Meaning |
+| --- | --- |
+| `preload-truncated` | The memory cap cut the load short (`loaded` of `total`). |
+| `selection-served-from-memory` | A feature selection was answered from the resident batch rather than a scan. |
+| `catalog-is-resident-preview` | The feature catalog covers only the loaded rows. |
+| `channel-defaults-fallback` | Image channel defaults fell back; `reason` says why. |
+| `table-rows-unmatched` | An associated table was found but none of its rows join to the element. |
+
+Absence is neither: a points element with no `feature_key` resolves to
+`ready(null)`.
+
+Resolvers classify a thrown cause with `toSpatialEntryError(cause, { elementKey,
+kind, resource, fallback })`. Loaders throw plain errors, so the seam supplies
+`fallback`, the kind to use when the cause carries no type. Call
+`isCancellation(cause)` first: an abort is not a failure, and there is no
+`cancelled` kind.
+
+## Points and shapes configuration
+
+`PointsResolver` plans `preload`, `catalog`, `rowCodes`, `matching` and
+`tiling` resources, and reads `pointsMemoryCap`, `colorByFeature`,
+`featureCodes` and `pointsTiling` (`'auto'` probes for a Morton or points-zarr
+tiled artifact first; `'off'` goes straight to the resident preload) from the
+entry config. `ShapesResolver` plans `geometry`, `tooltip` and `fillColor`, none of which block first paint.
+See [Loading points and shapes](./points-and-shapes) for what each resource
+reads.

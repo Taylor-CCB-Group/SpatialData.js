@@ -105,16 +105,6 @@ that is one file, not two. If you have a custom `assetFileNames` (or webpack
 `assetModuleFilename`) routing `.wasm` somewhere unhashed, check you have not
 turned it into two copies of 6.6 MB.
 
-:::note Before 0.9.0
-
-Core used to load the glue by a package-relative path that no bundler could
-resolve, so applications 404d on `{root}/vendor/parquet-wasm/parquet_wasm.js` in
-production while dev worked. If you are carrying a plugin that copies core's
-`vendor/` directory into your output, that is what it was for — delete it when you
-upgrade.
-
-:::
-
 ## Other bundlers
 
 | Bundler       | How to wire it                                                                                                                                                                                        |

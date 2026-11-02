@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # MDV release checklist
 
-Goal for this PR branch: release a `@spatialdata/vis` version that MDV can consume now, without replacing Viv, but using this in-place where possible.
+Goal: release a `@spatialdata/vis` version that MDV can consume now, without replacing Viv, but using this in-place where possible.
 
 Scope constraints:
 
@@ -63,9 +63,9 @@ geometry/images and maps **MDV’s render stack** to Viv/deck output.
 | Layer kind | v1 |
 |------------|----|
 | Images | Yes (Viv) |
-| Shapes | Yes — MDV drives style/filter via `layers` state |
+| Shapes | Yes — MDV drives style/filter via render stack entry props |
 | Labels | Yes — same `featureState` / `fillColorByColumn` API as shapes; segmentation vs shapes experiment is not a release gate |
-| Points | v1.1 — feature selection and colour are config-driven and serializable; tiling/index strategy still in progress |
+| Points | v1.1 — feature selection and colour are config-driven and serializable; viewport tiling exists for Morton-sorted and points-zarr elements |
 
 ### Custom deck layers (additive, not a replacement for state)
 
@@ -75,13 +75,13 @@ Those can interleave with SpatialData-generated layers in the composed stack.
 
 Over time, patterns that repeat in MDV (shared shape styling, common overlays) may move into `@spatialdata/vis` or `@spatialdata/layers`; v1 does not require that migration.
 
-### Shapes v1: filter and colour via `layers` state
+### Shapes v1: filter and colour via render stack entry props
 
 For v1, shapes must support the same *effect* as MDV table-row colouring/filtering, without MDV re-implementing SpatialData loading:
 
 - [x] `ShapesLayerConfig` accepts MDV-driven per-feature style (`featureState`, `fillColorByColumn` on the config object MDV updates when selection changes)
 - [x] Feature index / `instance_key` alignment with the associated table is stable for picking and styling (core `FeatureTableAlignment` + layers encoders)
-- [x] Document that MDV updates `layers[layerId]` when datastore selection or colour columns change ([Headless viewer guide](./headless-viewer), [Feature table associations](./feature-table-associations))
+- [x] Document that MDV updates the shapes entry's props when datastore selection or colour columns change ([Headless viewer guide](./headless-viewer), [Feature table associations](./feature-table-associations))
 
 Current local state:
 
@@ -124,7 +124,7 @@ runtime `featureColorResolver` on `SpatialCanvasViewer` over a
 `featureId → colour` record; it takes the RGBA bytes directly. It is deliberately
 **not** part of the saved Render Stack.
 
-### Points v1.1: feature selection and colour via `layers` state
+### Points v1.1: feature selection and colour via render stack entry props
 
 Points support the same config-driven model as shapes — MDV updates the layer
 config, vis owns loading and rendering:
@@ -133,7 +133,8 @@ config, vis owns loading and rendering:
 - [x] Selections persist by feature NAME, not code, so a saved config survives catalog renumbering ([Headless viewer guide](./headless-viewer))
 - [x] Colour overrides keyed by feature name for the same reason
 - [x] Headless feature UI supported without vis internals: `PointsFeatureStateProvider` + `usePointsFeatureState`
-- [ ] Tiling / index strategy for very large elements (follow-up: benchmarking index strategies, Python writer utilities)
+- [x] Viewport-tiled loading for very large Morton-sorted and points-zarr elements ([Loading points and shapes](../core/points-and-shapes#tiled-stores))
+- [ ] Benchmarking index strategies; Python writer utilities
 
 The serialization detail that matters for saved MDV charts: a points element
 frequently has **no feature-code column in the file** — a Xenium `transcripts`
@@ -151,8 +152,8 @@ Current local state:
   authoritative full-dataset list. A selection made against either resolves to
   the same features, which is what the name form buys.
 - Remaining release risk: a selection whose points fall outside the resident
-  window needs a whole-dataset scan, whose cost scales with element size — this
-  is what the tiling/index follow-up addresses. `matchingLoadState` exposes the
+  window needs a whole-dataset scan, whose cost scales with element size; tiled
+  elements avoid it. `matchingLoadState` exposes the
   progress meanwhile.
 - Remaining release risk: for a **dictionary-only** element, the fallback catalog
   path cannot tally counts, and it settles *successfully* without them — so the
@@ -166,26 +167,26 @@ Current local state:
 - Primary extension for **fully custom** deck layers: host overlay entries plus `hostLayerResolver`
 - Composition order: canonical render-stack order, with unmanaged deck layers treated as compatibility output
 
-Practical checks for this branch:
+Practical checks:
 
 - [ ] MDV can drive a shapes layer only by updating render stack entry props (no `SpatialCanvas` zustand store)
 - [ ] An MDV-style custom layer from `spatial_context.ts` can be supplied through a host overlay resolver without importing `packages/vis/src/*` internals
 
-## Release checklist (this branch)
+## Release checklist
 
-### 0) npm prerelease setup
+### 0) npm release setup
 
 - [x] `zarrextra` is published outside the `@spatialdata/*` namespace.
-- [x] Changesets is configured with a fixed `@spatialdata/*` prerelease suite:
+- [x] Changesets is configured with a fixed `@spatialdata/*` suite:
   - `@spatialdata/core`
   - `@spatialdata/react`
   - `@spatialdata/layers`
   - `@spatialdata/avivatorish`
   - `@spatialdata/vis`
-- [x] `zarrextra` participates in the initial prerelease but can version independently in future releases.
+- [x] `zarrextra` is released with the suite but can version independently in future releases.
 - [x] Release automation creates the Changesets version PR only; npm publishing is manual for now.
 - [x] No npm publish token is required in GitHub repository secrets.
-- [ ] Publish manually from a clean local checkout using `pnpm publish:latest` (default `latest` dist-tag).
+- [x] Publish manually from a clean local checkout using `pnpm publish:latest` (default `latest` dist-tag).
 - [ ] `@spatialdata/vis` installs cleanly in MDV.
 
 ### 1) API and export sanity
@@ -220,7 +221,7 @@ Practical checks for this branch:
 
 - [ ] `pnpm -r --filter @spatialdata/vis test` passes.
 - [ ] package build succeeds for `@spatialdata/vis` and dependent workspace packages.
-- [ ] produce installable package(s) for MDV testing (npm `next` prerelease or packed tarballs).
+- [ ] produce installable package(s) for MDV testing (published `latest` or packed tarballs).
 - [ ] smoke-test install in MDV workspace and verify viewer renders.
 
 ### 5) Non-goals (explicit)
@@ -230,10 +231,9 @@ Practical checks for this branch:
 - [ ] No in-repo implementation of broad GIS support in this release.
 - [ ] No hard coupling of `core` API to deck-specific loaders for this release.
 
-## Known alpha risks
+## Known risks
 
-Track these as explicit prerelease risks rather than blockers to the first MDV
-smoke package:
+Tracked issues that are not blockers for MDV:
 
 - [#41](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/41) — very large shape/image inputs can exhaust browser memory; add resource estimates and guard rails before broad use.
 - [#33](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/33) — stale elements can appear after switching stores when element names overlap.
@@ -241,15 +241,15 @@ smoke package:
 - [#13](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/13) — image source changes can temporarily hit an invalid source and surface runtime errors.
 - [#24](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/24) — points parquet loading should fail gracefully when server responses are directory listings or otherwise misconfigured.
 
-Post-prerelease unless MDV needs them immediately:
+Later unless MDV needs them immediately:
 
-- [#11](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/11) — multipart parquet sources.
+- [#11](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/11) — multipart parquet sources (`part.N.parquet` directories are read; the issue is open).
 - [#16](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/16) — 3D volumetric state/UI.
-- [#6](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/6) — local file selection.
+- [#6](https://github.com/Taylor-CCB-Group/SpatialData.js/issues/6) — local file selection in the UI (`FolderStore.fromFiles` and `ZipStore` already open picked folders and archives).
 
-## Viv extensions and Viv `0.21.0` stack
+## Viv extensions and the Viv `0.23.0` stack
 
-This repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9` (Viv PR [#924](https://github.com/hms-dbmi/viv/pull/924): uniform-buffer-backed shader props, `model.shaderInputs`, variable channel counts). MDV's matching Viv/deck upgrade is **almost ready to merge** — treat version alignment as done; the remaining gate is extension behaviour under the shared stack.
+This repo pins `@hms-dbmi/viv@0.23.0` and deck.gl `~9.4.0` (the catalog in `pnpm-workspace.yaml`); Viv's uniform-buffer-backed shader props, `model.shaderInputs` and variable channel counts date from 0.21. Confirm MDV is on the same stack; the remaining gate is extension behaviour under it.
 
 ### Why this matters now
 
@@ -257,9 +257,10 @@ This repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9` (Viv PR [#924](https:/
 - Extension breakage can look subtle (missing colormap behavior, stale shader props, or dropped extension props during cloning/spreading).
 - The move from deprecated uniform paths to shader-input paths can break custom layers/extensions if we do not audit deliberately.
 
-### Branch checklist for Viv-upgrade readiness
+### Viv-upgrade readiness
 
-- [x] Align Viv `0.21.0` / deck.gl `9.2.9` in this repo and MDV (MDV merge imminent).
+- [x] Align Viv / deck.gl in this repo (`0.23.0` / `~9.4.0`).
+- [ ] Confirm MDV is on the same stack.
 - [x] Audit `@spatialdata/vis` Viv paths for extension prop preservation:
   - `packages/vis/src/SpatialCanvas/VivSpatialViewer.tsx`
   - `vivProps` passthrough into `getLayers({ props })`; no post-spread of `layer.props`.
@@ -285,9 +286,9 @@ This repo pins `@hms-dbmi/viv@0.21.0` and deck.gl `9.2.9` (Viv PR [#924](https:/
 
 ## Suggested MDV smoke-test sequence
 
-1. Install branch build of `@spatialdata/vis` into MDV.
+1. Install `@spatialdata/vis` (published or packed) into MDV.
 2. Add a minimal wrapper chart that renders `SpatialCanvasViewer` with existing MDV view state.
-3. Pass current MDV overlays from `VivScatterComponent.tsx` as `deckProps.layers`.
+3. Pass current MDV overlays from `VivScatterComponent.tsx` as host overlay entries resolved by `hostLayerResolver`.
 4. Route tooltip through MDV's outer-container tooltip path only.
 5. Validate pan/zoom linking and selection behavior parity.
 6. Validate at least one labels/shapes overlay above image.
@@ -303,7 +304,7 @@ After this MDV-ready release, pursue incremental improvements in separate PRs:
 
 ## Future consideration: editable layers and write support
 
-**Not in v1.** v1 keeps selection/annotation as **MDV-owned deck layers** passed through `deckLayers` (for example editable ROI / lasso layers from `spatial_context.ts`), with this repo focused on **read** paths into SpatialData.
+**Not in v1.** v1 keeps selection/annotation as **MDV-owned deck layers** supplied as host overlays (for example editable ROI / lasso layers from `spatial_context.ts`), with this repo focused on **read** paths into SpatialData.
 
 Later, consider implementing here (and/or in `@spatialdata/core`) when write APIs exist:
 

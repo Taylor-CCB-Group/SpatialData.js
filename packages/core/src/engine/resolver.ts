@@ -3,9 +3,9 @@
  *
  * A resolver turns structural Render Stack inputs into stable loaded resources.
  * It is store-agnostic AND renderer-agnostic: it knows nothing about deck.gl,
- * React, Viv, or three.js. `tgpu-htj2k` (three.js/WebGPU, separate repo) consumes
- * the same interface `@spatialdata/vis` does — that second consumer is the whole
- * reason this lives in `core` rather than behind deck.gl.
+ * React, Viv, or three.js. A second, non-deck consumer (`intraspatial`, a separate
+ * repo that began as a three.js/WebGPU renderer with its own hand-rolled resolution)
+ * is the whole reason this lives in `core` rather than behind deck.gl.
  *
  * ## The phase separation — the load-bearing part
  *

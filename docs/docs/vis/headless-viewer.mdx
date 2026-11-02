@@ -222,23 +222,12 @@ Runtime attachments live beside the stack:
 
 ### Planned event API
 
-In a follow-up breaking experimental pass, `onFeatureHover` and
-`onFeatureClick` should be superseded by SpatialData-scoped element callbacks:
-`onSpatialElementMove`, `onSpatialElementOver`, `onSpatialElementOut`, and
-`onSpatialElementClick`.
-
-Those events should cover SpatialData-backed images, labels, shapes, and points.
-Each event should carry `layerId`, `elementKind`, `spatialElement`,
-`coordinateSystem`, `spatialData`, and `pickInfo`. Shapes and labels should also
-carry feature-specific fields such as `featureId`, `labelId`, `featureIndex`,
-`rowIndex`, `object`, and `tooltip` when available. `onSpatialElementOver` and
-`onSpatialElementOut` should be synthesized from hover transitions; for shapes
-and labels, those transitions should be per feature rather than only per layer.
-
-Raw deck `onHover` and `onClick` remain the escape hatch for host layers and
-custom deck.gl layers. This planned API does not add custom SpatialData-aware
-host layer events or invent feature semantics for images and points beyond what
-deck's `pickInfo` already provides.
+`onFeatureHover` / `onFeatureClick` are expected to be superseded in a breaking
+experimental pass by `onSpatialElementMove`, `onSpatialElementOver`,
+`onSpatialElementOut` and `onSpatialElementClick`, covering images, labels,
+shapes and points with the same payload plus per-feature over/out transitions.
+None of these exist yet. Raw deck `onHover` and `onClick` remain the escape
+hatch for host layers.
 
 ## Shapes and labels: table-driven colour and filter state
 
@@ -521,7 +510,7 @@ pnpm test:fixtures:generate:0.7.2   # once, if test-fixtures/ is missing
 pnpm --filter @spatialdata/vis dev
 ```
 
-Open **http://127.0.0.1:5173/headless** for the headless demo route. It loads
+Open **http://127.0.0.1:5173/headless** (the demo falls back to the next free port if 5173 is taken, and honours `PORT`) for the headless demo route. It loads
 the local **`blobs.zarr`** fixture (`v0.7.2`) via `SpatialCanvasViewer` with
 externally controlled layer state — no `SpatialCanvas` sidebars.
 
@@ -570,7 +559,7 @@ Before treating the API as stable for MDV:
 - [x] `demo/headless` route with local `blobs.zarr` fixture
 - [ ] Additional `demo/headless-*` variants (Leva controls, custom deck layers)
 - [ ] Tooltip/pick row resolution fully on shared `FeatureTableAlignment` (in progress)
-- [ ] npm `next` prerelease published and smoke-tested in MDV
+- [ ] Published package smoke-tested in MDV
 
 See also [MDV release checklist](./mdv-release-checklist) and
 [Feature table associations](./feature-table-associations).

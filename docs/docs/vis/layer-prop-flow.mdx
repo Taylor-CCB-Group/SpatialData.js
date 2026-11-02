@@ -25,7 +25,7 @@ right answer once.
    side effect. There is no parallel registry.
 4. **Viv image layers are an adapter boundary, not an exception.** Images still
    follow the same deck rule. Viv constructs the actual image layers, and Viv
-   0.21's multiscale image tile layer declares `[loader, selections]` as the
+   0.23's multiscale image tile layer declares `[loader, selections]` as the
    `getTileData` trigger set.
 
 If you follow those rules, deck.gl's existing layer matching + prop
@@ -88,7 +88,7 @@ SpatialCanvas image rendering currently routes through Viv
 directly own the image tile layer class, but it still owns the props it passes
 to Viv.
 
-- Treat Viv's image layer as the tile-loading owner. In Viv 0.21,
+- Treat Viv's image layer as the tile-loading owner. In Viv 0.23,
   `MultiscaleImageLayer` sets `updateTriggers.getTileData` to
   `[loader, selections]`.
 - Keep `loader` and `selections` identity-stable in `useLayerData`. Cosmetic

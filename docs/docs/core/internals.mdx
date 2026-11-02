@@ -17,94 +17,38 @@ If you're building an application with this library, you likely don't need anyth
 The package is organized into these internal modules:
 
 ```
-@spatialdata/core/
+@spatialdata/core/src/
 ├── store/          # SpatialData class, readZarr entry point
-│   ├── index.ts    # Main store class
-│   └── zarrUtils.ts # Zarr store parsing utilities
-├── models/         # Element class implementations
-│   ├── index.ts    # Element classes and factory
-│   ├── VShapesSource.ts   # Shapes geometry loader
-│   ├── VTableSource.ts    # Table loader utilities  
-│   └── VZarrDataSource.ts # Zarr data source base
-├── schemas/        # Zod validation schemas
-│   └── index.ts    # OME-NGFF and SpatialData schemas
+├── models/         # Element classes and factory (index.ts), plus the loaders:
+│                   #   VShapesSource, VPointsSource, VTableSource, VZarrDataSource
+├── engine/         # Resource Resolver: resolvers, SpatialEntryStore, Resolution, errors
+├── memory/         # Memory accounting (ADR 0005)
+├── schemas/        # Zod validation schemas (not exported)
 ├── transformations/
 │   ├── transformations.ts # Transformation classes
 │   └── operations.ts      # Helper functions
+├── workers/        # Parquet worker, client and protocol
 └── types.ts        # Core type definitions
 ```
 
-## Documented Divergences
+Points, shapes and tile loading live in top-level `points*.ts` and `shapes*.ts`
+modules; see [Loading points and shapes](./points-and-shapes) and the
+[Resource Resolver](./resource-resolver).
 
-Some internal loaders started from upstream Vitessce implementations but have
-already diverged in a few deliberate ways. We try to keep those divergences
-small, documented, and tied to higher-level API goals rather than ad hoc fixes.
+## Loader divergences
 
-### `VShapesSource.ts`
+`VShapesSource.ts` began as a copy of a Vitessce loader and has diverged: it is
+TypeScript, and newer `ngff:shapes` metadata revisions take the same
+parquet-backed path as older ones rather than being keyed to one version
+string. Stable feature-id loading (`ShapesElement.loadFeatureIds()`) is the
+behaviour to preserve. Each further divergence is documented in the file's
+header; keep it scoped to geometry and feature-id loading and put vis policy
+elsewhere.
 
-`VShapesSource.ts` began as a Vitessce-derived shapes loader. The current
-intentional divergences are:
-
-- TypeScript cleanup and normalization.
-- Modern `ngff:shapes` metadata revisions are routed through the same
-  parquet-backed path as the older supported modern format, instead of requiring
-  one exact version string.
-
-Why this exists:
-- `ShapesElement.loadFeatureIds()` is part of the high-level feature-association
-  story used by vis tooltip / picked-feature workflows.
-- In practice, stable feature-id loading is the behavior we need to preserve,
-  even when upstream metadata version strings move forward.
-
-Planned evolution:
-- keep `VShapesSource.ts` narrowly scoped to geometry / feature-id loading
-- review how that relates to use of e.g. https://github.com/geoarrow/deck.gl-layers/ in future
-- avoid pushing more vis policy into this file
-- if the divergence grows, prefer moving compatibility logic into a more
-  explicitly SpatialData.js-owned layer rather than silently accumulating it
-  here
-
-### Table Access Helpers
-
-`TableElement.getAnnDataJS()` is still exposed, but feature-association helpers
-such as `loadObsIndex()` and `loadObsColumns()` now prefer the direct
-zarr/parquet loader path in `VTableSource.ts`.
-
-Why this exists:
-- these reads sit on the hot path for table-to-spatial-feature association
-- we want them to remain usable even when wrapper libraries lag behind the
-  relevant zarr/string-dtype support
-
-Planned evolution:
-- add clearer typed dataframe-column accessors for general table use
-- keep the current convenience helpers focused on association / tooltip use
-- continue feeding capability gaps back upstream to `anndata.js`
-
-### Feature Identity Convergence (labels and shapes)
-
-Current state:
-
-- shapes expose stable feature ids through `ShapesElement.loadFeatureIds()`
-  (plus render data carrying `featureIds` and row-alignment metadata);
-- labels currently expose feature identity from picked raster values during
-  interactive rendering/tooltips.
-
-Near-term unification direction:
-
-1. Add a labels-side feature-id API in `@spatialdata/core` (for example
-   non-zero unique ids at the selected scale).
-2. Route both labels and shapes through the same association helper shape:
-   `featureId -> table row index`.
-3. Keep render-time picking as one producer of feature ids, not the only one.
-
-This keeps the table contract (`region`, `region_key`, `instance_key`) intact
-while making labels/shapes more symmetric in higher-level APIs.
-
-Experimental metadata idea (non-spec):
-we may prototype optional table metadata that asserts equivalence classes across
-elements (for example one canonical row identity corresponding to both
-`labels/<key>/<id>` and `shapes/<key>/<id>`). This should remain explicitly
-experimental and advisory until there is upstream spec support.
+`TableElement.getAnnDataJS()` is exposed, but `loadObsIndex()` and
+`loadObsColumns()` go through the direct zarr/parquet path in `VTableSource.ts`.
+They sit on the hot path for table-to-feature association and need to keep
+working when `anndata.js` lags on zarr or string-dtype support.
 
 ## Element Factory (Internal)
 
@@ -231,16 +175,13 @@ import type {
 
 ## Zod Schemas
 
-Validation schemas for metadata are defined in `schemas/index.ts`:
-
-- `rasterAttrsSchema` - Image/Labels OME-NGFF metadata
-- `shapesAttrsSchema` - Shapes element metadata
-- `pointsAttrsSchema` - Points element metadata  
-- `tableAttrsSchema` - AnnData table metadata
-- `coordinateTransformationSchema` - Transformation arrays
-- `spatialDataSchema` - Root store metadata
-
-These are used internally during element construction to validate and type metadata.
+Metadata schemas live in `schemas/index.ts` and are not exported from the
+package: `coordinateTransformationSchema` and the image schema, plus
+`rasterAttrsSchema`, `shapesAttrsSchema`, `pointsAttrsSchema` and
+`tableAttrsSchema` (re-exported from `models/`). They validate and type
+metadata during element construction; an element whose attributes fail
+validation is not created, and is reported through the `onBadFiles` handler
+passed to `readZarr`.
 
 ## Store Parsing
 
@@ -256,28 +197,7 @@ Element construction walks that tree with the guards and accessors described in
 node to a group once, so no element subclass has to discriminate group from array
 itself.
 
-## Result Type Implementation
+## Result Type
 
-The `Result` type and utilities are implemented in `zarrextra` and re-exported from `@spatialdata/core` for convenience:
-
-```ts
-// In zarrextra
-type Result<T, E = Error> = 
-  | { ok: true; value: T }
-  | { ok: false; error: E };
-
-const Ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
-const Err = <E>(error: E): Result<never, E> => ({ ok: false, error });
-const isOk = <T, E>(result: Result<T, E>): result is { ok: true; value: T } => result.ok;
-const isErr = <T, E>(result: Result<T, E>): result is { ok: false; error: E } => !result.ok;
-const unwrap = <T, E>(result: Result<T, E>): T => { ... };
-const unwrapOr = <T, E>(result: Result<T, E>, defaultValue: T): T => { ... };
-```
-
-You can import `Result` and its utilities from either `@spatialdata/core` or `zarrextra`.
-
-:::note Future considerations
-
-This is currently a custom implementation for simplicity and to avoid dependencies. We may review using an existing Result library (such as `neverthrow` or `ts-result`) in the future, but for now this provides a lightweight, dependency-free solution.
-
-:::
+`Result` and its utilities are implemented in `zarrextra` and re-exported from
+`@spatialdata/core`; see [Error Handling](./error-handling).
