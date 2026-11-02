@@ -79,13 +79,12 @@ async function readListedNodes(store: zarr.Listable<zarr.Readable>): Promise<Nod
   const format = await detectMetadataFormat(store);
   const listed = store.contents();
   if (!listed.some(({ path }) => path === '/')) listed.push({ path: '/', kind: 'group' });
-  return Promise.all(
-    listed.map(async ({ path, kind }) => ({
-      path,
-      kind,
-      ...(await readNodeMetadata(store, path, kind, format)),
-    }))
-  );
+  // One at a time: a store with no consolidated metadata is not worth a fan-out of requests.
+  const nodes: NodeEntry[] = [];
+  for (const { path, kind } of listed) {
+    nodes.push({ path, kind, ...(await readNodeMetadata(store, path, kind, format)) });
+  }
+  return nodes;
 }
 
 function sortByDepth(a: NodeEntry, b: NodeEntry): number {
