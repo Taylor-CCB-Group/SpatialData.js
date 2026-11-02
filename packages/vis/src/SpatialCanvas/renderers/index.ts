@@ -1,10 +1,10 @@
 /**
- * Layer renderers for SpatialCanvas
+ * Layer renderers for SpatialCanvas.
  *
- * Each renderer takes element data and configuration, returning deck.gl layers
- * ready to be composed into the final view.
+ * Images only. Shapes and labels rendering moved to their Renderer Adapters in
+ * `@spatialdata/layers` (ADR 0004 §4); images stay here with the Viv and
+ * `avivatorish` dependencies the ADR's 2026-07-14 amendment keeps out of `core`
+ * and `layers`.
  */
 
 export { type ImageLayerRenderConfig, renderImageLayer } from './imageRenderer';
-export { type LabelsLayerRenderConfig, renderLabelsLayer } from './labelsRenderer';
-export { renderShapesLayer, type ShapesLayerRenderConfig } from './shapesRenderer';
