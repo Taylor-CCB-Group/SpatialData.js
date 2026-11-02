@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
 import SpatialDataTableSource, { MAX_PARQUET_PARTS } from '../src/models/VTableSource.js';
+import { isDetached } from './arrayBuffers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
@@ -264,10 +265,10 @@ describe('whole-part reads hand out unshared bytes', () => {
     // Exactly what posting to the parquet worker does.
     const buffer = first.parts[0].buffer as ArrayBuffer;
     structuredClone(buffer, { transfer: [buffer] });
-    expect(buffer.detached).toBe(true);
+    expect(isDetached(buffer)).toBe(true);
 
     const second = await internals.readParquetDatasetBytesCapped(PARQUET_DIR, 1_000_000);
-    expect(second.parts[0]?.buffer.detached).toBe(false);
+    expect(isDetached(second.parts[0]?.buffer)).toBe(false);
     expect(second.parts[0]?.length).toBeGreaterThan(0);
 
     // And the main-thread cached path is still usable afterwards.

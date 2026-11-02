@@ -1,4 +1,5 @@
 import { Matrix4 } from '@math.gl/core';
+import type { OmeZarrMultiscalesSource } from '@spatialdata/avivatorish';
 import { CoordinateSystemNotFoundError, type SpatialData } from '@spatialdata/core';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -30,7 +31,15 @@ function imageElement(key: string, transform: 'global' | 'none' = 'global') {
   };
 }
 
-type MultiscalesSource = { store: { key: string } };
+// The element's `getStore` above tags the store with its key; the registry's source type
+// leaves `store` as `unknown`.
+const storeKey = (source: OmeZarrMultiscalesSource) =>
+  typeof source === 'object' &&
+  source.store &&
+  typeof source.store === 'object' &&
+  'key' in source.store
+    ? source.store.key
+    : undefined;
 
 const imageLayer = (id: string, elementKey: string): LayerConfig => ({
   id,
@@ -41,7 +50,7 @@ const imageLayer = (id: string, elementKey: string): LayerConfig => ({
 });
 
 function renderCanvas(options: {
-  fetch: (source: MultiscalesSource) => Promise<unknown>;
+  fetch: (source: OmeZarrMultiscalesSource) => Promise<unknown>;
   transform?: 'global' | 'none';
   layers: Record<string, LayerConfig>;
 }) {
@@ -146,8 +155,8 @@ describe('entry status — a load that fails', () => {
 
   it("keeps a failure's identity while another layer of the same kind loads", async () => {
     const pending: Array<(loader: unknown) => void> = [];
-    const fetch = vi.fn((source: MultiscalesSource) =>
-      source.store.key === 'img'
+    const fetch = vi.fn((source: OmeZarrMultiscalesSource) =>
+      storeKey(source) === 'img'
         ? Promise.reject(new Error('the store is unreachable'))
         : new Promise<unknown>((resolve) => pending.push(resolve))
     );

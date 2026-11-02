@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { ConsolidatedStore } from 'zarrextra';
 import { ATTRS_KEY } from 'zarrextra';
 import { SpatialData } from '../src/store/index.js';
 import {
@@ -75,10 +74,10 @@ function createMockSpatialData() {
         },
       },
     },
-    zarritaStore: {},
+    zarritaStore: { get: async () => undefined, contents: () => [] },
   };
 
-  return new SpatialData('https://example.com/mock.zarr', rootStore as ConsolidatedStore, [
+  return new SpatialData('https://example.com/mock.zarr', rootStore, [
     'shapes',
     'tables',
   ]);

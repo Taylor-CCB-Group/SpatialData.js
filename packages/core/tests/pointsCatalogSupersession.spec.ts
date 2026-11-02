@@ -5,7 +5,8 @@ import {
   PointsResolver,
   type ResolveContext,
 } from '../src/engine/index.js';
-import type { PointsElement, PointsFeatureCatalog } from '../src/models/index.js';
+import type { PointsElement } from '../src/models/index.js';
+import type { PointsFeatureCatalog } from '../src/pointsTiling.js';
 import type { PointsLoadResult } from '../src/pointsLoadOptions.js';
 
 /**

@@ -24,6 +24,7 @@ import {
   resolveRasterSource,
 } from './utils';
 
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 export const useImage = (source?: { description: string; urlOrFile: string }, history?: any) => {
   const [use3d, toggleUse3d, toggleIsOffsetsSnackbarOn] = useViewerStore(
     (store) => [store.use3d, store.toggleUse3d, store.toggleIsOffsetsSnackbarOn],
@@ -54,8 +55,10 @@ export const useImage = (source?: { description: string; urlOrFile: string }, hi
         })
       );
       // TODO: flagging so we can get back to this
+      // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
       let nextMeta: any;
       // TODO: flagging so we can get back to this
+      // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
       let nextLoader: any; //PixelSource | PixelSource[] | null = null;
       if (Array.isArray(newLoader)) {
         const arr = newLoader as Array<{ metadata?: unknown; data?: unknown }>;

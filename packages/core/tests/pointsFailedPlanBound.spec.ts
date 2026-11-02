@@ -7,6 +7,7 @@ import {
   SpatialEntryStore,
 } from '../src/engine/index.js';
 import type { PointsElement } from '../src/models/index.js';
+import { inertResolver } from './inertResolver.js';
 
 /**
  * A resource that FAILS must be planned once, not forever.
@@ -61,7 +62,12 @@ async function settle(store: SpatialEntryStore, context: ResolveContext, passes:
 describe('PointsResolver — a failed resource is not re-planned', () => {
   it('stops planning a preload once it has failed at this cap', async () => {
     const resolver = new PointsResolver();
-    const store = new SpatialEntryStore({ points: resolver });
+    const store = new SpatialEntryStore({
+      points: resolver,
+      shapes: inertResolver('shapes'),
+      images: inertResolver('images'),
+      labels: inertResolver('labels'),
+    });
     const el = brokenElement();
     const context = ctx(el);
 
@@ -75,7 +81,12 @@ describe('PointsResolver — a failed resource is not re-planned', () => {
 
   it('stops planning rowCodes once they have failed', async () => {
     const resolver = new PointsResolver();
-    const store = new SpatialEntryStore({ points: resolver });
+    const store = new SpatialEntryStore({
+      points: resolver,
+      shapes: inertResolver('shapes'),
+      images: inertResolver('images'),
+      labels: inertResolver('labels'),
+    });
     const el = brokenElement();
     const context = ctx(el);
 
@@ -87,7 +98,12 @@ describe('PointsResolver — a failed resource is not re-planned', () => {
 
   it('retry() is the way back — and is itself bounded', async () => {
     const resolver = new PointsResolver();
-    const store = new SpatialEntryStore({ points: resolver });
+    const store = new SpatialEntryStore({
+      points: resolver,
+      shapes: inertResolver('shapes'),
+      images: inertResolver('images'),
+      labels: inertResolver('labels'),
+    });
     const el = brokenElement();
     const context = ctx(el);
 
@@ -103,7 +119,12 @@ describe('PointsResolver — a failed resource is not re-planned', () => {
 
   it('a cap change is a different request and still dispatches', async () => {
     const resolver = new PointsResolver();
-    const store = new SpatialEntryStore({ points: resolver });
+    const store = new SpatialEntryStore({
+      points: resolver,
+      shapes: inertResolver('shapes'),
+      images: inertResolver('images'),
+      labels: inertResolver('labels'),
+    });
     const el = brokenElement();
 
     await settle(store, ctx(el, { pointsMemoryCap: 4_000_000 }), 5);
@@ -118,7 +139,12 @@ describe('PointsResolver — a failed resource is not re-planned', () => {
 
   it('bounds the whole entry, not just one resource', async () => {
     const resolver = new PointsResolver();
-    const store = new SpatialEntryStore({ points: resolver });
+    const store = new SpatialEntryStore({
+      points: resolver,
+      shapes: inertResolver('shapes'),
+      images: inertResolver('images'),
+      labels: inertResolver('labels'),
+    });
     const el = brokenElement();
     const context = ctx(el, { featureCodes: [0, 1] });
 

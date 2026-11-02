@@ -4,6 +4,11 @@ import { loadOmeZarrMultiscalesFromStore, registerJpeg2kCodec } from '../src';
 
 const encoder = new TextEncoder();
 
+/** Wrap an in-memory byte map as the async store zarrita's loaders take. */
+function asyncStore(map: Map<string, Uint8Array>): zarr.AsyncReadable {
+  return { get: async (key) => map.get(key) };
+}
+
 function jsonBytes(value: unknown): Uint8Array {
   return encoder.encode(JSON.stringify(value));
 }
@@ -156,7 +161,7 @@ describe('OME-Zarr store loader', () => {
     });
 
     try {
-      const [source] = await loadOmeZarrMultiscalesFromStore(createOmeZarrStore() as zarr.Readable);
+      const [source] = await loadOmeZarrMultiscalesFromStore(asyncStore(createOmeZarrStore()));
       expect(source.labels).toEqual(['t', 'c', 'z', 'y', 'x']);
       expect(source.shape).toEqual([1, 1, 1, 2, 2]);
       expect(source.dtype).toBe('Uint8');
@@ -176,7 +181,7 @@ describe('OME-Zarr store loader', () => {
 
   it('returns distinct tiles for different z and t selections', async () => {
     const [source] = await loadOmeZarrMultiscalesFromStore(
-      createMultiTzOmeZarrStore() as zarr.Readable
+      asyncStore(createMultiTzOmeZarrStore())
     );
     expect(source.shape).toEqual([2, 1, 3, 4, 4]);
 
@@ -192,7 +197,7 @@ describe('OME-Zarr store loader', () => {
 
   it('defaults missing z/t selection axes to index 0', async () => {
     const [source] = await loadOmeZarrMultiscalesFromStore(
-      createMultiTzOmeZarrStore() as zarr.Readable
+      asyncStore(createMultiTzOmeZarrStore())
     );
 
     const explicit = await source.getTile({ x: 0, y: 0, selection: { t: 0, c: 0, z: 0 } });
@@ -202,7 +207,7 @@ describe('OME-Zarr store loader', () => {
   });
 
   it('resolves spatial axes from labels for non-canonical axis order', async () => {
-    const [source] = await loadOmeZarrMultiscalesFromStore(createZcyxOmeZarrStore() as zarr.Readable);
+    const [source] = await loadOmeZarrMultiscalesFromStore(asyncStore(createZcyxOmeZarrStore()));
     expect(source.labels).toEqual(['z', 'c', 'y', 'x']);
     expect(source.shape).toEqual([3, 2, 8, 8]);
 

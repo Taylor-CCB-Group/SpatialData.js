@@ -207,8 +207,13 @@ describe('load() — the only place I/O starts', () => {
   it('ignores an unknown resource rather than throwing', async () => {
     const resolver = new PointsResolver();
 
+    // Deliberately outside the typed resource union: this is the runtime guard.
+    const task = { id: 'z', resource: 'nonsense' } as unknown as Parameters<
+      PointsResolver['load']
+    >[0];
+
     await expect(
-      resolver.load({ id: 'z', resource: 'nonsense' }, ctx(element()), new AbortController().signal)
+      resolver.load(task, ctx(element()), new AbortController().signal)
     ).resolves.toBeUndefined();
   });
 });
@@ -898,7 +903,10 @@ describe('D5 step 1 — Morton tiling metadata probe', () => {
     await resolver.ensureTilingMetadata({ key: 'transcripts', layerId: 'L', element: el });
 
     expect(resolver.isTiled('transcripts')).toBe(true);
-    expect(resolver.getTilingMetadata('transcripts')?.totalRowGroups).toBe(96);
+    expect(resolver.getTilingMetadata('transcripts')).toMatchObject({
+      kind: 'morton-points',
+      totalRowGroups: 96,
+    });
     // The preload, its row codes and the matching scan are all resident-batch
     // notions, and a tiled element has none of them. The catalog IS planned: it is
     // the only way a name-based selection becomes the codes the tile scan filters on

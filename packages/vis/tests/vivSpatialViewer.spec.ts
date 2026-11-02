@@ -5,7 +5,7 @@ import { VivSpatialViewer } from '../src/SpatialCanvas/VivSpatialViewer.js';
 
 describe('VivSpatialViewer passthrough', () => {
   it('forwards vivProps into detailView.getLayers props', () => {
-    const getLayers = vi.fn(() => []);
+    const getLayers = vi.fn((_args: { props: Record<string, unknown> }) => []);
     const viewer = new VivSpatialViewer({
       vivLayerProps: [
         {
@@ -31,11 +31,10 @@ describe('VivSpatialViewer passthrough', () => {
 
     // @ts-expect-error - test hook into private detail view
     viewer.detailView = { getLayers };
-    // @ts-expect-error - invoke private render path
     viewer._renderLayers();
 
     expect(getLayers).toHaveBeenCalled();
-    const props = getLayers.mock.calls[0]?.[0]?.props as Record<string, unknown>;
+    const props = getLayers.mock.calls[0]?.[0]?.props;
     expect(props.brightness).toEqual([0.25]);
     expect(props.contrast).toEqual([0.75]);
     expect(props.extensions).toEqual([{ name: 'demo-ext' }]);

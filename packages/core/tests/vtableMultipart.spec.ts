@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import SpatialDataTableSource from '../src/models/VTableSource.js';
+import { isDetached } from './arrayBuffers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const writerRoot = join(__dirname, '../../../python/spatialdata-js-util');
@@ -38,16 +39,16 @@ PY`,
 }
 
 function createFilesystemStore(root: string) {
-  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | undefined> => {
     const fullPath = join(root, relativePath);
     try {
       const info = await stat(fullPath);
       if (info.isDirectory()) {
-        return null;
+        return undefined;
       }
       return await readFile(fullPath);
     } catch {
-      return null;
+      return undefined;
     }
   };
 
@@ -63,7 +64,7 @@ function createFilesystemStore(root: string) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
       const bytes = await readStoreBytes(relativePath);
       if (!bytes) {
-        return null;
+        return undefined;
       }
       if (range.suffixLength != null) {
         return bytes.subarray(bytes.length - range.suffixLength);
@@ -167,16 +168,16 @@ describe('row-group chunks own their bytes', () => {
     structuredClone(first?.schemaBytes.buffer, {
       transfer: [first?.schemaBytes.buffer as ArrayBuffer],
     });
-    expect(first?.schemaBytes.buffer.detached).toBe(true);
+    expect(isDetached(first?.schemaBytes.buffer)).toBe(true);
 
     // The next read must still be usable — both for a later row group and for a
     // repeat of the same one.
     const second = await internals.readParquetRowGroupBytesByGroupIndex(parquetPath, 0);
-    expect(second?.schemaBytes.buffer.detached).toBe(false);
+    expect(isDetached(second?.schemaBytes.buffer)).toBe(false);
     expect(second?.schemaBytes.length).toBeGreaterThan(0);
 
     // And the underlying metadata is intact for the NEXT consumer too.
     const dataset = await source.loadParquetDatasetMetadata(parquetPath);
-    expect(dataset?.parts[0]?.schemaBytes.buffer.detached).toBe(false);
+    expect(isDetached(dataset?.parts[0]?.schemaBytes.buffer)).toBe(false);
   });
 });

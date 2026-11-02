@@ -10,6 +10,7 @@ import {
 import type { ShapesElement } from '../src/models/index.js';
 import type { ShapesRenderData } from '../src/shapes.js';
 import type { SpatialData } from '../src/store/index.js';
+import { inertResolver } from './inertResolver.js';
 
 /**
  * The shapes Resource Resolver, headless — no deck layer, no GL context.
@@ -128,7 +129,7 @@ describe('load() — the only place I/O starts', () => {
   it('dedups a concurrent request for the same task id', async () => {
     const resolver = new ShapesResolver();
     const el = element();
-    const task = { id: 'g', resource: 'geometry' };
+    const task = { id: 'g', resource: 'geometry' } as const;
 
     await Promise.all([
       resolver.load(task, ctx(el), signal()),
@@ -375,7 +376,12 @@ describe('a failed load settles', () => {
       ],
     } as unknown as SpatialData;
     const resolver = new ShapesResolver({ spatialData });
-    const store = new SpatialEntryStore({ shapes: resolver });
+    const store = new SpatialEntryStore({
+      shapes: resolver,
+      images: inertResolver('images'),
+      labels: inertResolver('labels'),
+      points: inertResolver('points'),
+    });
     const byType = {
       ...ctx(element()),
       entryId: 'a',

@@ -66,7 +66,7 @@ function createDirectoryThrowsStore(root: string) {
       return false;
     }
   };
-  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | undefined> => {
     reads.push(relativePath);
     if (await isDirectory(relativePath)) {
       // The server would 500 here; the store turns that into a throw.
@@ -75,7 +75,7 @@ function createDirectoryThrowsStore(root: string) {
     try {
       return await readFile(join(root, relativePath));
     } catch {
-      return null; // missing file → 404 → null (this is how part enumeration stops)
+      return undefined; // missing file → 404 → undefined (this is how part enumeration stops)
     }
   };
 
@@ -94,7 +94,7 @@ function createDirectoryThrowsStore(root: string) {
     ) {
       const bytes = await readStoreBytes(path.startsWith('/') ? path.slice(1) : path);
       if (!bytes) {
-        return null;
+        return undefined;
       }
       if (range.suffixLength != null) {
         return bytes.subarray(bytes.length - range.suffixLength);

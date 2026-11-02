@@ -6,11 +6,31 @@ import {
   getAggregateHoverPickDepth,
   isHoverDuringDrag,
   normalizeDeckLayerId,
+  type PickMultipleObjectsCapable,
   pickedLayerId,
   resolveDeckPickLayerIds,
   resolveHoveredLabel,
   resolveHoverFeatureTooltip,
 } from '../src/SpatialCanvas/featureTooltipHover.js';
+
+/** A real deck layer: `PickingInfo.layer` is a full `Layer`, which a `{ id }` literal is not. */
+function layerOf(id: string) {
+  return new ScatterplotLayer({ id, data: [], getPosition: [0, 0] });
+}
+
+/** A deck double with the flattened layer list deck keeps on `layerManager`. The resolver reads
+ *  it via Reflect, so it is not in the typed interface; returning a variable (not a fresh
+ *  literal) keeps it from being an excess property at the call site. */
+function deckWithFlattenedLayers(
+  pickMultipleObjects: PickMultipleObjectsCapable['pickMultipleObjects']
+) {
+  return {
+    layerManager: {
+      getLayers: () => [{ id: 'shapes:cells-#spatial-view#' }, { id: LABELS_BITMASK_LAYER_ID }],
+    },
+    pickMultipleObjects,
+  };
+}
 
 /** A pick on `memberId` as deck reports it once it has bubbled up through a group:
  *  `info.layer` names the group, and the group records the member. */
@@ -33,7 +53,7 @@ function pickThroughGroup(memberId: string, object?: unknown): PickingInfo {
 
 describe('pickedLayerId', () => {
   it('is the picked layer’s id when no group is involved', () => {
-    expect(pickedLayerId({ layer: { id: 'shapes-cells' } })).toBe('shapes-cells');
+    expect(pickedLayerId({ layer: layerOf('shapes-cells') })).toBe('shapes-cells');
     expect(pickedLayerId({ layer: null })).toBe('');
   });
 
@@ -97,18 +117,22 @@ describe('featureTooltipHover', () => {
     const deck = {
       pickMultipleObjects: () => [
         {
+          color: null,
+          pixelRatio: 1,
           picked: true,
           x: 10,
           y: 20,
-          layer: { id: 'labels:mask' },
+          layer: layerOf('labels:mask'),
           index: 0,
           object: {},
         },
         {
+          color: null,
+          pixelRatio: 1,
           picked: true,
           x: 10,
           y: 20,
-          layer: { id: 'shapes:cells' },
+          layer: layerOf('shapes:cells'),
           index: 1,
           object: {},
         },
@@ -116,7 +140,16 @@ describe('featureTooltipHover', () => {
     };
 
     const result = resolveHoverFeatureTooltip(
-      { picked: true, x: 10, y: 20, layer: { id: 'shapes:cells' }, index: 1, object: {} },
+      {
+        color: null,
+        pixelRatio: 1,
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: layerOf('shapes:cells'),
+        index: 1,
+        object: {},
+      },
       getFeatureTooltip,
       { deck }
     );
@@ -139,19 +172,39 @@ describe('featureTooltipHover', () => {
     const deck = {
       pickMultipleObjects: () => [
         {
+          color: null,
+          pixelRatio: 1,
           picked: true,
           x: 10,
           y: 20,
-          layer: { id: 'points:transcripts__partial' },
+          layer: layerOf('points:transcripts__partial'),
           index: 0,
           object: {},
         },
-        { picked: true, x: 10, y: 20, layer: { id: 'points:transcripts' }, index: 1, object: {} },
+        {
+          color: null,
+          pixelRatio: 1,
+          picked: true,
+          x: 10,
+          y: 20,
+          layer: layerOf('points:transcripts'),
+          index: 1,
+          object: {},
+        },
       ],
     };
 
     const result = resolveHoverFeatureTooltip(
-      { picked: true, x: 10, y: 20, layer: { id: 'points:transcripts' }, index: 1, object: {} },
+      {
+        color: null,
+        pixelRatio: 1,
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: layerOf('points:transcripts'),
+        index: 1,
+        object: {},
+      },
       getFeatureTooltip,
       { deck }
     );
@@ -174,17 +227,28 @@ describe('featureTooltipHover', () => {
     }));
     const pickMultipleObjects = vi.fn(() => [
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells' },
+        layer: layerOf('shapes:cells'),
         index: 0,
         object: {},
       },
     ]);
 
     resolveHoverFeatureTooltip(
-      { picked: true, x: 10, y: 20, layer: { id: 'shapes:cells' }, index: 1, object: {} },
+      {
+        color: null,
+        pixelRatio: 1,
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: layerOf('shapes:cells'),
+        index: 1,
+        object: {},
+      },
       getFeatureTooltip,
       {
         deck: { pickMultipleObjects },
@@ -214,10 +278,12 @@ describe('featureTooltipHover', () => {
 
     const result = resolveHoverFeatureTooltip(
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells', context: { device: { type: 'webgpu' } } },
+        layer: Object.assign(layerOf('shapes:cells'), { context: { device: { type: 'webgpu' } } }),
         index: 1,
         object: {},
       },
@@ -248,23 +314,18 @@ describe('featureTooltipHover', () => {
   });
 
   it('resolves logical label ids to flattened bitmask tile layer ids', () => {
-    expect(
-      resolveDeckPickLayerIds(
-        {
-          props: {
-            layers: [{ id: 'labels:mask-#spatial-view#' }, { id: 'shapes:cells-#spatial-view#' }],
-          },
-          layerManager: {
-            getLayers: () => [
-              { id: 'shapes:cells-#spatial-view#' },
-              { id: LABELS_BITMASK_LAYER_ID },
-            ],
-          },
-          pickMultipleObjects: () => [],
-        },
-        ['shapes:cells', 'labels:mask']
-      )
-    ).toEqual([
+    // Bound first so `layerManager` (read by the resolver via Reflect, not part of the
+    // typed interface) is not an excess property of a fresh literal.
+    const deck = {
+      props: {
+        layers: [{ id: 'labels:mask-#spatial-view#' }, { id: 'shapes:cells-#spatial-view#' }],
+      },
+      layerManager: {
+        getLayers: () => [{ id: 'shapes:cells-#spatial-view#' }, { id: LABELS_BITMASK_LAYER_ID }],
+      },
+      pickMultipleObjects: () => [],
+    };
+    expect(resolveDeckPickLayerIds(deck, ['shapes:cells', 'labels:mask'])).toEqual([
       'labels:mask-#spatial-view#',
       'shapes:cells-#spatial-view#',
       LABELS_BITMASK_LAYER_ID,
@@ -280,18 +341,22 @@ describe('featureTooltipHover', () => {
     }));
     const pickMultipleObjects = vi.fn(() => [
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells-#spatial-view#' },
+        layer: layerOf('shapes:cells-#spatial-view#'),
         index: 0,
         object: {},
       },
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'labels:mask-#spatial-view#' },
+        layer: layerOf('labels:mask-#spatial-view#'),
         index: 0,
         object: {},
       },
@@ -299,10 +364,12 @@ describe('featureTooltipHover', () => {
 
     const result = resolveHoverFeatureTooltip(
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells-#spatial-view#' },
+        layer: layerOf('shapes:cells-#spatial-view#'),
         index: 0,
         object: {},
       },
@@ -339,18 +406,22 @@ describe('featureTooltipHover', () => {
     }));
     const pickMultipleObjects = vi.fn(() => [
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells-#spatial-view#' },
+        layer: layerOf('shapes:cells-#spatial-view#'),
         index: 0,
         object: {},
       },
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: LABELS_BITMASK_LAYER_ID },
+        layer: layerOf(LABELS_BITMASK_LAYER_ID),
         index: 0,
         object: { labelId: 7 },
       },
@@ -358,24 +429,18 @@ describe('featureTooltipHover', () => {
 
     const result = resolveHoverFeatureTooltip(
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells-#spatial-view#' },
+        layer: layerOf('shapes:cells-#spatial-view#'),
         index: 0,
         object: {},
       },
       getFeatureTooltip,
       {
-        deck: {
-          layerManager: {
-            getLayers: () => [
-              { id: 'shapes:cells-#spatial-view#' },
-              { id: LABELS_BITMASK_LAYER_ID },
-            ],
-          },
-          pickMultipleObjects,
-        },
+        deck: deckWithFlattenedLayers(pickMultipleObjects),
         pickLayerIds: ['shapes:cells', 'labels:mask'],
       }
     );
@@ -399,10 +464,12 @@ describe('featureTooltipHover', () => {
       if (layerIds?.length === 1 && layerIds.includes(LABELS_BITMASK_LAYER_ID)) {
         return [
           {
+            color: null,
+            pixelRatio: 1,
             picked: true,
             x: 10,
             y: 20,
-            layer: { id: LABELS_BITMASK_LAYER_ID },
+            layer: layerOf(LABELS_BITMASK_LAYER_ID),
             index: 0,
             object: { labelId: 7 },
           },
@@ -411,18 +478,22 @@ describe('featureTooltipHover', () => {
 
       return [
         {
+          color: null,
+          pixelRatio: 1,
           picked: true,
           x: 10,
           y: 20,
-          layer: { id: 'shapes:cells-#spatial-view#' },
+          layer: layerOf('shapes:cells-#spatial-view#'),
           index: 0,
           object: { featureId: 'cell-a' },
         },
         {
+          color: null,
+          pixelRatio: 1,
           picked: true,
           x: 10,
           y: 20,
-          layer: { id: 'shapes:cells-#spatial-view#' },
+          layer: layerOf('shapes:cells-#spatial-view#'),
           index: 1,
           object: { featureId: 'cell-b' },
         },
@@ -431,24 +502,18 @@ describe('featureTooltipHover', () => {
 
     const result = resolveHoverFeatureTooltip(
       {
+        color: null,
+        pixelRatio: 1,
         picked: true,
         x: 10,
         y: 20,
-        layer: { id: 'shapes:cells-#spatial-view#' },
+        layer: layerOf('shapes:cells-#spatial-view#'),
         index: 0,
         object: { featureId: 'cell-a' },
       },
       getFeatureTooltip,
       {
-        deck: {
-          layerManager: {
-            getLayers: () => [
-              { id: 'shapes:cells-#spatial-view#' },
-              { id: LABELS_BITMASK_LAYER_ID },
-            ],
-          },
-          pickMultipleObjects,
-        },
+        deck: deckWithFlattenedLayers(pickMultipleObjects),
         pickLayerIds: ['shapes:cells', 'labels:mask'],
       }
     );
@@ -480,16 +545,54 @@ describe('featureTooltipHover', () => {
     // "missing" and must be recovered without one readPixels per missing layer.
     const pickMultipleObjects = vi.fn(({ layerIds }: { layerIds?: string[] }) => {
       if (layerIds && layerIds.length === 3) {
-        return [{ picked: true, x: 10, y: 20, layer: { id: 'shapes:a' }, index: 0, object: {} }];
+        return [
+          {
+            color: null,
+            pixelRatio: 1,
+            picked: true,
+            x: 10,
+            y: 20,
+            layer: layerOf('shapes:a'),
+            index: 0,
+            object: {},
+          },
+        ];
       }
       return [
-        { picked: true, x: 10, y: 20, layer: { id: 'shapes:b' }, index: 0, object: {} },
-        { picked: true, x: 10, y: 20, layer: { id: 'shapes:c' }, index: 0, object: {} },
+        {
+          color: null,
+          pixelRatio: 1,
+          picked: true,
+          x: 10,
+          y: 20,
+          layer: layerOf('shapes:b'),
+          index: 0,
+          object: {},
+        },
+        {
+          color: null,
+          pixelRatio: 1,
+          picked: true,
+          x: 10,
+          y: 20,
+          layer: layerOf('shapes:c'),
+          index: 0,
+          object: {},
+        },
       ];
     });
 
     const result = resolveHoverFeatureTooltip(
-      { picked: true, x: 10, y: 20, layer: { id: 'shapes:a' }, index: 0, object: {} },
+      {
+        color: null,
+        pixelRatio: 1,
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: layerOf('shapes:a'),
+        index: 0,
+        object: {},
+      },
       getFeatureTooltip,
       {
         deck: { pickMultipleObjects },
@@ -519,7 +622,16 @@ describe('featureTooltipHover', () => {
     }));
 
     const result = resolveHoverFeatureTooltip(
-      { picked: true, x: 10, y: 20, layer: { id: 'shapes:cells' }, index: 1, object: {} },
+      {
+        color: null,
+        pixelRatio: 1,
+        picked: true,
+        x: 10,
+        y: 20,
+        layer: layerOf('shapes:cells'),
+        index: 1,
+        object: {},
+      },
       getFeatureTooltip,
       {
         deck: { pickMultipleObjects: () => [] },
@@ -538,7 +650,11 @@ describe('resolveHoveredLabel', () => {
   it('resolves the layer and label under the cursor', () => {
     expect(
       resolveHoveredLabel(
-        { picked: true, layer: { id: 'labels:cells' }, object: { labelId: 42 } },
+        {
+          picked: true,
+          layer: layerOf('labels:cells'),
+          object: { labelId: 42 },
+        },
         isLabels
       )
     ).toEqual({ layerId: 'labels:cells', labelId: 42 });
@@ -547,7 +663,11 @@ describe('resolveHoveredLabel', () => {
   it('strips deck’s per-viewport id suffix, so the id matches the layer config key', () => {
     expect(
       resolveHoveredLabel(
-        { picked: true, layer: { id: 'labels:cells-#detail#' }, object: { labelId: 7 } },
+        {
+          picked: true,
+          layer: layerOf('labels:cells-#detail#'),
+          object: { labelId: 7 },
+        },
         isLabels
       )
     ).toEqual({ layerId: 'labels:cells', labelId: 7 });
@@ -556,18 +676,22 @@ describe('resolveHoveredLabel', () => {
   it('resolves nothing when the pick is not on a label', () => {
     // Nothing under the cursor at all — moving onto empty space or off the canvas.
     expect(
-      resolveHoveredLabel({ picked: false, layer: { id: 'labels:cells' } }, isLabels)
+      resolveHoveredLabel({ picked: false, layer: layerOf('labels:cells') }, isLabels)
     ).toBeNull();
     // A different layer kind: a shapes pick must never light up a labels layer.
     expect(
       resolveHoveredLabel(
-        { picked: true, layer: { id: 'shapes:cells' }, object: { featureId: '3' } },
+        {
+          picked: true,
+          layer: layerOf('shapes:cells'),
+          object: { featureId: '3' },
+        },
         isLabels
       )
     ).toBeNull();
     // Picked, on a labels layer, but the object carries no label id.
     expect(
-      resolveHoveredLabel({ picked: true, layer: { id: 'labels:cells' }, object: {} }, isLabels)
+      resolveHoveredLabel({ picked: true, layer: layerOf('labels:cells'), object: {} }, isLabels)
     ).toBeNull();
     // Deck can report a pick with no layer.
     expect(resolveHoveredLabel({ picked: true, object: { labelId: 1 } }, isLabels)).toBeNull();
@@ -578,13 +702,21 @@ describe('resolveHoveredLabel', () => {
     // against sampled ids by proximity.
     expect(
       resolveHoveredLabel(
-        { picked: true, layer: { id: 'labels:cells' }, object: { labelId: '1e3' } },
+        {
+          picked: true,
+          layer: layerOf('labels:cells'),
+          object: { labelId: '1e3' },
+        },
         isLabels
       )
     ).toBeNull();
     expect(
       resolveHoveredLabel(
-        { picked: true, layer: { id: 'labels:cells' }, object: { labelId: 'abc' } },
+        {
+          picked: true,
+          layer: layerOf('labels:cells'),
+          object: { labelId: 'abc' },
+        },
         isLabels
       )
     ).toBeNull();

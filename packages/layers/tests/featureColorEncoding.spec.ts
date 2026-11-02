@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignFeatureColors,
   featureColorAt,
+  type FeatureNumericRampSpec,
   featureColorSchemeSignature,
   resolveFeatureFillColorMode,
 } from '../src/featureColorEncoding';
@@ -357,7 +358,7 @@ describe('featureColorSchemeSignature', () => {
 });
 
 describe('a ramp with more than two stops', () => {
-  const diverging: [number, number, number][] = [
+  const diverging: FeatureNumericRampSpec = [
     [0, 0, 255],
     [255, 255, 255],
     [255, 0, 0],

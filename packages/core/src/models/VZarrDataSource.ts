@@ -50,6 +50,7 @@ export default class ZarrDataSource {
   async getJson(
     key: string,
     storeRootParam: Location<Readable> | null = null
+    // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   ): Promise<Record<string, any>> {
     const { storeRoot } = this;
     const storeRootToUse = storeRootParam || storeRoot;

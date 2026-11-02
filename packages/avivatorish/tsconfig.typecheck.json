@@ -1,0 +1,13 @@
+{
+  // Typechecks src and tests together. Separate from tsconfig.json because that one
+  // sets `rootDir: "src"` for declaration emit, which would reject `tests`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "emitDeclarationOnly": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": null
+  },
+  "include": ["src", "tests"]
+}

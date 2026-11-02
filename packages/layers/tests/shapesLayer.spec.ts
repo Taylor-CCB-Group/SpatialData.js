@@ -1,3 +1,4 @@
+import type { Layer } from '@deck.gl/core';
 import { describe, expect, it, vi } from 'vitest';
 import { SpatialLayer } from '../src/SpatialLayer';
 import {
@@ -17,6 +18,14 @@ import {
   resolveShapeTooltipRowIndex,
   type ShapesRenderDataLike,
 } from '../src/shapesLayer';
+
+/** `createShapesDeckLayer` may return null or an array; these specs expect exactly one layer. */
+function single(layer: Layer | Layer[] | null): Layer {
+  if (layer === null || Array.isArray(layer)) {
+    throw new Error('expected a single deck layer');
+  }
+  return layer;
+}
 
 const renderData: ShapesRenderDataLike = {
   kind: 'wkb-parquet',
@@ -131,7 +140,7 @@ describe('createShapesDeckLayer', () => {
     );
 
     expect(layer).not.toBeNull();
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     expect((props.data as unknown[]).length).toBe(2);
     expect((props.data as Array<{ featureId: string }>).map((d) => d.featureId)).toEqual([
       'cell-1',
@@ -162,7 +171,7 @@ describe('createShapesDeckLayer', () => {
     if (!layer || Array.isArray(layer)) {
       throw new Error('Expected a single object-path shapes layer');
     }
-    const props = layer.props as unknown as {
+    const props = single(layer).props as unknown as {
       data: Array<{ featureId: string }>;
       getLineColor: (datum: { featureId: string }) => number[];
       lineWidthUnits: string;
@@ -207,7 +216,7 @@ describe('createShapesDeckLayer', () => {
     if (!layer) {
       throw new Error('Expected shapes layer to render');
     }
-    const props = layer.props as unknown as {
+    const props = single(layer).props as unknown as {
       getLineWidth: number;
       lineWidthUnits: string;
       lineWidthMinPixels: number;
@@ -231,8 +240,8 @@ describe('createShapesDeckLayer', () => {
       { id: 'shapes-test', spatialCoordinateSystem: 'global', onShapeHover }
     );
 
-    const hovered = (layer!.props.data as any[])[0];
-    (layer!.props.onHover as (info: any) => void)({ object: hovered });
+    const hovered = (single(layer).props.data as any[])[0];
+    (single(layer).props.onHover as (info: any) => void)({ object: hovered });
     expect(onShapeHover).toHaveBeenCalledWith(
       expect.objectContaining({
         layerId: 'shapes-test',
@@ -268,7 +277,7 @@ describe('createShapesDeckLayer', () => {
     );
 
     expect(layer).not.toBeNull();
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     expect(props.radiusUnits).toBe('pixels');
     expect((props.getRadius as (d: { radius: number }) => number)(props.data[0])).toBe(8);
   });
@@ -297,7 +306,7 @@ describe('createShapesDeckLayer', () => {
     );
 
     expect(layer).not.toBeNull();
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     expect(props.radiusUnits).toBe('common');
     expect(
       (props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)
@@ -317,7 +326,7 @@ describe('createShapesDeckLayer', () => {
     );
 
     expect(layer).not.toBeNull();
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     expect((props.data as Array<{ featureId: string }>).map((d) => d.featureId)).toEqual([
       'cell-1',
       'cell-2',
@@ -334,7 +343,7 @@ describe('createShapesDeckLayer', () => {
       },
       { id: 'tooltip-shapes' }
     );
-    const picked = (layer!.props.data as any[])[0];
+    const picked = (single(layer).props.data as any[])[0];
     delete picked.rowIndex;
 
     expect(
@@ -368,7 +377,7 @@ describe('createShapesDeckLayer', () => {
       },
       { id: 'tooltip-shapes-fallback' }
     );
-    const picked = (layer!.props.data as any[])[0];
+    const picked = (single(layer).props.data as any[])[0];
     delete picked.rowIndex;
 
     expect(
@@ -668,8 +677,8 @@ describe('SpatialLayer', () => {
       { id: 'geoarrow' }
     );
 
-    expect((fallback!.props as any).data).toHaveLength(2);
-    expect((geoarrow!.props as any).data).toHaveLength(2);
+    expect((single(fallback).props as any).data).toHaveLength(2);
+    expect((single(geoarrow).props as any).data).toHaveLength(2);
   });
 });
 
@@ -700,7 +709,7 @@ describe('host-supplied feature colour buffer', () => {
       { id: 'shapes-buffer', featureColors: buffer }
     );
 
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     const byIndex = (i: number) => props.getFillColor(props.data[i]);
     expect(byIndex(0)).toEqual([255, 0, 0, 255]);
     expect(byIndex(1)).toEqual([0, 0, 0, 0]);
@@ -714,7 +723,7 @@ describe('host-supplied feature colour buffer', () => {
       { id: 'shapes-buffer-outline', featureColors: buffer }
     );
 
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     expect(props.getLineColor(props.data[0])).toEqual(deriveStrokeColor([255, 0, 0, 255]));
   });
 
@@ -756,7 +765,7 @@ describe('host-supplied feature colour buffer', () => {
       { id: 'shapes-short-buffer', featureColors: short }
     );
 
-    const props = layer!.props as any;
+    const props = single(layer).props as any;
     expect(props.getFillColor(props.data[0])).toEqual([255, 0, 0, 255]);
     expect(props.getFillColor(props.data[1])).toEqual([0, 0, 0, 0]);
   });

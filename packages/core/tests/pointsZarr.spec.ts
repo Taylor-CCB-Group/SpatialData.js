@@ -549,7 +549,7 @@ describe('points-zarr element', () => {
     expect(loader?.capabilities.kind).toBe('points-zarr-tiled');
     const batch = await loader?.loadInBounds({ bounds: wholeExtent, featureCodes: [2] });
     expect(batch?.pointCount).toBeGreaterThan(0);
-    expect(batch?.featureCodes && new Set(batch.featureCodes)).toEqual(new Set([2]));
+    expect(batch?.featureCodes && new Set(Array.from(batch.featureCodes))).toEqual(new Set([2]));
     expect(batch?.shape).toEqual([3, batch?.pointCount]);
   });
 });

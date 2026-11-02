@@ -1,11 +1,11 @@
-import { Dictionary, Int16, tableFromArrays, Utf8, Vector, vectorFromArray } from 'apache-arrow';
+import { Dictionary, Int16, Table, tableFromArrays, Utf8, Vector, vectorFromArray } from 'apache-arrow';
 import { describe, expect, it } from 'vitest';
 import { resolveRowFeatureCodesFromTable } from '../src/pointsFeatures.js';
 
 const FEATURE_KEY = 'feature_name';
 
 function dictionaryTable(names: string[]) {
-  return tableFromArrays({
+  return new Table({
     [FEATURE_KEY]: vectorFromArray(names, new Dictionary(new Utf8(), new Int16())),
   });
 }

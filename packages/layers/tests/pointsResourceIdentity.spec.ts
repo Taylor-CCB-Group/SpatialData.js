@@ -204,7 +204,13 @@ describe('partial render resource — getMatchingPartialResource', () => {
       loadPointsMatchingFeatureCodes: vi.fn(
         async (o: { onProgress?: (p: PointsLoadProgress) => void }) => {
           await yieldTick();
-          o.onProgress?.({ matchedRows: 2, scannedRows: 10, partialResult: partial });
+          o.onProgress?.({
+            matchedRows: 2,
+            scannedRows: 10,
+            partIndex: 0,
+            partCount: 1,
+            partialResult: partial,
+          });
           return scan.promise;
         }
       ),
@@ -240,7 +246,13 @@ describe('partial render resource — getMatchingPartialResource', () => {
         async (o: { onProgress?: (p: PointsLoadProgress) => void }) => {
           await yieldTick();
           emit = o.onProgress as (p: PointsLoadProgress) => void;
-          emit({ matchedRows: 2, scannedRows: 10, partialResult: first });
+          emit({
+            matchedRows: 2,
+            scannedRows: 10,
+            partIndex: 0,
+            partCount: 1,
+            partialResult: first,
+          });
           return scan.promise;
         }
       ),
@@ -258,7 +270,7 @@ describe('partial render resource — getMatchingPartialResource', () => {
     // A new chunk grows the buffer. D10: the resource identity is held STABLE for the
     // scan (so PointsLayer does not tear the overlay down per chunk) and the revision
     // bumps instead — the composite re-reads the grown buffer on that prop change.
-    emit({ matchedRows: 5, scannedRows: 30, partialResult: grown });
+    emit({ matchedRows: 5, scannedRows: 30, partIndex: 0, partCount: 1, partialResult: grown });
     const atSecondChunk = engine.getMatchingPartialResource(element, 'pts');
 
     expect(atSecondChunk).toBe(atFirstChunk); // SAME resource — no teardown
@@ -280,7 +292,13 @@ describe('partial render resource — getMatchingPartialResource', () => {
       loadPointsMatchingFeatureCodes: vi.fn(
         async (o: { onProgress?: (p: PointsLoadProgress) => void }) => {
           await yieldTick();
-          o.onProgress?.({ matchedRows: 2, scannedRows: 10, partialResult: batch(2) });
+          o.onProgress?.({
+            matchedRows: 2,
+            scannedRows: 10,
+            partIndex: 0,
+            partCount: 1,
+            partialResult: batch(2),
+          });
           return batch(2);
         }
       ),

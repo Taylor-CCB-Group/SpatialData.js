@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import SpatialDataPointsSource from '../src/models/VPointsSource.js';
+import { ExposedPointsSource } from './exposedPointsSource.js';
 import * as parquetWorkerClient from '../src/workers/parquetWorkerClient.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,16 +46,16 @@ PY`,
 }
 
 function createFilesystemStore(root: string) {
-  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | null> => {
+  const readStoreBytes = async (relativePath: string): Promise<Uint8Array | undefined> => {
     const fullPath = join(root, relativePath);
     try {
       const info = await stat(fullPath);
       if (info.isDirectory()) {
-        return null;
+        return undefined;
       }
       return await readFile(fullPath);
     } catch {
-      return null;
+      return undefined;
     }
   };
 
@@ -71,7 +71,7 @@ function createFilesystemStore(root: string) {
       const relativePath = path.startsWith('/') ? path.slice(1) : path;
       const bytes = await readStoreBytes(relativePath);
       if (!bytes) {
-        return null;
+        return undefined;
       }
       if (range.suffixLength != null) {
         return bytes.subarray(bytes.length - range.suffixLength);
@@ -92,12 +92,12 @@ function createFilesystemStore(root: string) {
  */
 describe('SpatialDataPointsSource feature catalog', () => {
   let fixtureRoot: string;
-  let source: SpatialDataPointsSource;
+  let source: ExposedPointsSource;
 
   beforeAll(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), 'points-features-'));
     await writePointsFeatureFixture(fixtureRoot);
-    source = new SpatialDataPointsSource({
+    source = new ExposedPointsSource({
       store: createFilesystemStore(fixtureRoot),
       fileType: '.zarr',
     });
@@ -130,7 +130,7 @@ describe('SpatialDataPointsSource feature catalog', () => {
   });
 
   it('lists features for oversized datasets via feature-column scan', async () => {
-    vi.spyOn(source, 'resolveParquetRowCount' as keyof SpatialDataPointsSource).mockResolvedValue(
+    vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(
       5_000_000
     );
     const catalog = await source.listPointsFeatures('points/transcripts');
@@ -169,7 +169,7 @@ PY`,
       { cwd: writerRoot, stdio: 'pipe' }
     );
 
-    const dictSource = new SpatialDataPointsSource({
+    const dictSource = new ExposedPointsSource({
       store: createFilesystemStore(fixtureRoot),
       fileType: '.zarr',
     });
@@ -183,7 +183,7 @@ PY`,
     });
     vi.spyOn(
       dictSource,
-      'resolveParquetRowCount' as keyof SpatialDataPointsSource
+      'resolveParquetRowCount'
     ).mockResolvedValue(5_000_000);
 
     // Oversized → the byte-oriented feature-column scan, which does not tally
@@ -248,7 +248,7 @@ PY`,
       { cwd: writerRoot, stdio: 'pipe' }
     );
 
-    const dictSource = new SpatialDataPointsSource({
+    const dictSource = new ExposedPointsSource({
       store: createFilesystemStore(fixtureRoot),
       fileType: '.zarr',
     });
@@ -268,7 +268,7 @@ PY`,
     ]);
 
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_with_codes');
-    expect([...featureCodes!]).toEqual([1, 0, 1]);
+    expect(Array.from(featureCodes ?? [])).toEqual([1, 0, 1]);
   }, 120_000);
 
   it('counts dictionary-only feature columns from the catalog build, not loadFeatureCounts', async () => {
@@ -295,7 +295,7 @@ PY`,
       { cwd: writerRoot, stdio: 'pipe' }
     );
 
-    const dictSource = new SpatialDataPointsSource({
+    const dictSource = new ExposedPointsSource({
       store: createFilesystemStore(fixtureRoot),
       fileType: '.zarr',
     });
@@ -344,7 +344,7 @@ PY`,
       { cwd: writerRoot, stdio: 'pipe' }
     );
 
-    const dictSource = new SpatialDataPointsSource({
+    const dictSource = new ExposedPointsSource({
       store: createFilesystemStore(fixtureRoot),
       fileType: '.zarr',
     });
@@ -361,7 +361,7 @@ PY`,
     expect(points.featureCodes).toBeUndefined();
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_only');
     expect(featureCodes?.length).toBe(3);
-    expect([...featureCodes!]).toEqual([0, 1, 0]);
+    expect(Array.from(featureCodes ?? [])).toEqual([0, 1, 0]);
   }, 120_000);
 
   it('derives dictionary-only row codes from decoded names, not local dictionary indices', async () => {
@@ -403,7 +403,7 @@ PY`,
       { cwd: writerRoot, stdio: 'pipe' }
     );
 
-    const dictSource = new SpatialDataPointsSource({
+    const dictSource = new ExposedPointsSource({
       store: createFilesystemStore(fixtureRoot),
       fileType: '.zarr',
     });
@@ -425,7 +425,7 @@ PY`,
     ]);
 
     const featureCodes = await dictSource.loadPointsRowFeatureCodes('points/dict_local_indices');
-    expect([...featureCodes!]).toEqual([0, 0, 1, 1, 1, 2]);
+    expect(Array.from(featureCodes ?? [])).toEqual([0, 0, 1, 1, 1, 2]);
   }, 120_000);
 
   it('delegates row feature code decode to the parquet worker when enabled', async () => {
@@ -439,7 +439,7 @@ PY`,
 
     const featureCodes = await source.loadPointsRowFeatureCodes('points/transcripts');
     expect(decodeSpy).toHaveBeenCalled();
-    expect([...featureCodes!]).toEqual([...workerCodes]);
+    expect(Array.from(featureCodes ?? [])).toEqual([...workerCodes]);
   });
 
   it('delegates oversized feature catalog scan to the parquet worker when enabled', async () => {
@@ -455,7 +455,7 @@ PY`,
     const catalogSpy = vi
       .spyOn(parquetWorkerClient, 'scanParquetFeatureCatalogInWorker')
       .mockResolvedValue(workerCatalog);
-    vi.spyOn(source, 'resolveParquetRowCount' as keyof SpatialDataPointsSource).mockResolvedValue(
+    vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(
       5_000_000
     );
 

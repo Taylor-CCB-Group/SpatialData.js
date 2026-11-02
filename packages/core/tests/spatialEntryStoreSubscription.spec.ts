@@ -38,6 +38,7 @@ function notifyingResolver() {
         bounds: null,
         revision: 0,
       }),
+      retry: () => {},
       evict: () => {},
       dispose: () => {
         listeners.clear();

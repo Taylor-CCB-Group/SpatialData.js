@@ -8,6 +8,40 @@ import {
 
 const encoder = new TextEncoder();
 
+/** zarrita types `Codec.decode` as `Uint8Array | Chunk`; array-to-bytes codecs yield the latter. */
+function toUint8Chunk(value: unknown): zarr.Chunk<'uint8'> {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'data' in value &&
+    value.data instanceof Uint8Array &&
+    'shape' in value &&
+    Array.isArray(value.shape) &&
+    'stride' in value &&
+    Array.isArray(value.stride)
+  ) {
+    return { data: value.data, shape: value.shape, stride: value.stride };
+  }
+  throw new Error('Expected a decoded chunk object.');
+}
+
+/**
+ * Chunk metadata as fizarrita's codec worker sends it (snake_case). zarrita's registry
+ * types only know the camelCase shape, so the boundary assertion is local to this helper;
+ * the registered codec normalises it (see `normalizeChunkMetadata`).
+ */
+type CodecMeta = Parameters<
+  Awaited<ReturnType<NonNullable<ReturnType<typeof zarr.registry.get>>>>['fromConfig']
+>[1];
+
+function fizarritaWorkerMeta(codecName: string): CodecMeta {
+  return {
+    data_type: 'uint8',
+    chunk_shape: [2, 2],
+    codecs: [{ name: codecName, configuration: {} }],
+  } as unknown as CodecMeta;
+}
+
 function createCodecArrayStore(codecName: string): Map<string, Uint8Array> {
   return new Map<string, Uint8Array>([
     [
@@ -59,8 +93,8 @@ describe('codec registration', () => {
       const chunk = await zarr.get(arrAfter, [null, null]);
 
       expect(typeof chunk).toBe('object');
-      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
-      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([1, 2, 3, 4]);
+      expect(chunk.shape).toEqual([2, 2]);
+      expect(Array.from(chunk.data)).toEqual([1, 2, 3, 4]);
     } finally {
       if (previous) {
         zarr.registry.set(codecName, previous);
@@ -86,18 +120,11 @@ describe('codec registration', () => {
       if (!factory) throw new Error('Expected codec factory to be registered.');
 
       const entry = await factory();
-      const codec = entry.fromConfig(
-        {},
-        {
-          data_type: 'uint8',
-          chunk_shape: [2, 2],
-          codecs: [{ name: codecName, configuration: {} }],
-        }
-      );
+      const codec = entry.fromConfig({}, fizarritaWorkerMeta(codecName));
 
-      const chunk = await codec.decode(new Uint8Array([99]));
-      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([5, 6, 7, 8]);
-      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+      const chunk = toUint8Chunk(await codec.decode(new Uint8Array([99])));
+      expect(Array.from(chunk.data)).toEqual([5, 6, 7, 8]);
+      expect(chunk.shape).toEqual([2, 2]);
     } finally {
       if (previous) {
         zarr.registry.set(codecName, previous);
@@ -129,8 +156,8 @@ describe('codec registration', () => {
       const chunk = await zarr.get(arrAfter, [null, null]);
 
       expect(typeof chunk).toBe('object');
-      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
-      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([9, 10, 11, 12]);
+      expect(chunk.shape).toEqual([2, 2]);
+      expect(Array.from(chunk.data)).toEqual([9, 10, 11, 12]);
     } finally {
       if (previous) {
         zarr.registry.set(codecName, previous);
@@ -156,18 +183,11 @@ describe('codec registration', () => {
       if (!factory) throw new Error('Expected codec factory to be registered.');
 
       const entry = await factory();
-      const codec = entry.fromConfig(
-        {},
-        {
-          data_type: 'uint8',
-          chunk_shape: [2, 2],
-          codecs: [{ name: codecName, configuration: {} }],
-        }
-      );
+      const codec = entry.fromConfig({}, fizarritaWorkerMeta(codecName));
 
-      const chunk = await codec.decode(new Uint8Array([99]));
-      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([13, 14, 15, 16]);
-      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+      const chunk = toUint8Chunk(await codec.decode(new Uint8Array([99])));
+      expect(Array.from(chunk.data)).toEqual([13, 14, 15, 16]);
+      expect(chunk.shape).toEqual([2, 2]);
     } finally {
       if (previous) {
         zarr.registry.set(codecName, previous);
@@ -189,15 +209,16 @@ describe('codec registration', () => {
       const codec = entry.fromConfig(
         { endian: 'little' },
         {
-          data_type: 'uint8',
-          chunk_shape: [2, 2],
+          dataType: 'uint8',
+          shape: [2, 2],
+          fillValue: 0,
           codecs: [{ name: 'bytes', configuration: { endian: 'little' } }],
         }
       );
 
-      const chunk = await codec.decode(new Uint8Array([1, 2, 3, 4]));
-      expect(Array.from((chunk as zarr.Chunk<'uint8'>).data)).toEqual([1, 2, 3, 4]);
-      expect((chunk as zarr.Chunk<'uint8'>).shape).toEqual([2, 2]);
+      const chunk = toUint8Chunk(await codec.decode(new Uint8Array([1, 2, 3, 4])));
+      expect(Array.from(chunk.data)).toEqual([1, 2, 3, 4]);
+      expect(chunk.shape).toEqual([2, 2]);
     } finally {
       zarr.registry.clear();
       for (const [key, value] of previousEntries) {
@@ -241,12 +262,16 @@ describe('codec registration', () => {
 
     const decoder = createOpenJphDecoder(decode);
     const decoded = toUint16Array(
-      await decoder(encoded, {
-        dataType: 'uint16',
-        shape: [height, width],
-        codecs: [{ name: 'experimental.openjph_htj2k', configuration: {} }],
-        fillValue: 0,
-      })
+      await decoder(
+        encoded,
+        {
+          dataType: 'uint16',
+          shape: [height, width],
+          codecs: [{ name: 'experimental.openjph_htj2k', configuration: {} }],
+          fillValue: 0,
+        },
+        {}
+      )
     );
     expect(decoded).toEqual(plane);
   });

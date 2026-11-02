@@ -358,6 +358,7 @@ export function useWindowSize(scaleWidth = 1, scaleHeight = 1) {
   });
   return windowSize;
 }
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 type LOADER = OME_TIFF | any; //idk
 function narrowLimits(limits: number[]): limits is [number, number] {
   return limits.length === 2;
@@ -379,6 +380,7 @@ function clampVivSelectionToSource(
 }
 
 type RasterSourceLike = {
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   getRaster: (args: { selection: VivSelection }) => Promise<{ data: any }>;
   labels: string[];
   shape: number[];
@@ -607,6 +609,7 @@ export function isMobileOrTablet() {
 /**
  * @param { import('../../src/loaders/omexml').OMEXML[0] } imgMeta
  */
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 export function guessRgb({ Pixels }: any) {
   const numChannels = Pixels.Channels.length;
   const { SamplesPerPixel } = Pixels.Channels[0];
@@ -628,6 +631,7 @@ export function truncateDecimalNumber(value: number, maxLength: number) {
  * Get physical size scaling Matrix4
  * @param {Object} loader PixelSource - todo: clarify type
  */
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 export function getPhysicalSizeScalingMatrix(loader: PixelSource | any) {
   const { x, y, z } = loader?.meta?.physicalSizes ?? {};
   if (x?.size && y?.size && z?.size) {

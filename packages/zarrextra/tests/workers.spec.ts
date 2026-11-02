@@ -1,6 +1,5 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { OutputChunk, RollupOutput } from 'rollup';
 import { build } from 'vite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getChunkDecodeBackend } from '../src/chunkDecode';
@@ -17,11 +16,18 @@ vi.mock('@fideus-labs/worker-pool', () => {
   return { WorkerPool: MockWorkerPool };
 });
 
-function rollupOutputs(output: RollupOutput | RollupOutput[]): RollupOutput[] {
-  return Array.isArray(output) ? output : [output];
+// The bundler's types are not a direct dependency, so derive them from vite's `build`.
+type BuildResult = Awaited<ReturnType<typeof build>>;
+type RollupOutput = Extract<BuildResult, { output: unknown }>;
+type OutputItem = RollupOutput['output'][number];
+type OutputChunk = Extract<OutputItem, { type: 'chunk' }>;
+
+function rollupOutputs(output: BuildResult): RollupOutput[] {
+  const outputs = Array.isArray(output) ? output : [output];
+  return outputs.filter((o): o is RollupOutput => 'output' in o);
 }
 
-function isChunk(item: RollupOutput['output'][number]): item is OutputChunk {
+function isChunk(item: OutputItem): item is OutputChunk {
   return item.type === 'chunk';
 }
 

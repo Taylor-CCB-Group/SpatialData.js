@@ -9,6 +9,17 @@ import {
 
 const encoder = new TextEncoder();
 
+type GetWorkerFn = Parameters<typeof setFizarritaGetWorker>[0];
+
+/** A spy standing in for fizarrita's getWorker that always resolves a 2x2 uint8 chunk. */
+function mockGetWorker(values: number[]) {
+  return vi.fn<GetWorkerFn>(async <D extends zarr.DataType>() => {
+    const chunk = { data: new Uint8Array(values), shape: [2, 2], stride: [2, 1] };
+    // The fixture is fixed uint8 while the signature is generic in D; the compiler cannot relate them.
+    return chunk as unknown as zarr.Chunk<D>;
+  });
+}
+
 function createArrayStore(): Map<string, Uint8Array> {
   return new Map<string, Uint8Array>([
     [
@@ -62,11 +73,7 @@ describe('getZarrChunk', () => {
   });
 
   it('delegates to fizarrita getWorker when that backend is enabled', async () => {
-    const getWorker = vi.fn(async () => ({
-      data: new Uint8Array([9, 8, 7, 6]),
-      shape: [2, 2],
-      stride: [2, 1],
-    }));
+    const getWorker = mockGetWorker([9, 8, 7, 6]);
     setFizarritaGetWorker(getWorker);
 
     const pool = { terminateWorkers: vi.fn() };
@@ -94,12 +101,8 @@ describe('getZarrChunk', () => {
 describe('getZarrChunk cancellation', () => {
   it('hands the caller signal to fizarrita rather than watching it here', async () => {
     const controller = new AbortController();
-    const getWorker = vi.fn(async () => ({
-      data: new Uint8Array([1, 2, 3, 4]),
-      shape: [2, 2],
-      stride: [2, 1],
-    }));
-    setFizarritaGetWorker(getWorker as never);
+    const getWorker = mockGetWorker([1, 2, 3, 4]);
+    setFizarritaGetWorker(getWorker);
     setChunkDecodeBackend({ kind: 'fizarrita', pool: {} as never });
 
     const store = createArrayStore();
@@ -113,12 +116,8 @@ describe('getZarrChunk cancellation', () => {
   });
 
   it('omits the signal when the caller gives none', async () => {
-    const getWorker = vi.fn(async () => ({
-      data: new Uint8Array([1, 2, 3, 4]),
-      shape: [2, 2],
-      stride: [2, 1],
-    }));
-    setFizarritaGetWorker(getWorker as never);
+    const getWorker = mockGetWorker([1, 2, 3, 4]);
+    setFizarritaGetWorker(getWorker);
     setChunkDecodeBackend({ kind: 'fizarrita', pool: {} as never });
 
     const store = createArrayStore();
@@ -175,12 +174,8 @@ describe('getZarrChunk cancellation', () => {
 
 describe('getZarrChunk with a per-read cache', () => {
   it("hands fizarrita the read's cache in place of the backend's", async () => {
-    const getWorker = vi.fn(async () => ({
-      data: new Uint8Array([1, 2, 3, 4]),
-      shape: [2, 2],
-      stride: [2, 1],
-    }));
-    setFizarritaGetWorker(getWorker as never);
+    const getWorker = mockGetWorker([1, 2, 3, 4]);
+    setFizarritaGetWorker(getWorker);
     const newCache = () => ({ get: () => undefined, set: () => {} });
     const backendCache = newCache();
     setChunkDecodeBackend({
