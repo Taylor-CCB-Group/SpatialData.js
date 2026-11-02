@@ -15,6 +15,7 @@ import {
 } from '../pointsZarr.js';
 import { assessRasterLevels, rasterLevelsFromTree } from '../rasterLayout';
 import {
+  type Axis,
   type CoordinateTransformation,
   type PointsAttrs,
   pointsAttrsSchema,
@@ -458,6 +459,21 @@ export class TableElement extends AbstractElement<'tables'> {
 // ============================================
 
 /**
+ * The schema admits axes whose `type` is missing or unrecognised. Transforms map by axis name
+ * only for `space` axes, so treat axes named x/y/z as spatial rather than dropping their values.
+ */
+function withTypedXYZ(axes: Axis[]): Axis[] {
+  return axes.map((a) =>
+    a.type !== 'space' &&
+    a.type !== 'channel' &&
+    a.type !== 'time' &&
+    ['x', 'y', 'z'].includes(a.name.toLowerCase())
+      ? { ...a, type: 'space' }
+      : a
+  );
+}
+
+/**
  * Base class for raster elements (images and labels).
  * These share OME-NGFF multiscale structure and transformation logic.
  */
@@ -561,7 +577,7 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
     return {
       element: this.getTransformation(toCoordinateSystem),
       dataset: datasetTransforms
-        ? parseTransforms(datasetTransforms, multiscale?.axes)
+        ? parseTransforms(datasetTransforms, multiscale && withTypedXYZ(multiscale.axes))
         : new Identity(),
     };
   }

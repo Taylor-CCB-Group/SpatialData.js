@@ -537,9 +537,7 @@ export function parseTransformEntry(
       return new MapAxis(t.mapAxis, input, output);
 
     case 'sequence': {
-      const children = t.transformations.map((sub: TransformEntry) =>
-        parseTransformEntry(sub, input?.axes)
-      );
+      const children = parseChain(t.transformations, input?.axes);
       return new Sequence(children, input, output);
     }
 
@@ -547,6 +545,24 @@ export function parseTransformEntry(
       console.warn(`Unknown transform type: ${(t as { type: string }).type}`);
       return new Identity(input, output);
   }
+}
+
+/**
+ * Parse entries in application order. An entry that declares no `input` takes the axes the
+ * previous entry left behind: its declared `output`, unchanged for axis-preserving types, and
+ * unknown (positional fallback) after anything that may reorder axes without declaring them.
+ */
+function parseChain(entries: TransformEntry[], initialAxes?: Axis[]): BaseTransformation[] {
+  let axes = initialAxes;
+  return entries.map((entry) => {
+    const parsed = parseTransformEntry(entry, axes);
+    if (parsed.output?.axes) {
+      axes = parsed.output.axes;
+    } else if (!['identity', 'scale', 'translation'].includes(parsed.type)) {
+      axes = undefined;
+    }
+    return parsed;
+  });
 }
 
 /**
@@ -572,7 +588,7 @@ export function parseTransforms(
   }
 
   // Multiple transforms → wrap in a Sequence
-  const parsed = transforms.map((t) => parseTransformEntry(t, defaultInputAxes));
+  const parsed = parseChain(transforms, defaultInputAxes);
   // Use the first transform's input and last transform's output
   const input = parsed[0].input;
   const output = parsed[parsed.length - 1].output;
