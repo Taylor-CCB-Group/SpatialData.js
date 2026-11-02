@@ -36,7 +36,9 @@ export function getVivId(id: string): string {
 
 export type VivViewState = (OrthographicViewState | OrbitViewState) & { id: string };
 export type VivViewStates = VivViewState[];
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 export type View = { id: string } & any; // Viv View type
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 export type VivPickInfo = PickingInfo<any, any> & { tile?: any };
 type VivZoom = number | readonly number[] | null | undefined;
 type VivLoader = { meta?: { physicalSizes?: { x?: { size: number; unit: string } } } };
@@ -373,6 +375,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     }
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   layerFilter({ layer, viewport }: { layer: Layer; viewport: any }): boolean {
     return layer.id.includes(getVivId(viewport.id));
   }

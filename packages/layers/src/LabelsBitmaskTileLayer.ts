@@ -34,6 +34,7 @@ function getLabelCoordinate(
     return point;
   }
   try {
+    // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
     return new Matrix4(modelMatrix as any).invert().transformAsPoint(point) as [
       number,
       number,
@@ -45,6 +46,7 @@ function getLabelCoordinate(
 }
 
 function getLabelAtPixel(
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   props: any,
   pixelX: number,
   pixelY: number
@@ -133,6 +135,7 @@ export function resolveLabelPickingInfo(info: PickingInfo, props: any): PickingI
   return info;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 const UntypedXRLayer = XRLayer as any;
 
 export class LabelsBitmaskTileLayer extends UntypedXRLayer {
@@ -162,6 +165,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
   };
 
   // biome-ignore lint/complexity/noUselessConstructor: widens the base UntypedXRLayer constructor so `new LabelsBitmaskTileLayer(props)` typechecks.
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   constructor(...args: any[]) {
     super(...args);
   }
@@ -171,6 +175,7 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     return 1;
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   getShaders(): any {
     return {
       fs,
@@ -248,11 +253,13 @@ export class LabelsBitmaskTileLayer extends UntypedXRLayer {
     const plane = channelData?.data?.[0];
     if (plane && channelData.width && channelData.height) {
       textures.channel0 = this.dataToTexture(plane, channelData.width, channelData.height);
+      // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
       (this as any)._setNewTexturesFromLoadThisFrame?.(textures);
       this.setState({ textures });
       return;
     }
 
+    // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
     (this as any)._setNewTexturesFromLoadThisFrame?.(null);
   }
 

@@ -32,6 +32,7 @@ function generateToggles<TDefaults extends {}, TState extends TDefaults>(
   // I don't know why we suddenly needed to add TState... typescript complaining otherwise
   set: SetFunctionType<TState>
 ): TogglesReturnType<TDefaults> {
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   const toggles: any = {};
   for (const [k, v] of Object.entries(defaults)) {
     if (typeof v === 'boolean') {
@@ -50,6 +51,7 @@ export type ChannelsState = {
   colors: [number, number, number][];
   domains: [number, number][];
   selections: { z: number; c: number; t: number }[];
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   loader: any; //TBD
   image: number;
   ids: string[];
@@ -114,9 +116,11 @@ const DEFAULT_VIEWER_STATE = {
   useLens: false,
   useColormap: false,
   globalSelection: { z: 0, t: 0 },
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   channelOptions: [] as any[],
   /** type is WIP */
   metadata: null as Metadata | null,
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   viewState: null as any,
   source: undefined as { urlOrFile: string; description: string } | undefined,
   pyramidResolution: 0,
@@ -268,6 +272,7 @@ export function createVivStores() {
   return { viewerStore, channelsStore, imageSettingsStore } as VivContextType;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 const VivContext = createContext<VivContextType>(null as any);
 /**
  * This implictly assumes that we are in a context where there is a chart, and that we
@@ -330,6 +335,7 @@ type OME_METADATA = OME_ZARR['metadata'] & {
   // at least, that was true for the first sample I looked at...
   // and at least that allows us to remove some ts-expect-error
   Pixels: {
+    // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
     Channels: Array<{ Name: string; SamplesPerPixel: number; Color?: any }>;
     //! I don't think we actually do see these on OME-ZARR
     PhysicalSizeX?: number;

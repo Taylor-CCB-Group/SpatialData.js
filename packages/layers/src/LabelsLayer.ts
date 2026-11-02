@@ -126,6 +126,7 @@ function resolveFeatureColorLut(
 }
 
 const VIV_SIGNAL_ABORTED = '__vivSignalAborted';
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 const UntypedTileLayer = TileLayer as any;
 
 /** The labels tile class for this device: WGSL on WebGPU, the Viv-based GLSL one otherwise. */
@@ -142,18 +143,22 @@ function isMultiscaleLoader(loader: unknown): loader is unknown[] {
   return Array.isArray(loader) && loader.length > 1;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 function getBaseLoader(loader: any) {
   return Array.isArray(loader) ? loader[0] : loader;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 class SingleScaleLabelsLayer extends CompositeLayer<any> {
   static layerName = 'SingleScaleLabelsLayer';
 
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   finalizeState(context: any): void {
     (this.state.abortController as AbortController | undefined)?.abort();
     super.finalizeState(context);
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   updateState({ props, oldProps }: { props: any; oldProps: any }): void {
     const loaderChanged = props.loader !== oldProps.loader;
     const selectionsChanged = props.labelsSelectionKey !== oldProps.labelsSelectionKey;
@@ -168,6 +173,7 @@ class SingleScaleLabelsLayer extends CompositeLayer<any> {
 
     const { signal } = abortController;
     const selection = firstSelection(props.selections);
+    // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
     const getRaster = (props.loader as any).getRaster.bind(props.loader);
 
     getRaster({ selection, signal })
@@ -269,6 +275,7 @@ class MultiscaleLabelsTileLayer extends UntypedTileLayer {
   static layerName = 'MultiscaleLabelsTileLayer';
 
   // biome-ignore lint/complexity/noUselessConstructor: TileLayer's public types reject the Viv-style constructor overload used here.
+  // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
   constructor(...args: any[]) {
     super(...args);
   }
@@ -284,6 +291,7 @@ class MultiscaleLabelsTileLayer extends UntypedTileLayer {
     const loaders = Array.isArray(loader) ? loader : [loader];
     const resolution = Math.max(0, Math.min(loaders.length - 1, Math.round(-z)));
     const selection = firstSelection(this.props.selections);
+    // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
     const tileLoader = loaders[resolution] as any;
     const getTile = tileLoader?.getTile?.bind(tileLoader);
 
@@ -324,6 +332,7 @@ class MultiscaleLabelsTileLayer extends UntypedTileLayer {
   }
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 function renderSubBitmaskLayers(props: any) {
   const TileClass = props.useWebGPULabels ? RasterTileLayer : LabelsBitmaskTileLayer;
   const {
@@ -512,6 +521,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
     };
 
     if (isMultiscaleLoader(loader)) {
+      // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
       const baseLoader = loader[0] as any;
       const { height, width } = getImageSize(baseLoader);
       const tileSize = baseLoader.tileSize;
@@ -545,6 +555,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
           onTileError: baseLoader.onTileError,
           renderSubLayers: renderSubBitmaskLayers,
           useWebGPULabels: isWebGPU(this.context),
+          // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
         } as any
       ) as unknown as Layer;
     }
@@ -558,6 +569,7 @@ export class LabelsLayer extends CompositeLayer<LabelsLayerProps> {
       {
         ...commonProps,
         ...interactionProps,
+        // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
       } as any
     ) as unknown as Layer;
   }
