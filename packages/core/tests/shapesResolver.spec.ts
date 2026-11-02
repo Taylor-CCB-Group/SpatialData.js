@@ -5,6 +5,7 @@ import {
   type ResolveContext,
   type ShapesResolveConfig,
   ShapesResolver,
+  SpatialEntryStore,
 } from '../src/engine/index.js';
 import type { ShapesElement } from '../src/models/index.js';
 import type { ShapesRenderData } from '../src/shapes.js';
@@ -353,8 +354,16 @@ describe('a failed load settles', () => {
   });
 
   it('serves each layer its own column when two layers share an element', async () => {
-    // Each column's rows are told apart by the extra column the loader was asked for.
-    const loadObsColumns = vi.fn(async (names: string[]) => names.map((n) => [`${n}-value`]));
+    // Table reads are held open so both layers' fill-colour loads overlap, as they do
+    // when one `reconcile` call carries both layers.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loadObsColumns = vi.fn(async (names: string[]) => {
+      await gate;
+      return names.map((n) => [`${n}-value`]);
+    });
     const spatialData = {
       getAssociatedTable: () => [
         'table',
@@ -366,6 +375,7 @@ describe('a failed load settles', () => {
       ],
     } as unknown as SpatialData;
     const resolver = new ShapesResolver({ spatialData });
+    const store = new SpatialEntryStore({ shapes: resolver });
     const byType = {
       ...ctx(element()),
       entryId: 'a',
@@ -377,10 +387,12 @@ describe('a failed load settles', () => {
       config: { fillColorByColumn: { columnName: 'area', mode: 'auto' } },
     };
 
-    for (let pass = 0; pass < 3; pass++) {
-      await reconcile(resolver, byType);
-      await reconcile(resolver, byArea);
-    }
+    const pending = store.reconcile([byType, byArea]);
+    release();
+    await pending;
+    // Settling replans; nothing should be left to load.
+    await store.reconcile([byType, byArea]);
+    await store.reconcile([byType, byArea]);
 
     // Loaded once per column, not once per pass.
     const fetchedColumns = loadObsColumns.mock.calls.map(([names]) => names.join());
@@ -389,12 +401,10 @@ describe('a failed load settles', () => {
 
     const typeRows = resolver.getFillColorRows('cells', 'type');
     const areaRows = resolver.getFillColorRows('cells', 'area');
-    expect(typeRows).toBeDefined();
-    expect(areaRows).toBeDefined();
-    expect(typeRows).not.toBe(areaRows);
-    expect(resolver.snapshot(byType).resources.fillColor).not.toBe(
-      resolver.snapshot(byArea).resources.fillColor
-    );
+    expect(typeRows?.extraColumns?.[0]).toEqual(['type-value']);
+    expect(areaRows?.extraColumns?.[0]).toEqual(['area-value']);
+    expect(Resolution.lastGood(resolver.snapshot(byType).resources.fillColor)).toBe(typeRows);
+    expect(Resolution.lastGood(resolver.snapshot(byArea).resources.fillColor)).toBe(areaRows);
   });
 
   it('retry() re-requests a failed tooltip once, and leaves good geometry alone', async () => {
