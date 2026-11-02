@@ -46,9 +46,10 @@ equivalent: each becomes a layer with its own WGSL. See
 ## Extending layers, and intraspatial
 
 [intraspatial](https://github.com/xinaesthete/intraspatial) is a separate
-three.js/WebGPU renderer that consumes the same [Resource Resolver](../core/resource-resolver)
-as vis. It is where 3D and 2D-in-perspective views are expected to be developed,
-with a more deck-centric implementation than Viv's volume rendering.
+WebGPU project that is moving towards deck.gl and SpatialData.js (it began with
+some three.js prototypes). MDV already uses it for density layers. It is where 3D
+and 2D-in-perspective views are expected to be developed, with a more
+deck-centric implementation than Viv's volume rendering.
 
 It bears on layer extensions. On WebGL, behaviour is added to a deck layer with a
 `LayerExtension` that injects GLSL through shader hooks. deck 9.4 has no WGSL
