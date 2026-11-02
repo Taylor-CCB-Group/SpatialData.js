@@ -74,15 +74,26 @@ async function readNodeMetadata(
   return { metadata, attrs: attrs ?? {} };
 }
 
+/** How many node documents are read at once from a store with no consolidated metadata. */
+const LISTED_READ_BATCH = 16;
+
 /** Node documents for a store that can list itself but has no consolidated metadata: one read per node. */
 async function readListedNodes(store: zarr.Listable<zarr.Readable>): Promise<NodeEntry[]> {
   const format = await detectMetadataFormat(store);
   const listed = store.contents();
   if (!listed.some(({ path }) => path === '/')) listed.push({ path: '/', kind: 'group' });
-  // One at a time: a store with no consolidated metadata is not worth a fan-out of requests.
   const nodes: NodeEntry[] = [];
-  for (const { path, kind } of listed) {
-    nodes.push({ path, kind, ...(await readNodeMetadata(store, path, kind, format)) });
+  for (let start = 0; start < listed.length; start += LISTED_READ_BATCH) {
+    const batch = listed.slice(start, start + LISTED_READ_BATCH);
+    nodes.push(
+      ...(await Promise.all(
+        batch.map(async ({ path, kind }) => ({
+          path,
+          kind,
+          ...(await readNodeMetadata(store, path, kind, format)),
+        }))
+      ))
+    );
   }
   return nodes;
 }
