@@ -30,6 +30,7 @@ export type {
   EntryResources,
   ResolveContext,
   ResolveTask,
+  ResourcePayloads,
   ResourceResolver,
 } from './resolver.js';
 export type { ShapesResolveConfig, ShapesResolverCallbacks } from './ShapesResolver.js';
