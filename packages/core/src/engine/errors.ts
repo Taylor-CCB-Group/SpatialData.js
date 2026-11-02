@@ -1,3 +1,4 @@
+import type { ElementIssue } from '../issues.js';
 /**
  * Spatial Entry Error — the typed domain-failure channel for a Resource Resolver.
  * Entry Notice — the non-fatal channel beside it.
@@ -141,6 +142,12 @@ export type EntryNotice =
       readonly message: string;
       readonly tableName: string;
       readonly instanceKey: string;
+    }
+  | {
+      /** How the element is stored will make it slow or awkward however the client behaves. */
+      readonly kind: 'element-issues';
+      readonly message: string;
+      readonly issues: readonly ElementIssue[];
     };
 
 /**

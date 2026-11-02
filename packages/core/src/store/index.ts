@@ -8,7 +8,9 @@ import {
   openExtraConsolidated,
   serializeZarrTree,
 } from 'zarrextra';
+import type { StoreIssue } from '../issues';
 import {
+  type AnyElement,
   type ElementInstanceMap,
   loadElements,
   type SpatialElement,
@@ -68,6 +70,33 @@ export class SpatialData {
         elementType
       );
     }
+  }
+
+  private *_genElements(): Generator<AnyElement> {
+    for (const name of ElementNames) {
+      const group = this[name];
+      if (group) yield* Object.values(group);
+    }
+  }
+
+  /**
+   * Issues with how any element is stored, judged from consolidated metadata alone.
+   * See {@link ElementIssue}; {@link assessIssues} also covers those that need a read.
+   */
+  getIssues(): StoreIssue[] {
+    return [...this._genElements()].flatMap((element) =>
+      element.getIssues().map((issue) => ({ path: element.path, issue }))
+    );
+  }
+
+  /** {@link getIssues}, plus issues that can only be judged by reading from the store. */
+  async assessIssues(): Promise<StoreIssue[]> {
+    const perElement = await Promise.all(
+      [...this._genElements()].map(async (element) =>
+        (await element.assessIssues()).map((issue) => ({ path: element.path, issue }))
+      )
+    );
+    return perElement.flat();
   }
 
   private *_genSpatialElementValues() {

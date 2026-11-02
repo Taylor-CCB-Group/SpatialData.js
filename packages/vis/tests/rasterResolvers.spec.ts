@@ -36,6 +36,7 @@ const imageElement = (over: Record<string, unknown> = {}) =>
     path: 'images/morphology',
     attrs: {},
     getStore: () => ({}),
+    getIssues: () => [],
     ...over,
   }) as unknown as ImageElement;
 
@@ -45,6 +46,7 @@ const labelsElement = (over: Record<string, unknown> = {}) =>
     path: 'labels/cells',
     attrs: {},
     getStore: () => ({}),
+    getIssues: () => [],
     ...over,
   }) as unknown as LabelsElement;
 

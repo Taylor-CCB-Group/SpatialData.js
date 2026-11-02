@@ -27,6 +27,10 @@ interface BaseElement {
   readonly key: string;        // The element's name within its category
   readonly url: string;        // Full URL to the element's zarr group
   readonly attrs: object;      // Validated attributes (type varies by element)
+
+  // Problems with how the element is stored; see Element Issues
+  getIssues(): readonly ElementIssue[];
+  assessIssues(): Promise<readonly ElementIssue[]>;
 }
 ```
 
