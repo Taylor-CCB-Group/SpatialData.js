@@ -7,7 +7,12 @@ import type { RasterLayoutIssue } from './rasterLayout.js';
  */
 export type Remedy =
   | { op: 'build-pyramid'; factor: number; coarsestAtMostPixels: number }
-  | { op: 'rechunk'; chunkPixels: { min: number; max: number } };
+  | {
+      op: 'rechunk';
+      chunkPixels: { min: number; max: number };
+      /** Over all dimensions, not just y and x, so channels and a wide dtype count. */
+      decodedBytesAtMost: number;
+    };
 
 /**
  * A property of how an element is stored that will make it slow or awkward to use

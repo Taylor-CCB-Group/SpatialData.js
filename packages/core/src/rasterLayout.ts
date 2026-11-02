@@ -47,7 +47,6 @@ const BUILD_PYRAMID: Remedy = {
   factor: 2,
   coarsestAtMostPixels: 2048,
 };
-const RECHUNK: Remedy = { op: 'rechunk', chunkPixels: { min: 512, max: 1024 } };
 
 const product = (values: number[]) => values.reduce((a, b) => a * b, 1);
 
@@ -87,7 +86,11 @@ export function assessRasterLevels(
       chunkWidth: chunk.width,
       chunkHeight: chunk.height,
       decodedBytes,
-      remedy: RECHUNK,
+      remedy: {
+        op: 'rechunk',
+        chunkPixels: { min: 512, max: 1024 },
+        decodedBytesAtMost: budgets.chunkDecodedBytes,
+      },
     });
   }
   return issues;

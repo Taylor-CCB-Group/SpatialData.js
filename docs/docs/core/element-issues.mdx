@@ -38,7 +38,11 @@ Each issue carries a `remedy`: the operation that would move the data to a prefe
 ```ts
 type Remedy =
   | { op: 'build-pyramid'; factor: number; coarsestAtMostPixels: number }
-  | { op: 'rechunk'; chunkPixels: { min: number; max: number } };
+  | {
+      op: 'rechunk';
+      chunkPixels: { min: number; max: number };
+      decodedBytesAtMost: number; // over all dimensions, from the budget in use
+    };
 ```
 
 The set of issues and remedies is expected to grow with the spec and with other element types; treat both unions as open.

@@ -48,9 +48,9 @@ describe('assessRasterLevels', () => {
   it('honours custom budgets', () => {
     const levels = [level(1024, 512)];
     expect(assessRasterLevels(levels)).toEqual([]);
-    expect(
-      assessRasterLevels(levels, { coarsestLevelPixels: 1, chunkDecodedBytes: 1 })
-    ).toHaveLength(2);
+    const issues = assessRasterLevels(levels, { coarsestLevelPixels: 1, chunkDecodedBytes: 1 });
+    expect(issues).toHaveLength(2);
+    expect(issues[1]?.remedy).toMatchObject({ op: 'rechunk', decodedBytesAtMost: 1 });
   });
 });
 
