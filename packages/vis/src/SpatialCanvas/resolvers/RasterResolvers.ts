@@ -301,14 +301,24 @@ abstract class BaseRasterResolver<TConfig, TElement, TData extends { loader: unk
 
 // ---------------------------------------------------------------------------
 
+/** Payload per planned resource; see {@link ResolveTask}. */
+type ImagesPayloads = { loader: undefined };
+type LabelsPayloads = {
+  loader: undefined;
+  tooltip: { tooltipFields: string[] };
+  fillColor: { column: string };
+};
+
 export class ImagesResolver
   extends BaseRasterResolver<ImagesResolveConfig, ImageElement, ImageChannelDefaults>
-  implements ResourceResolver<ImagesResolveConfig, ImageElement>
+  implements ResourceResolver<ImagesResolveConfig, ImageElement, ImagesPayloads>
 {
   readonly kind = 'images' as const;
   readonly blockingResources = ['loader'] as const;
 
-  plan(ctx: ResolveContext<ImagesResolveConfig, ImageElement>): readonly ResolveTask[] {
+  plan(
+    ctx: ResolveContext<ImagesResolveConfig, ImageElement>
+  ): readonly ResolveTask<ImagesPayloads>[] {
     if (this.needsLoader(this.entries.get(ctx.elementKey))) {
       return [{ id: `${ctx.elementKey}#loader`, resource: 'loader' }];
     }
@@ -316,7 +326,7 @@ export class ImagesResolver
   }
 
   async load(
-    task: ResolveTask,
+    task: ResolveTask<ImagesPayloads>,
     ctx: ResolveContext<ImagesResolveConfig, ImageElement>,
     _signal: AbortSignal
   ): Promise<void> {
@@ -362,7 +372,7 @@ export class ImagesResolver
 
 export class LabelsResolver
   extends BaseRasterResolver<LabelsResolveConfig, LabelsElement, LabelsChannelDefaults>
-  implements ResourceResolver<LabelsResolveConfig, LabelsElement>
+  implements ResourceResolver<LabelsResolveConfig, LabelsElement, LabelsPayloads>
 {
   readonly kind = 'labels' as const;
   readonly blockingResources = ['loader'] as const;
@@ -401,9 +411,11 @@ export class LabelsResolver
     return `${elementKey}\u0000${column}`;
   }
 
-  plan(ctx: ResolveContext<LabelsResolveConfig, LabelsElement>): readonly ResolveTask[] {
+  plan(
+    ctx: ResolveContext<LabelsResolveConfig, LabelsElement>
+  ): readonly ResolveTask<LabelsPayloads>[] {
     const key = ctx.elementKey;
-    const tasks: ResolveTask[] = [];
+    const tasks: ResolveTask<LabelsPayloads>[] = [];
     if (this.needsLoader(this.entries.get(key))) {
       tasks.push({ id: `${key}#loader`, resource: 'loader' });
     }
@@ -431,7 +443,7 @@ export class LabelsResolver
   }
 
   async load(
-    task: ResolveTask,
+    task: ResolveTask<LabelsPayloads>,
     ctx: ResolveContext<LabelsResolveConfig, LabelsElement>,
     _signal: AbortSignal
   ): Promise<void> {
@@ -447,7 +459,7 @@ export class LabelsResolver
     }
 
     if (task.resource === 'fillColor') {
-      const column = (task.payload as { column?: string } | undefined)?.column;
+      const column = task.payload.column;
       if (!column) return;
       try {
         const rows = await loadAssociatedTableFeatureRows({
@@ -480,10 +492,7 @@ export class LabelsResolver
     }
 
     if (task.resource === 'tooltip') {
-      // `payload` is optional on ResolveTask; a malformed tooltip task must be a
-      // no-op rather than throwing out of load() and rejecting the whole reconcile.
-      const fields = (task.payload as { tooltipFields?: string[] } | undefined)?.tooltipFields;
-      if (!fields) return;
+      const fields = task.payload.tooltipFields;
       const signature = fields.join('');
       try {
         const metadata = await loadLabelsTooltipMetadata(

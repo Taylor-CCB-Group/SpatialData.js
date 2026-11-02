@@ -1112,7 +1112,9 @@ export function useLayerData(
               elementKey: elem.key,
               props: config,
               renderData,
-              fillColorRows: shapesResolver.getFillColorRows(elem.key),
+              fillColorRows: config.fillColorByColumn?.columnName
+                ? shapesResolver.getFillColorRows(elem.key, config.fillColorByColumn.columnName)
+                : undefined,
               modelMatrix: elem.transform,
               ...(hostFeatureColors ? { featureColors: hostFeatureColors } : {}),
               pickingEnabled,

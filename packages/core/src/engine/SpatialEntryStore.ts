@@ -18,7 +18,7 @@ import type { EntryResources, ResolveContext, ResolveTask, ResourceResolver } fr
  */
 
 // biome-ignore lint/suspicious/noExplicitAny: the registry is heterogeneous by design — each resolver has its own config and element types, and the store deliberately cannot see them.
-export type ResolverRegistry = Readonly<Record<SpatialEntryKind, ResourceResolver<any, any>>>;
+export type ResolverRegistry = Readonly<Record<SpatialEntryKind, ResourceResolver<any, any, any>>>;
 
 // biome-ignore lint/suspicious/noExplicitAny: see above.
 export type AnyResolveContext = ResolveContext<any, any>;

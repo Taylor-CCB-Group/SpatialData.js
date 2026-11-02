@@ -222,7 +222,18 @@ export interface PointsMatchingLoadState {
   error?: SpatialEntryError;
 }
 
-export class PointsResolver implements ResourceResolver<PointsResolveConfig, PointsElement> {
+/** Payload per planned resource; see {@link ResolveTask}. */
+export type PointsPayloads = {
+  preload: { memoryCap: number };
+  catalog: undefined;
+  rowCodes: undefined;
+  matching: { featureCodes: readonly number[]; memoryCap: number };
+  tiling: undefined;
+};
+
+export class PointsResolver
+  implements ResourceResolver<PointsResolveConfig, PointsElement, PointsPayloads>
+{
   readonly kind = 'points' as const;
   /**
    * What gates a first paint: the tiling probe (until it answers we do not know which
@@ -377,9 +388,11 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
    * functions of config plus entry state; they were just being asked in the wrong
    * phase. Here they cannot start work even by accident.
    */
-  plan(ctx: ResolveContext<PointsResolveConfig, PointsElement>): readonly ResolveTask[] {
+  plan(
+    ctx: ResolveContext<PointsResolveConfig, PointsElement>
+  ): readonly ResolveTask<PointsPayloads>[] {
     const { elementKey: key, config } = ctx;
-    const tasks: ResolveTask[] = [];
+    const tasks: ResolveTask<PointsPayloads>[] = [];
     const cap = config.pointsMemoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
 
     // Everything below reads the cached entry. One from another element instance would
@@ -498,7 +511,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
 
   /** ASYNC. The only place I/O starts. Dispatches to the lifecycle methods below. */
   async load(
-    task: ResolveTask,
+    task: ResolveTask<PointsPayloads>,
     ctx: ResolveContext<PointsResolveConfig, PointsElement>,
     _signal: AbortSignal
   ): Promise<void> {
@@ -507,10 +520,10 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
       layerId: ctx.entryId,
       element: ctx.element,
     };
-    const payload = task.payload as
-      | { memoryCap?: number; featureCodes?: readonly number[] }
-      | undefined;
-    const cap = payload?.memoryCap ?? DEFAULT_POINTS_MEMORY_CAP;
+    const cap =
+      task.resource === 'preload' || task.resource === 'matching'
+        ? task.payload.memoryCap
+        : DEFAULT_POINTS_MEMORY_CAP;
 
     switch (task.resource) {
       case 'preload':
@@ -523,7 +536,7 @@ export class PointsResolver implements ResourceResolver<PointsResolveConfig, Poi
         await this.ensureRowFeatureCodes(target);
         return;
       case 'matching':
-        await this.ensureMatchingFeaturesLoaded(target, payload?.featureCodes ?? [], cap);
+        await this.ensureMatchingFeaturesLoaded(target, task.payload.featureCodes, cap);
         return;
       case 'tiling':
         await this.ensureTilingMetadata(target);

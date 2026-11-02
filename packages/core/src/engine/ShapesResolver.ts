@@ -48,28 +48,28 @@ import { SnapshotCache } from './snapshotCache.js';
  *
  * ## Known bug, preserved
  *
- * Tooltip metadata and fill-colour rows are cached per **element**, but requested per
- * **layer config** — `buildResolveContext` builds one context per layer. Two layers
- * over one element that differ in `tooltipFields`, or in
- * `fillColorByColumn.columnName`, therefore invalidate each other forever: a
- * ping-pong, after which `getFillColorRows` hands back whichever column landed last.
+ * Tooltip metadata is cached per **element**, but requested per **layer config** —
+ * `buildResolveContext` builds one context per layer. Two layers over one element that
+ * differ in `tooltipFields` therefore invalidate each other forever: a ping-pong.
+ * Fill-colour rows do not: they are keyed by element *and* column, and
+ * `getFillColorRows(key, column)` takes the column, as `LabelsResolver` in `vis` does.
+ * Labels tooltips are per element too.
  *
- * Keying the projections by layer id (`ShapesRendererAdapter`'s caches, as
- * `shapePrebuiltData` and `shapeFillColorData` did before it) stops two layers sharing
- * one colour map, but it cannot help when the rows underneath are the wrong column's —
- * so the fill-colour half of this is not avoided either.
- * `LabelsResolver` in `vis` already has the shape of the fix: `fillColors` is keyed by
- * element *and* column, and `getFillColorRows(key, column)` takes the column. Its
- * tooltips are per element, so that half is shared.
- *
- * Step 1 is a re-housing, so the behaviour is preserved as-is. **Track B owns the
- * fix**: the fill-colour half is tracked as #253.
+ * Step 1 is a re-housing, so the tooltip behaviour is preserved as-is. **Track B owns
+ * the fix.**
  */
 
 export interface ShapesResolveConfig {
   tooltipFields?: string[];
   fillColorByColumn?: { columnName: string; mode: string };
 }
+
+/** Payload per planned resource; see {@link ResolveTask}. */
+export type ShapesPayloads = {
+  geometry: undefined;
+  tooltip: { tooltipFields: string[] };
+  fillColor: { column: string };
+};
 
 export interface ShapesResolverCallbacks {
   onStatus?: (layerId: string, resource: string, status: 'loading' | 'ready' | 'error') => void;
@@ -78,13 +78,16 @@ export interface ShapesResolverCallbacks {
 interface ShapesEntry {
   geometry: Resolution<ShapesRenderData>;
   tooltip: Resolution<ShapesTooltipMetadata>;
-  fillColor: Resolution<AssociatedTableFeatureRows>;
+  /**
+   * Table rows per fill-colour column. Per column, not one slot: layers over one
+   * element may colour by different columns, and a single slot has them evict
+   * each other on every plan.
+   */
+  fillColors: Map<string, Resolution<AssociatedTableFeatureRows>>;
   /** In-flight promises, keyed by task id — today's dedup, kept byte for byte. */
   inFlight: Map<string, Promise<void>>;
   /** The tooltip-fields signature `tooltip` was loaded for. */
   tooltipSignature?: string;
-  /** The column name `fillColor` was loaded for. */
-  fillColorColumn?: string;
   /** Set by `retry()`: `plan()` otherwise schedules geometry only while it is idle. */
   retryGeometry?: boolean;
   bounds?: AxisAlignedBounds | null;
@@ -95,11 +98,41 @@ interface ShapesEntry {
   notices: readonly EntryNotice[];
 }
 
+/** Typed access to one resource slot; `set(undefined)` clears it. */
+interface Slot<T> {
+  get(): Resolution<T> | undefined;
+  set(resolution: Resolution<T> | undefined): void;
+}
+
+const GEOMETRY_SLOT = (entry: ShapesEntry): Slot<ShapesRenderData> => ({
+  get: () => entry.geometry,
+  set: (r) => {
+    entry.geometry = r ?? Resolution.idle();
+  },
+});
+
+const TOOLTIP_SLOT = (entry: ShapesEntry): Slot<ShapesTooltipMetadata> => ({
+  get: () => entry.tooltip,
+  set: (r) => {
+    entry.tooltip = r ?? Resolution.idle();
+  },
+});
+
+const fillColorSlot = (entry: ShapesEntry, column: string): Slot<AssociatedTableFeatureRows> => ({
+  get: () => entry.fillColors.get(column),
+  set: (r) => {
+    if (r) entry.fillColors.set(column, r);
+    else entry.fillColors.delete(column);
+  },
+});
+
 const NO_NOTICES: readonly EntryNotice[] = [];
 
 const tooltipSignature = (fields: string[] | undefined): string => (fields ?? []).join('');
 
-export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, ShapesElement> {
+export class ShapesResolver
+  implements ResourceResolver<ShapesResolveConfig, ShapesElement, ShapesPayloads>
+{
   readonly kind = 'shapes' as const;
   /**
    * **Nothing blocks.** Shapes load non-blocking: geometry refines an
@@ -107,7 +140,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
    * shows immediately and the geometry pops in when it settles. (Tooltip and fill
    * colour never blocked either.) This is the whole point of the non-blocking
    * pass — `blockingResources` is empty *data*, not a kind-switch, so
-   * `store.isBlocking` reports shapes as never-blocking with no special case.
+   * `store.isBlocking` never reports shapes as blocking with no special case.
    *
    * The wait is still visible: the resolver reports `geometry: 'loading'` via
    * `onStatus`, which drives the host's non-modal `isLoading` indicator — just
@@ -133,7 +166,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       entry = {
         geometry: Resolution.idle(),
         tooltip: Resolution.idle(),
-        fillColor: Resolution.idle(),
+        fillColors: new Map(),
         inFlight: new Map(),
         notices: NO_NOTICES,
       };
@@ -145,10 +178,12 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   // --- ResourceResolver -------------------------------------------------------
 
   /** PURE, SYNC. Starts nothing. */
-  plan(ctx: ResolveContext<ShapesResolveConfig, ShapesElement>): readonly ResolveTask[] {
+  plan(
+    ctx: ResolveContext<ShapesResolveConfig, ShapesElement>
+  ): readonly ResolveTask<ShapesPayloads>[] {
     const key = ctx.elementKey;
     const entry = this.entries.get(key);
-    const tasks: ResolveTask[] = [];
+    const tasks: ResolveTask<ShapesPayloads>[] = [];
 
     if (!entry || Resolution.isIdle(entry.geometry) || entry.retryGeometry) {
       tasks.push({ id: `${key}#geometry`, resource: 'geometry' });
@@ -169,7 +204,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
 
     const column = ctx.config.fillColorByColumn?.columnName;
     if (column) {
-      if (!entry || entry.fillColorColumn !== column) {
+      if (!entry?.fillColors.has(column)) {
         tasks.push({
           id: `${key}#fillColor:${column}`,
           resource: 'fillColor',
@@ -183,7 +218,7 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
 
   /** ASYNC. The only place I/O starts. Never throws — failures become Resolutions. */
   async load(
-    task: ResolveTask,
+    task: ResolveTask<ShapesPayloads>,
     ctx: ResolveContext<ShapesResolveConfig, ShapesElement>,
     signal: AbortSignal
   ): Promise<void> {
@@ -200,83 +235,96 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
   }
 
   private async run(
-    task: ResolveTask,
+    task: ResolveTask<ShapesPayloads>,
     ctx: ResolveContext<ShapesResolveConfig, ShapesElement>,
     entry: ShapesEntry,
     _signal: AbortSignal
   ): Promise<void> {
     const key = ctx.elementKey;
-    const slot = task.resource as 'geometry' | 'tooltip' | 'fillColor';
-    if (slot !== 'geometry' && slot !== 'tooltip' && slot !== 'fillColor') return;
-
-    // Capture the exact pre-load resolution. On cancellation we restore it — an
-    // initial load that is aborted must fall back to `idle`, or `plan()` (which
-    // only schedules idle geometry) never reschedules it and the entry hangs.
-    const prior = entry[slot];
-    if (slot === 'geometry') entry.retryGeometry = false;
-    // Retain the last good value across the refine, so a reload keeps drawing.
-    const stale = Resolution.lastGood(entry[slot] as Resolution<never>);
-    entry[slot] = Resolution.loading(stale !== undefined ? { stale } : {}) as never;
-    this.callbacks.onStatus?.(ctx.entryId, slot, 'loading');
-    this.notify();
-
-    try {
-      switch (slot) {
-        case 'geometry': {
+    switch (task.resource) {
+      case 'geometry':
+        entry.retryGeometry = false;
+        return this.settle(ctx, 'geometry', GEOMETRY_SLOT(entry), 'decode-failed', async () => {
           const renderData = await ctx.element.loadRenderData();
           entry.notices = await this.unmatchedTableNotices(key, renderData);
-          entry.geometry = Resolution.ready(renderData);
-          break;
-        }
-        case 'tooltip': {
-          const fields = (task.payload as { tooltipFields: string[] }).tooltipFields;
-          const metadata = await loadShapesTooltipMetadata(this.spatialData, ctx.element, fields);
-          entry.tooltip = Resolution.ready(metadata);
-          entry.tooltipSignature = tooltipSignature(fields);
-          break;
-        }
-        case 'fillColor': {
-          const column = (task.payload as { column: string }).column;
-          const rows = await loadAssociatedTableFeatureRows({
+          return renderData;
+        });
+      case 'tooltip': {
+        const fields = task.payload.tooltipFields;
+        return this.settle(
+          ctx,
+          'tooltip',
+          TOOLTIP_SLOT(entry),
+          'load-failed',
+          () => loadShapesTooltipMetadata(this.spatialData, ctx.element, fields),
+          // Recorded on failure too: `plan()` reschedules whenever the signature
+          // differs from the config, so leaving it unset re-requests the failing
+          // read in a loop.
+          () => {
+            entry.tooltipSignature = tooltipSignature(fields);
+          }
+        );
+      }
+      case 'fillColor': {
+        const column = task.payload.column;
+        return this.settle(ctx, 'fillColor', fillColorSlot(entry, column), 'load-failed', () =>
+          loadAssociatedTableFeatureRows({
             spatialData: this.spatialData,
             kind: 'shapes',
             key,
             extraColumnNames: [column],
-          });
-          entry.fillColor = Resolution.ready(rows);
-          entry.fillColorColumn = column;
-          break;
-        }
+          })
+        );
       }
-      this.callbacks.onStatus?.(ctx.entryId, slot, 'ready');
+    }
+  }
+
+  /**
+   * The load lifecycle shared by every slot: mark loading (retaining the last good
+   * value), load, then settle to ready / failed / the pre-load resolution on
+   * cancellation. `slot` is typed per resource, so no branch needs a cast.
+   */
+  private async settle<T>(
+    ctx: ResolveContext<ShapesResolveConfig, ShapesElement>,
+    resource: string,
+    slot: Slot<T>,
+    fallback: 'decode-failed' | 'load-failed',
+    load: () => Promise<T>,
+    onSettled?: () => void
+  ): Promise<void> {
+    // Capture the exact pre-load resolution. On cancellation we restore it — an
+    // initial load that is aborted must fall back to `idle`, or `plan()` (which
+    // only schedules idle geometry) never reschedules it and the entry hangs.
+    const prior = slot.get();
+    // Retain the last good value across the refine, so a reload keeps drawing.
+    const stale = Resolution.lastGood(prior ?? Resolution.idle<T>());
+    slot.set(Resolution.loading(stale !== undefined ? { stale } : {}));
+    this.callbacks.onStatus?.(ctx.entryId, resource, 'loading');
+    this.notify();
+
+    try {
+      slot.set(Resolution.ready(await load()));
+      onSettled?.();
+      this.callbacks.onStatus?.(ctx.entryId, resource, 'ready');
     } catch (cause) {
       // Cancellation is a non-event: an aborted load is not a domain failure, and
       // painting an error for one would be a visible regression. Restore the exact
       // pre-load resolution so a cancelled slot never hangs in `loading`.
       if (isCancellation(cause)) {
-        entry[slot] = prior as never;
+        slot.set(prior);
         return;
       }
       const error = toSpatialEntryError(cause, {
-        elementKey: key,
+        elementKey: ctx.elementKey,
         kind: 'shapes',
-        resource: slot,
+        resource,
         // The SEAM knows what it was doing. A geometry decode that throws is a
         // decode failure; a tooltip/table read that throws is a load failure.
-        fallback: slot === 'geometry' ? 'decode-failed' : 'load-failed',
+        fallback,
       });
-      entry[slot] = Resolution.failed(error, stale) as never;
-      // Record what failed, not just what succeeded: `plan()` reschedules whenever
-      // these differ from the config, and every settle triggers a reconcile, so
-      // leaving them unset re-requests the failing read in a loop.
-      if (slot === 'tooltip') {
-        entry.tooltipSignature = tooltipSignature(
-          (task.payload as { tooltipFields: string[] }).tooltipFields
-        );
-      } else if (slot === 'fillColor') {
-        entry.fillColorColumn = (task.payload as { column: string }).column;
-      }
-      this.callbacks.onStatus?.(ctx.entryId, slot, 'error');
+      slot.set(Resolution.failed(error, stale));
+      onSettled?.();
+      this.callbacks.onStatus?.(ctx.entryId, resource, 'error');
     } finally {
       this.notify();
     }
@@ -288,7 +336,9 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     // Key the memo by the entry (layers may share an element) and the transform
     // (it moves the bounds). Shapes resources and notices don't depend on config,
     // so there is no config dimension here.
-    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, '');
+    // The fill column is part of the key: the snapshot names that column's rows.
+    const column = ctx.config.fillColorByColumn?.columnName;
+    const cached = this.snapshots.get(ctx.entryId, this.version, ctx.transform, column ?? '');
     if (cached) return cached;
 
     const entry = this.entries.get(key);
@@ -298,14 +348,14 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       resources: {
         geometry: entry?.geometry ?? Resolution.idle(),
         tooltip: entry?.tooltip ?? Resolution.idle(),
-        fillColor: entry?.fillColor ?? Resolution.idle(),
+        fillColor: (column ? entry?.fillColors.get(column) : undefined) ?? Resolution.idle(),
       },
       notices: entry?.notices ?? NO_NOTICES,
       bounds: this.bounds(ctx),
       revision: this.version,
     };
 
-    this.snapshots.set(ctx.entryId, this.version, ctx.transform, '', value);
+    this.snapshots.set(ctx.entryId, this.version, ctx.transform, column ?? '', value);
     return value;
   }
 
@@ -387,10 +437,15 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
     return entry ? Resolution.lastGood(entry.tooltip) : undefined;
   }
 
-  /** The raw table rows. The COLOURS are built by the adapter — see the class doc. */
-  getFillColorRows(key: string): AssociatedTableFeatureRows | undefined {
-    const entry = this.entries.get(key);
-    return entry ? Resolution.lastGood(entry.fillColor) : undefined;
+  /**
+   * The raw table rows for one fill-colour column. The COLOURS are built by the
+   * adapter — see the class doc.
+   *
+   * The column is part of the lookup: layers over one element may differ in it.
+   */
+  getFillColorRows(key: string, column: string): AssociatedTableFeatureRows | undefined {
+    const resolution = this.entries.get(key)?.fillColors.get(column);
+    return resolution ? Resolution.lastGood(resolution) : undefined;
   }
 
   // --- Subscription -----------------------------------------------------------
@@ -424,9 +479,11 @@ export class ShapesResolver implements ResourceResolver<ShapesResolveConfig, Sha
       entry.tooltipSignature = undefined;
       changed = true;
     }
-    if (Resolution.isFailed(entry.fillColor)) {
-      entry.fillColorColumn = undefined;
-      changed = true;
+    for (const [column, resolution] of entry.fillColors) {
+      if (Resolution.isFailed(resolution)) {
+        entry.fillColors.delete(column);
+        changed = true;
+      }
     }
     if (changed) this.notify();
   }
