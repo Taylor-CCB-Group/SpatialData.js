@@ -1,5 +1,27 @@
 # @spatialdata/core
 
+## 0.14.0
+
+### Minor Changes
+
+- [#260](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/260) [`764ea88`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/764ea88539fc38dab8eafe713e84d39a53052022) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `SpatialData.badFiles` lists the elements that were in the store but failed to load (`{ path, error }`, in the order found), so any consumer can report them after the fact. `SpatialDataProvider` accepts `onBadFiles`; changing its identity does not reopen the store.
+
+- [#261](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/261) [`70e1200`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/70e1200d166257fa0785e610b3eecd6f6725c755) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Elements report how they are stored when that will be slow: `element.getIssues()` (synchronous, from consolidated metadata) returns structured `ElementIssue`s, each with a `remedy` describing the fix. Images and labels flag a missing or too-shallow pyramid and oversized chunks (thresholds exported as `COARSEST_LEVEL_PIXEL_BUDGET` and `CHUNK_DECODED_BYTES_BUDGET`). Resolvers surface them as an `element-issues` entry notice.
+
+- [#238](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/238) [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `SpatialEntryStore.retry(ctx)` re-runs an entry's failed resources. `ResourceResolver` gains a required `retry(elementKey)`, so a custom resolver must implement it: make its failed resources plannable again, since `plan()` should not reschedule a failure by itself.
+
+- [#254](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/254) [`87b0a84`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/87b0a8417b23dfb11866a84f11f07f5a5777e50e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Two shapes layers over one element can now colour by different columns; previously they overwrote each other's fill-colour rows and the colours flickered between them. `ShapesResolver.getFillColorRows(key, column)` now takes the column (breaking for callers of the one-argument form).
+
+- [#242](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/242) [`5abcb0d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5abcb0da0776e75cf3a569eabceabbdc8831c97f) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Shapes and labels layers now report a `table-rows-unmatched` notice through `getEntryStatus` when the associated table's `instance_key` values can't join to the element, instead of silently drawing no table colours or tooltip fields. For labels this catches ids the raster's dtype can't hold, such as packed 64-bit cell ids against a uint32 raster. `SpatialCanvas` now shows each layer's errors and notices in its layer panel, with Retry for retryable errors.
+
+### Patch Changes
+
+- [#266](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/266) [`c80928c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c80928c6a041a3b699c5120bf9945d68dafb6d82) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `getTransformationForLevel` now maps a level's `scale`/`translation` onto the multiscale's axes by name, so `(c, y, x)` images no longer get their channel factor applied to x.
+
+- [#238](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/238) [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9) Thanks [@xinaesthete](https://github.com/xinaesthete)! - A shapes layer whose tooltip fields or fill-colour column fail to load no longer re-requests them on every render; the failure stays until the config changes.
+- Updated dependencies [[`b98ab78`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b98ab78eb796463fee2805e373317fb62ea145f4)]:
+  - zarrextra@0.7.1
+
 ## 0.13.2
 
 ### Patch Changes

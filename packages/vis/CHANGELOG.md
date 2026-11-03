@@ -1,5 +1,45 @@
 # @spatialdata/vis
 
+## 0.14.0
+
+### Minor Changes
+
+- [#245](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/245) [`f3c6832`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/f3c6832731e4fce03db2ad6438de83d4d0421ef6) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Hovering a point now shows a tooltip with its feature name and position, on both the preloaded and tiled points paths. `onFeatureHover` / `onFeatureClick` emit the pick as well, so a host rendering its own tooltip gets it too.
+  
+  A points layer's per-row feature codes are now loaded whichever way `colorByFeature` is set, so the tooltip names the feature on a layer that is not coloured by it. For that to not turn colour on, `colorByFeature: false` now reaches the layer as a prop instead of being implied by withheld codes — a layer that asked for no colour-by-feature got it anyway when its codes were loaded for the filter, and now stays flat.
+  
+  `SpatialFeaturePickEvent` gains a `points` member: it has no `rowIndex` (a points element has no associated table), so reading `event.rowIndex` without narrowing on `elementKind` is now a type error.
+
+- [#261](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/261) [`70e1200`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/70e1200d166257fa0785e610b3eecd6f6725c755) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Elements report how they are stored when that will be slow: `element.getIssues()` (synchronous, from consolidated metadata) returns structured `ElementIssue`s, each with a `remedy` describing the fix. Images and labels flag a missing or too-shallow pyramid and oversized chunks (thresholds exported as `COARSEST_LEVEL_PIXEL_BUDGET` and `CHUNK_DECODED_BYTES_BUDGET`). Resolvers surface them as an `element-issues` entry notice.
+
+- [#242](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/242) [`5abcb0d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5abcb0da0776e75cf3a569eabceabbdc8831c97f) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Shapes and labels layers now report a `table-rows-unmatched` notice through `getEntryStatus` when the associated table's `instance_key` values can't join to the element, instead of silently drawing no table colours or tooltip fields. For labels this catches ids the raster's dtype can't hold, such as packed 64-bit cell ids against a uint32 raster. `SpatialCanvas` now shows each layer's errors and notices in its layer panel, with Retry for retryable errors.
+
+- [#238](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/238) [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9) Thanks [@xinaesthete](https://github.com/xinaesthete)! - The renderer hooks report why each layer failed and what is degraded about it: `getEntryStatus(layerId)` returns its typed `SpatialEntryError`s and `EntryNotice`s, `onEntryStatusChange` calls back when that changes, and `retryEntry(layerId)` re-runs failed loads. A stack entry whose element is missing, or has no transform to the coordinate system, now reports `element-not-found` or `coordinate-system-not-found` instead of being silently skipped.
+
+- [#243](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/243) [`cb8e2fd`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/cb8e2fda0396a0489d12436cad9321e81e638818) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Export the per-layer config types from the package root: `BaseLayerConfig`,
+  `ImageLayerConfig`, `ShapesLayerConfig`, `PointsLayerConfig`,
+  `LabelsLayerConfig`, plus `FeatureStateConfig`, `FillColorByColumn` and
+  `ViewState2D` / `ViewState3D`.
+  
+  `LayerConfig` was already public but its members were not, so narrowing to one
+  layer kind meant `Extract<LayerConfig, { type: 'shapes' }>`.
+  
+  Also re-exports the field types those configs are built from
+  (`ShapeFillColorMode`, `LabelFillColorMode`, `ShapeStrokeWidthUnits`,
+  `FeatureCategoricalPaletteSpec`, `FeatureNumericRampSpec`,
+  `FeatureMissingValueOptions`), so a caller can name a `fillColorByColumn` or
+  `strokeWidthUnits` value without depending on `@spatialdata/layers` directly.
+
+### Patch Changes
+
+- [#254](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/254) [`87b0a84`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/87b0a8417b23dfb11866a84f11f07f5a5777e50e) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Two shapes layers over one element can now colour by different columns; previously they overwrote each other's fill-colour rows and the colours flickered between them. `ShapesResolver.getFillColorRows(key, column)` now takes the column (breaking for callers of the one-argument form).
+- Updated dependencies [[`764ea88`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/764ea88539fc38dab8eafe713e84d39a53052022), [`c80928c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c80928c6a041a3b699c5120bf9945d68dafb6d82), [`f3c6832`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/f3c6832731e4fce03db2ad6438de83d4d0421ef6), [`70e1200`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/70e1200d166257fa0785e610b3eecd6f6725c755), [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9), [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9), [`87b0a84`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/87b0a8417b23dfb11866a84f11f07f5a5777e50e), [`6a31343`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/6a31343ea479ba0562ef7cac0b98792a9be611e1), [`5abcb0d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5abcb0da0776e75cf3a569eabceabbdc8831c97f), [`b98ab78`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b98ab78eb796463fee2805e373317fb62ea145f4)]:
+  - @spatialdata/core@0.14.0
+  - @spatialdata/react@0.14.0
+  - @spatialdata/layers@0.14.0
+  - zarrextra@0.7.1
+  - @spatialdata/avivatorish@0.14.0
+
 ## 0.13.2
 
 ### Patch Changes

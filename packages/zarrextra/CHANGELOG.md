@@ -1,5 +1,11 @@
 # zarrextra
 
+## 0.7.1
+
+### Patch Changes
+
+- [#258](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/258) [`b98ab78`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b98ab78eb796463fee2805e373317fb62ea145f4) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `openExtraConsolidated` builds its tree from the store's consolidated metadata document with no per-node reads. A consolidated v2 store no longer sends a 404 for `zarr.json` per node. `zarr.json` is preferred over `.zmetadata` where a store has both.
+
 ## 0.7.0
 
 ### Minor Changes
