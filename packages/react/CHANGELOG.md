@@ -1,5 +1,16 @@
 # @spatialdata/react
 
+## 0.14.0
+
+### Minor Changes
+
+- [#260](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/260) [`764ea88`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/764ea88539fc38dab8eafe713e84d39a53052022) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `SpatialData.badFiles` lists the elements that were in the store but failed to load (`{ path, error }`, in the order found), so any consumer can report them after the fact. `SpatialDataProvider` accepts `onBadFiles`; changing its identity does not reopen the store.
+
+### Patch Changes
+
+- Updated dependencies [[`764ea88`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/764ea88539fc38dab8eafe713e84d39a53052022), [`c80928c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/c80928c6a041a3b699c5120bf9945d68dafb6d82), [`70e1200`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/70e1200d166257fa0785e610b3eecd6f6725c755), [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9), [`5a6ab26`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5a6ab2631ee9b92afc09d8623daa7a8ff02ebec9), [`87b0a84`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/87b0a8417b23dfb11866a84f11f07f5a5777e50e), [`5abcb0d`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5abcb0da0776e75cf3a569eabceabbdc8831c97f)]:
+  - @spatialdata/core@0.14.0
+
 ## 0.13.2
 
 ### Patch Changes
