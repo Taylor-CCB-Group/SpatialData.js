@@ -4,6 +4,7 @@ import { TileLayer } from '@deck.gl/geo-layers';
 import { PolygonLayer } from '@deck.gl/layers';
 import {
   DEFAULT_POINTS_MEMORY_CAP,
+  type MemoryReporting,
   mortonTileGrid,
   multiscaleTileGrid,
   type PointsTileGrid,
@@ -46,6 +47,21 @@ function isColumnarBatch(value: unknown): value is ColumnarNdarrayPointsBatch {
   );
 }
 
+function byteLengthOf(values: ArrayLike<number>): number {
+  return ArrayBuffer.isView(values)
+    ? values.byteLength
+    : values.length * Float64Array.BYTES_PER_ELEMENT;
+}
+
+/** A tile's batch, carrying the bytes it holds: deck's tile cache evicts by `byteLength`. */
+function withByteLength(
+  batch: ColumnarNdarrayPointsBatch
+): ColumnarNdarrayPointsBatch & MemoryReporting {
+  const codes = batch.featureCodes ? byteLengthOf(batch.featureCodes) : 0;
+  const byteLength = batch.data.reduce((total, column) => total + byteLengthOf(column), codes);
+  return { ...batch, byteLength };
+}
+
 function renderedPointCount(batch: ColumnarNdarrayPointsBatch): number {
   if (batch.pointCount !== undefined) {
     return batch.pointCount;
@@ -78,9 +94,9 @@ export const mortonTiledStrategy = createTiledPointsStrategy((layer, localBounds
     totalRows: capabilities.totalRows ?? 0,
     maxRowsPerGroup: capabilities.maxRowsPerGroup ?? 0,
     modelMatrixScale: modelMatrixUniformScale(layer.props.modelMatrix),
-    // A second pool the resident cap cannot see (ADR 0005 — account first, manage
-    // after). Budgeting against the same number is not the cap applying: it makes the
-    // worst case a stated quantity rather than deck's `5 x whatever is on screen`.
+    // A second pool the resident cap cannot see (ADR 0005). Budgeting against the same
+    // number makes its worst case a stated quantity rather than deck's `5 x whatever is
+    // on screen`; deck enforces it through the bytes each tile reports.
     cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP,
   });
 });
@@ -154,6 +170,7 @@ function renderTiledPoints(
         zoomOffset: grid.zoomOffset,
         maxRequests: grid.maxRequests,
         maxCacheSize: grid.maxCacheSize,
+        maxCacheByteSize: grid.maxCacheByteSize,
         refinementStrategy: 'best-available',
         updateTriggers: {
           getTileData: [
@@ -252,7 +269,7 @@ function renderTiledPoints(
               rawBounds,
               attempt
             );
-            return batch;
+            return withByteLength(batch);
           } catch (error) {
             const aborted = Boolean(tileProps.signal?.aborted) || isAbortError(error);
             debugHooks.onTileLoadEnd(

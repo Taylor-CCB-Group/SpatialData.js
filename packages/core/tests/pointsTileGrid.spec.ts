@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_POINTS_MEMORY_CAP } from '../src/pointsLimits.js';
 import {
   mortonTileGrid,
+  multiscaleTileGrid,
+  POINTS_TILE_ROW_BYTES,
   POINTS_TILE_SIZE,
   POINTS_TILE_TARGET_ROWS,
 } from '../src/pointsTileGrid.js';
@@ -55,11 +57,10 @@ describe('morton tile grid', () => {
     }
   });
 
-  it('states the tile cache budget in rows instead of leaving it to deck', () => {
+  it('states the tile cache budget in rows, enforced in bytes', () => {
     const grid = mortonTileGrid({ ...XENIUM, cacheRowBudget: 4_000_000 });
-    expect(grid.maxCacheSize).toBeGreaterThan(0);
-    expect(grid.estimatedRowsPerTile).toBeGreaterThan(0);
-    expect(grid.cacheRowBudget).toBe(grid.maxCacheSize * grid.estimatedRowsPerTile);
+    expect(grid.cacheRowBudget).toBe(4_000_000);
+    expect(grid.maxCacheByteSize).toBe(4_000_000 * POINTS_TILE_ROW_BYTES);
     // deck's default is 5 x the selected tile count, which on a coarse viewport of
     // this element is ~220 tiles; whatever we choose has to be a stated number.
     expect(grid.maxCacheSize).toBeLessThan(220);
@@ -109,12 +110,21 @@ describe('morton tile grid', () => {
     const implicit = mortonTileGrid(XENIUM);
     const explicit = mortonTileGrid({ ...XENIUM, cacheRowBudget: DEFAULT_POINTS_MEMORY_CAP });
 
-    expect(implicit.maxCacheSize).toBe(explicit.maxCacheSize);
-    expect(implicit.cacheRowBudget).toBe(explicit.cacheRowBudget);
-    // ...and it is a real budget, not the fallback tile count.
-    expect(implicit.maxCacheSize * implicit.estimatedRowsPerTile).toBeCloseTo(
-      implicit.cacheRowBudget,
-      6
-    );
+    expect(implicit.maxCacheByteSize).toBe(explicit.maxCacheByteSize);
+    expect(implicit.cacheRowBudget).toBe(DEFAULT_POINTS_MEMORY_CAP);
+  });
+});
+
+describe('multiscale tile grid', () => {
+  it('does not size the cache as if every tile were full', () => {
+    // The loader keeps each tile NEAR the target, not at it, so dividing the budget by
+    // the target held 16 tiles. A zoom across a few levels touches ~50.
+    const grid = multiscaleTileGrid({
+      bounds: { minX: 0, minY: 0, maxX: 8192, maxY: 8192 },
+      finestTileSize: 100,
+      modelMatrixScale: 1,
+    });
+    expect(grid.maxCacheSize).toBeGreaterThanOrEqual(64);
+    expect(grid.maxCacheByteSize).toBe(DEFAULT_POINTS_MEMORY_CAP * POINTS_TILE_ROW_BYTES);
   });
 });

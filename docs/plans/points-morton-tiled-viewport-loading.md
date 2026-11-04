@@ -184,9 +184,14 @@ For this element: `minZoom -1 … maxZoom 0` (1024 µm / ~324k rows and 512 µm 
 the floor** — 50k-row groups put it at ~402 µm. The old fixed 1024 was accidentally near
 -optimal *for this file* and would not be for one an order of magnitude smaller or denser.
 
-`maxCacheSize` is now `cacheRowBudget / estimatedRowsPerTile`, clamped to [16, 512],
-against `DEFAULT_POINTS_MEMORY_CAP` — 16 tiles here, ~5.2M rows worst case. `maxRequests`
-stays 6, as a decision rather than an inheritance.
+The tile cache is budgeted against `DEFAULT_POINTS_MEMORY_CAP` in rows and enforced in
+bytes: each tile reports its batch's `byteLength`, and deck's `maxCacheByteSize` is the
+budget at `POINTS_TILE_ROW_BYTES` (16 — x, y, z float32 and a uint32 code), 64 MB.
+`maxCacheSize` is only a 128-tile backstop for tiles that hold nothing. Dividing the
+budget by `estimatedRowsPerTile` instead held 16 tiles, because a tile's size says what
+it may hold rather than what it does; a zoom across a few levels touches ~50, so every
+zoom back evicted and rebuilt them. `maxRequests` stays 6, as a decision rather than an
+inheritance.
 
 ### Bytes per viewport query
 
@@ -255,10 +260,10 @@ scenario label repeats.
   fix is a multi-resolution points pyramid (the writer already has a `points multiscale`
   command), not a finer index, and it is the strongest argument for doing that next.
   `pointsTiling: 'off'` is one config key away if the trade is wrong for a deployment.
-- **Tile cache eviction.** Answered at the *accounting* level by the row-budgeted
-  `maxCacheSize` above, and open deliberately per [ADR 0005](../adr/0005-memory-accounting-before-management.md):
-  nothing evicts by bytes, and a tile's real footprint is whatever its points weigh, so a
-  dense viewport can still exceed the estimate. Manage after accounting.
+- **Tile cache eviction.** By the bytes each tile reports, per
+  [ADR 0005](../adr/0005-memory-accounting-before-management.md). What it does not see is
+  each cached tile's GPU buffers and sublayer, which deck keeps alongside the batch; the
+  tile-count backstop is what bounds those.
 - **Preload *and* tiles?** A small resident window for instant zoomed-out context is
   attractive but re-introduces two batches with different code spaces, reviving the
   alignment invariants D5 escaped. Default: no.

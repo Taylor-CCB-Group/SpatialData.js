@@ -19,17 +19,52 @@ export const POINTS_TILE_TARGET_ROWS = 400_000;
 /** Tiles the deck cache may retain, when the artifact gives us nothing to derive from. */
 const FALLBACK_CACHE_TILES = 24;
 
+/**
+ * Most a decoded tile row weighs: x, y and z as float32 and a uint32 feature code. Turns
+ * the row budget into the bytes deck evicts tiles by.
+ */
+export const POINTS_TILE_ROW_BYTES = 16;
+
+/**
+ * Tiles the deck cache may retain however little they hold. Bytes are the real bound;
+ * this only stops tiles that report none (empty, or outside the data) piling up. Kept
+ * well short of deck's 512-ish worst case because the `TileLayer` keeps a sublayer per
+ * cached tile and diffs every one of them each frame (~0.035ms each, measured).
+ */
+const MAX_CACHE_TILES = 128;
+
 export interface PointsTileGrid {
   tileSize: number;
   minZoom: number;
   maxZoom: number;
   zoomOffset: number;
   maxRequests: number;
+  /** Backstop on the tile count; {@link PointsTileGrid.maxCacheByteSize} is the bound that applies. */
   maxCacheSize: number;
-  /** Rows a coarsest-level tile is expected to hold — the unit of the cache budget. */
+  /**
+   * Bytes the deck tile cache may hold, against each tile's reported `byteLength`: the
+   * row budget at {@link POINTS_TILE_ROW_BYTES}.
+   */
+  maxCacheByteSize: number;
+  /** Rows a coarsest-level tile is expected to hold. */
   estimatedRowsPerTile: number;
-  /** Worst-case rows the tile cache can hold. Accounting, not a limit deck enforces. */
+  /** Rows the tile cache may hold, enforced through {@link PointsTileGrid.maxCacheByteSize}. */
   cacheRowBudget: number;
+}
+
+/**
+ * The cache bounds for a row budget. Not tiles x rows-per-tile: a tile's size says how
+ * much it MAY hold, not what it does. Sparse regions, finer levels and a multiscale
+ * artifact's coarser levels all hold a fraction of the estimate, so a count derived from
+ * it held 16 tiles where a zoom across a few levels touches ~50, and every zoom back
+ * evicted and rebuilt them.
+ */
+function cacheBounds(budget: number) {
+  return {
+    maxCacheSize: MAX_CACHE_TILES,
+    maxCacheByteSize: budget * POINTS_TILE_ROW_BYTES,
+    cacheRowBudget: budget,
+  };
 }
 
 export interface PointsTileGridInput {
@@ -81,9 +116,9 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
       maxZoom: -1,
       zoomOffset: 0,
       maxRequests: 6,
+      ...cacheBounds(input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP),
       maxCacheSize: FALLBACK_CACHE_TILES,
       estimatedRowsPerTile: 0,
-      cacheRowBudget: 0,
     };
   }
 
@@ -101,11 +136,6 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
 
   const coarsestSpan = POINTS_TILE_SIZE / 2 ** minZoom;
   const estimatedRowsPerTile = Math.round(density * coarsestSpan * coarsestSpan);
-  const budget = input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP;
-  const maxCacheSize =
-    budget > 0 && estimatedRowsPerTile > 0
-      ? Math.min(512, Math.max(16, Math.round(budget / estimatedRowsPerTile)))
-      : FALLBACK_CACHE_TILES;
 
   return {
     tileSize: POINTS_TILE_SIZE,
@@ -116,9 +146,8 @@ export function mortonTileGrid(input: PointsTileGridInput): PointsTileGrid {
       Number.isFinite(modelMatrixScale) && modelMatrixScale > 0 ? Math.log2(modelMatrixScale) : 0,
     // deck's default, kept deliberately: each request is a range read plus a decode.
     maxRequests: 6,
-    maxCacheSize,
+    ...cacheBounds(input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP),
     estimatedRowsPerTile,
-    cacheRowBudget: maxCacheSize * estimatedRowsPerTile,
   };
 }
 
@@ -150,9 +179,6 @@ export function multiscaleTileGrid(input: MultiscalePointsTileGridInput): Points
   const minZoom = span > 0 ? Math.floor(zoomForSpan(span)) : 0;
   const maxZoom =
     finestTileSize > 0 ? Math.max(minZoom, Math.floor(zoomForSpan(finestTileSize))) : minZoom;
-  const estimatedRowsPerTile = POINTS_TILE_TARGET_ROWS;
-  const budget = input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP;
-  const maxCacheSize = Math.min(512, Math.max(16, Math.round(budget / estimatedRowsPerTile)));
   return {
     tileSize: POINTS_TILE_SIZE,
     minZoom,
@@ -160,8 +186,7 @@ export function multiscaleTileGrid(input: MultiscalePointsTileGridInput): Points
     zoomOffset:
       Number.isFinite(modelMatrixScale) && modelMatrixScale > 0 ? Math.log2(modelMatrixScale) : 0,
     maxRequests: 6,
-    maxCacheSize,
-    estimatedRowsPerTile,
-    cacheRowBudget: maxCacheSize * estimatedRowsPerTile,
+    ...cacheBounds(input.cacheRowBudget ?? DEFAULT_POINTS_MEMORY_CAP),
+    estimatedRowsPerTile: POINTS_TILE_TARGET_ROWS,
   };
 }
