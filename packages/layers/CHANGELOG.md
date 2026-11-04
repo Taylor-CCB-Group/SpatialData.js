@@ -1,5 +1,13 @@
 # @spatialdata/layers
 
+## 0.15.0
+
+### Patch Changes
+
+- [#269](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/269) [`5b15c31`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5b15c315250708a00ffe2ff11ab4ebe77b999410) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Tiled points layers now bound their tile cache by the bytes the tiles hold (`PointsTileGrid.maxCacheByteSize`, the row budget at `POINTS_TILE_ROW_BYTES`), with `maxCacheSize` only a 128-tile backstop. The cache used to hold 16 tiles, so zooming back over levels already visited refetched and rebuilt them.
+- Updated dependencies [[`5b15c31`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/5b15c315250708a00ffe2ff11ab4ebe77b999410)]:
+  - @spatialdata/core@0.15.0
+
 ## 0.14.0
 
 ### Minor Changes
