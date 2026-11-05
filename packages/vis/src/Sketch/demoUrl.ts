@@ -1,6 +1,6 @@
 /** Default SpatialData Zarr URL for the vis demo / docs Sketch embed. */
 export const DEFAULT_DEMO_SPATIALDATA_URL =
-  'https://storage.googleapis.com/vitessce-demo-data/spatialdata-august-2025/visium_hd_3.0.0.spatialdata.zarr';
+  'https://oranus.cmd.ox.ac.uk/publicprojects/project/13/spatial/Atera_v1_WTA_Kidney_non_diseased_FFPE.zarr';
 
 /**
  * Read `?url=` from a query string (e.g. for MDV links into the demo).
