@@ -1,4 +1,5 @@
 import SpatialDataPointsSource from '../src/models/VPointsSource.js';
+import type { ParquetWasmFile } from '../src/parquetWasmLoader.js';
 
 interface RowGroupBytes {
   schemaBytes: Uint8Array;
@@ -33,5 +34,11 @@ export class ExposedPointsSource extends SpatialDataPointsSource {
     }
   ): Promise<{ rowGroups: RowGroupBytes[]; parts: Uint8Array[] }> {
     return super.readParquetWorkerPayload(parquetPath, options);
+  }
+
+  override parquetPartFileOpeners(
+    parquetPath: string
+  ): Promise<Array<() => Promise<ParquetWasmFile>> | null> {
+    return super.parquetPartFileOpeners(parquetPath);
   }
 }

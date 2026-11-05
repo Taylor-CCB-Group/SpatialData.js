@@ -2237,33 +2237,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     columnNames: string[],
     onPartialCatalog?: (catalog: PointsFeatureCatalog) => void
   ): Promise<PointsFeatureCatalog | null> {
-    if (!(await this.canStreamParquetByUrl())) {
-      return null;
-    }
-    // Use the discovered parts rather than guessing paths: these are known to
-    // exist and are in row order, which the code assignment depends on.
-    const datasetMetadata = await this.loadParquetDatasetMetadata(parquetPath);
-    const partPaths = datasetMetadata?.parts.map((part) => part.path);
-    if (!partPaths || partPaths.length === 0) {
-      return null;
-    }
-    const partUrls: string[] = [];
-    for (const partPath of partPaths) {
-      const url = this.resolveStoreUrl(partPath);
-      if (!url) {
-        return null;
-      }
-      partUrls.push(url);
-    }
-
-    // Decline before the reader ever sees the URL: a server that refuses one of
-    // the range shapes it needs makes it panic unrecoverably rather than error.
-    if (!(await this.serverSupportsStreamingRanges(partUrls[0]))) {
-      return null;
-    }
-
-    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
-    if (!ParquetFile) {
+    // In row order, which the code assignment depends on.
+    const partOpeners = await this.parquetPartFileOpeners(parquetPath);
+    if (!partOpeners) {
       return null;
     }
 
@@ -2288,9 +2264,9 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     // the promise it came from.
     const stall = createStallGuard(FEATURE_STREAM_STALL_TIMEOUT_MS);
     const scanAllParts = async () => {
-      for (const url of partUrls) {
-        const { stream } = await openStreamWithinBudget(
-          ParquetFile.fromUrl(url),
+      for (const openPart of partOpeners) {
+        const { file, stream } = await openStreamWithinBudget(
+          openPart(),
           {
             columns: columnNames,
             batchSize: FEATURE_STREAM_BATCH_ROWS,
@@ -2341,6 +2317,10 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           // and cancel() can hang exactly like read() does — never await it.
           void reader.cancel().catch(() => {});
           reader.releaseLock();
+          // Can throw after a wasm panic.
+          try {
+            file.free?.();
+          } catch {}
         }
       }
     };

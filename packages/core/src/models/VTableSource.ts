@@ -3,10 +3,12 @@
 import { type Table as ArrowTable, tableFromIPC } from 'apache-arrow';
 import type { Readable } from 'zarrita';
 import { ByteLruCache } from '../memory/byteLruCache.js';
+import { storeBackedParquetBlob } from '../parquetStoreBlob.js';
 import {
   getParquetModule,
   type ParquetModule,
   type ParquetRowGroupReadOptions,
+  type ParquetWasmFile,
   type ParquetWasmMetadata,
   supportsParquetStreaming,
 } from '../parquetWasmLoader.js';
@@ -224,6 +226,24 @@ function toSafeNumber(value: number | bigint, label: string) {
     throw new Error(`Invalid parquet ${label}: ${String(value)}`);
   }
   return n;
+}
+
+/** End of the part's last column chunk. */
+function parquetDataEnd(metadata: ParquetWasmMetadata): number {
+  let end = 0;
+  for (let index = 0; index < metadata.numRowGroups(); index += 1) {
+    const rowGroup = metadata.rowGroup(index);
+    try {
+      end = Math.max(
+        end,
+        toSafeNumber(rowGroup.fileOffset(), 'row-group file offset') +
+          toSafeNumber(rowGroup.compressedSize(), 'row-group compressed size')
+      );
+    } finally {
+      rowGroup.free?.();
+    }
+  }
+  return end;
 }
 
 /**
@@ -1119,6 +1139,60 @@ export default class SpatialDataTableSource extends AnnDataSource {
     });
     SpatialDataTableSource.rangeProbeByOrigin.set(origin, probe);
     return probe;
+  }
+
+  /**
+   * Streaming `ParquetFile` openers for each part, in row order: by URL where
+   * the server allows it, otherwise through `store.getRange`. Null if neither.
+   */
+  protected async parquetPartFileOpeners(
+    parquetPath: string
+  ): Promise<Array<() => Promise<ParquetWasmFile>> | null> {
+    const { ParquetFile } = await SpatialDataTableSource.parquetModulePromise;
+    if (!ParquetFile) {
+      return null;
+    }
+    const dataset = await this.loadParquetDatasetMetadata(parquetPath);
+    if (!dataset || dataset.parts.length === 0) {
+      return null;
+    }
+
+    if (await this.canStreamParquetByUrl()) {
+      const urls: string[] = [];
+      for (const part of dataset.parts) {
+        const url = this.resolveStoreUrl(part.path);
+        if (url) {
+          urls.push(url);
+        }
+      }
+      // Decline before the reader ever sees the URL: a server that refuses one of
+      // the range shapes it needs makes it panic unrecoverably rather than error.
+      if (
+        urls.length === dataset.parts.length &&
+        (await this.serverSupportsStreamingRanges(urls[0]))
+      ) {
+        return urls.map((url) => () => ParquetFile.fromUrl(url));
+      }
+    }
+
+    const getRange = this.rangeReader();
+    const { fromFile } = ParquetFile;
+    if (!getRange || !fromFile) {
+      return null;
+    }
+    const openers: Array<() => Promise<ParquetWasmFile>> = [];
+    for (const part of dataset.parts) {
+      const blob = storeBackedParquetBlob(
+        async (offset, length) => toUint8Array(await getRange(`/${part.path}`, { offset, length })),
+        part.schemaBytes,
+        parquetDataEnd(part.metadata)
+      );
+      if (!blob) {
+        return null;
+      }
+      openers.push(() => fromFile.call(ParquetFile, blob));
+    }
+    return openers;
   }
 
   /**

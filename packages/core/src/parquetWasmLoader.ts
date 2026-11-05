@@ -10,6 +10,7 @@ export interface ParquetWasmRowGroupMetadata {
   numRows(): number;
   fileOffset(): number | bigint;
   compressedSize(): number | bigint;
+  free?(): void;
 }
 
 export interface ParquetWasmMetadata {
@@ -53,8 +54,16 @@ export interface ParquetWasmFile {
   free?(): void;
 }
 
+/** The part of `Blob` that `ParquetFile.fromFile` uses. */
+export interface ParquetBlobLike {
+  readonly size: number;
+  slice(start?: number, end?: number): ParquetBlobLike;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
 export interface ParquetWasmFileConstructor {
   fromUrl(url: string): Promise<ParquetWasmFile>;
+  fromFile?(handle: ParquetBlobLike): Promise<ParquetWasmFile>;
 }
 
 export interface ParquetModule {
