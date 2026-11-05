@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 
@@ -89,8 +90,9 @@ class TestRemoveTree:
             return path
 
         monkeypatch.setattr(os, "unlink", unlink_taking_siblings_along)
-        with pytest.raises(FileNotFoundError):
-            shutil.rmtree(make_tree(tmp_path / "plain"))
+        if sys.version_info < (3, 13):  # 3.13's rmtree tolerates this itself
+            with pytest.raises(FileNotFoundError):
+                shutil.rmtree(make_tree(tmp_path / "plain"))
 
         tree = make_tree(tmp_path / "tolerant")
         remove_tree(tree)
@@ -157,13 +159,35 @@ class TestWriteSpatialdata:
         write_spatialdata(sdata, tmp_path / "out.zarr", overwrite=True)
         assert (tmp_path / "out.zarr" / "points" / "transcripts").is_dir()
 
-    def test_never_deletes_the_store_it_was_read_from(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("target", [".", "source.zarr"])
+    def test_never_deletes_the_store_it_was_read_from(self, tmp_path: Path, target: str) -> None:
         source = _source_store(tmp_path / "source.zarr")
 
         with pytest.raises(ValueError, match="backs the SpatialData"):
-            write_spatialdata(sd.read_zarr(source), source, overwrite=True)
+            write_spatialdata(sd.read_zarr(source), tmp_path / target, overwrite=True)
 
         assert (source / "points" / "transcripts" / MARKER).exists()
+
+    def test_edited_transformations_are_written_not_copied(self, tmp_path: Path) -> None:
+        from spatialdata.transformations import Scale, get_transformation, set_transformation
+
+        source = _source_store(tmp_path / "source.zarr")
+        sdata = sd.read_zarr(source)
+        scale = Scale([2.0, 2.0], axes=("x", "y"))
+        set_transformation(sdata.points["transcripts"], scale, "global")
+
+        write_spatialdata(sdata, tmp_path / "out.zarr")
+
+        written = sd.read_zarr(tmp_path / "out.zarr").points["transcripts"]
+        assert get_transformation(written, "global") == scale
+        assert not (tmp_path / "out.zarr" / "points" / "transcripts" / MARKER).exists()
+
+    def test_leaves_sdata_pointing_at_the_new_store(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_source_store(tmp_path / "source.zarr"))
+
+        write_spatialdata(sdata, tmp_path / "out.zarr")
+
+        assert Path(sdata.path) == tmp_path / "out.zarr"
 
 
 class TestRecompressInMemory:
@@ -209,6 +233,14 @@ class TestRecompressInMemory:
         assert "cell_type" in reread.tables["table"].obs
 
 
+    def test_temp_dir_inside_a_path_source_is_refused(self, tmp_path: Path) -> None:
+        source = _source_store(tmp_path / "source.zarr")
+
+        with pytest.raises(ValueError, match="temp_dir"):
+            recompress_spatialdata(
+                source, tmp_path / "out.zarr", pyramid=True, temp_dir=source / "scratch"
+            )
+
     def test_pyramids_are_staged_from_the_rasters_alone(self, tmp_path: Path) -> None:
         source = _source_store(tmp_path / "source.zarr")
 
@@ -244,6 +276,21 @@ class TestZipDirectory:
             assert sorted(archive.namelist()) == ["points/t/chunk", "zarr.json"]
             assert {info.compress_type for info in archive.infolist()} == {zipfile.ZIP_STORED}
             assert archive.read("points/t/chunk") == b"\x00" * 1000
+
+    def test_missing_source_is_an_error_not_an_empty_zip(self, tmp_path: Path) -> None:
+        with pytest.raises(NotADirectoryError):
+            zip_directory(tmp_path / "absent", tmp_path / "x.zip")
+
+        assert not (tmp_path / "x.zip").exists()
+
+    def test_zip_inside_the_source_is_not_packed_into_itself(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path / "store.zarr")
+
+        zip_directory(store, store / "store.zip")
+        zip_directory(store, store / "store.zip")
+
+        with zipfile.ZipFile(store / "store.zip") as archive:
+            assert sorted(archive.namelist()) == ["points/t/chunk", "zarr.json"]
 
     def test_failure_leaves_no_partial_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

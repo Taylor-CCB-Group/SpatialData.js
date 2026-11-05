@@ -362,7 +362,7 @@ spatialdata-js-util zip ~/data/xenium.zarr ~/data/xenium.zarr.zip
 
 Packs a store into an uncompressed zip with its contents at the archive root, so
 a browser can range-read any one chunk (zarrextra's `ZipStore`). Files are
-streamed, so memory stays flat, and the zip appears only once it is complete.
+streamed rather than read into memory, and the zip appears only once it is complete.
 
 ## Python API
 

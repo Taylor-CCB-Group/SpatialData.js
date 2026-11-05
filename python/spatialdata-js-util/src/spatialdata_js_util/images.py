@@ -724,6 +724,13 @@ def recompress_spatialdata(
 
     dest_path = Path(dest)
     scratch = None if temp_dir is None else str(temp_dir)
+    if (
+        scratch is not None
+        and isinstance(source, str | Path)
+        and Path(scratch).resolve().is_relative_to(Path(source).resolve())
+    ):
+        # Staged pyramids are copies of the source; inside it they would copy themselves.
+        raise ValueError(f"temp_dir {temp_dir} must not be inside the source store {source}")
     mirror_dir: tempfile.TemporaryDirectory[str] | None = None
     pyramid_dir: tempfile.TemporaryDirectory[str] | None = None
     try:

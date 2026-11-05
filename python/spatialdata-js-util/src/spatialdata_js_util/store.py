@@ -366,7 +366,8 @@ def write_spatialdata(
     are written as such instead of failing the way plain `write` does.
 
     With *overwrite* an existing *path* is replaced, but never the store *sdata*
-    was read from, which backs its lazy elements.
+    was read from, nor a directory containing it: both back its lazy elements.
+    Like `SpatialData.write`, a successful write leaves `sdata.path` at *path*.
     """
     import anndata
     import zarr
@@ -377,7 +378,7 @@ def write_spatialdata(
     if target.exists():
         if not overwrite:
             raise FileExistsError(target)
-        if sdata.path is not None and target.resolve() == Path(sdata.path).resolve():
+        if sdata.path is not None and Path(sdata.path).resolve().is_relative_to(target.resolve()):
             raise ValueError(f"Cannot overwrite {target}: it backs the SpatialData being written.")
         remove_tree(target)
 
@@ -398,12 +399,16 @@ def write_spatialdata(
         for key, source in unchanged.items():
             shutil.copytree(source, target / "points" / key)
         rest.write_consolidated_metadata()
+        sdata.path = target
 
 
 def _unmodified_points(sdata: SpatialData) -> dict[str, Path]:
     """Points elements that are exactly what the store *sdata* was read from holds, by key."""
     if sdata.path is None:
         return {}
+    from spatialdata._io.io_points import _get_transformations_from_ngff_dict
+    from spatialdata.transformations import get_transformation
+
     store = Path(sdata.path)
     unchanged = {}
     for key, points in sdata.points.items():
@@ -411,10 +416,20 @@ def _unmodified_points(sdata: SpatialData) -> dict[str, Path]:
         # An untouched element is a bare parquet read; anything layered on top of it
         # (a new column, a filter) changes what a write must produce.
         expr = points.expr
-        if (
+        if not (
             type(expr).__name__.startswith("ReadParquet")
             and Path(str(expr.operand("path"))) == source / "points.parquet"
         ):
+            continue
+        # The copy brings the stored coordinate transformations with it, so an
+        # element whose transformations were edited in memory has to be written.
+        try:
+            stored = _get_transformations_from_ngff_dict(
+                read_json(source / "zarr.json")["attributes"]["coordinateTransformations"]
+            )
+        except (OSError, KeyError, ValueError):
+            continue
+        if stored == get_transformation(points, get_all=True):
             unchanged[key] = source
     return unchanged
 
@@ -424,16 +439,21 @@ def zip_directory(source: str | Path, zip_path: str | Path) -> None:
 
     Zarr chunks are already compressed, and a stored (uncompressed) zip lets a
     browser read any one of them with a single range request, which is what
-    zarrextra's `ZipStore` does. Files are streamed, so memory stays flat. The
-    archive is built beside *zip_path* and renamed into place only once complete.
+    zarrextra's `ZipStore` does. File contents are streamed, so memory grows with
+    the number of files, not their size. The archive is built beside *zip_path*
+    (and left out of itself if that is inside *source*) and renamed into place
+    only once complete.
     """
     root = Path(source)
+    if not root.is_dir():
+        raise NotADirectoryError(root)
     target = Path(zip_path)
     partial = target.with_name(f".{target.name}.partial")
+    skip = {target.resolve(), partial.resolve()}
     try:
         with zipfile.ZipFile(partial, "w", zipfile.ZIP_STORED, allowZip64=True) as archive:
             for path in sorted(root.rglob("*")):
-                if path.is_file():
+                if path.is_file() and path.resolve() not in skip:
                     archive.write(path, path.relative_to(root).as_posix())
         partial.replace(target)
     except BaseException:
