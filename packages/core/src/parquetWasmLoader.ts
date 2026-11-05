@@ -10,6 +10,8 @@ export interface ParquetWasmRowGroupMetadata {
   numRows(): number;
   fileOffset(): number | bigint;
   compressedSize(): number | bigint;
+  /** Release the wasm-side copy; each `rowGroup(i)` call allocates one. */
+  free?(): void;
 }
 
 export interface ParquetWasmMetadata {
@@ -53,8 +55,23 @@ export interface ParquetWasmFile {
   free?(): void;
 }
 
+/**
+ * What `ParquetFile.fromFile` reads from its handle: `size`, `slice` and
+ * `arrayBuffer`, called as plain methods, so a real `Blob` is not required.
+ */
+export interface ParquetBlobLike {
+  readonly size: number;
+  slice(start?: number, end?: number): ParquetBlobLike;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
 export interface ParquetWasmFileConstructor {
   fromUrl(url: string): Promise<ParquetWasmFile>;
+  /**
+   * Open from a `Blob`-shaped handle. Unlike {@link fromUrl} this works under
+   * Node too, since the reads are the handle's own.
+   */
+  fromFile?(handle: ParquetBlobLike): Promise<ParquetWasmFile>;
 }
 
 export interface ParquetModule {

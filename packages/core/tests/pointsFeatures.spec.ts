@@ -130,9 +130,7 @@ describe('SpatialDataPointsSource feature catalog', () => {
   });
 
   it('lists features for oversized datasets via feature-column scan', async () => {
-    vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(
-      5_000_000
-    );
+    vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(5_000_000);
     const catalog = await source.listPointsFeatures('points/transcripts');
     expect(catalog).toEqual({
       featureKey: 'feature_name',
@@ -144,7 +142,7 @@ describe('SpatialDataPointsSource feature catalog', () => {
     });
   });
 
-  it('lists features for oversized dictionary-encoded datasets via row-group dictionary read', async () => {
+  it('lists features for oversized dictionary-encoded datasets through the store-backed stream', async () => {
     const elementDir = join(fixtureRoot, 'points', 'dict_large');
     await mkdir(elementDir, { recursive: true });
     execSync(
@@ -181,18 +179,15 @@ PY`,
         version: '0.2',
       },
     });
-    vi.spyOn(
-      dictSource,
-      'resolveParquetRowCount'
-    ).mockResolvedValue(5_000_000);
+    vi.spyOn(dictSource, 'resolveParquetRowCount').mockResolvedValue(5_000_000);
 
-    // Oversized → the byte-oriented feature-column scan, which does not tally
-    // (only the streaming scan and the whole-table read do).
+    // Oversized, and the store has no URL → the streaming scan reads through
+    // the store, decoding the dictionary and tallying as it goes.
     const catalog = await dictSource.listPointsFeatures('points/dict_large');
     expect(catalog?.entries).toEqual([
-      { code: 0, name: 'gene_a' },
-      { code: 1, name: 'gene_b' },
-      { code: 2, name: 'gene_c' },
+      { code: 0, name: 'gene_a', count: 34 },
+      { code: 1, name: 'gene_b', count: 33 },
+      { code: 2, name: 'gene_c', count: 33 },
     ]);
   }, 120_000);
 
@@ -455,9 +450,9 @@ PY`,
     const catalogSpy = vi
       .spyOn(parquetWorkerClient, 'scanParquetFeatureCatalogInWorker')
       .mockResolvedValue(workerCatalog);
-    vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(
-      5_000_000
-    );
+    vi.spyOn(source, 'resolveParquetRowCount').mockResolvedValue(5_000_000);
+    // The worker is the fallback once no streaming reader applies.
+    vi.spyOn(source, 'parquetPartFileOpeners').mockResolvedValue(null);
 
     const catalog = await source.listPointsFeatures('points/transcripts');
     expect(catalogSpy).toHaveBeenCalled();
