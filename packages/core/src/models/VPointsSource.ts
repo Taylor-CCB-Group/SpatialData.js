@@ -2266,7 +2266,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     const stall = createStallGuard(FEATURE_STREAM_STALL_TIMEOUT_MS);
     const scanAllParts = async () => {
       for (const openPart of partOpeners) {
-        const { stream } = await openStreamWithinBudget(
+        const { file, stream } = await openStreamWithinBudget(
           openPart(),
           {
             columns: columnNames,
@@ -2318,6 +2318,11 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           // and cancel() can hang exactly like read() does — never await it.
           void reader.cancel().catch(() => {});
           reader.releaseLock();
+          // The stream owns what it reads; the file is only the parsed footer,
+          // held in wasm until GC otherwise. After a panic free() can throw too.
+          try {
+            file.free?.();
+          } catch {}
         }
       }
     };
