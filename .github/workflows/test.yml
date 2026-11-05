@@ -349,6 +349,12 @@ jobs:
 
   production-browser:
     runs-on: ubuntu-latest
+    # Browsers and system libraries come preinstalled; `playwright install
+    # --with-deps` spent 9 minutes in apt on a slow mirror. Keep the tag in step
+    # with the resolved @playwright/test version in pnpm-lock.yaml.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
     permissions:
       contents: read
     steps:
@@ -395,9 +401,6 @@ jobs:
       - name: Generate test fixtures (Python spatialdata 0.8.0)
         if: steps.cache-production-browser-fixtures.outputs.cache-hit != 'true'
         run: pnpm test:fixtures:generate:0.8.0
-
-      - name: Install Chromium and Linux dependencies
-        run: pnpm exec playwright install --with-deps chromium
 
       - name: Build and browser-test the production browser consumer
         run: pnpm test:browser:production
