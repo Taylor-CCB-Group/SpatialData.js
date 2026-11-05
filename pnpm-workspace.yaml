@@ -81,7 +81,7 @@ overrides:
 
 catalog:
   '@zarrita/storage': ^0.2.0
-  '@rolldown/plugin-babel': ^0.2.3
+  '@rolldown/plugin-babel': ^0.3.0
   babel-plugin-react-compiler: ^1.0.0
   '@deck.gl/aggregation-layers': ~9.4.0
   '@deck.gl/core': ~9.4.0
@@ -106,7 +106,7 @@ catalog:
   '@hms-dbmi/viv': ^0.23.0
   '@vivjs/constants': 0.23.0
   '@vivjs/views': 0.23.0
-  anndata.js: ^0.0.2
+  anndata.js: ^0.0.3
   apache-arrow: ^21.2.0
   react: ^19.2.1
   react-dom: ^19.2.1
