@@ -354,6 +354,16 @@ convert_store_tables_to_csc("store.zarr")     # whole store
 csc = to_csc(adata.X)                         # or just a matrix
 ```
 
+## Zip
+
+```bash
+spatialdata-js-util zip ~/data/xenium.zarr ~/data/xenium.zarr.zip
+```
+
+Packs a store into an uncompressed zip with its contents at the archive root, so
+a browser can range-read any one chunk (zarrextra's `ZipStore`). Files are
+streamed, so memory stays flat, and the zip appears only once it is complete.
+
 ## Python API
 
 ```python
@@ -387,6 +397,20 @@ add_pyramids_in_place("input.zarr")   # append levels to the store itself
 sdata = sd.read_zarr("input.zarr")
 ensure_pyramids(sdata, include_labels=True)
 sdata.write("output.zarr")
+```
+
+`SpatialData.write` re-encodes every points partition through dask, which on
+transcript-scale points needs tens of GB of RAM, and refuses tables with
+nullable string columns on older AnnData. `write_spatialdata` writes the same
+way but copies points that are unchanged since reading as files, and
+`recompress_spatialdata` uses it for an in-memory source (`temp_dir=` moves its
+intermediate copies off the system disk):
+
+```python
+from spatialdata_js_util import write_spatialdata, zip_directory
+
+write_spatialdata(sdata, "output.zarr", overwrite=True)
+zip_directory("output.zarr", "output.zarr.zip")
 ```
 
 ## Monorepo development

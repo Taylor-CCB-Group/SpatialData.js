@@ -32,6 +32,7 @@ from .store import (
     drop_consolidated_metadata,
     list_element_keys,
     refresh_consolidated_metadata,
+    remove_tree,
     write_json,
     zarr_format_of,
 )
@@ -259,7 +260,7 @@ def convert_store_tables_to_csc(
                 raise WriterCommandError(
                     f"Destination already exists: {store_path}\nPass overwrite to replace it."
                 )
-            shutil.rmtree(store_path)
+            remove_tree(store_path)
         shutil.copytree(source_path, store_path)
 
     available = list_element_keys(store_path, "tables")

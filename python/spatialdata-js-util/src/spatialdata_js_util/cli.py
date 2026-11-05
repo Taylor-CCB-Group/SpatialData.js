@@ -5,6 +5,7 @@ Subcommands are grouped by what they act on:
     images   recompress rasters with browser-readable codecs
     points   Morton-index Points elements
     tables   convert table matrices to CSC
+    zip      pack a store into an uncompressed zip
     codecs   inspect codec backend availability
     tui      interactive workflow UI
 """
@@ -31,6 +32,9 @@ examples:
 
   # Convert table matrices to CSC for fast per-gene reads in the browser
   spatialdata-js-util tables to-csc ~/data/xenium.zarr
+
+  # Pack a store into a zip the browser can range-read
+  spatialdata-js-util zip ~/data/xenium.zarr ~/data/xenium.zarr.zip
 
   # Show which HTJ2K backend is in use
   spatialdata-js-util codecs info
@@ -95,6 +99,7 @@ def _images_recompress(args: argparse.Namespace) -> None:
         reversible=True if args.reversible else None,
         sibling=args.sibling,
         workers=args.workers,
+        temp_dir=args.temp_dir,
         # Any explicit --pyramid-* option means the user wants pyramids, so the
         # bare --pyramid flag is a convenience rather than a requirement.
         pyramid=args.pyramid
@@ -279,6 +284,11 @@ def _add_images_commands(subparsers: argparse._SubParsersAction) -> None:
         type=_positive_int,
         default=os.cpu_count() or 1,
         help="Parallel encoder workers (default: CPU count)",
+    )
+    recompress.add_argument(
+        "--temp-dir",
+        metavar="DIR",
+        help="Where to put staged pyramids (default: the system temporary directory)",
     )
     _add_pyramid_args(recompress, with_flag=True)
     recompress.set_defaults(func=_images_recompress)
@@ -747,6 +757,37 @@ def _add_tables_commands(subparsers: argparse._SubParsersAction) -> None:
     to_csc.set_defaults(func=_tables_to_csc)
 
 
+# --------------------------------------------------------------------------- zip
+
+
+def _zip(args: argparse.Namespace) -> None:
+    from .store import zip_directory
+
+    source = Path(args.source)
+    if not source.is_dir():
+        raise SystemExit(f"error: not a directory: {source}")
+    zip_path = Path(args.zip)
+    if zip_path.exists() and not args.overwrite:
+        raise SystemExit(f"error: {zip_path} already exists; pass --overwrite to replace it")
+    zip_directory(source, zip_path)
+    _print_json({"source": str(source), "zip": str(zip_path), "bytes": zip_path.stat().st_size})
+
+
+def _add_zip_command(subparsers: argparse._SubParsersAction) -> None:
+    zip_parser = subparsers.add_parser(
+        "zip",
+        help="pack a store into an uncompressed zip",
+        description=(
+            "Pack a Zarr store into an uncompressed zip with the store's contents at the "
+            "archive root, which a browser can read chunk by chunk with range requests."
+        ),
+    )
+    zip_parser.add_argument("source", metavar="SOURCE", help="Zarr store directory")
+    zip_parser.add_argument("zip", metavar="ZIP", help="Output zip file")
+    zip_parser.add_argument("--overwrite", action="store_true", help="Replace an existing ZIP")
+    zip_parser.set_defaults(func=_zip)
+
+
 # --------------------------------------------------------------------------- codecs
 
 
@@ -823,6 +864,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_images_commands(subparsers)
     _add_points_commands(subparsers)
     _add_tables_commands(subparsers)
+    _add_zip_command(subparsers)
     _add_codecs_commands(subparsers)
     _add_tui_command(subparsers)
     return parser

@@ -21,6 +21,7 @@ from .store import (
     read_points_dataframe,
     read_points_element_attrs,
     register_points_elements_in_consolidated_metadata,
+    remove_tree,
 )
 
 
@@ -120,7 +121,7 @@ def _copy_store_shell(source: Path, dest: Path, *, overwrite: bool) -> None:
     if dest.exists():
         if not overwrite:
             raise FileExistsError(f"Destination already exists: {dest}")
-        shutil.rmtree(dest)
+        remove_tree(dest)
 
     def ignore_points(directory: str, names: list[str]) -> set[str]:
         if Path(directory) == source:
@@ -161,7 +162,7 @@ def _copy_canonical_parquet(source_parquet: Path, dest_parquet: Path) -> None:
     dest_parquet.parent.mkdir(parents=True, exist_ok=True)
     if source_parquet.is_dir():
         if dest_parquet.exists():
-            shutil.rmtree(dest_parquet)
+            remove_tree(dest_parquet)
         shutil.copytree(source_parquet, dest_parquet)
     else:
         shutil.copy2(source_parquet, dest_parquet)
@@ -223,7 +224,7 @@ def write_index_permutations(
                 output_parquet.parent.mkdir(parents=True, exist_ok=True)
                 if output_parquet.exists():
                     if output_parquet.is_dir():
-                        shutil.rmtree(output_parquet)
+                        remove_tree(output_parquet)
                     else:
                         output_parquet.unlink()
                 df.to_parquet(output_parquet, index=False)

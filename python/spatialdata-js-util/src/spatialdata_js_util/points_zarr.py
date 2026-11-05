@@ -51,6 +51,8 @@ import pyarrow.parquet as pq
 import zarr
 from zarr.codecs import BloscCodec
 
+from .store import remove_tree
+
 POINTS_ZARR_VERSION = "0.1"
 #: The points-zarr copy's subgroup in a standard points element (ADR 0006).
 SIDECAR_GROUP = "experimental.points-zarr"
@@ -373,7 +375,7 @@ def write_points_zarr(
         # Replaced only now that the input has been read and spilled, so a bad input
         # leaves the existing group as it was.
         if element_dir.exists():
-            shutil.rmtree(element_dir)
+            remove_tree(element_dir)
         root = zarr.open_group(element_dir, mode="w", zarr_format=3)
         layout: list[dict[str, Any]] = []
         for level in range(level_count):
@@ -719,7 +721,7 @@ def write_points_zarr_store(
     if store_dir.exists():
         if not overwrite:
             raise FileExistsError(f"{store_dir} exists; pass overwrite=True to replace it")
-        shutil.rmtree(store_dir)
+        remove_tree(store_dir)
     source: PointsSource = (lambda: [data]) if isinstance(data, pd.DataFrame) else data
     transforms = transformations or _identity_transform(
         ("x", "y", "z")[: len(coordinates)], coordinate_system, units
