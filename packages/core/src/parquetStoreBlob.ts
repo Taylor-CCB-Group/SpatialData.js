@@ -1,31 +1,19 @@
 import type { ParquetBlobLike } from './parquetWasmLoader.js';
 
-/**
- * The size a store-backed blob reports. parquet-wasm converts it to a 32-bit
- * signed integer somewhere on the open path and panics above this; the real
- * part may be anything up to it.
- */
+/** parquet-wasm panics on a blob size above i32 max. */
 export const STORE_BLOB_VIRTUAL_SIZE = 2 ** 31 - 1;
 
-/** Reads `length` bytes at `offset` of one parquet part through its store. */
 export type PartRangeReader = (
   offset: number,
   length: number
 ) => Promise<Uint8Array | null | undefined>;
 
 /**
- * A `Blob` stand-in for `ParquetFile.fromFile`, so a store with `getRange` but
- * no URL (a zip, a picked folder) gets the same projected, batch-at-a-time
- * reader the URL path uses.
+ * A `Blob` stand-in for `ParquetFile.fromFile` over a store with no URL.
  *
- * The store cannot say how long the part is, so the blob claims
- * {@link STORE_BLOB_VIRTUAL_SIZE} and serves its last `footer.length` bytes
- * from the footer we already hold. The reader finds everything else by
- * absolute offset, which the store answers as-is. That holds while the real
- * part is no longer than the virtual size; `dataEnd` (the end of the last
- * column chunk) is checked against it, and a read that comes back short throws.
- *
- * Returns null when the part does not fit.
+ * The store can't report the part's length, so the blob claims `virtualSize`
+ * and serves the cached footer at its end; every other read is by absolute
+ * offset. Null if the part's data would overlap that footer.
  */
 export function storeBackedParquetBlob(
   readRange: PartRangeReader,

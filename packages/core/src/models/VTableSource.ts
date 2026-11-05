@@ -228,7 +228,7 @@ function toSafeNumber(value: number | bigint, label: string) {
   return n;
 }
 
-/** Where a part's last row group ends: the furthest byte its column chunks reach. */
+/** End of the part's last column chunk. */
 function parquetDataEnd(metadata: ParquetWasmMetadata): number {
   let end = 0;
   for (let index = 0; index < metadata.numRowGroups(); index += 1) {
@@ -1142,14 +1142,8 @@ export default class SpatialDataTableSource extends AnnDataSource {
   }
 
   /**
-   * One opener per part of a parquet dataset, in row order, for the streaming
-   * `ParquetFile` reader — or null when neither transport applies.
-   *
-   * By URL when the store has one and the server passes
-   * {@link serverSupportsStreamingRanges}. Otherwise through the store's own
-   * `getRange` (see `storeBackedParquetBlob`), which is what a zip or a picked
-   * folder has. That one needs no suffix ranges, since the footer is already
-   * cached, and runs under Node as well.
+   * Streaming `ParquetFile` openers for each part, in row order: by URL where
+   * the server allows it, otherwise through `store.getRange`. Null if neither.
    */
   protected async parquetPartFileOpeners(
     parquetPath: string

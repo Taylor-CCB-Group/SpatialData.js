@@ -2237,8 +2237,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
     columnNames: string[],
     onPartialCatalog?: (catalog: PointsFeatureCatalog) => void
   ): Promise<PointsFeatureCatalog | null> {
-    // In row order, which the code assignment depends on. By URL where the
-    // server allows it, otherwise through the store (zips, picked folders).
+    // In row order, which the code assignment depends on.
     const partOpeners = await this.parquetPartFileOpeners(parquetPath);
     if (!partOpeners) {
       return null;
@@ -2318,8 +2317,7 @@ export default class SpatialDataPointsSource extends SpatialDataTableSource {
           // and cancel() can hang exactly like read() does — never await it.
           void reader.cancel().catch(() => {});
           reader.releaseLock();
-          // The stream owns what it reads; the file is only the parsed footer,
-          // held in wasm until GC otherwise. After a panic free() can throw too.
+          // Can throw after a wasm panic.
           try {
             file.free?.();
           } catch {}
