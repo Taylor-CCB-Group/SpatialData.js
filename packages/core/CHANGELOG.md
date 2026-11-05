@@ -1,5 +1,11 @@
 # @spatialdata/core
 
+## 0.15.1
+
+### Patch Changes
+
+- [#272](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/272) [`4c15631`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4c156318115fc994f045e2db59daf6d1676e49b3) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `listFeatures()` on a large points element now works when the store has no URL, such as a zarrextra `ZipStore` or `FolderStore`. It reads only the feature columns, one batch at a time, through the store. Before, it fell back to decoding the whole parquet file, which ran parquet-wasm out of memory (`RuntimeError: unreachable`) on files of a few hundred MB.
+
 ## 0.15.0
 
 ### Minor Changes
