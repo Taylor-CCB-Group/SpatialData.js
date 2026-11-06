@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,21 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
+def _byte_size(value: str) -> int:
+    """Bytes from a size such as ``4G``, ``512M`` or ``1000000``."""
+    units = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+    text = value.strip().upper().removesuffix("B").removesuffix("I")
+    scale = units.get(text[-1:], 1)
+    number = text[:-1] if scale != 1 else text
+    try:
+        parsed = int(float(number) * scale)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not a size: {value}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("size must be positive")
     return parsed
 
 
@@ -393,6 +409,10 @@ def _points_morton_from_zarr(args: argparse.Namespace) -> None:
             overwrite=args.overwrite,
             row_group_size=args.row_group_size,
             compression=args.compression,
+            # Left to the runner's default so the CLI need not import pandas to parse.
+            **({} if args.memory_budget is None else {"memory_budget": args.memory_budget}),
+            temp_dir=args.temp_dir,
+            progress=lambda message: print(message, file=sys.stderr, flush=True),
         )
     )
 
@@ -573,6 +593,20 @@ def _add_points_commands(subparsers: argparse._SubParsersAction) -> None:
             "Column used to derive <feature_key>_codes (default: spatialdata_attrs.feature_key "
             "from the element zarr.json)"
         ),
+    )
+    morton_from_zarr.add_argument(
+        "--memory-budget",
+        type=_byte_size,
+        metavar="SIZE",
+        help=(
+            "Working memory for the sort, e.g. 4G (default: 4G). Larger input is sorted "
+            "out of core, spilling about its own size to --temp-dir."
+        ),
+    )
+    morton_from_zarr.add_argument(
+        "--temp-dir",
+        metavar="DIR",
+        help="Where to spill an out-of-core sort (default: beside the output)",
     )
     _add_row_group_args(morton_from_zarr)
     morton_from_zarr.set_defaults(func=_points_morton_from_zarr)

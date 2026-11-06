@@ -245,3 +245,23 @@ def test_write_index_permutations_writes_manifest(tmp_path: Path) -> None:
         dest / "points" / "transcripts_morton" / "points.parquet"
     ).schema_arrow.names
     assert MORTON_CODE_2D_COLUMN in morton_columns
+
+
+def test_morton_points_from_zarr_out_of_core_matches_in_memory(tmp_path: Path) -> None:
+    in_memory, out_of_core = tmp_path / "a.zarr", tmp_path / "b.zarr"
+    for root in (in_memory, out_of_core):
+        _write_points_element(root, "transcripts", rows=3000)
+
+    expected = run_morton_points_from_zarr(in_memory, points_key="transcripts", row_group_size=250)
+    actual = run_morton_points_from_zarr(
+        out_of_core, points_key="transcripts", row_group_size=250, memory_budget=20_000
+    )
+
+    assert (expected["out_of_core"], actual["out_of_core"]) == (False, True)
+    assert actual["rows"] == expected["rows"] == 3000
+    path = Path("points") / "transcripts" / "points.parquet"
+    assert (out_of_core / path).read_bytes() == (in_memory / path).read_bytes()
+    assert sorted(p.name for p in (out_of_core / path).parent.iterdir()) == [
+        "points.parquet",
+        "zarr.json",
+    ]
