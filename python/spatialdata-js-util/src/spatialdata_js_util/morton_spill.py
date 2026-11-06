@@ -59,6 +59,9 @@ _IN_MEMORY_COPIES = 12
 #: `morton_sort_points` sorts by z first only while z has fewer distinct values.
 _Z_SORT_LIMIT = 100
 _ROW_COLUMN = "__morton_spill_row__"
+#: The scanner's defaults (16 batches x 4 files) queue gigabytes of decoded batches
+#: whenever the consumer is slower than the read, which the spill always is.
+_READAHEAD = {"batch_readahead": 1, "fragment_readahead": 1}
 #: `write_morton_points_parquet` writes the frame's index as this column.
 _WRITTEN_INDEX = "__index_level_0__"
 
@@ -164,7 +167,7 @@ def _survey(dataset: ds.Dataset, feature_key: str | None, has_z: bool) -> _Surve
     feature_uniques: list[np.ndarray] = []
 
     # The default batch size, as `to_table` uses: a chunk's dictionary can depend on it.
-    for batch in dataset.to_batches(columns=columns):
+    for batch in dataset.to_batches(columns=columns, **_READAHEAD):
         offset = survey.rows
         survey.rows += batch.num_rows
         for slot, (axis, is_min) in enumerate((("x", True), ("x", False), ("y", True), ("y", False))):
@@ -448,7 +451,7 @@ def write_morton_points_parquet_spilled(
     xy = ["x", "y", *(["z"] if z_order is not None else [])]
     histogram = np.zeros(keyer.bins, dtype=np.int64)
     offset = 0
-    for batch in dataset.to_batches(columns=xy, batch_size=batch_rows):
+    for batch in dataset.to_batches(columns=xy, batch_size=batch_rows, **_READAHEAD):
         keep = _rest_mask(offset, batch.num_rows, sentinels)
         offset += batch.num_rows
         frame = batch.to_pandas()
@@ -472,7 +475,7 @@ def write_morton_points_parquet_spilled(
         offset = 0
         spill_schema: pa.Schema | None = None
         try:
-            for batch in dataset.to_batches(batch_size=batch_rows):
+            for batch in dataset.to_batches(batch_size=batch_rows, **_READAHEAD):
                 frame = batch.select(xy).to_pandas()
                 morton = _morton(frame, survey)
                 keep = _rest_mask(offset, batch.num_rows, sentinels)
