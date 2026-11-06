@@ -49,10 +49,7 @@ from .points import (
     morton_code_2d,
     write_morton_points_parquet,
 )
-from .store import remove_tree
-
-#: Default working-set budget. The in-memory path is used below it.
-DEFAULT_MEMORY_BUDGET = 4 * 1024**3
+from .store import DEFAULT_MEMORY_BUDGET, remove_tree
 #: Bytes a row costs while a bucket is sorted, per byte of its Arrow width: the
 #: pandas frame, its sorted copy, the concatenation, and the Arrow table written.
 _WORKING_COPIES = 8

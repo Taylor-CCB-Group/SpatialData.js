@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from spatialdata import SpatialData
 
 
+#: Working memory the out-of-core rewrites (points sort, CSC tables) aim to stay within.
+DEFAULT_MEMORY_BUDGET = 4 * 1024**3
+
+
 def remove_tree(path: str | Path) -> None:
     """`shutil.rmtree` that tolerates entries vanishing while it walks.
 
