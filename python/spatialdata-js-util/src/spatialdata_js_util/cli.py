@@ -57,7 +57,7 @@ def _byte_size(value: str) -> int:
     number = text[:-1] if scale != 1 else text
     try:
         parsed = int(float(number) * scale)
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
         raise argparse.ArgumentTypeError(f"not a size: {value}") from exc
     if parsed <= 0:
         raise argparse.ArgumentTypeError("size must be positive")
@@ -735,6 +735,7 @@ def _tables_to_csc(args: argparse.Namespace) -> None:
             layers=not args.no_layers,
             densify=args.densify,
             overwrite=args.overwrite,
+            **({} if args.memory_budget is None else {"memory_budget": args.memory_budget}),
         )
     )
 
@@ -788,6 +789,15 @@ def _add_tables_commands(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     to_csc.add_argument("--overwrite", action="store_true", help="Replace an existing DEST")
+    to_csc.add_argument(
+        "--memory-budget",
+        type=_byte_size,
+        metavar="SIZE",
+        help=(
+            "Working memory, e.g. 4G (default: 4G). Larger CSR matrices are converted "
+            "out of core, spilling about their own size beside the table."
+        ),
+    )
     to_csc.set_defaults(func=_tables_to_csc)
 
 

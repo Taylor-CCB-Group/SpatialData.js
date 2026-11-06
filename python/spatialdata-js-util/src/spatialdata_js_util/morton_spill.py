@@ -20,9 +20,9 @@ are cut at the same rows.
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
-import resource
 import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -86,7 +86,15 @@ def _row_width(schema: pa.Schema) -> int:
 def estimate_in_memory_bytes(source: str | Path) -> int:
     """Rough peak memory of `write_morton_points_parquet` on *source*."""
     dataset = ds.dataset(source, format="parquet")
-    return dataset.count_rows() * _row_width(dataset.schema) * _IN_MEMORY_COPIES
+    by_width = dataset.count_rows() * _row_width(dataset.schema)
+    # Parquet's uncompressed sizes catch wide string columns the width guess misses.
+    uncompressed = 0
+    for fragment in dataset.get_fragments():
+        metadata = fragment.metadata
+        uncompressed += sum(
+            metadata.row_group(i).total_byte_size for i in range(metadata.num_row_groups)
+        )
+    return max(by_width, uncompressed) * _IN_MEMORY_COPIES
 
 
 class _DistinctCounter:
@@ -99,8 +107,9 @@ class _DistinctCounter:
     *limit* even when it might not, costing only a less compact encoding.
     """
 
-    def __init__(self, limit: int, *, max_values: int):
+    def __init__(self, limit: int, *, max_values: int, max_bitmap_bytes: int):
         self.limit = limit
+        self.max_bitmap_bytes = max_bitmap_bytes
         self.max_values = max_values
         self.exceeded = False
         self._dtype: np.dtype | None = None
@@ -115,7 +124,9 @@ class _DistinctCounter:
         # The sentinels arrive through pandas, which can widen the type.
         self._dtype = self._dtype or values.dtype
         values = values.astype(self._dtype, copy=False)
-        if values.dtype.itemsize <= 4:
+        if self._bitmap is not None or (
+            values.dtype.itemsize <= 4 and 1 << (values.dtype.itemsize * 8 - 3) <= self.max_bitmap_bytes
+        ):
             self._set_bits(values)
             return
         self._pending.append(np.unique(values))
@@ -167,6 +178,7 @@ class _Survey:
     extremes: list[tuple[float, int]] = field(default_factory=list)
     extreme_z: dict[int, Any] = field(default_factory=dict)
     z_counts: dict[Any, int] | None = None
+    z_dtype: Any = np.float64
     categories: dict[str, list[Any]] = field(default_factory=dict)
 
     def sentinel_rows(self) -> list[int]:
@@ -194,6 +206,8 @@ def _survey(dataset: ds.Dataset, feature_key: str | None, has_z: bool) -> _Surve
     if string_feature:
         columns.append(feature_key)
     survey = _Survey(z_counts={} if has_z else None)
+    if has_z:
+        survey.z_dtype = np.dtype(schema.field("z").type.to_pandas_dtype())
     # (min x, max x, min y, max y): best value and its first row.
     best = [(math.inf, -1), (-math.inf, -1), (math.inf, -1), (-math.inf, -1)]
     seen: dict[str, dict[Any, None]] = {name: {} for name in dictionary_columns}
@@ -231,6 +245,8 @@ def _survey(dataset: ds.Dataset, feature_key: str | None, has_z: bool) -> _Surve
         if string_feature:
             values = batch.column(feature_key).drop_null()
             feature_uniques.append(pc.unique(values).to_numpy(zero_copy_only=False))
+            if len(feature_uniques) >= 64:
+                feature_uniques = [pd.unique(np.concatenate(feature_uniques))]
 
     survey.extremes = [(float(value), row) for value, row in best]
     survey.categories = {name: list(values) for name, values in seen.items()}
@@ -273,7 +289,8 @@ class _Keyer:
         self.z_values = None
         if z_order is not None:
             numbers = [value for value in z_order if value != "nan"]
-            self.z_values = np.asarray(numbers, dtype=np.float64)
+            # The column's own dtype: float64 would merge int64 values above 2**53.
+            self.z_values = np.asarray(numbers, dtype=survey.z_dtype)
             self.z_has_nan = len(numbers) < len(z_order)
         z_ranks = 1 if z_order is None else max(1, len(z_order))
         self.prefix_bits = 20 if z_order is None else 14
@@ -283,9 +300,10 @@ class _Keyer:
         prefix = (morton >> np.uint32(32 - self.prefix_bits)).astype(np.int64)
         if self.z_values is None:
             return prefix
-        z = batch.column("z").to_numpy(zero_copy_only=False).astype(np.float64)
+        z = batch.column("z").to_numpy(zero_copy_only=False)
         rank = np.searchsorted(self.z_values, z)
-        rank[np.isnan(z)] = len(self.z_values)
+        if z.dtype.kind == "f":
+            rank[np.isnan(z)] = len(self.z_values)
         return (rank.astype(np.int64) << self.prefix_bits) | prefix
 
 
@@ -408,6 +426,10 @@ def _pandas_index_columns(schema: pa.Schema) -> frozenset[str]:
 
 
 def _raise_open_file_limit(needed: int) -> None:
+    try:
+        import resource
+    except ImportError:  # Windows: no soft limit to raise
+        return
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     if soft >= needed:
         return
@@ -522,7 +544,12 @@ def write_morton_points_parquet_spilled(
                     )
                 for name, values in integers.items():
                     counter = counters.setdefault(
-                        name, _DistinctCounter(threshold, max_values=memory_budget // 32)
+                        name,
+                        _DistinctCounter(
+                            threshold,
+                            max_values=memory_budget // 32,
+                            max_bitmap_bytes=memory_budget // 8,
+                        ),
                     )
                     counter.add(values.filter(pa.array(keep)).drop_null().to_numpy(zero_copy_only=False))
                 if spill_schema is None:
@@ -634,7 +661,7 @@ def _plan(
     if sentinel_frame is not None:
         frames.append(sentinel_frame[checked])
     columns = sorted({*checked, *sort_columns})
-    for frame in [*frames, *buckets(columns)]:
+    for frame in itertools.chain(frames, buckets(columns)):
         for name in checked:
             values = frame[name].to_numpy()
             if values.size == 0:

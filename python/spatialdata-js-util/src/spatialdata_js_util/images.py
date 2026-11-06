@@ -506,8 +506,9 @@ def _recompress_image_array(
                 done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
                 for future in done:
                     coords, plane = in_flight.pop(future)
-                    submit_next()
+                    # Before the next read, so an encoder error is not masked by a read error.
                     encoded = future.result()
+                    submit_next()
                     encoded_bytes += len(encoded)
                     chunk_count += 1
                     _write_encoded_chunk(dest_array_path, coords, encoded)

@@ -46,6 +46,7 @@ from .store import (
     read_points_element_attrs,
     register_points_elements_in_consolidated_metadata,
     remove_tree,
+    replace_keeping_original,
     validate_points_key,
 )
 
@@ -435,8 +436,7 @@ def _morton_spilled(output_spec: MortonZarrOutput, **options: Any) -> int:
         result = write_morton_points_parquet_spilled(
             output_spec.source_parquet, staged, **options
         )
-        _remove_output(output)
-        staged.rename(output)
+        replace_keeping_original(staged, output)
     finally:
         _remove_output(staged)
     return int(result["rows"])
@@ -490,6 +490,7 @@ def run_tables_to_csc(
     layers: bool = True,
     densify: bool = False,
     overwrite: bool = False,
+    memory_budget: int = DEFAULT_MEMORY_BUDGET,
 ) -> dict[str, Any]:
     from .tables import convert_store_tables_to_csc
 
@@ -501,6 +502,7 @@ def run_tables_to_csc(
             layers=layers,
             densify=densify,
             overwrite=overwrite,
+            memory_budget=memory_budget,
         )
     )
     return result.manifest

@@ -35,6 +35,7 @@ from .store import (
     refresh_consolidated_metadata,
     check_dest_not_ancestor,
     remove_tree,
+    replace_keeping_original,
     write_json,
     zarr_format_of,
 )
@@ -194,15 +195,17 @@ def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budge
     indptr = np.asarray(element["indptr"][:], dtype=np.int64)
     indices, data = element["indices"], element["data"]
     nnz = int(indptr[-1])
-    step = 1 << 25
+    row_dtype = np.int32 if n_rows < 2**31 else np.int64
 
+    # Row, column and value per entry, and the sort's index.
+    entry_bytes = np.dtype(row_dtype).itemsize + 4 + data.dtype.itemsize + 8
+    block_entries = max(1, memory_budget // (2 * entry_bytes))
+    # Spill slices hold columns as int64 plus the block sort; keep them within budget too.
+    step = int(min(1 << 25, max(1, memory_budget // (4 * (8 + data.dtype.itemsize + 16)))))
     counts = np.zeros(n_cols, dtype=np.int64)
     for start in range(0, nnz, step):
         counts += np.bincount(indices[start : start + step], minlength=n_cols)
 
-    # Row, column and value per entry, and the sort's index.
-    entry_bytes = 4 + 4 + data.dtype.itemsize + 8
-    block_entries = max(1, memory_budget // (2 * entry_bytes))
     edges = [0]
     running = 0
     for column, count in enumerate(counts.tolist()):
@@ -214,45 +217,49 @@ def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budge
     edge_array = np.asarray(edges[:-1], dtype=np.int64)
     blocks = len(edges) - 1
 
-    spill = Path(tempfile.mkdtemp(prefix=f".{name}-csc-", dir=directory.parent))
     staged = f".{name}-csc"
+    staged_dir = directory.parent / staged
+    # A failed earlier run's staged matrix goes first, so its space is free for the spill.
+    if staged_dir.exists():
+        remove_tree(staged_dir)
+    spill = Path(tempfile.mkdtemp(prefix=f".{name}-csc-", dir=directory.parent))
+
+    def append(b: int, part: str, values: np.ndarray) -> None:
+        # Opened per write, so the block count is not bounded by the open-file limit.
+        with open(spill / f"{b}.{part}", "ab") as handle:
+            values.tofile(handle)
+
+    def load(b: int, part: str, dtype: Any) -> np.ndarray:
+        path = spill / f"{b}.{part}"
+        # A block of empty columns gets no writes, and so no file.
+        return np.fromfile(path, dtype=dtype) if path.exists() else np.empty(0, dtype=dtype)
+
     try:
-        files = [
-            {part: open(spill / f"{b}.{part}", "wb") for part in ("row", "col", "val")}
-            for b in range(blocks)
-        ]
-        try:
-            row_starts = np.searchsorted(indptr, np.arange(0, nnz, step), side="right") - 1
-            row_bounds = [*np.unique(row_starts).tolist(), n_rows]
-            for r0, r1 in zip(row_bounds[:-1], row_bounds[1:]):
-                s, e = int(indptr[r0]), int(indptr[r1])
-                if s == e:
-                    continue
-                cols = np.asarray(indices[s:e], dtype=np.int64)
-                vals = np.asarray(data[s:e])
-                rows = np.repeat(np.arange(r0, r1, dtype=np.int32), np.diff(indptr[r0 : r1 + 1]))
-                block = np.searchsorted(edge_array, cols, side="right") - 1
-                order = np.argsort(block, kind="stable")
-                bounds = np.searchsorted(block[order], np.arange(blocks + 1))
-                for b in np.unique(block).tolist():
-                    taken = order[bounds[b] : bounds[b + 1]]
-                    rows[taken].tofile(files[b]["row"])
-                    (cols[taken] - edges[b]).astype(np.int32).tofile(files[b]["col"])
-                    vals[taken].tofile(files[b]["val"])
-        finally:
-            for handles in files:
-                for handle in handles.values():
-                    handle.close()
+        row_starts = np.searchsorted(indptr, np.arange(0, nnz, step), side="right") - 1
+        row_bounds = [*np.unique(row_starts).tolist(), n_rows]
+        for r0, r1 in zip(row_bounds[:-1], row_bounds[1:]):
+            s, e = int(indptr[r0]), int(indptr[r1])
+            if s == e:
+                continue
+            cols = np.asarray(indices[s:e], dtype=np.int64)
+            vals = np.asarray(data[s:e])
+            rows = np.repeat(np.arange(r0, r1, dtype=row_dtype), np.diff(indptr[r0 : r1 + 1]))
+            block = np.searchsorted(edge_array, cols, side="right") - 1
+            order = np.argsort(block, kind="stable")
+            bounds = np.searchsorted(block[order], np.arange(blocks + 1))
+            for b in np.unique(block).tolist():
+                taken = order[bounds[b] : bounds[b + 1]]
+                append(b, "row", rows[taken])
+                append(b, "col", (cols[taken] - edges[b]).astype(np.int32))
+                append(b, "val", vals[taken])
 
         # `tocsc` picks 32-bit indices whenever they fit.
         index_dtype = np.int32 if max(nnz, n_rows) < 2**31 else np.int64
-        if staged in group:
-            remove_tree(directory.parent / staged)
         for b in range(blocks):
             c0, c1 = edges[b], edges[b + 1]
-            rows = np.fromfile(spill / f"{b}.row", dtype=np.int32)
-            cols = np.fromfile(spill / f"{b}.col", dtype=np.int32)
-            vals = np.fromfile(spill / f"{b}.val", dtype=data.dtype)
+            rows = load(b, "row", row_dtype)
+            cols = load(b, "col", np.int32)
+            vals = load(b, "val", data.dtype)
             order = np.argsort(cols, kind="stable")
             block_indptr = np.zeros(c1 - c0 + 1, dtype=index_dtype)
             np.cumsum(counts[c0:c1], out=block_indptr[1:])
@@ -266,10 +273,13 @@ def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budge
             else:
                 sparse_dataset(group[staged]).append(matrix)
             del matrix
+    except BaseException:
+        if staged_dir.exists():
+            remove_tree(staged_dir)
+        raise
     finally:
         remove_tree(spill)
-    remove_tree(directory)
-    (directory.parent / staged).rename(directory)
+    replace_keeping_original(staged_dir, directory)
 
 
 def _convert_table_matrices(

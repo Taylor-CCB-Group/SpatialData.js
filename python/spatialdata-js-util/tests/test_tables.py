@@ -514,6 +514,7 @@ class TestOutOfCoreCsc:
         x = sparse.random(300, 57, density=0.2, format="csr", random_state=3, dtype=np.float32)
         x[5] = 0  # an empty row, and empty columns below
         x[:, 9] = 0
+        x[:, 50:] = 0  # trailing empty columns form blocks with no entries
         x.eliminate_zeros()
         table = TableModel.parse(anndata.AnnData(X=x, layers={"counts": x.copy()}))
         a = _store(tmp_path / "a.zarr", table=table)
