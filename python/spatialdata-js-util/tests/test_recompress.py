@@ -446,6 +446,15 @@ def test_recompress_spatialdata_rewrites_image_and_labels(tmp_path: Path) -> Non
     assert result.manifest_path.exists()
 
 
+def test_recompress_spatialdata_refuses_a_destination_containing_the_source(
+    tmp_path: Path,
+) -> None:
+    source = _write_source_store(tmp_path / "data" / "source.zarr")
+    with pytest.raises(ValueError, match="delete the source"):
+        recompress_spatialdata(source, tmp_path / "data", overwrite=True)
+    assert (source / "zarr.json").is_file()
+
+
 def test_recompress_spatialdata_rejects_browser_unsupported_jp2k_dtype(tmp_path: Path) -> None:
     source = _write_source_store(tmp_path / "source.zarr", image_dtype="uint32")
 

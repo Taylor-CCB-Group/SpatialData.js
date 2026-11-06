@@ -39,6 +39,7 @@ from .pyramids import DEFAULT_MIN_SIZE as DEFAULT_PYRAMID_MIN_SIZE
 from .store import (
     read_json,
     refresh_consolidated_metadata,
+    check_dest_not_ancestor,
     remove_tree,
     write_json,
     write_spatialdata,
@@ -588,6 +589,7 @@ def _recompress_label_array(
 
 
 def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> Path:
+    check_dest_not_ancestor(source_path, dest)
     if dest.exists():
         if not overwrite:
             raise FileExistsError(dest)

@@ -32,6 +32,7 @@ from .store import (
     drop_consolidated_metadata,
     list_element_keys,
     refresh_consolidated_metadata,
+    check_dest_not_ancestor,
     remove_tree,
     write_json,
     zarr_format_of,
@@ -244,17 +245,10 @@ def convert_store_tables_to_csc(
     else:
         store_path = Path(dest)
         in_place = False
-        # The overwrite branch below deletes the destination before copying, so a
-        # destination that *is* the source — or contains it — would delete the
-        # store we are about to read. Checked against resolved paths so a symlink
-        # or `.` in the argument cannot slip past.
-        resolved_source = source_path.resolve()
-        resolved_dest = store_path.resolve()
-        if resolved_dest == resolved_source or resolved_dest in resolved_source.parents:
-            raise WriterCommandError(
-                f"Destination would delete the source store: {store_path}\n"
-                "Pass no destination to convert in place."
-            )
+        try:
+            check_dest_not_ancestor(source_path, store_path)
+        except ValueError as exc:
+            raise WriterCommandError(f"{exc}\nPass no destination to convert in place.") from exc
         if store_path.exists():
             if not overwrite:
                 raise WriterCommandError(

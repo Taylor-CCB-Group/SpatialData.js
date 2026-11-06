@@ -38,6 +38,13 @@ def remove_tree(path: str | Path) -> None:
     shutil.rmtree(path, onexc=ignore_vanished)
 
 
+def check_dest_not_ancestor(source: str | Path, dest: str | Path) -> None:
+    """Refuse a *dest* that is *source* or contains it: overwriting it would delete the source."""
+    resolved_source = Path(source).resolve()
+    if resolved_source.is_relative_to(Path(dest).resolve()):
+        raise ValueError(f"Destination would delete the source store: {dest}")
+
+
 def read_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text())
 

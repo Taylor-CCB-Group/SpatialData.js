@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -199,6 +200,16 @@ def test_morton_points_from_zarr_requires_overwrite_for_existing_output_element(
         row_group_size=50,
     )
     assert (zarr_root / "points" / "transcripts_morton" / "points.parquet").is_file()
+
+
+def test_write_index_permutations_refuses_a_destination_containing_the_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "data" / "source.zarr"
+    _write_points_element(source, "transcripts", rows=10)
+    with pytest.raises(ValueError, match="delete the source"):
+        write_index_permutations(source, tmp_path / "data", points_key="transcripts", overwrite=True)
+    assert (source / "points" / "transcripts" / "points.parquet").exists()
 
 
 def test_write_index_permutations_writes_manifest(tmp_path: Path) -> None:
