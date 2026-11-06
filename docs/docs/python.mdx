@@ -17,6 +17,7 @@ this page says what each optimisation buys on the JavaScript side.
 | `points morton-from-zarr`, `points morton` | Morton-sorts points parquet with sentinel bounds rows and controlled row groups | The `morton-tiled` points loader ([tiled stores](./core/points-and-shapes#tiled-stores)) |
 | `points zarr`, `points add-zarr` | Writes an experimental points-zarr copy beside the standard element | The `points-zarr-tiled` loader |
 | `tables to-csc` | `X` and layers from CSR to CSC | Reading one gene as one contiguous range |
+| `zip` | Packs a store into an uncompressed zip | Range-reading a whole store from one file (`ZipStore` in `zarrextra`) |
 
 Stores keep their standard layout (`--sibling` keeps each original image and adds a compressed copy beside it), and the
 points-zarr copy lives in a subgroup ([ADR 0006](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0006-experimental-formats-beside-the-standard.md)),

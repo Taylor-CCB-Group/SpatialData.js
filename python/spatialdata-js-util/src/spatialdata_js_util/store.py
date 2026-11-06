@@ -10,12 +10,32 @@ from __future__ import annotations
 
 import json
 import shutil
+import zipfile
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 import pandas as pd
 import pyarrow.dataset as ds
+
+if TYPE_CHECKING:
+    from spatialdata import SpatialData
+
+
+def remove_tree(path: str | Path) -> None:
+    """`shutil.rmtree` that tolerates entries vanishing while it walks.
+
+    On an exFAT volume macOS keeps a `._name` AppleDouble companion for each
+    file and deletes it together with `name`, so the walk's later `unlink` of
+    `._name` finds nothing there and `shutil.rmtree` raises. A path that is
+    already gone is not an error either.
+    """
+
+    def ignore_vanished(function: Any, failed_path: str, error: BaseException) -> None:
+        if not isinstance(error, FileNotFoundError):
+            raise error
+
+    shutil.rmtree(path, onexc=ignore_vanished)
 
 
 def read_json(path: str | Path) -> dict[str, Any]:
@@ -328,3 +348,114 @@ def read_points_dataframe(parquet_path: str | Path) -> pd.DataFrame:
     # `ds.dataset` handles a single file and a partitioned directory alike.
     table = ds.dataset(path, format="parquet").to_table()
     return table.to_pandas()
+
+
+def write_spatialdata(
+    sdata: SpatialData, path: str | Path, *, overwrite: bool = False
+) -> None:
+    """Write *sdata* to a Zarr store, copying unchanged points as files.
+
+    `SpatialData.write` re-encodes every points partition through dask, a thread
+    per partition. Partitions of transcript-scale points are around 1 GB of
+    Parquet and several times that in memory, so a store read from disk and
+    written back can need tens of GB of RAM. A points element that is still
+    exactly what `sdata.path` holds is copied with the filesystem instead; every
+    other element goes through `SpatialData.write` as usual.
+
+    Nullable string columns, which 10x Genomics and SpatialData.js stores carry,
+    are written as such instead of failing the way plain `write` does.
+
+    With *overwrite* an existing *path* is replaced, but never the store *sdata*
+    was read from, nor a directory containing it: both back its lazy elements.
+    Like `SpatialData.write`, a successful write leaves `sdata.path` at *path*.
+    """
+    import anndata
+    import zarr
+    from spatialdata import SpatialData
+
+    target = Path(path)
+    unchanged = _unmodified_points(sdata)
+    if target.exists():
+        if not overwrite:
+            raise FileExistsError(target)
+        if sdata.path is not None and Path(sdata.path).resolve().is_relative_to(target.resolve()):
+            raise ValueError(f"Cannot overwrite {target}: it backs the SpatialData being written.")
+        remove_tree(target)
+
+    with anndata.settings.override(allow_write_nullable_strings=True):
+        if not unchanged:
+            sdata.write(target)
+            return
+        rest = SpatialData(
+            images=dict(sdata.images),
+            labels=dict(sdata.labels),
+            points={key: points for key, points in sdata.points.items() if key not in unchanged},
+            shapes=dict(sdata.shapes),
+            tables=dict(sdata.tables),
+            attrs=dict(sdata.attrs),
+        )
+        rest.write(target)
+        zarr.open_group(target, mode="r+", use_consolidated=False).require_group("points")
+        for key, source in unchanged.items():
+            shutil.copytree(source, target / "points" / key)
+        rest.write_consolidated_metadata()
+        sdata.path = target
+
+
+def _unmodified_points(sdata: SpatialData) -> dict[str, Path]:
+    """Points elements that are exactly what the store *sdata* was read from holds, by key."""
+    if sdata.path is None:
+        return {}
+    from spatialdata._io.io_points import _get_transformations_from_ngff_dict
+    from spatialdata.transformations import get_transformation
+
+    store = Path(sdata.path)
+    unchanged = {}
+    for key, points in sdata.points.items():
+        source = store / "points" / key
+        # An untouched element is a bare parquet read; anything layered on top of it
+        # (a new column, a filter) changes what a write must produce.
+        expr = points.expr
+        if not (
+            type(expr).__name__.startswith("ReadParquet")
+            and Path(str(expr.operand("path"))) == source / "points.parquet"
+        ):
+            continue
+        # The copy brings the stored coordinate transformations with it, so an
+        # element whose transformations were edited in memory has to be written.
+        try:
+            stored = _get_transformations_from_ngff_dict(
+                read_json(source / "zarr.json")["attributes"]["coordinateTransformations"]
+            )
+        except (OSError, KeyError, ValueError):
+            continue
+        if stored == get_transformation(points, get_all=True):
+            unchanged[key] = source
+    return unchanged
+
+
+def zip_directory(source: str | Path, zip_path: str | Path) -> None:
+    """Pack the contents of *source* into an uncompressed zip, at the archive root.
+
+    Zarr chunks are already compressed, and a stored (uncompressed) zip lets a
+    browser read any one of them with a single range request, which is what
+    zarrextra's `ZipStore` does. File contents are streamed, so memory grows with
+    the number of files, not their size. The archive is built beside *zip_path*
+    (and left out of itself if that is inside *source*) and renamed into place
+    only once complete.
+    """
+    root = Path(source)
+    if not root.is_dir():
+        raise NotADirectoryError(root)
+    target = Path(zip_path)
+    partial = target.with_name(f".{target.name}.partial")
+    skip = {target.resolve(), partial.resolve()}
+    try:
+        with zipfile.ZipFile(partial, "w", zipfile.ZIP_STORED, allowZip64=True) as archive:
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and path.resolve() not in skip:
+                    archive.write(path, path.relative_to(root).as_posix())
+        partial.replace(target)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise

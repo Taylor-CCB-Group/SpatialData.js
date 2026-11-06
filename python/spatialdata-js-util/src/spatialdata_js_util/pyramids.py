@@ -50,6 +50,7 @@ from .store import (
     json_bytes,
     read_json,
     refresh_consolidated_metadata,
+    remove_tree,
     write_json,
 )
 
@@ -736,7 +737,7 @@ def add_pyramids(
             raise WriterCommandError(
                 f"Destination already exists: {dest_path}\nPass overwrite to replace it."
             )
-        shutil.rmtree(dest_path)
+        remove_tree(dest_path)
     shutil.copytree(source_path, dest_path)
 
     source_sdata = sd.read_zarr(source_path)

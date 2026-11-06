@@ -40,6 +40,7 @@ from .store import (
     read_points_dataframe,
     read_points_element_attrs,
     register_points_elements_in_consolidated_metadata,
+    remove_tree,
     validate_points_key,
 )
 
@@ -334,7 +335,7 @@ def run_morton_points_from_zarr(
     df = _as_command_error(lambda: read_points_dataframe(output_spec.source_parquet))
     if output_spec.output_parquet.exists():
         if output_spec.output_parquet.is_dir():
-            shutil.rmtree(output_spec.output_parquet)
+            remove_tree(output_spec.output_parquet)
         else:
             output_spec.output_parquet.unlink()
     if (

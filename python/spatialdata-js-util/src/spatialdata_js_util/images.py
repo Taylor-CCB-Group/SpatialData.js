@@ -36,7 +36,13 @@ from .codecs.backends import (
 from .codecs.htj2k_wasm import configure_encoder_pool
 from .provenance import package_version, sha256
 from .pyramids import DEFAULT_MIN_SIZE as DEFAULT_PYRAMID_MIN_SIZE
-from .store import read_json, refresh_consolidated_metadata, write_json
+from .store import (
+    read_json,
+    refresh_consolidated_metadata,
+    remove_tree,
+    write_json,
+    write_spatialdata,
+)
 
 ImagePreset = Literal["lossless", "balanced", "small"]
 ChunkSpec = Literal["auto"] | tuple[int, ...] | list[int]
@@ -447,7 +453,7 @@ def _recompress_image_array(
     is_lossless = bool(encode_options.get("reversible", False))
 
     if dest_array_path.exists():
-        shutil.rmtree(dest_array_path)
+        remove_tree(dest_array_path)
     (dest_array_path / "c").mkdir(parents=True)
     write_json(
         dest_array_path / "zarr.json",
@@ -548,7 +554,7 @@ def _recompress_label_array(
     codec = _blosc_codec(dtype, int(config.get("clevel", 5)))
 
     if dest_array_path.exists():
-        shutil.rmtree(dest_array_path)
+        remove_tree(dest_array_path)
     dest_array_path.mkdir(parents=True)
     dest_array = zarr.create_array(
         store=str(dest_array_path),
@@ -585,10 +591,27 @@ def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> P
     if dest.exists():
         if not overwrite:
             raise FileExistsError(dest)
-        shutil.rmtree(dest)
+        remove_tree(dest)
 
     shutil.copytree(source_path, dest)
     return source_path
+
+
+def _mirror_rasters(
+    store: Path, mirror: Path, image_keys: list[str], label_keys: list[str]
+) -> Path:
+    """Copy just the named rasters of *store* into a new minimal store at *mirror*."""
+    for collection, keys in (("images", image_keys), ("labels", label_keys)):
+        if not keys:
+            continue
+        (mirror / collection).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(store / collection / "zarr.json", mirror / collection / "zarr.json")
+        for key in keys:
+            shutil.copytree(store / collection / key, mirror / collection / key)
+    mirror.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(store / "zarr.json", mirror / "zarr.json")
+    refresh_consolidated_metadata(mirror)
+    return mirror
 
 
 def _codec_sibling_suffix(codec: str) -> str:
@@ -660,6 +683,7 @@ def recompress_spatialdata(
     pyramid_downscale: int = 2,
     pyramid_min_size: int = DEFAULT_PYRAMID_MIN_SIZE,
     pyramid_force: bool = False,
+    temp_dir: str | Path | None = None,
 ) -> RecompressedSpatialData:
     """Preserve a SpatialData store and recompress configured rasters.
 
@@ -673,7 +697,13 @@ def recompress_spatialdata(
 
     Path sources are copied before raster replacement, which keeps tables,
     shapes, points, and unconfigured rasters intact without loading the whole
-    object.
+    object. An in-memory source is written straight to *dest* with
+    `write_spatialdata`, so points still backed by the store it was read from
+    are copied as files rather than re-encoded.
+
+    Intermediate copies (of the rasters being rewritten, and staged pyramids)
+    go to *temp_dir*, the system temporary directory by default. Point it at a
+    volume with room for them when the system disk is small.
 
     With *pyramid*, any configured image whose coarsest level is larger than
     *pyramid_min_size* is given the levels it lacks before it is recompressed,
@@ -693,22 +723,28 @@ def recompress_spatialdata(
         configure_encoder_pool(worker_count)
 
     dest_path = Path(dest)
-    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    scratch = None if temp_dir is None else str(temp_dir)
+    if scratch is not None:
+        # Scratch copies of the source would copy themselves, and ones inside dest would
+        # leave entries in its consolidated metadata after they are deleted.
+        scratch_path = Path(scratch).resolve()
+        guarded = [("destination", dest_path)]
+        if isinstance(source, str | Path):
+            guarded.append(("source", Path(source)))
+        for label, store in guarded:
+            if scratch_path.is_relative_to(store.resolve()):
+                raise ValueError(f"temp_dir {temp_dir} must not be inside the {label} store {store}")
+    mirror_dir: tempfile.TemporaryDirectory[str] | None = None
     pyramid_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
-        if isinstance(source, str | Path):
+        in_memory = not isinstance(source, str | Path)
+        if in_memory:
+            write_spatialdata(source, dest_path, overwrite=overwrite)
+            source_label = None
+            read_path = dest_path  # replaced by a copy of the rasters below
+        else:
             read_path = _prepare_path_source(Path(source), dest_path, overwrite=overwrite)
             source_label = str(source)
-        else:
-            if dest_path.exists():
-                if not overwrite:
-                    raise FileExistsError(dest_path)
-                shutil.rmtree(dest_path)
-            temp_dir = tempfile.TemporaryDirectory(prefix="spatialdata-codec-writer-")
-            read_path = Path(temp_dir.name) / "source.zarr"
-            source.write(str(read_path), overwrite=True)
-            shutil.copytree(read_path, dest_path)
-            source_label = None
 
         resolved_config = resolve_recompression_config(
             config,
@@ -728,6 +764,17 @@ def recompress_spatialdata(
         if not label_keys and resolved_config.get("default_labels", {}).get("codec") == "blosc":
             label_keys = _list_raster_keys(dest_path, "labels")
 
+        if in_memory:
+            # The recompressor deletes each destination array before streaming its
+            # source into it, so it needs its own copy of the rasters it will read.
+            # Everything else (points above all) stays only in dest.
+            mirror_dir = tempfile.TemporaryDirectory(
+                prefix="spatialdata-js-util-source-", dir=scratch
+            )
+            read_path = _mirror_rasters(
+                dest_path, Path(mirror_dir.name) / "source.zarr", image_keys, label_keys
+            )
+
         # Pyramids are staged in their own store rather than written straight into
         # dest: the recompressor deletes a destination array before streaming the
         # source into it, so reading the new levels from dest would pull the rug
@@ -735,7 +782,9 @@ def recompress_spatialdata(
         pyramid_reports: list[dict[str, Any]] = []
         pyramid_roots: dict[str, Path] = {}
         if pyramid:
-            pyramid_dir = tempfile.TemporaryDirectory(prefix="spatialdata-js-util-pyramid-")
+            pyramid_dir = tempfile.TemporaryDirectory(
+                prefix="spatialdata-js-util-pyramid-", dir=scratch
+            )
             pyramid_reports, pyramid_roots = _stage_pyramids(
                 read_path=read_path,
                 staging_path=Path(pyramid_dir.name) / "pyramid.zarr",
@@ -762,7 +811,7 @@ def recompress_spatialdata(
                 )
                 sib_group_path = dest_path / "images" / dest_key
                 if sib_group_path.exists():
-                    shutil.rmtree(sib_group_path)
+                    remove_tree(sib_group_path)
                 sib_group_path.mkdir(parents=True)
                 src_group_meta = raster_root / "images" / key / "zarr.json"
                 if src_group_meta.exists():
@@ -774,7 +823,7 @@ def recompress_spatialdata(
                     # declares the new levels and keeps no stale ones.
                     dest_group = dest_path / "images" / dest_key
                     if dest_group.exists():
-                        shutil.rmtree(dest_group)
+                        remove_tree(dest_group)
                     dest_group.mkdir(parents=True)
                     shutil.copy2(
                         raster_root / "images" / key / "zarr.json", dest_group / "zarr.json"
@@ -844,7 +893,7 @@ def recompress_spatialdata(
             write_json(manifest_path, manifest_data)
         return RecompressedSpatialData(dest_path, manifest_path, manifest_data)
     finally:
-        if temp_dir is not None:
-            temp_dir.cleanup()
+        if mirror_dir is not None:
+            mirror_dir.cleanup()
         if pyramid_dir is not None:
             pyramid_dir.cleanup()

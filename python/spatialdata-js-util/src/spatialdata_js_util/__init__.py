@@ -63,6 +63,7 @@ from .points_zarr import (
     write_points_zarr,
     write_points_zarr_store,
 )
+from .store import remove_tree, write_spatialdata, zip_directory
 from .tables import (
     CscConversion,
     anndata_to_csc,
@@ -103,6 +104,7 @@ __all__ = [
     "plan_column_encodings",
     "recompress_spatialdata",
     "register_codecs",
+    "remove_tree",
     "resolve_recompression_config",
     "resolve_scale_factors",
     "to_csc",
@@ -110,4 +112,6 @@ __all__ = [
     "write_multiscale_points_parquet",
     "write_points_zarr",
     "write_points_zarr_store",
+    "write_spatialdata",
+    "zip_directory",
 ]
