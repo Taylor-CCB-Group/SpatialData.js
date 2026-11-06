@@ -638,3 +638,35 @@ def test_recompress_sibling_uses_htj2k_key(tmp_path: Path) -> None:
         {"name": CODEC_HTJ2K_OPENJPH, "configuration": {}}
     ]
     assert result.manifest["images"][0]["path"] == f"images/{sibling_key}/0"
+
+
+def test_recompress_reads_a_bounded_window_of_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import spatialdata_js_util.images as images
+
+    source = _write_source_store(tmp_path / "source.zarr")
+    read_chunk, write_chunk = images._chunk_plane, images._write_encoded_chunk
+    outstanding = [0]
+    peak = [0]
+
+    def counting_read(*args, **kwargs):
+        outstanding[0] += 1
+        peak[0] = max(peak[0], outstanding[0])
+        return read_chunk(*args, **kwargs)
+
+    def counting_write(*args, **kwargs):
+        outstanding[0] -= 1
+        return write_chunk(*args, **kwargs)
+
+    monkeypatch.setattr(images, "_chunk_plane", counting_read)
+    monkeypatch.setattr(images, "_write_encoded_chunk", counting_write)
+    recompress_spatialdata(
+        source,
+        tmp_path / "out.zarr",
+        config={"images": {"morphology": {"preset": "lossless", "chunks": [1, 1, 1]}}},
+        workers=2,
+        manifest=False,
+    )
+    # 64 one-pixel chunks; reading them all up front made the peak 64.
+    assert peak[0] <= 2 * 2 + 1
