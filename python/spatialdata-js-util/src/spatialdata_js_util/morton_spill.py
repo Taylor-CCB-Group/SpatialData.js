@@ -90,11 +90,21 @@ def estimate_in_memory_bytes(source: str | Path) -> int:
 
 
 class _DistinctCounter:
-    """Exact distinct count, abandoned once it passes *limit*."""
+    """Distinct count of an integer column, abandoned once it passes *limit*.
 
-    def __init__(self, limit: int):
+    Values of 32 bits or fewer set bits in a bitmap (at most 512 MB), which is
+    exact at any count. Wider values are kept as a sorted unique array, which on
+    a billion-row Morton column reached ~10 GB before passing the limit; that
+    array is capped at *max_values*, past which the column counts as exceeding
+    *limit* even when it might not, costing only a less compact encoding.
+    """
+
+    def __init__(self, limit: int, *, max_values: int):
         self.limit = limit
+        self.max_values = max_values
         self.exceeded = False
+        self._dtype: np.dtype | None = None
+        self._bitmap: np.ndarray | None = None
         self._unique: np.ndarray | None = None
         self._pending: list[np.ndarray] = []
         self._pending_size = 0
@@ -102,10 +112,27 @@ class _DistinctCounter:
     def add(self, values: np.ndarray) -> None:
         if self.exceeded or values.size == 0:
             return
+        # The sentinels arrive through pandas, which can widen the type.
+        self._dtype = self._dtype or values.dtype
+        values = values.astype(self._dtype, copy=False)
+        if values.dtype.itemsize <= 4:
+            self._set_bits(values)
+            return
         self._pending.append(np.unique(values))
         self._pending_size += self._pending[-1].size
         if self._pending_size > max(0 if self._unique is None else self._unique.size, 1 << 22):
             self._merge()
+
+    def _set_bits(self, values: np.ndarray) -> None:
+        width = values.dtype.itemsize * 8
+        if self._bitmap is None:
+            self._bitmap = np.zeros(1 << max(0, width - 3), dtype=np.uint8)
+        # Reinterpret signed values as unsigned: a bijection, so counts are unchanged.
+        unsigned = np.unique(values.view(f"u{values.dtype.itemsize}")).astype(np.uint64)
+        byte = unsigned >> np.uint64(3)
+        bit = np.left_shift(np.uint8(1), (unsigned & np.uint64(7)).astype(np.uint8))
+        starts = np.flatnonzero(np.r_[True, byte[1:] != byte[:-1]])
+        self._bitmap[byte[starts]] |= np.bitwise_or.reduceat(bit, starts)
 
     def _merge(self) -> None:
         if not self._pending:
@@ -114,12 +141,18 @@ class _DistinctCounter:
         self._unique = np.unique(np.concatenate(parts))
         self._pending = []
         self._pending_size = 0
-        if self._unique.size > self.limit:
+        if self._unique.size > min(self.limit, self.max_values):
             self.exceeded = True
             self._unique = None
 
     def count(self) -> int | None:
-        """The count, or None once it is known to exceed the limit."""
+        """The count, or None once it is known (or assumed) to exceed the limit."""
+        if self._bitmap is not None:
+            count = int(np.unpackbits(self._bitmap).sum()) if self._bitmap.size <= 1 << 16 else sum(
+                int(np.unpackbits(self._bitmap[i : i + (1 << 24)]).sum())
+                for i in range(0, self._bitmap.size, 1 << 24)
+            )
+            return None if count > self.limit else count
         self._merge()
         if self.exceeded:
             return None
@@ -488,7 +521,9 @@ def write_morton_points_parquet_spilled(
                         taken.append_column(_ROW_COLUMN, pa.array(rows[~keep]))
                     )
                 for name, values in integers.items():
-                    counter = counters.setdefault(name, _DistinctCounter(threshold))
+                    counter = counters.setdefault(
+                        name, _DistinctCounter(threshold, max_values=memory_budget // 32)
+                    )
                     counter.add(values.filter(pa.array(keep)).drop_null().to_numpy(zero_copy_only=False))
                 if spill_schema is None:
                     spill_schema = spilled.schema
