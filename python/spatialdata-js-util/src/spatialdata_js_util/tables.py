@@ -36,6 +36,7 @@ from .store import (
     check_dest_not_ancestor,
     remove_tree,
     replace_keeping_original,
+    restore_replaced_original,
     write_json,
     zarr_format_of,
 )
@@ -235,15 +236,12 @@ def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budge
         return np.fromfile(path, dtype=dtype) if path.exists() else np.empty(0, dtype=dtype)
 
     try:
-        row_starts = np.searchsorted(indptr, np.arange(0, nnz, step), side="right") - 1
-        row_bounds = [*np.unique(row_starts).tolist(), n_rows]
-        for r0, r1 in zip(row_bounds[:-1], row_bounds[1:]):
-            s, e = int(indptr[r0]), int(indptr[r1])
-            if s == e:
-                continue
+        # Entry ranges, not rows, so one dense row cannot exceed the slice.
+        for s in range(0, nnz, step):
+            e = min(s + step, nnz)
             cols = np.asarray(indices[s:e], dtype=np.int64)
             vals = np.asarray(data[s:e])
-            rows = np.repeat(np.arange(r0, r1, dtype=row_dtype), np.diff(indptr[r0 : r1 + 1]))
+            rows = (np.searchsorted(indptr, np.arange(s, e), side="right") - 1).astype(row_dtype)
             block = np.searchsorted(edge_array, cols, side="right") - 1
             order = np.argsort(block, kind="stable")
             bounds = np.searchsorted(block[order], np.arange(blocks + 1))
@@ -282,6 +280,7 @@ def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budge
     replace_keeping_original(staged_dir, directory)
 
 
+
 def _convert_table_matrices(
     table_path: Path, *, layers: bool, densify: bool, memory_budget: int = DEFAULT_MEMORY_BUDGET
 ) -> dict[str, str]:
@@ -302,6 +301,10 @@ def _convert_table_matrices(
     with _anndata_write_settings(zarr_format=zarr_format_of(table_path)):
         # `X` is optional in AnnData — a table may carry only `layers`, or only
         # annotations. Converting what is there beats refusing the whole table.
+        # A run stopped mid-swap leaves the original matrix aside; put it back first.
+        restore_replaced_original(table_path / "X")
+        for aside in (table_path / "layers").glob(".*.previous"):
+            restore_replaced_original(aside.with_name(aside.name[1 : -len(".previous")]))
         if "X" in root:
             report["X"] = _convert_group_matrix(
                 root, "X", densify=densify, directory=table_path / "X",

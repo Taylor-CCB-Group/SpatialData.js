@@ -355,3 +355,18 @@ def test_replace_keeping_original_restores_a_directory_when_the_move_fails(
     replace_keeping_original(staged, target)
     assert target.read_bytes() == b"sorted"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["points.parquet"]
+
+
+def test_restore_replaced_original_recovers_from_a_stop_between_renames(tmp_path: Path) -> None:
+    from spatialdata_js_util.store import restore_replaced_original
+
+    target = tmp_path / "X"
+    previous = tmp_path / ".X.previous"
+    previous.mkdir()
+    (previous / "zarr.json").write_text("{}")
+    restore_replaced_original(target)
+    assert (target / "zarr.json").is_file() and not previous.exists()
+
+    previous.mkdir()  # the swap landed but the cleanup did not
+    restore_replaced_original(target)
+    assert target.is_dir() and not previous.exists()

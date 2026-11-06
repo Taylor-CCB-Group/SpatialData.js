@@ -103,3 +103,22 @@ def test_spilled_handles_an_empty_input(tmp_path: Path) -> None:
     result = write_morton_points_parquet_spilled(source, tmp_path / "out.parquet")
     assert result["rows"] == 0
     assert pq.ParquetFile(tmp_path / "out.parquet").metadata.num_rows == 0
+
+
+def test_spilled_matches_in_memory_with_many_integer_columns(tmp_path: Path) -> None:
+    # Several 16-bit columns: a small budget cannot give each its own bitmap,
+    # so some fall back to sorted counting; the file must not change.
+    rng = np.random.default_rng(11)
+    frame = _frame(rng, 4000, genes=["a", "b", "c"], z_levels=None)
+    for i in range(5):
+        frame[f"k{i}"] = rng.integers(0, 3000 if i % 2 else 7, len(frame)).astype("int16")
+    source = _parts(tmp_path / "points.parquet", [frame])
+    expected = tmp_path / "expected.parquet"
+    write_morton_points_parquet(
+        read_points_dataframe(source), expected, feature_key="feature_name", row_group_size=300
+    )
+    actual = tmp_path / "actual.parquet"
+    write_morton_points_parquet_spilled(
+        source, actual, feature_key="feature_name", row_group_size=300, memory_budget=400_000
+    )
+    _assert_same_file(expected, actual)

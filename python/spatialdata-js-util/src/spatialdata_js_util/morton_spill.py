@@ -548,7 +548,8 @@ def write_morton_points_parquet_spilled(
                         _DistinctCounter(
                             threshold,
                             max_values=memory_budget // 32,
-                            max_bitmap_bytes=memory_budget // 8,
+                            # One eighth of the budget, shared by every counted column.
+                            max_bitmap_bytes=memory_budget // (8 * max(1, len(integers))),
                         ),
                     )
                     counter.add(values.filter(pa.array(keep)).drop_null().to_numpy(zero_copy_only=False))

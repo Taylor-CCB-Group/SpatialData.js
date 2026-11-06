@@ -47,6 +47,7 @@ from .store import (
     register_points_elements_in_consolidated_metadata,
     remove_tree,
     replace_keeping_original,
+    restore_replaced_original,
     validate_points_key,
 )
 
@@ -346,6 +347,9 @@ def run_morton_points_from_zarr(
                 "Choose another element name or enable overwrite."
             )
 
+    # A run stopped mid-swap leaves the original aside; put it back before reading.
+    restore_replaced_original(output_spec.source_parquet)
+    restore_replaced_original(output_spec.output_parquet)
     spill = _as_command_error(
         lambda: estimate_in_memory_bytes(output_spec.source_parquet) > memory_budget
     )

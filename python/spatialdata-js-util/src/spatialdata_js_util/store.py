@@ -71,6 +71,17 @@ def replace_keeping_original(staged: Path, target: Path) -> None:
     remove_tree(previous)
 
 
+def restore_replaced_original(target: Path) -> None:
+    """Finish or undo a `replace_keeping_original` that a stopped process left half done."""
+    previous = target.with_name(f".{target.name}.previous")
+    if not previous.exists():
+        return
+    if target.exists():
+        remove_tree(previous)  # the replacement landed; only the cleanup was missed
+    else:
+        previous.rename(target)
+
+
 def read_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text())
 
