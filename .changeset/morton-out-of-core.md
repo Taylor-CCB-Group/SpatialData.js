@@ -7,3 +7,5 @@
 `tables to-csc` (`convert_store_tables_to_csc`) likewise converts a CSR matrix too large for `memory_budget` (default 4 GiB) out of core, spilling beside the table, instead of holding both layouts in memory.
 
 Image recompression keeps only a few chunks per worker in memory, instead of reading each whole resolution level before writing any of it.
+
+`points add-zarr` no longer loads every level-0 point of a band group to build a coarse level: on a 1.2-billion-point element the last levels needed over 15 GB.
