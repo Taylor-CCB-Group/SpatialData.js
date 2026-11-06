@@ -515,7 +515,12 @@ class TestOutOfCoreCsc:
         x[5] = 0  # an empty row, and empty columns below
         x[:, 9] = 0
         x[:, 50:] = 0  # trailing empty columns form blocks with no entries
+        x[7, :50] = np.arange(1, 51, dtype=np.float32)  # a dense row
         x.eliminate_zeros()
+        from spatialdata_js_util.tables import _spill_step
+
+        # The dense row must span several spill slices for this to test splitting.
+        assert x[7].nnz > 2 * _spill_step(2_000, x.dtype.itemsize)
         table = TableModel.parse(anndata.AnnData(X=x, layers={"counts": x.copy()}))
         a = _store(tmp_path / "a.zarr", table=table)
         b = _store(tmp_path / "b.zarr", table=table)

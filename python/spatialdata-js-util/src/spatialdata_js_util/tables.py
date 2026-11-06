@@ -177,6 +177,11 @@ def _convert_group_matrix(
     return _describe(before, _sparse_format(converted))
 
 
+def _spill_step(memory_budget: int, value_itemsize: int) -> int:
+    """Entries per spill slice: columns as int64, values, and the block sort, within budget."""
+    return int(min(1 << 25, max(1, memory_budget // (4 * (8 + value_itemsize + 16)))))
+
+
 def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budget: int) -> None:
     """Rewrite the CSR matrix *group[name]* as CSC without holding either whole.
 
@@ -201,8 +206,7 @@ def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budge
     # Row, column and value per entry, and the sort's index.
     entry_bytes = np.dtype(row_dtype).itemsize + 4 + data.dtype.itemsize + 8
     block_entries = max(1, memory_budget // (2 * entry_bytes))
-    # Spill slices hold columns as int64 plus the block sort; keep them within budget too.
-    step = int(min(1 << 25, max(1, memory_budget // (4 * (8 + data.dtype.itemsize + 16)))))
+    step = _spill_step(memory_budget, data.dtype.itemsize)
     counts = np.zeros(n_cols, dtype=np.int64)
     for start in range(0, nnz, step):
         counts += np.bincount(indices[start : start + step], minlength=n_cols)
