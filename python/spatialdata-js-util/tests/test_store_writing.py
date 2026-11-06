@@ -241,6 +241,15 @@ class TestRecompressInMemory:
                 source, tmp_path / "out.zarr", pyramid=True, temp_dir=source / "scratch"
             )
 
+    def test_temp_dir_inside_the_destination_is_refused(self, tmp_path: Path) -> None:
+        sdata = sd.read_zarr(_source_store(tmp_path / "source.zarr"))
+        out = tmp_path / "out.zarr"
+
+        with pytest.raises(ValueError, match="destination"):
+            recompress_spatialdata(sdata, out, codec=CODEC_JPEG2K, temp_dir=out / "scratch")
+
+        assert not out.exists()
+
     def test_pyramids_are_staged_from_the_rasters_alone(self, tmp_path: Path) -> None:
         source = _source_store(tmp_path / "source.zarr")
 
