@@ -131,7 +131,10 @@ class _DistinctCounter:
             return
         self._pending.append(np.unique(values))
         self._pending_size += self._pending[-1].size
-        if self._pending_size > max(0 if self._unique is None else self._unique.size, 1 << 22):
+        # Merge once pending matches the kept set, or a quarter of the cap; pending
+        # plus the merge copy then stays within a small multiple of max_values.
+        floor = max(1, min(1 << 22, self.max_values // 4))
+        if self._pending_size > max(0 if self._unique is None else self._unique.size, floor):
             self._merge()
 
     def _set_bits(self, values: np.ndarray) -> None:
@@ -547,7 +550,8 @@ def write_morton_points_parquet_spilled(
                         name,
                         _DistinctCounter(
                             threshold,
-                            max_values=memory_budget // 32,
+                            # Shared by every counted column, as the bitmaps are.
+                            max_values=memory_budget // (32 * max(1, len(integers))),
                             # One eighth of the budget, shared by every counted column.
                             max_bitmap_bytes=memory_budget // (8 * max(1, len(integers))),
                         ),
