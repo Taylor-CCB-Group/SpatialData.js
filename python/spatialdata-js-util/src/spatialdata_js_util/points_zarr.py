@@ -482,14 +482,18 @@ def _write_level(
     written = 0
 
     for g, bands in enumerate(groups):
-        loaded = {
-            name: np.concatenate([np.fromfile(work / f"band{b}.{name}", dtype=dtype) for b in bands])
-            for name, dtype in spill_fields
-        }
-        if level == 0:
-            ids = None
-        else:
-            ids = np.concatenate([np.fromfile(work / f"band{b}.id", dtype=np.uint64) for b in bands])
+        # A coarse group spans many level-0 bands but keeps only 4^-level of their
+        # points, so each band is filtered as it loads rather than after concatenating.
+        parts: dict[str, list[np.ndarray]] = {name: [] for name, _ in [*spill_fields, ("id", None)]}
+        for b in bands:
+            keep = np.fromfile(work / f"band{b}.r", dtype=np.float32) < threshold
+            for name, dtype in spill_fields:
+                parts[name].append(np.fromfile(work / f"band{b}.{name}", dtype=dtype)[keep])
+            if level > 0:
+                parts["id"].append(np.fromfile(work / f"band{b}.id", dtype=np.uint64)[keep])
+        loaded = {name: np.concatenate(parts[name]) for name, _ in spill_fields}
+        ids = np.concatenate(parts["id"]) if level > 0 else None
+        del parts
         member = loaded["r"] < threshold
         tx = np.clip(((loaded["x"][member] - x0) // size).astype(np.int64), 0, nx - 1)
         ty = np.clip(((loaded["y"][member] - y0) // size).astype(np.int64), 0, ny - 1)

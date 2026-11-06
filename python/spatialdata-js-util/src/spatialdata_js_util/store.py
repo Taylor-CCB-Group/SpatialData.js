@@ -9,6 +9,7 @@ without the heavy write dependencies.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import zipfile
 from copy import deepcopy
@@ -20,6 +21,10 @@ import pyarrow.dataset as ds
 
 if TYPE_CHECKING:
     from spatialdata import SpatialData
+
+
+#: Working memory the out-of-core rewrites (points sort, CSC tables) aim to stay within.
+DEFAULT_MEMORY_BUDGET = 4 * 1024**3
 
 
 def remove_tree(path: str | Path) -> None:
@@ -36,6 +41,45 @@ def remove_tree(path: str | Path) -> None:
             raise error
 
     shutil.rmtree(path, onexc=ignore_vanished)
+
+
+def check_dest_not_ancestor(source: str | Path, dest: str | Path) -> None:
+    """Refuse a *dest* that is *source* or contains it: overwriting it would delete the source."""
+    resolved_source = Path(source).resolve()
+    if resolved_source.is_relative_to(Path(dest).resolve()):
+        raise ValueError(f"Destination would delete the source store: {dest}")
+
+
+def replace_keeping_original(staged: Path, target: Path) -> None:
+    """Move *staged* to *target*; *target*'s old contents survive until that succeeds.
+
+    A file is replaced atomically. A directory (a partitioned Parquet element, a
+    zarr group) is first renamed aside, and restored if the move fails.
+    """
+    if not target.is_dir():
+        os.replace(staged, target)
+        return
+    previous = target.with_name(f".{target.name}.previous")
+    if previous.exists():
+        remove_tree(previous)
+    target.rename(previous)
+    try:
+        os.replace(staged, target)
+    except BaseException:
+        previous.rename(target)
+        raise
+    remove_tree(previous)
+
+
+def restore_replaced_original(target: Path) -> None:
+    """Finish or undo a `replace_keeping_original` that a stopped process left half done."""
+    previous = target.with_name(f".{target.name}.previous")
+    if not previous.exists():
+        return
+    if target.exists():
+        remove_tree(previous)  # the replacement landed; only the cleanup was missed
+    else:
+        previous.rename(target)
 
 
 def read_json(path: str | Path) -> dict[str, Any]:

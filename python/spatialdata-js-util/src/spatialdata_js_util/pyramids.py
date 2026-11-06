@@ -50,6 +50,7 @@ from .store import (
     json_bytes,
     read_json,
     refresh_consolidated_metadata,
+    check_dest_not_ancestor,
     remove_tree,
     write_json,
 )
@@ -727,11 +728,12 @@ def add_pyramids(
     dest_path = Path(dest)
     if not (source_path / "zarr.json").is_file():
         raise WriterCommandError(f"Not a zarr store (no zarr.json): {source_path}")
-    if dest_path.resolve() == source_path.resolve():
+    try:
+        check_dest_not_ancestor(source_path, dest_path)
+    except ValueError as exc:
         raise WriterCommandError(
-            "Pyramids must be written to a different store than the source: SpatialData "
-            "refuses to delete the files backing a live element."
-        )
+            f"{exc}\nPyramids must be written to a different store than the source."
+        ) from exc
     if dest_path.exists():
         if not overwrite:
             raise WriterCommandError(

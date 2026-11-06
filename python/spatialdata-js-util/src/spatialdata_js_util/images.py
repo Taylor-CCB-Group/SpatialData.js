@@ -4,7 +4,7 @@ import json
 import shutil
 import tempfile
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +39,7 @@ from .pyramids import DEFAULT_MIN_SIZE as DEFAULT_PYRAMID_MIN_SIZE
 from .store import (
     read_json,
     refresh_consolidated_metadata,
+    check_dest_not_ancestor,
     remove_tree,
     write_json,
     write_spatialdata,
@@ -486,27 +487,40 @@ def _recompress_image_array(
                 is_lossless=is_lossless,
             )
     else:
+        # A bounded window of chunks in flight: submitting every chunk up front
+        # reads the whole level into memory before the first one is written.
+        pending_coords = iter(chunk_coords_list)
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_job = {
-                executor.submit(_encode_chunk_task, plane, codec, encode_options): (coords, plane)
-                for coords in chunk_coords_list
-                for plane in [_chunk_plane(source_array, shape, chunks, coords)]
-            }
-            for future in as_completed(future_to_job):
-                coords, plane = future_to_job[future]
-                encoded = future.result()
-                encoded_bytes += len(encoded)
-                chunk_count += 1
-                _write_encoded_chunk(dest_array_path, coords, encoded)
-                _maybe_record_chunk_check(
-                    chunks_checked=chunks_checked,
-                    coords=coords,
-                    encoded=encoded,
-                    plane=plane,
-                    codec=codec,
-                    raster_path=raster_path,
-                    is_lossless=is_lossless,
-                )
+            in_flight: dict[Future[bytes], tuple[tuple[int, ...], np.ndarray]] = {}
+
+            def submit_next() -> None:
+                coords = next(pending_coords, None)
+                if coords is not None:
+                    plane = _chunk_plane(source_array, shape, chunks, coords)
+                    future = executor.submit(_encode_chunk_task, plane, codec, encode_options)
+                    in_flight[future] = (coords, plane)
+
+            for _ in range(2 * workers):
+                submit_next()
+            while in_flight:
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    coords, plane = in_flight.pop(future)
+                    # Before the next read, so an encoder error is not masked by a read error.
+                    encoded = future.result()
+                    submit_next()
+                    encoded_bytes += len(encoded)
+                    chunk_count += 1
+                    _write_encoded_chunk(dest_array_path, coords, encoded)
+                    _maybe_record_chunk_check(
+                        chunks_checked=chunks_checked,
+                        coords=coords,
+                        encoded=encoded,
+                        plane=plane,
+                        codec=codec,
+                        raster_path=raster_path,
+                        is_lossless=is_lossless,
+                    )
 
     report: dict[str, Any] = {
         "path": raster_path,
@@ -588,6 +602,7 @@ def _recompress_label_array(
 
 
 def _prepare_path_source(source_path: Path, dest: Path, *, overwrite: bool) -> Path:
+    check_dest_not_ancestor(source_path, dest)
     if dest.exists():
         if not overwrite:
             raise FileExistsError(dest)
