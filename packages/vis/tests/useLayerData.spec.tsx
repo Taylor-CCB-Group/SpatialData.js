@@ -110,6 +110,35 @@ const shapesConfig = (id: string, elementKey: string): LayerConfig<'shapes'> => 
 const render = (layers: Record<string, LayerConfig>, elements: ElementsByType) =>
   renderHook(() => useLayerData(layers, Object.keys(layers), elements, null));
 
+const inFlightTile: PointsTileHandle = {
+  tileId: '0-0--1',
+  index: { x: 0, y: 0, z: -1 },
+  bbox: { left: 0, top: 512, right: 512, bottom: 0 },
+};
+
+/** The store the hook handed to the layer — the only handle a caller ever gets. */
+function tileDebugStoreOf(layers: unknown[]): TileDebugStore | undefined {
+  for (const layer of layers) {
+    const store = (layer as { props?: { tileDebugStore?: TileDebugStore } }).props?.tileDebugStore;
+    if (store) return store;
+  }
+  return undefined;
+}
+
+/**
+ * Is this layer drawing through the Morton tile path?
+ *
+ * Through `resolvePointsTarget` rather than the element's name, so the question stays
+ * honest if what addresses an entry ever stops being the name.
+ */
+function isTiled(
+  result: { current: ReturnType<typeof useLayerData> },
+  layerId = 'layer-p'
+): boolean {
+  const target = result.current.resolvePointsTarget(layerId);
+  return !!target && result.current.pointsEngine.isTiled(target.key);
+}
+
 describe('useLayerData — the public surface', () => {
   // ADR 0004 promises MDV that this surface survives the refactor behind a compat
   // shim. MDV gets it via `...layerData` in SpatialCanvasViewer, so a member that
@@ -289,6 +318,134 @@ describe('useLayerData — resolver lifecycle across a dataset swap', () => {
     // is still present and hands back the same identity-stable render resource.
     expect(result.current.hasRenderableLayerData('layer-p')).toBe(true);
     expect(pointsResource()).toBe(before);
+  });
+});
+
+describe('useLayerData — a dataset swap onto a same-named element (#162)', () => {
+  // Element names repeat across datasets by convention — two Xenium runs both have
+  // `transcripts` — and the points engine deliberately survives a `spatialData` swap
+  // (see the test above). #208 made `PointsResolver` entries remember the element
+  // instance they were loaded from, and the Morton tile trigger use that instance
+  // rather than its name, so a same-named element from a new dataset is no longer
+  // served the previous one's preload, catalog or tiling answer.
+  //
+  // That fix is covered by unit tests in core and layers. These are the same three
+  // symptoms seen through the hook, which is where #162 asked for them and where a
+  // host actually meets them: the artifact a tiled layer reads, the extent auto-fit
+  // frames, and the tiles the debug overlay paints. Each one fails if
+  // `PointsResolver.isForeign` stops answering.
+  const metadataA = {
+    kind: 'morton-points' as const,
+    parquetPath: 'dataset-a/points/transcripts/points.parquet',
+    axisNames: ['x', 'y'],
+    featureCodeColumnName: 'feature_name_codes',
+    mortonCodeColumnName: 'morton_code_2d',
+    totalRows: 12_000,
+    totalRowGroups: 8,
+    maxRowsPerGroup: 2_000,
+    supportsRowGroupRangeReads: true,
+    bounds: { minX: 0, minY: 0, maxX: 1024, maxY: 1024 },
+  };
+  const metadataB = {
+    ...metadataA,
+    parquetPath: 'dataset-b/points/transcripts/points.parquet',
+    bounds: { minX: 4000, minY: 4000, maxX: 5000, maxY: 5000 },
+  };
+
+  function tiledPointsElement(key: string, metadata: typeof metadataA): AvailableElement {
+    const element = {
+      key,
+      getPointsTilingMetadata: vi.fn(async () => metadata),
+      loadPointsInBounds: vi.fn(async () => null),
+      loadPoints: vi.fn(async () => ({
+        shape: [2, 1],
+        data: [new Float32Array([0]), new Float32Array([0])],
+      })),
+      listFeaturesWithCounts: vi.fn(async () => null),
+    } as unknown as PointsElement;
+    return { key, type: 'points', element, transform: new Matrix4() };
+  }
+
+  const tiledLayers: Record<string, LayerConfig> = {
+    'layer-p': { ...pointsConfig('layer-p', 'transcripts'), pointsTiling: 'auto' },
+  };
+
+  /** Both halves of a real swap: a new dataset AND the elements resolved from it. */
+  function renderSwap() {
+    const elementsA: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      points: [tiledPointsElement('transcripts', metadataA)],
+    };
+    const elementsB: ElementsByType = {
+      ...EMPTY_ELEMENTS,
+      points: [tiledPointsElement('transcripts', metadataB)],
+    };
+    const rendered = renderHook(
+      ({ sd, elements }: { sd: SpatialData; elements: ElementsByType }) =>
+        useLayerData(tiledLayers, Object.keys(tiledLayers), elements, null, sd),
+      { initialProps: { sd: {} as SpatialData, elements: elementsA } }
+    );
+    return {
+      ...rendered,
+      swap: () => rendered.rerender({ sd: {} as SpatialData, elements: elementsB }),
+    };
+  }
+
+  it('probes the new element rather than serving the previous dataset’s artifact', async () => {
+    const { result, swap } = renderSwap();
+    const parquetPath = () => {
+      const target = result.current.resolvePointsTarget('layer-p');
+      if (!target) return undefined;
+      // `parquetPath` is the Morton variant's; the union also holds points-zarr.
+      const metadata = result.current.pointsEngine.getTilingMetadata(target.key);
+      return metadata?.kind === 'morton-points' ? metadata.parquetPath : undefined;
+    };
+
+    await waitFor(() => {
+      expect(parquetPath()).toBe(metadataA.parquetPath);
+    });
+
+    swap();
+
+    await waitFor(() => {
+      expect(parquetPath()).toBe(metadataB.parquetPath);
+    });
+  });
+
+  it('drops the tile overlay the previous dataset filled', async () => {
+    const { result, swap } = renderSwap();
+
+    await waitFor(() => {
+      expect(isTiled(result)).toBe(true);
+    });
+    const storeA = tileDebugStoreOf(result.current.getLayers());
+    expect(storeA).toBeDefined();
+    act(() => {
+      const hooks = createTiledPointsDebugHooks(storeA);
+      hooks.onViewportTilesRequested([inFlightTile]);
+      hooks.onTileLoadStart(inFlightTile);
+    });
+
+    swap();
+
+    await waitFor(() => {
+      expect(isTiled(result)).toBe(true);
+      expect(tileDebugStoreOf(result.current.getLayers())).not.toBe(storeA);
+    });
+  });
+
+  it('frames the new dataset’s extent, not the previous one’s', async () => {
+    const { result, swap } = renderSwap();
+
+    await waitFor(() => {
+      expect(result.current.getWorldBoundsForLayer('layer-p')).toMatchObject(metadataA.bounds);
+    });
+
+    swap();
+
+    await waitFor(() => {
+      expect(result.current.getWorldBoundsForLayer('layer-p')).toMatchObject(metadataB.bounds);
+    });
   });
 });
 
@@ -765,22 +922,6 @@ describe('useLayerData — tile progress follows the LIVE layers', () => {
       listFeaturesWithCounts: vi.fn(async () => null),
     } as unknown as PointsElement;
     return { key, type: 'points', element, transform: new Matrix4() };
-  }
-
-  const inFlightTile: PointsTileHandle = {
-    tileId: '0-0--1',
-    index: { x: 0, y: 0, z: -1 },
-    bbox: { left: 0, top: 512, right: 512, bottom: 0 },
-  };
-
-  /** The store the hook handed to the layer — the only handle a caller ever gets. */
-  function tileDebugStoreOf(layers: unknown[]): TileDebugStore | undefined {
-    for (const layer of layers) {
-      const store = (layer as { props?: { tileDebugStore?: TileDebugStore } }).props
-        ?.tileDebugStore;
-      if (store) return store;
-    }
-    return undefined;
   }
 
   it('drops a layer switched off tiling while a tile was still in flight', async () => {
