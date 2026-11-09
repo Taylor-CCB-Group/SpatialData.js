@@ -395,7 +395,10 @@ describe('useLayerData — a dataset swap onto a same-named element (#162)', () 
     const { result, swap } = renderSwap();
     const parquetPath = () => {
       const target = result.current.resolvePointsTarget('layer-p');
-      return target && result.current.pointsEngine.getTilingMetadata(target.key)?.parquetPath;
+      if (!target) return undefined;
+      // `parquetPath` is the Morton variant's; the union also holds points-zarr.
+      const metadata = result.current.pointsEngine.getTilingMetadata(target.key);
+      return metadata?.kind === 'morton-points' ? metadata.parquetPath : undefined;
     };
 
     await waitFor(() => {
