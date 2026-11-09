@@ -39,7 +39,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: '24.14.1'
+          node-version: '26.13.0'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -71,7 +71,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: '24.14.1'
+          node-version: '26.13.0'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -101,7 +101,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: '24.14.1'
+          node-version: '26.13.0'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -139,7 +139,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: '24.14.1'
+          node-version: '26.13.0'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -212,7 +212,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: '24.14.1'
+          node-version: '26.13.0'
           cache: 'pnpm'
 
       - name: Setup uv
@@ -371,7 +371,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: '24.14.1'
+          node-version: '26.13.0'
           cache: 'pnpm'
 
       - name: Setup uv

@@ -31,6 +31,8 @@ export default mergeConfig(baseConfig, {
   },
   test: {
     globals: true,
+    // Builds the test environment once per worker, not once per file; modules stay isolated per file.
+    pool: 'vmThreads',
     environment: 'jsdom',
     include: ['tests/**/*.spec.ts', 'tests/**/*.spec.tsx'],
   },

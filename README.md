@@ -31,7 +31,7 @@ If you prefer not to use Volta, use Node.js >= 20.19 (or 22.12+) and pnpm >= 10.
 curl https://get.volta.sh | bash
 
 # Restart your shell so Volta is on PATH
-volta install node@24.14.1 pnpm@10.33.0
+volta install node@26.13.0 pnpm@10.33.0
 
 # Install dependencies
 pnpm install
