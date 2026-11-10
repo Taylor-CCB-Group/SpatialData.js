@@ -328,3 +328,45 @@ class TestZipDirectory:
         with pytest.raises(SystemExit, match="already exists"):
             main(["zip", str(store), str(tmp_path / "store.zip")])
         main(["zip", str(store), str(tmp_path / "store.zip"), "--overwrite"])
+
+
+def test_replace_keeping_original_restores_a_directory_when_the_move_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from spatialdata_js_util.store import replace_keeping_original
+
+    target = tmp_path / "points.parquet"
+    target.mkdir()
+    (target / "part.0.parquet").write_bytes(b"original")
+    staged = tmp_path / ".points.parquet.partial"
+    staged.write_bytes(b"sorted")
+
+    def failing_replace(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError):
+        replace_keeping_original(staged, target)
+    assert (target / "part.0.parquet").read_bytes() == b"original"
+
+    monkeypatch.undo()
+    replace_keeping_original(staged, target)
+    assert target.read_bytes() == b"sorted"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["points.parquet"]
+
+
+def test_restore_replaced_original_recovers_from_a_stop_between_renames(tmp_path: Path) -> None:
+    from spatialdata_js_util.store import restore_replaced_original
+
+    target = tmp_path / "X"
+    previous = tmp_path / ".X.previous"
+    previous.mkdir()
+    (previous / "zarr.json").write_text("{}")
+    restore_replaced_original(target)
+    assert (target / "zarr.json").is_file() and not previous.exists()
+
+    previous.mkdir()  # the swap landed but the cleanup did not
+    restore_replaced_original(target)
+    assert target.is_dir() and not previous.exists()

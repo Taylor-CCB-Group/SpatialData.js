@@ -18,6 +18,11 @@ from .index_permutations import (
     IndexCondition,
     write_index_permutations,
 )
+from .morton_spill import (
+    DEFAULT_MEMORY_BUDGET,
+    estimate_in_memory_bytes,
+    write_morton_points_parquet_spilled,
+)
 from .points import EncodingPolicy
 from .points_zarr import (
     DEFAULT_CHUNK_ROWS,
@@ -41,6 +46,8 @@ from .store import (
     read_points_element_attrs,
     register_points_elements_in_consolidated_metadata,
     remove_tree,
+    replace_keeping_original,
+    restore_replaced_original,
     validate_points_key,
 )
 
@@ -282,7 +289,15 @@ def run_morton_points_from_zarr(
     overwrite: bool = False,
     row_group_size: int = 50_000,
     compression: str = "zstd",
+    memory_budget: int = DEFAULT_MEMORY_BUDGET,
+    temp_dir: str | Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
+    """Morton-sort a store's points element.
+
+    Input whose in-memory sort would need more than *memory_budget* bytes is
+    sorted out of core, spilling to *temp_dir* (the output's directory by default).
+    """
     zarr_path = Path(zarr)
     keys = list_points_keys(zarr_path)
     if not keys:
@@ -332,12 +347,27 @@ def run_morton_points_from_zarr(
                 "Choose another element name or enable overwrite."
             )
 
-    df = _as_command_error(lambda: read_points_dataframe(output_spec.source_parquet))
-    if output_spec.output_parquet.exists():
-        if output_spec.output_parquet.is_dir():
-            remove_tree(output_spec.output_parquet)
-        else:
-            output_spec.output_parquet.unlink()
+    # A run stopped mid-swap leaves the original aside; put it back before reading.
+    restore_replaced_original(output_spec.source_parquet)
+    restore_replaced_original(output_spec.output_parquet)
+    spill = _as_command_error(
+        lambda: estimate_in_memory_bytes(output_spec.source_parquet) > memory_budget
+    )
+    if spill:
+        rows = _as_command_error(
+            lambda: _morton_spilled(
+                output_spec,
+                feature_key=resolved_feature_key,
+                row_group_size=row_group_size,
+                compression=compression,
+                memory_budget=memory_budget,
+                temp_dir=temp_dir,
+                progress=progress,
+            )
+        )
+    else:
+        df = _as_command_error(lambda: read_points_dataframe(output_spec.source_parquet))
+        _remove_output(output_spec.output_parquet)
     if (
         output_spec.collection == "points"
         and output_spec.output_points_key is not None
@@ -350,15 +380,18 @@ def run_morton_points_from_zarr(
                 dest_key=output_spec.output_points_key,
             )
         )
-    sorted_df = _as_command_error(
-        lambda: write_morton_points_parquet(
-            df,
-            output_spec.output_parquet,
-            feature_key=resolved_feature_key,
-            row_group_size=row_group_size,
-            compression=compression,
+    if not spill:
+        sorted_df = _as_command_error(
+            lambda: write_morton_points_parquet(
+                df,
+                output_spec.output_parquet,
+                feature_key=resolved_feature_key,
+                row_group_size=row_group_size,
+                compression=compression,
+            )
         )
-    )
+        rows = int(len(sorted_df))
+        del df, sorted_df
     if (
         output_spec.collection == "points"
         and output_spec.output_points_key is not None
@@ -381,9 +414,36 @@ def run_morton_points_from_zarr(
         "output": str(output_spec.output_parquet),
         "in_place": output_spec.in_place,
         "feature_key": resolved_feature_key,
-        "rows": int(len(sorted_df)),
+        "rows": rows,
         "row_group_size": row_group_size,
+        "out_of_core": spill,
     }
+
+
+def _remove_output(path: Path) -> None:
+    if path.is_dir():
+        remove_tree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def _morton_spilled(output_spec: MortonZarrOutput, **options: Any) -> int:
+    """Sort out of core into a sibling file, then put it in the output's place.
+
+    The source is read until the very end, so in place it is only replaced once
+    the new file is complete.
+    """
+    output = output_spec.output_parquet
+    staged = output.with_name(f".{output.name}.partial")
+    _remove_output(staged)
+    try:
+        result = write_morton_points_parquet_spilled(
+            output_spec.source_parquet, staged, **options
+        )
+        replace_keeping_original(staged, output)
+    finally:
+        _remove_output(staged)
+    return int(result["rows"])
 
 
 def run_write_index_permutations(
@@ -434,6 +494,7 @@ def run_tables_to_csc(
     layers: bool = True,
     densify: bool = False,
     overwrite: bool = False,
+    memory_budget: int = DEFAULT_MEMORY_BUDGET,
 ) -> dict[str, Any]:
     from .tables import convert_store_tables_to_csc
 
@@ -445,6 +506,7 @@ def run_tables_to_csc(
             layers=layers,
             densify=densify,
             overwrite=overwrite,
+            memory_budget=memory_budget,
         )
     )
     return result.manifest

@@ -251,6 +251,12 @@ class TestAddPyramids:
         with pytest.raises(WriterCommandError, match="different store"):
             add_pyramids(source, source, overwrite=True)
 
+    def test_refuses_a_destination_containing_the_source(self, tmp_path: Path) -> None:
+        source = _store(tmp_path / "src.zarr")
+        with pytest.raises(WriterCommandError, match="delete the source"):
+            add_pyramids(source, tmp_path, overwrite=True)
+        assert (source / "zarr.json").is_file()
+
     def test_rejects_existing_dest_without_overwrite(self, tmp_path: Path) -> None:
         source = _store(tmp_path / "src.zarr")
         (tmp_path / "out.zarr").mkdir()

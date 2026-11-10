@@ -29,10 +29,14 @@ from typing import TYPE_CHECKING, Any, Iterator, Sequence
 from .errors import WriterCommandError
 from .provenance import package_version
 from .store import (
+    DEFAULT_MEMORY_BUDGET,
     drop_consolidated_metadata,
     list_element_keys,
     refresh_consolidated_metadata,
+    check_dest_not_ancestor,
     remove_tree,
+    replace_keeping_original,
+    restore_replaced_original,
     write_json,
     zarr_format_of,
 )
@@ -151,11 +155,21 @@ def _anndata_write_settings(*, zarr_format: int) -> Iterator[None]:
             setattr(settings, name, value)
 
 
-def _convert_group_matrix(group: Any, name: str, *, densify: bool) -> str:
+def _convert_group_matrix(
+    group: Any, name: str, *, densify: bool, directory: Path, memory_budget: int
+) -> str:
     """Convert one matrix child of a zarr group in place, reporting what changed."""
     from anndata.io import read_elem, write_elem
 
-    matrix = read_elem(group[name])
+    element = group[name]
+    if element.attrs.get("encoding-type") == "csr_matrix":
+        nnz = int(element["indices"].shape[0])
+        # The CSR read plus its CSC copy, both whole.
+        needed = 2 * nnz * (element["indices"].dtype.itemsize + element["data"].dtype.itemsize)
+        if needed > memory_budget:
+            _csr_to_csc_out_of_core(group, name, directory, memory_budget)
+            return "csr->csc"
+    matrix = read_elem(element)
     before = _sparse_format(matrix)
     converted = to_csc(matrix, densify=densify)
     if converted is not matrix:
@@ -163,8 +177,116 @@ def _convert_group_matrix(group: Any, name: str, *, densify: bool) -> str:
     return _describe(before, _sparse_format(converted))
 
 
+def _spill_step(memory_budget: int, value_itemsize: int) -> int:
+    """Entries per spill slice: columns as int64, values, and the block sort, within budget."""
+    return int(min(1 << 25, max(1, memory_budget // (4 * (8 + value_itemsize + 16)))))
+
+
+def _csr_to_csc_out_of_core(group: Any, name: str, directory: Path, memory_budget: int) -> None:
+    """Rewrite the CSR matrix *group[name]* as CSC without holding either whole.
+
+    One pass spills each entry's (row, value) to the file of its column block, in
+    row order; each block is then sorted by column, which keeps rows ascending
+    within a column as `tocsc` does, and appended to a new CSC element. That
+    replaces the CSR one only once complete.
+    """
+    import tempfile
+
+    import numpy as np
+    import scipy.sparse as sp
+    from anndata.io import sparse_dataset, write_elem
+
+    element = group[name]
+    n_rows, n_cols = (int(v) for v in element.attrs["shape"])
+    indptr = np.asarray(element["indptr"][:], dtype=np.int64)
+    indices, data = element["indices"], element["data"]
+    nnz = int(indptr[-1])
+    row_dtype = np.int32 if n_rows < 2**31 else np.int64
+
+    # Row, column and value per entry, and the sort's index.
+    entry_bytes = np.dtype(row_dtype).itemsize + 4 + data.dtype.itemsize + 8
+    block_entries = max(1, memory_budget // (2 * entry_bytes))
+    step = _spill_step(memory_budget, data.dtype.itemsize)
+    counts = np.zeros(n_cols, dtype=np.int64)
+    for start in range(0, nnz, step):
+        counts += np.bincount(indices[start : start + step], minlength=n_cols)
+
+    edges = [0]
+    running = 0
+    for column, count in enumerate(counts.tolist()):
+        if running and running + count > block_entries:
+            edges.append(column)
+            running = 0
+        running += count
+    edges.append(n_cols)
+    edge_array = np.asarray(edges[:-1], dtype=np.int64)
+    blocks = len(edges) - 1
+
+    staged = f".{name}-csc"
+    staged_dir = directory.parent / staged
+    # A failed earlier run's staged matrix goes first, so its space is free for the spill.
+    if staged_dir.exists():
+        remove_tree(staged_dir)
+    spill = Path(tempfile.mkdtemp(prefix=f".{name}-csc-", dir=directory.parent))
+
+    def append(b: int, part: str, values: np.ndarray) -> None:
+        # Opened per write, so the block count is not bounded by the open-file limit.
+        with open(spill / f"{b}.{part}", "ab") as handle:
+            values.tofile(handle)
+
+    def load(b: int, part: str, dtype: Any) -> np.ndarray:
+        path = spill / f"{b}.{part}"
+        # A block of empty columns gets no writes, and so no file.
+        return np.fromfile(path, dtype=dtype) if path.exists() else np.empty(0, dtype=dtype)
+
+    try:
+        # Entry ranges, not rows, so one dense row cannot exceed the slice.
+        for s in range(0, nnz, step):
+            e = min(s + step, nnz)
+            cols = np.asarray(indices[s:e], dtype=np.int64)
+            vals = np.asarray(data[s:e])
+            rows = (np.searchsorted(indptr, np.arange(s, e), side="right") - 1).astype(row_dtype)
+            block = np.searchsorted(edge_array, cols, side="right") - 1
+            order = np.argsort(block, kind="stable")
+            bounds = np.searchsorted(block[order], np.arange(blocks + 1))
+            for b in np.unique(block).tolist():
+                taken = order[bounds[b] : bounds[b + 1]]
+                append(b, "row", rows[taken])
+                append(b, "col", (cols[taken] - edges[b]).astype(np.int32))
+                append(b, "val", vals[taken])
+
+        # `tocsc` picks 32-bit indices whenever they fit.
+        index_dtype = np.int32 if max(nnz, n_rows) < 2**31 else np.int64
+        for b in range(blocks):
+            c0, c1 = edges[b], edges[b + 1]
+            rows = load(b, "row", row_dtype)
+            cols = load(b, "col", np.int32)
+            vals = load(b, "val", data.dtype)
+            order = np.argsort(cols, kind="stable")
+            block_indptr = np.zeros(c1 - c0 + 1, dtype=index_dtype)
+            np.cumsum(counts[c0:c1], out=block_indptr[1:])
+            matrix = sp.csc_matrix(
+                (vals[order], rows[order].astype(index_dtype), block_indptr),
+                shape=(n_rows, c1 - c0),
+            )
+            del rows, cols, vals, order
+            if b == 0:
+                write_elem(group, staged, matrix)
+            else:
+                sparse_dataset(group[staged]).append(matrix)
+            del matrix
+    except BaseException:
+        if staged_dir.exists():
+            remove_tree(staged_dir)
+        raise
+    finally:
+        remove_tree(spill)
+    replace_keeping_original(staged_dir, directory)
+
+
+
 def _convert_table_matrices(
-    table_path: Path, *, layers: bool, densify: bool
+    table_path: Path, *, layers: bool, densify: bool, memory_budget: int = DEFAULT_MEMORY_BUDGET
 ) -> dict[str, str]:
     """Rewrite a table's matrices in place, touching nothing else.
 
@@ -183,15 +305,23 @@ def _convert_table_matrices(
     with _anndata_write_settings(zarr_format=zarr_format_of(table_path)):
         # `X` is optional in AnnData — a table may carry only `layers`, or only
         # annotations. Converting what is there beats refusing the whole table.
+        # A run stopped mid-swap leaves the original matrix aside; put it back first.
+        restore_replaced_original(table_path / "X")
+        for aside in (table_path / "layers").glob(".*.previous"):
+            restore_replaced_original(aside.with_name(aside.name[1 : -len(".previous")]))
         if "X" in root:
-            report["X"] = _convert_group_matrix(root, "X", densify=densify)
+            report["X"] = _convert_group_matrix(
+                root, "X", densify=densify, directory=table_path / "X",
+                memory_budget=memory_budget,
+            )
         else:
             report["X"] = "absent"
         if layers and "layers" in root:
             layers_group = root["layers"]
             for name in sorted(layers_group.keys()):
                 report[f"layers/{name}"] = _convert_group_matrix(
-                    layers_group, name, densify=densify
+                    layers_group, name, densify=densify,
+                    directory=table_path / "layers" / name, memory_budget=memory_budget,
                 )
 
     # The table group may carry its own consolidated listing, which now describes
@@ -227,8 +357,12 @@ def convert_store_tables_to_csc(
     densify: bool = False,
     overwrite: bool = False,
     manifest: bool = True,
+    memory_budget: int = DEFAULT_MEMORY_BUDGET,
 ) -> CscConversion:
     """Rewrite a store's table matrices in CSC layout.
+
+    A CSR matrix whose conversion would need more than *memory_budget* bytes is
+    converted out of core, spilling about its own size beside the table.
 
     With *dest*, the store is copied first and the source left untouched; without
     it, tables are rewritten in place. Pass *tables* to restrict which table
@@ -244,17 +378,10 @@ def convert_store_tables_to_csc(
     else:
         store_path = Path(dest)
         in_place = False
-        # The overwrite branch below deletes the destination before copying, so a
-        # destination that *is* the source — or contains it — would delete the
-        # store we are about to read. Checked against resolved paths so a symlink
-        # or `.` in the argument cannot slip past.
-        resolved_source = source_path.resolve()
-        resolved_dest = store_path.resolve()
-        if resolved_dest == resolved_source or resolved_dest in resolved_source.parents:
-            raise WriterCommandError(
-                f"Destination would delete the source store: {store_path}\n"
-                "Pass no destination to convert in place."
-            )
+        try:
+            check_dest_not_ancestor(source_path, store_path)
+        except ValueError as exc:
+            raise WriterCommandError(f"{exc}\nPass no destination to convert in place.") from exc
         if store_path.exists():
             if not overwrite:
                 raise WriterCommandError(
@@ -278,7 +405,9 @@ def convert_store_tables_to_csc(
     for key in selected:
         table_path = store_path / "tables" / key
         n_obs, n_vars = _table_dimensions(table_path)
-        matrices = _convert_table_matrices(table_path, layers=layers, densify=densify)
+        matrices = _convert_table_matrices(
+            table_path, layers=layers, densify=densify, memory_budget=memory_budget
+        )
         reports.append(
             {
                 "path": f"tables/{key}",

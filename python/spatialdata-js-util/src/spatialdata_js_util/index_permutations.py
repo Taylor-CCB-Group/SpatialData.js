@@ -21,6 +21,7 @@ from .store import (
     read_points_dataframe,
     read_points_element_attrs,
     register_points_elements_in_consolidated_metadata,
+    check_dest_not_ancestor,
     remove_tree,
 )
 
@@ -118,6 +119,7 @@ def _condition_sort_order(
 
 
 def _copy_store_shell(source: Path, dest: Path, *, overwrite: bool) -> None:
+    check_dest_not_ancestor(source, dest)
     if dest.exists():
         if not overwrite:
             raise FileExistsError(f"Destination already exists: {dest}")

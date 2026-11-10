@@ -503,3 +503,39 @@ class TestNestedConsolidatedMetadata:
         table = sd.read_zarr(store).tables["table"]
         assert table.X.format == "csc"
         assert table.X.nnz > 0
+
+
+class TestOutOfCoreCsc:
+    def test_matches_the_in_memory_conversion(self, tmp_path: Path) -> None:
+        import zarr
+        from anndata.io import read_elem
+        from spatialdata.models import TableModel
+
+        x = sparse.random(300, 57, density=0.2, format="csr", random_state=3, dtype=np.float32)
+        x[5] = 0  # an empty row, and empty columns below
+        x[:, 9] = 0
+        x[:, 50:] = 0  # trailing empty columns form blocks with no entries
+        x[7, :50] = np.arange(1, 51, dtype=np.float32)  # a dense row
+        x.eliminate_zeros()
+        from spatialdata_js_util.tables import _spill_step
+
+        # The dense row must span several spill slices for this to test splitting.
+        assert x[7].nnz > 2 * _spill_step(2_000, x.dtype.itemsize)
+        table = TableModel.parse(anndata.AnnData(X=x, layers={"counts": x.copy()}))
+        a = _store(tmp_path / "a.zarr", table=table)
+        b = _store(tmp_path / "b.zarr", table=table)
+
+        convert_store_tables_to_csc(a, manifest=False)
+        result = convert_store_tables_to_csc(b, manifest=False, memory_budget=2_000)
+
+        assert result.manifest["tables"][0]["matrices"] == {"X": "csr->csc", "layers/counts": "csr->csc"}
+        for key in ("X", "layers/counts"):
+            expected = read_elem(zarr.open_group(str(a / "tables" / "table"))[key])
+            actual = read_elem(zarr.open_group(str(b / "tables" / "table"))[key])
+            assert actual.format == "csc"
+            for part in ("data", "indices", "indptr"):
+                assert getattr(actual, part).dtype == getattr(expected, part).dtype
+                assert np.array_equal(getattr(actual, part), getattr(expected, part))
+        assert sd.read_zarr(b).tables["table"].X.format == "csc"
+        leftovers = [p.name for p in (b / "tables" / "table").iterdir() if p.name.startswith(".")]
+        assert not [n for n in leftovers if "csc" in n]
