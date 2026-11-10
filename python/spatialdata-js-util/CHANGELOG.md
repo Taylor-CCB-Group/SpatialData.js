@@ -1,5 +1,15 @@
 # spatialdata-js-util
 
+## 0.3.0
+
+### Minor Changes
+
+- [#282](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/282) [`4f66800`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/4f66800acded853ad37fb06caed682bc226acd75) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Billion-row stores now convert in bounded memory. `points morton-from-zarr` and `tables to-csc` work out of core above `--memory-budget` (default 4G) and write the same result as before; the Morton sort spills to `--temp-dir` (default: beside the output), the CSC conversion beside the table. Image recompression and `points add-zarr` no longer load whole levels at once. Commands that copy a store refuse a destination containing the source instead of deleting it.
+
+- [#276](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/276) [`bb699f1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/bb699f10967e28379786c520d029efdc6bd48b2a) Thanks [@xinaesthete](https://github.com/xinaesthete)! - New `write_spatialdata(sdata, path)` writes a `SpatialData` like `sdata.write` but copies points elements that are unchanged since reading as files, instead of re-encoding every partition through dask (tens of GB of RAM on transcript-scale points), and writes nullable string columns on AnnData versions that refuse them. `recompress_spatialdata` now uses it for an in-memory source, writes straight to the destination rather than copying the store twice, and takes `temp_dir` to put its intermediate copies somewhere other than the system temp directory.
+  
+  Also new: `zip_directory(source, zip_path)` and `spatialdata-js-util zip SOURCE ZIP` pack a store into the uncompressed zip that `zarrextra`'s `ZipStore` range-reads; and `remove_tree`, which the package now uses instead of `shutil.rmtree`, so deleting a directory on an exFAT volume under macOS no longer fails when `._*` sidecar files vanish mid-walk.
+
 ## 0.2.0
 
 ### Minor Changes
