@@ -267,7 +267,11 @@ function shardPaths(metadata: Metadata): string[] {
     );
     if (!shard || shard.configuration?.index_location === 'start') continue;
     const encoding = Object(Reflect.get(node, 'chunk_key_encoding'));
-    const separator = String(Reflect.get(Object(encoding.configuration), 'separator') ?? '/');
+    // The v2 encoding defaults to '.', the default encoding to '/'.
+    const separator = String(
+      Reflect.get(Object(encoding.configuration), 'separator') ??
+        (encoding.name === 'v2' ? '.' : '/')
+    );
     const zeros = (node.shape ?? []).map(() => '0');
     const key =
       encoding.name === 'v2' ? zeros.join(separator) || '0' : ['c', ...zeros].join(separator);
