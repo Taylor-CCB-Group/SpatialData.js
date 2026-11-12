@@ -221,8 +221,12 @@ def _rebuild_element(source_element: Any, scale_factors: list[int], chunks: Any)
     from spatialdata.models import get_model
 
     model = get_model(source_element)
+    kwargs: dict[str, Any] = {}
+    # The parser numbers channels 0..n unless told; labels have no `c` and reject the kwarg.
+    if "c" in source_element.dims:
+        kwargs["c_coords"] = source_element.coords["c"].values.tolist()
     # Transformations travel with the element; passing them again is an error.
-    return model.parse(source_element, scale_factors=scale_factors, chunks=chunks)
+    return model.parse(source_element, scale_factors=scale_factors, chunks=chunks, **kwargs)
 
 
 def _extend_element(element: Any, scale_factors: list[int]) -> Any:
