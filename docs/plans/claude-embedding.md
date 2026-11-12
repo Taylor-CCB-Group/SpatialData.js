@@ -56,26 +56,27 @@ callbacks. The synced state is the controller's `{ renderStack, viewState,
 selection }` plus the store reference. Python sets `renderStack` from data, and
 reads back what the user is looking at.
 
-To settle before building, by measurement:
+Measured in local marimo 0.25 with anywidget 0.11 (the probe as an anywidget, on the probe
+branch):
 
-- **Workers and WASM.** anywidget loads the widget module from a string,
-  probably through a `blob:` URL, so `import.meta.url` cannot locate worker or
-  `.wasm` files. If so, the widget needs the same self-contained build as the
-  MCP App (workers and WASM inlined), and that build becomes the shared
-  artefact. Notebook pages likely impose no strict CSP, so blob workers and
-  WASM should run.
-- **Where a local store's bytes come from.**
-  - A local kernel can start a loopback range server (as `serve_store.py`
-    does) and pass its URL.
-  - A remote kernel, such as a hosted marimo or JupyterHub, cannot be reached
-    on `localhost`. Bytes would go through the widget's message channel or a
-    file route the notebook server provides; find out what marimo offers.
-- **marimo WASM notebooks.** Python runs in Pyodide in the page, so a
-  URL-driven widget works for remote stores, but there is no server route for
-  local ones.
+- **Workers and WASM run.** The widget renders in the notebook page, in a shadow root rather
+  than an iframe, with no CSP. Blob workers, module workers, WASM inside a worker and blob
+  `import()` all pass, and the page is not cross-origin isolated.
+- **Sibling files are not resolvable.** marimo serves the module as a virtual file
+  (`/@file/<id>.js`). `new URL('./worker.js', import.meta.url)` therefore points at a path
+  that returns 404. The widget needs the same self-contained build as the MCP App, with
+  workers and WASM inlined. That build is the shared artefact, and here it runs unrestricted.
+- **A loopback store server is reachable** from the notebook page, with ranges and CORS. A
+  local kernel can start one (as `serve_store.py` does) and pass its URL.
+- **marimo's virtual-file route answers bounded and suffix ranges** (206), on the notebook's
+  own origin. That makes it a candidate for serving a store through a hosted kernel, where
+  the browser cannot reach the kernel's `localhost`, but it only serves files marimo has
+  registered. Whether a store tree can be exposed through it is open.
 
-The step 1 probe answers the first two. `probes.ts` does not depend on MCP, so
-wrap it as an anywidget and run it in marimo (local and hosted) and Jupyter.
+Still to measure:
+- hosted marimo, where the kernel runs remotely;
+- marimo WASM notebooks: Python in Pyodide, no server route for local stores;
+- Jupyter.
 
 ## Steps
 
@@ -105,7 +106,8 @@ wrap it as an anywidget and run it in marimo (local and hosted) and Jupyter.
      not through results.
    - A viewer skill covers inspecting a store and writing render stacks, and builds on the
      existing store-preparation and hosting skills.
-5. **anywidget**, for marimo and Jupyter, after the notebook probe; see [Notebooks](#notebooks-marimo-first).
+5. **anywidget**, for marimo and Jupyter, on the self-contained build; see
+   [Notebooks](#notebooks-marimo-first).
 
 ## Open questions
 
