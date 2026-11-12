@@ -803,3 +803,35 @@ class TestRecompressWithPyramid:
         )
         assert result.manifest["pyramids"] == []
         assert not has_pyramid(tmp_path / "out.zarr", "images", "morphology")
+
+
+class TestChannelNames:
+    """Named channels must survive every path that adds levels."""
+
+    NAMES = ["DAPI", "PolyT"]
+
+    def _named_store(self, path: Path, **kwargs) -> Path:
+        pixels = np.concatenate([_image(), _image()])
+        return _store(path, pixels=pixels, c_coords=self.NAMES, **kwargs)
+
+    @pytest.mark.parametrize("scale_factors", [None, [2]], ids=["single-level", "extended"])
+    def test_in_memory(self, tmp_path: Path, scale_factors: list[int] | None) -> None:
+        from spatialdata.models import get_channel_names
+
+        sdata = sd.read_zarr(self._named_store(tmp_path / "src.zarr", scale_factors=scale_factors))
+
+        [report] = ensure_pyramids(sdata, min_size=512)
+
+        assert report["action"] == "extended"
+        assert get_channel_names(sdata.images["morphology"]) == self.NAMES
+
+    @pytest.mark.parametrize("force", [False, True], ids=["extended", "rebuilt"])
+    def test_store_to_store(self, tmp_path: Path, force: bool) -> None:
+        from spatialdata.models import get_channel_names
+
+        source = self._named_store(tmp_path / "src.zarr", scale_factors=[2])
+
+        add_pyramids(source, tmp_path / "out.zarr", levels=3, force=force)
+
+        written = sd.read_zarr(tmp_path / "out.zarr").images["morphology"]
+        assert get_channel_names(written) == self.NAMES
