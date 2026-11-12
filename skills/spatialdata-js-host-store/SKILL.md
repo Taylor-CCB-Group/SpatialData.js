@@ -121,7 +121,7 @@ evidence, but some of it is normal:
   policy. The store's origin must be listed in the app's
   `_meta.ui.csp.connectDomains`, and the server must allow that origin, so
   `*` is simplest. Whether a tile can reach a store on `localhost` depends on
-  the host. The `apps/mcp-probe` app in the SpatialData.js repo measures this.
+  the host and is not yet known for Claude. Prefer a public HTTPS URL there.
 
 If you can drive a browser, finish by opening the viewer the user named with
 the URL. For the SpatialData.js demo that is its page with `?url=<store URL>`.
