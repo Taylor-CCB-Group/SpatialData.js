@@ -285,10 +285,16 @@ async function shardHead(base: string, metadata: Metadata): Promise<ProbeRecord>
   const candidates = shardPaths(metadata).slice(0, 4);
   if (candidates.length === 0) return { ok: true, skipped: 'no sharded arrays' };
   let first: ProbeRecord | undefined;
+  let allAbsent = true;
   for (const path of candidates) {
     const result: ProbeRecord = { path, ...(await head(`${base}/${path}`)) };
     if (result.ok === true) return result;
+    // Only a visible 404 means "not written"; an opaque failure may be CORS.
+    if (result.status !== 404) allAbsent = false;
     first ??= result;
+  }
+  if (allAbsent) {
+    return { ok: true, skipped: `none of ${candidates.length} zero-coordinate shards exists` };
   }
   return { ...first, tried: candidates.length };
 }
