@@ -142,6 +142,14 @@ large images are fine:
 python <this skill>/scripts/compare_images.py in.zarr out.zarr     # max/mean abs error per image
 ```
 
+With `--sibling`, the compressed copy has its own key (`<key>:<codec>_<preset>`). The
+same-named image in `out.zarr` is the untouched original, so pair them explicitly:
+
+```bash
+python <this skill>/scripts/compare_images.py in.zarr out.zarr \
+  --pair morphology_focus=morphology_focus:htj2k_balanced
+```
+
 Then confirm:
 
 ```bash

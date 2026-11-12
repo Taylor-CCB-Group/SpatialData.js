@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -25,6 +26,7 @@ USER_AGENT = {"User-Agent": "spatialdata-js-check/1"}
 WHOLE_ENCODING = {"Accept-Encoding": "gzip, deflate"}
 RANGE_ENCODING = {"Accept-Encoding": "identity"}
 PROBE_BYTES = 8
+CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+|\*)")
 
 results: list[tuple[str, str, str]] = []  # (status, check, detail)
 
@@ -126,6 +128,19 @@ def check_ranges(url: str, origin: str, label: str, suffix: bool, need_content_r
                             f"{min(len(body), PROBE_BYTES)} bytes, expected {PROBE_BYTES}")
         if "content-range" not in headers:
             problems.append("no Content-Range header")
+        else:
+            match = CONTENT_RANGE.fullmatch(headers["content-range"].strip())
+            if not match:
+                problems.append(f"unparseable Content-Range {headers['content-range']!r}")
+            else:
+                start, end, total = int(match[1]), int(match[2]), match[3]
+                if rng.startswith("bytes=-"):  # the last bytes, measured from the end
+                    ok = total != "*" and (start, end) == (int(total) - PROBE_BYTES, int(total) - 1)
+                else:
+                    ok = (start, end) == (0, PROBE_BYTES - 1)
+                if not ok:
+                    problems.append(f"Content-Range {headers['content-range']!r} is not the "
+                                    f"interval {rng} asked for")
         exposed = header_list(headers, "access-control-expose-headers")
         if need_content_range and "content-range" not in exposed and "*" not in exposed:
             problems.append("Content-Range is not in Access-Control-Expose-Headers, so the browser "

@@ -22,6 +22,7 @@ import functools
 import os
 import re
 import secrets
+import urllib.parse
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -141,7 +142,7 @@ def main() -> None:
         base = f"http://{args.host}:{args.port}" + (f"/{token}" if token else "")
         print(f"Serving {root} at {base}/", flush=True)
         for name in stores:
-            print(f"  {base}/{name}", flush=True)
+            print(f"  {base}/{urllib.parse.quote(name, safe='')}", flush=True)
         httpd.serve_forever()
 
 
