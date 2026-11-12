@@ -175,9 +175,14 @@ def check_preflight(url: str, origin: str, label: str, required: bool) -> None:
                "but suffix ranges or extra request headers would.")
 
 
-def first_shard_url(store: str, metadata: dict) -> str | None:
-    """A shard file of the first array whose index sits at the shard's end. zarrita reads
-    such an index with HEAD (for the size) and a bounded range; nothing else HEADs a store."""
+MAX_SHARD_CANDIDATES = 4
+
+
+def shard_paths(metadata: dict) -> list[str]:
+    """Store-relative zero-coordinate shards of arrays whose index sits at the shard's end.
+    zarrita reads such an index with HEAD (for the size) and a bounded range; nothing else
+    HEADs a store."""
+    paths = []
     for path, node in sorted(metadata.items()):
         if node.get("node_type") != "array":
             continue
@@ -185,14 +190,28 @@ def first_shard_url(store: str, metadata: dict) -> str | None:
         if not shards or shards[0].get("configuration", {}).get("index_location") == "start":
             continue
         encoding = node.get("chunk_key_encoding") or {}
-        separator = encoding.get("configuration", {}).get("separator", "/")
+        v2 = encoding.get("name") == "v2"
+        separator = encoding.get("configuration", {}).get("separator", "." if v2 else "/")
         zeros = ["0"] * len(node.get("shape", []))
-        if encoding.get("name") == "v2":
-            key = separator.join(zeros) or "0"
-        else:
-            key = separator.join(["c", *zeros])
-        return f"{store}/{path}/{key}"
-    return None
+        key = (separator.join(zeros) or "0") if v2 else separator.join(["c", *zeros])
+        paths.append(f"{path}/{key}")
+    return paths
+
+
+def check_shard_head(store: str, origin: str, metadata: dict, explicit: str | None) -> None:
+    """A store need not write an all-fill shard (zarr reads it as fill values), so a 404 on
+    a guessed zero-coordinate shard is not a hosting fault. Try a few; any other failure is."""
+    candidates = [explicit] if explicit else shard_paths(metadata)[:MAX_SHARD_CANDIDATES]
+    if not candidates:
+        return
+    for path in candidates:
+        status, _, _ = request(f"{store}/{path}", origin, "HEAD")
+        if status != 404 or explicit:
+            # A HEAD on gzip-encoded text can legitimately omit Content-Length, so test a real shard.
+            check_head(f"{store}/{path}", origin, "shard file", zip_archive=False)
+            return
+    record("WARN", "shard file: HEAD", f"none of {len(candidates)} zero-coordinate shards exists "
+           "(all-fill shards are not written), so HEAD went untested; pass --shard <path>.")
 
 
 def find_parquet(store: str, origin: str, metadata: dict) -> str | None:
@@ -215,6 +234,8 @@ def main() -> None:
                         help="Origin of the page that will read the store (default: %(default)s)")
     parser.add_argument("--parquet", help="Store-relative Parquet path to range-test "
                         "(default: first points element)")
+    parser.add_argument("--shard", help="Store-relative path of a shard file to HEAD "
+                        "(default: the first existing zero-coordinate shard)")
     parser.add_argument("--json", action="store_true", help="Print results as JSON")
     args = parser.parse_args()
     store = args.store_url.rstrip("/")
@@ -254,10 +275,7 @@ def main() -> None:
     # zarrita reads chunks with bounded ranges, and sizes shards with HEAD to find their index.
     check_preflight(meta_url, args.origin, "metadata file", required=False)
     check_ranges(meta_url, args.origin, "metadata file", suffix=False, need_content_range=False)
-    shard = first_shard_url(store, metadata)
-    if shard:
-        # A HEAD on gzip-encoded text can legitimately omit Content-Length, so test a real shard.
-        check_head(shard, args.origin, "shard file", zip_archive=False)
+    check_shard_head(store, args.origin, metadata, args.shard)
     # The Parquet reader reads footers with suffix ranges, which are preflighted.
     parquet = f"{store}/{args.parquet}" if args.parquet else find_parquet(store, args.origin, metadata)
     if parquet:
