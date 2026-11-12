@@ -1,7 +1,6 @@
 import {
   AdditiveColormap3DExtensions,
   ColorPalette3DExtensions,
-  getChannelStats,
   loadOmeZarr,
   RENDERING_MODES,
 } from '@hms-dbmi/viv';
@@ -9,6 +8,7 @@ import { Matrix4 } from '@math.gl/core';
 import { useEffect, useState } from 'react';
 
 import { GLOBAL_SLIDER_DIMENSION_FIELDS } from './constants';
+import { computeChannelStats } from './rasterStats';
 import type { OME_TIFF, PixelSource } from './state';
 
 const _MAX_CHANNELS_FOR_SNACKBAR_WARNING = 40;
@@ -473,7 +473,7 @@ export async function getSingleSelectionStats2D({
 }): Promise<SelectionStats> {
   const data = getRasterSource(loader);
   const raster = await data.getRaster({ selection: clampVivSelectionToSource(selection, data) });
-  const selectionStats = getChannelStats(raster.data);
+  const selectionStats = computeChannelStats(raster.data);
   if (!narrowStats(selectionStats)) {
     throw new Error(
       'expected getChannelStats() to return domain and contrastLimits as [number, number]'
@@ -518,9 +518,9 @@ export async function getSingleSelectionStats3D({
   const rasterTop = await lowResSource.getRaster({
     selection: { ...baseSelection, z: Math.max(0, sizeZ - 1) },
   });
-  const stats0 = getChannelStats(raster0.data);
-  const statsMid = getChannelStats(rasterMid.data);
-  const statsTop = getChannelStats(rasterTop.data);
+  const stats0 = computeChannelStats(raster0.data);
+  const statsMid = computeChannelStats(rasterMid.data);
+  const statsTop = computeChannelStats(rasterTop.data);
   if (!narrowStats(stats0) || !narrowStats(statsMid) || !narrowStats(statsTop)) {
     throw new Error(
       'expected getChannelStats() to return domain and contrastLimits as [number, number]'
