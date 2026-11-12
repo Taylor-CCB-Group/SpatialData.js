@@ -80,7 +80,7 @@ def check_head(url: str, origin: str, label: str, zip_archive: bool) -> bool:
     if status != 200:
         hint = " (an empty shard may simply not exist)" if status == 404 else ""
         record("FAIL", f"{label}: HEAD", f"status {status}{hint}. Readers size files with HEAD "
-               "(zarrita for shard indexes, the zip reader for the archive).")
+               "(zarrita for shard indexes and Parquet footers, the zip reader for the archive).")
         return False
     if not check_cors(headers, origin, f"{label}: HEAD"):
         return False
@@ -112,7 +112,8 @@ def check_ranges(url: str, origin: str, label: str, suffix: bool, need_content_r
             continue
         if status == 416:
             record("FAIL", check, "416. Many static servers refuse suffix ranges; SpatialData.js then "
-                   "falls back to whole-file Parquet reads, which are slow on large points.")
+                   "skips the streaming Parquet reader for whole-row-group or whole-file reads, "
+                   "which are slow on large points.")
             continue
         if status != 206:
             record("FAIL", check, f"status {status}")
@@ -145,7 +146,8 @@ def check_ranges(url: str, origin: str, label: str, suffix: bool, need_content_r
         exposed = header_list(headers, "access-control-expose-headers")
         if need_content_range and "content-range" not in exposed and "*" not in exposed:
             problems.append("Content-Range is not in Access-Control-Expose-Headers, so the browser "
-                            "hides it; readers learn the file size from it.")
+                            "hides it; with no Content-Length on HEAD, the zip reader learns the "
+                            "archive size from it.")
         if problems:
             record("FAIL", check, " ".join(problems))
         else:
@@ -276,11 +278,13 @@ def main() -> None:
     check_preflight(meta_url, args.origin, "metadata file", required=False)
     check_ranges(meta_url, args.origin, "metadata file", suffix=False, need_content_range=False)
     check_shard_head(store, args.origin, metadata, args.shard)
-    # The Parquet reader reads footers with suffix ranges, which are preflighted.
+    # Footers are read with HEAD then a bounded range; only the streaming reader sends
+    # suffix ranges, which are preflighted. No Parquet reader reads Content-Range.
     parquet = f"{store}/{args.parquet}" if args.parquet else find_parquet(store, args.origin, metadata)
     if parquet:
         check_preflight(parquet, args.origin, "points parquet", required=True)
-        check_ranges(parquet, args.origin, "points parquet", suffix=True, need_content_range=True)
+        check_head(parquet, args.origin, "points parquet", zip_archive=False)
+        check_ranges(parquet, args.origin, "points parquet", suffix=True, need_content_range=False)
     elif any(k.startswith("points/") for k in metadata):
         record("WARN", "points parquet", "points elements exist but no Parquet was found to test; "
                "pass --parquet")
