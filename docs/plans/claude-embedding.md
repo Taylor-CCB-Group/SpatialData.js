@@ -11,7 +11,7 @@ The goal is one embeddable viewer that several hosts mount:
 | --- | --- |
 | demo page | already opens a local folder or zip, with no server |
 | MCP App (Claude Science, claude.ai, Desktop) | tile, server tools, skill, plugin |
-| Jupyter (anywidget, as lonboard does) | the same ES module, state synced both ways |
+| marimo and Jupyter (anywidget) | the same ES module, state synced both ways; see [Notebooks](#notebooks-marimo-first) |
 | `sdjs serve <root>` (npm and PyPI) | local store server, a browsable list of the stores under a root |
 
 Two shared pieces carry all of them:
@@ -45,6 +45,38 @@ module workers, so if Claude enforces exactly that policy, the single-file build
 Run the probe in Claude Science, claude.ai and Desktop before choosing. Claude's production CSP is
 not documented.
 
+## Notebooks: marimo first
+
+marimo is the primary notebook target. It runs anywidget widgets natively
+(`mo.ui.anywidget`), so one widget covers marimo and Jupyter.
+
+marimo also makes a widget's synced traits a reactive value. Viewport or
+selection changes in the viewer then re-run the cells that read them, without
+callbacks. The synced state is the controller's `{ renderStack, viewState,
+selection }` plus the store reference. Python sets `renderStack` from data, and
+reads back what the user is looking at.
+
+To settle before building, by measurement:
+
+- **Workers and WASM.** anywidget loads the widget module from a string,
+  probably through a `blob:` URL, so `import.meta.url` cannot locate worker or
+  `.wasm` files. If so, the widget needs the same self-contained build as the
+  MCP App (workers and WASM inlined), and that build becomes the shared
+  artefact. Notebook pages likely impose no strict CSP, so blob workers and
+  WASM should run.
+- **Where a local store's bytes come from.**
+  - A local kernel can start a loopback range server (as `serve_store.py`
+    does) and pass its URL.
+  - A remote kernel, such as a hosted marimo or JupyterHub, cannot be reached
+    on `localhost`. Bytes would go through the widget's message channel or a
+    file route the notebook server provides; find out what marimo offers.
+- **marimo WASM notebooks.** Python runs in Pyodide in the page, so a
+  URL-driven widget works for remote stores, but there is no server route for
+  local ones.
+
+The step 1 probe answers the first two. `probes.ts` does not depend on MCP, so
+wrap it as an anywidget and run it in marimo (local and hosted) and Jupyter.
+
 ## Steps
 
 1. **Capability probe** (built, unmerged). Next: run it in each Claude surface and record the
@@ -73,7 +105,7 @@ not documented.
      not through results.
    - A viewer skill covers inspecting a store and writing render stacks, and builds on the
      existing store-preparation and hosting skills.
-5. **anywidget.**
+5. **anywidget**, for marimo and Jupyter, after the notebook probe; see [Notebooks](#notebooks-marimo-first).
 
 ## Open questions
 
