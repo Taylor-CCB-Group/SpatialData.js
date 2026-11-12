@@ -101,9 +101,15 @@ function flattenLayers(list: LayersList, out: Layer[] = []): Layer[] {
   return out;
 }
 
-function isDescendantOf(layer: Layer, ancestor: Layer): boolean {
+/**
+ * Whether `layer` sits under the group. Ancestors are matched by id, not identity:
+ * deck only re-points a sublayer's `parent` when its composite re-renders, so a
+ * member matched with unchanged props keeps sublayers whose chain runs through the
+ * previous instances of the member and the group.
+ */
+export function isIsolatedGroupDescendant(layer: Layer, group: Layer): boolean {
   for (let p = layer.parent; p; p = p.parent) {
-    if (p === ancestor) return true;
+    if (p === group || p.id === group.id) return true;
   }
   return false;
 }
@@ -365,7 +371,7 @@ class GroupIsolationEffect implements Effect {
           pass.render({
             ...opts,
             pass: isolationPassName(group.id),
-            layers: opts.layers.filter((layer) => isDescendantOf(layer, group)),
+            layers: opts.layers.filter((layer) => isIsolatedGroupDescendant(layer, group)),
             viewports: [atOrigin(viewport)],
             target: target.framebuffer,
             clearCanvas: true,

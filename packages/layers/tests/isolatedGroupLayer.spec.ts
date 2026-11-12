@@ -5,6 +5,7 @@ import {
   getIsolatedGroupMember,
   getIsolatedGroupMemberId,
   IsolatedGroupLayer,
+  isIsolatedGroupDescendant,
 } from '../src/groups/IsolatedGroupLayer';
 
 function circles(id: string): ScatterplotLayer {
@@ -111,5 +112,24 @@ describe('IsolatedGroupLayer picking', () => {
     g.updateAutoHighlight(cleared);
     expect(toGreen).toHaveBeenLastCalledWith(cleared);
     expect(toRed).not.toHaveBeenCalled();
+  });
+});
+
+describe('IsolatedGroupLayer membership', () => {
+  it('counts a sublayer whose parent chain runs through earlier instances', () => {
+    // deck re-points a sublayer's parent only when its composite re-renders. A member
+    // matched with unchanged props keeps sublayers pointing at the previous member,
+    // whose parent is the previous group.
+    const tile = circles('g/points-tile-3');
+    group('g', [circles('g/points')]);
+    const oldMember = circles('g/points');
+    tile.parent = oldMember;
+    group('g', [oldMember]);
+    const current = new IsolatedGroupLayer({ id: 'g', layers: [circles('g/points')] });
+
+    expect(isIsolatedGroupDescendant(tile, current)).toBe(true);
+    expect(
+      isIsolatedGroupDescendant(tile, new IsolatedGroupLayer({ id: 'other', layers: [] }))
+    ).toBe(false);
   });
 });
