@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SpatialData probe</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 10px; }
+      h1 { font-size: 13px; margin: 0 0 8px; }
+      #summary { margin: 0 0 8px; }
+      table { border-collapse: collapse; width: 100%; }
+      td { padding: 1px 8px 1px 0; vertical-align: top; word-break: break-all; }
+      td:first-child { white-space: nowrap; opacity: 0.7; word-break: normal; }
+      .ok { color: #2e7d32; }
+      .bad { color: #c62828; }
+      @media (prefers-color-scheme: dark) { .ok { color: #81c784; } .bad { color: #ef9a9a; } }
+      button { font: inherit; margin: 0 6px 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>SpatialData probe</h1>
+    <div>
+      <button id="rerun" type="button">Re-run</button>
+      <button id="send" type="button">Post results to the conversation</button>
+    </div>
+    <p id="summary">Running…</p>
+    <table id="results"></table>
+    <script type="module" src="/src/mcp-app.ts"></script>
+  </body>
+</html>

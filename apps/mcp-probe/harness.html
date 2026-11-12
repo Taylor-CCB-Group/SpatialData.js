@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SpatialData probe harness</title>
+    <style>
+      body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; display: grid; gap: 12px; }
+      iframe { width: 100%; height: 600px; border: 1px solid #8884; border-radius: 6px; }
+      pre { margin: 0; padding: 8px; background: #8881; border-radius: 6px; white-space: pre-wrap; }
+      h2 { font-size: 13px; margin: 0 0 4px; }
+    </style>
+  </head>
+  <body>
+    <div>
+      Harness host · <span id="mode"></span> · try
+      <a href="?csp=spec">csp=spec</a> / <a href="?csp=none">csp=none</a> /
+      <a href="?csp=spec&sandbox=opaque">sandbox=opaque</a>
+    </div>
+    <!-- harness.ts sets the sandbox flags before loading the View. -->
+    <iframe id="view" title="View" sandbox="allow-scripts"></iframe>
+    <div><h2>Model context (ui/update-model-context)</h2><pre id="model-context">—</pre></div>
+    <div><h2>Server tool calls from the View</h2><pre id="server-calls"></pre></div>
+    <script type="module" src="/src/harness.ts"></script>
+  </body>
+</html>

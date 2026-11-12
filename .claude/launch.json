@@ -25,6 +25,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@spatialdata/vis", "dev"],
       "port": 5173
+    },
+    {
+      "name": "mcp-probe-harness",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@spatialdata/mcp-probe", "harness"],
+      "port": 5190
     }
   ]
 }
