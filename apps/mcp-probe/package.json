@@ -5,7 +5,7 @@
   "type": "module",
   "description": "MCP App capability probe: what a host's sandboxed iframe allows a SpatialData.js view to do",
   "scripts": {
-    "build": "vite build && vite build --config vite.widget.config.ts",
+    "build": "vite build && vite build --config vite.widget.config.ts && vite build --config vite.server.config.ts",
     "typecheck": "tsc --noEmit",
     "start": "vite build && node main.ts",
     "dev": "concurrently --raw \"vite build --watch --mode development\" \"node --watch main.ts\"",

@@ -17,7 +17,7 @@ const sendButton = element('send', HTMLButtonElement);
 
 const app = new App({ name: 'SpatialData probe', version: '0.1.0' }, {}, { autoResize: true });
 
-let storeUrl: string | undefined;
+let storeUrls: string[] = [];
 let lastResults: ProbeRecord = {};
 let running: Promise<ProbeRecord> | undefined;
 
@@ -51,12 +51,12 @@ function renderTable(results: ProbeRecord): void {
   tableEl.replaceChildren(...rows);
 }
 
-async function probe(url: string): Promise<ProbeRecord> {
-  storeUrl = url;
+async function probe(urls: string[]): Promise<ProbeRecord> {
+  storeUrls = urls;
   const results: ProbeRecord = { host: hostReport() };
   lastResults = results;
-  for await (const [name, result] of runProbes(url)) {
-    summaryEl.textContent = `Probing against ${url}… finished ${name}`;
+  for await (const [name, result] of runProbes(urls)) {
+    summaryEl.textContent = `Probing… finished ${name}`;
     results[name] = result;
     renderTable(results);
   }
@@ -66,33 +66,33 @@ async function probe(url: string): Promise<ProbeRecord> {
   // The agent cannot see the tile or its console; this is how the results reach it.
   await app
     .updateModelContext({
-      content: [{ type: 'text', text: `SpatialData probe (${url}):\n${verdicts.join('\n')}` }],
+      content: [{ type: 'text', text: `SpatialData probe:\n${verdicts.join('\n')}` }],
       structuredContent: results,
     })
     .catch((e: unknown) => console.warn('updateModelContext failed', e));
   return results;
 }
 
-function start(url: string): Promise<ProbeRecord> {
-  if (running && url === storeUrl) return running;
-  running = probe(url).finally(() => {
+function start(urls: string[]): Promise<ProbeRecord> {
+  if (running && urls.join() === storeUrls.join()) return running;
+  running = probe(urls).finally(() => {
     running = undefined;
   });
   return running;
 }
 
-const toolArguments = z.object({ store_url: z.string().optional() });
-const toolResult = z.object({ store_url: z.string() });
+const toolArguments = z.object({ store_urls: z.array(z.string()).optional() });
+const toolResult = z.object({ store_urls: z.array(z.string()) });
 
-// The input arrives first; it may omit store_url, in which case the server's
-// default comes back in the result.
+// The input arrives first; it may omit store_urls, in which case the server's
+// defaults come back in the result.
 app.ontoolinput = ({ arguments: args }) => {
   const parsed = toolArguments.safeParse(args ?? {});
-  if (parsed.success && parsed.data.store_url) void start(parsed.data.store_url);
+  if (parsed.success && parsed.data.store_urls?.length) void start(parsed.data.store_urls);
 };
 app.ontoolresult = (result) => {
   const parsed = toolResult.safeParse(result.structuredContent);
-  if (parsed.success) void start(parsed.data.store_url);
+  if (parsed.success) void start(parsed.data.store_urls);
 };
 
 // Tools the agent can call against the live tile.
@@ -108,15 +108,15 @@ app.registerTool(
   'rerun_probe',
   {
     title: 'Re-run probe',
-    description: 'Re-run the probe, optionally against a different store URL.',
-    inputSchema: z.object({ store_url: z.string().url().optional() }),
+    description: 'Re-run the probe, optionally against different store URLs.',
+    inputSchema: z.object({ store_urls: z.array(z.string().url()).optional() }),
   },
-  async ({ store_url }) => {
-    const url = store_url ?? storeUrl;
-    if (!url) {
-      return { content: [{ type: 'text', text: 'No store URL yet.' }], isError: true };
+  async ({ store_urls }) => {
+    const urls = store_urls?.length ? store_urls : storeUrls;
+    if (urls.length === 0) {
+      return { content: [{ type: 'text', text: 'No store URLs yet.' }], isError: true };
     }
-    const results = await probe(url);
+    const results = await probe(urls);
     return {
       content: [{ type: 'text', text: summarize(results).join('\n') }],
       structuredContent: results,
@@ -125,7 +125,7 @@ app.registerTool(
 );
 
 rerunButton.addEventListener('click', () => {
-  if (storeUrl) void probe(storeUrl);
+  if (storeUrls.length > 0) void probe(storeUrls);
 });
 sendButton.addEventListener('click', () => {
   void app.callServerTool({ name: 'report_probe', arguments: { results: lastResults } });

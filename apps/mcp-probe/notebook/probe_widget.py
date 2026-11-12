@@ -13,5 +13,5 @@ WIDGET_JS = Path(__file__).parent.parent / "dist" / "widget.js"
 
 class ProbeWidget(anywidget.AnyWidget):
     _esm = WIDGET_JS
-    store_url = traitlets.Unicode("").tag(sync=True)
+    store_urls = traitlets.List(traitlets.Unicode()).tag(sync=True)
     results = traitlets.Dict().tag(sync=True)

@@ -15,16 +15,17 @@ def _():
     sys.path.insert(0, str(Path(__file__).parent))
     from probe_widget import ProbeWidget
 
-    # `pnpm test:server` serves the fixtures with CORS and ranges.
-    store_url = os.environ.get(
-        "STORE_URL", "http://localhost:38473/test-fixtures/v0.8.0/blobs.zarr"
-    )
-    return ProbeWidget, json, mo, os, store_url
+    # A public HTTPS store and a loopback one (`pnpm test:server`); STORE_URLS overrides.
+    store_urls = os.environ.get("STORE_URLS", "").split(",") if os.environ.get("STORE_URLS") else [
+        "https://oranus.cmd.ox.ac.uk/publicprojects/project/13/spatial/Atera_v1_WTA_Kidney_non_diseased_FFPE.zarr",
+        "http://localhost:38473/test-fixtures/v0.8.0/blobs.zarr",
+    ]
+    return ProbeWidget, json, mo, os, store_urls
 
 
 @app.cell
-def _(ProbeWidget, mo, store_url):
-    probe = mo.ui.anywidget(ProbeWidget(store_url=store_url))
+def _(ProbeWidget, mo, store_urls):
+    probe = mo.ui.anywidget(ProbeWidget(store_urls=store_urls))
     probe
     return (probe,)
 

@@ -5,7 +5,7 @@ import {
   NodeStreamableHTTPServerTransport,
 } from '@modelcontextprotocol/node';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { connectDomains, createServer, defaultStoreUrl } from './server.ts';
+import { connectDomains, createServer, defaultStoreUrls } from './server.ts';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -76,7 +76,7 @@ function startHttp(): void {
 
   httpServer.listen(port, host, () => {
     console.log(`MCP server: http://${host}:${port}/mcp`);
-    console.log(`Default store: ${defaultStoreUrl()}`);
+    console.log(`Default stores: ${defaultStoreUrls().join(' ')}`);
     console.log(`Tile connect-src: ${connectDomains().join(' ')}`);
   });
   const shutdown = () => httpServer.close(() => process.exit(0));

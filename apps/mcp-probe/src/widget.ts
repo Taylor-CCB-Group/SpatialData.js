@@ -47,27 +47,30 @@ export default {
 
     const run = async () => {
       const id = ++current;
-      const storeUrl = model.get('store_url');
-      if (typeof storeUrl !== 'string' || !storeUrl) {
-        pre.textContent = 'Set store_url to probe a store.';
+      const value = model.get('store_urls');
+      const storeUrls = Array.isArray(value)
+        ? value.filter((u): u is string => typeof u === 'string')
+        : [];
+      if (storeUrls.length === 0) {
+        pre.textContent = 'Set store_urls to probe stores.';
         return;
       }
       const results: ProbeRecord = { module: moduleReport(el) };
-      for await (const [name, result] of runProbes(storeUrl)) {
+      for await (const [name, result] of runProbes(storeUrls)) {
         if (id !== current) return;
         results[name] = result;
-        pre.textContent = `Probing ${storeUrl}… finished ${name}`;
+        pre.textContent = `Probing… finished ${name}`;
       }
-      pre.textContent = [`SpatialData probe (${storeUrl})`, ...summarize(results)].join('\n');
+      pre.textContent = ['SpatialData probe', ...summarize(results)].join('\n');
       model.set('results', results);
       model.save_changes();
     };
 
-    model.on('change:store_url', run);
+    model.on('change:store_urls', run);
     void run();
     return () => {
       current++;
-      model.off('change:store_url', run);
+      model.off('change:store_urls', run);
     };
   },
 };

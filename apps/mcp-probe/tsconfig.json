@@ -13,5 +13,12 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src", "server.ts", "main.ts", "vite.config.ts", "vite.widget.config.ts"]
+  "include": [
+    "src",
+    "server.ts",
+    "main.ts",
+    "vite.config.ts",
+    "vite.widget.config.ts",
+    "vite.server.config.ts"
+  ]
 }

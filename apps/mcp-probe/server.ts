@@ -10,11 +10,23 @@ import {
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
-const DIST_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+// Beside server.ts when run from source; one level up from the bundled dist/server/main.js.
+const VIEW_CANDIDATES = [
+  path.join(HERE, 'dist', 'mcp-app.html'),
+  path.join(HERE, '..', 'mcp-app.html'),
+];
 const RESOURCE_URI = 'ui://spatialdata/probe.html';
 
-/** `pnpm test:server` serves `test-fixtures/` with CORS and range support. */
-const DEFAULT_STORE_URL = 'http://localhost:38473/test-fixtures/v0.8.0/blobs.zarr';
+/**
+ * A public HTTPS store (the demo's default) and a loopback one (`pnpm test:server`):
+ * one run then says both whether the tile can range-read the web and whether it can
+ * reach a store served on this machine.
+ */
+const DEFAULT_STORE_URLS = [
+  'https://oranus.cmd.ox.ac.uk/publicprojects/project/13/spatial/Atera_v1_WTA_Kidney_non_diseased_FFPE.zarr',
+  'http://localhost:38473/test-fixtures/v0.8.0/blobs.zarr',
+];
 
 function listEnv(name: string): string[] {
   return (process.env[name] ?? '')
@@ -23,8 +35,9 @@ function listEnv(name: string): string[] {
     .filter(Boolean);
 }
 
-export function defaultStoreUrl(): string {
-  return process.env.STORE_URL ?? DEFAULT_STORE_URL;
+export function defaultStoreUrls(): string[] {
+  const fromEnv = listEnv('STORE_URLS');
+  return fromEnv.length > 0 ? fromEnv : DEFAULT_STORE_URLS;
 }
 
 /**
@@ -34,7 +47,7 @@ export function defaultStoreUrl(): string {
  */
 export function connectDomains(): string[] {
   const origins = new Set(listEnv('STORE_ORIGINS'));
-  origins.add(new URL(defaultStoreUrl()).origin);
+  for (const url of defaultStoreUrls()) origins.add(new URL(url).origin);
   for (const origin of [...origins]) {
     const url = new URL(origin);
     if (url.hostname === 'localhost') origins.add(origin.replace('localhost', '127.0.0.1'));
@@ -55,6 +68,17 @@ function appDomain(): string | undefined {
   return `${hash}.claudemcpcontent.com`;
 }
 
+async function readView(): Promise<string> {
+  for (const candidate of VIEW_CANDIDATES) {
+    try {
+      return await fs.readFile(candidate, 'utf-8');
+    } catch {
+      // Try the next layout.
+    }
+  }
+  throw new Error(`View not built; looked for ${VIEW_CANDIDATES.join(', ')}`);
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'spatialdata-probe', version: '0.1.0' });
 
@@ -69,27 +93,30 @@ export function createServer(): McpServer {
         'range requests to a SpatialData store, and any CSP violations. The tile adds its ' +
         'results to the model context when it finishes.',
       inputSchema: z.object({
-        store_url: z
-          .string()
-          .url()
-          .describe('Base URL of a SpatialData .zarr store. Its origin must be allowlisted.')
+        store_urls: z
+          .array(z.string().url())
+          .describe(
+            'SpatialData .zarr store or .zip URLs to range-read. Their origins must be ' +
+              'allowlisted. Defaults to one public HTTPS store and one on localhost.'
+          )
           .optional(),
       }),
       _meta: { ui: { resourceUri: RESOURCE_URI } },
     },
-    async ({ store_url }) => {
-      const storeUrl = store_url ?? defaultStoreUrl();
+    async ({ store_urls }) => {
+      const storeUrls = store_urls?.length ? store_urls : defaultStoreUrls();
       const allowed = connectDomains();
-      const origin = new URL(storeUrl).origin;
-      const notes = allowed.includes(origin)
-        ? []
-        : [
-            `${origin} is not in the tile's connect-src (${allowed.join(', ')}); ` +
-              'fetches will be blocked. Restart the server with STORE_ORIGINS including it.',
-          ];
+      const notes = storeUrls
+        .map((url) => new URL(url).origin)
+        .filter((origin) => !allowed.includes(origin))
+        .map(
+          (origin) =>
+            `${origin} is not in the tile's connect-src; fetches to it will be blocked. ` +
+            'Restart the server with STORE_ORIGINS including it.'
+        );
       return {
         content: [{ type: 'text', text: ['Opened SpatialData probe.', ...notes].join(' ') }],
-        structuredContent: { store_url: storeUrl, connect_domains: allowed },
+        structuredContent: { store_urls: storeUrls, connect_domains: allowed },
       };
     }
   );
@@ -116,7 +143,7 @@ export function createServer(): McpServer {
     RESOURCE_URI,
     { mimeType: RESOURCE_MIME_TYPE },
     async () => {
-      const html = await fs.readFile(path.join(DIST_DIR, 'mcp-app.html'), 'utf-8');
+      const html = await readView();
       const domain = appDomain();
       const resourceDomains = listEnv('RESOURCE_DOMAINS');
       return {

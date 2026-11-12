@@ -17,7 +17,7 @@ const RESOURCE_URI = 'ui://spatialdata/probe.html';
 const params = new URLSearchParams(location.search);
 const cspMode = params.get('csp') ?? 'spec';
 const mcpUrl = params.get('mcp') ?? 'http://127.0.0.1:3001/mcp';
-const storeUrl = params.get('store') ?? undefined;
+const storeUrls = params.getAll('store');
 // Claude serves a View from its own real origin, which `same-origin` approximates
 // (here it shares the harness origin). `opaque` is a sandbox without
 // allow-same-origin, as some hosts use.
@@ -81,7 +81,7 @@ bridge.onsizechange = ({ height }) => {
   if (height) frame.style.height = `${height}px`;
 };
 bridge.oninitialized = async () => {
-  const args = storeUrl ? { store_url: storeUrl } : {};
+  const args = storeUrls.length > 0 ? { store_urls: storeUrls } : {};
   void bridge.sendToolInput({ arguments: args });
   const result = await client.callTool({ name: 'open_spatial_probe', arguments: args });
   callsEl.textContent += `open_spatial_probe → ${JSON.stringify(result.content)}\n`;
