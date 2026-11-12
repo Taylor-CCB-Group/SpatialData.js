@@ -46,8 +46,10 @@ Each requirement exists because a specific reader depends on it:
 4. **CORS.**
    - Responses must carry `Access-Control-Allow-Origin`, either `*` or the
      viewer page's origin.
-   - `Range` is not a CORS-safelisted header, so every ranged read is
-     preflighted. `OPTIONS` must succeed and allow the `Range` header.
+   - `Range` is CORS-safelisted only as a single bounded range, so suffix
+     reads (the Parquet footers) are preflighted. `OPTIONS` must succeed and
+     allow the `Range` header. Zip archives and zarr chunks use bounded ranges
+     only.
    - `Access-Control-Expose-Headers` must include `Content-Range`, otherwise
      the browser hides it from the reader.
 5. **No compression on ranged files.** Do not apply
@@ -79,11 +81,15 @@ rather than sending `*`.
 ## Serve a local store
 
 ```bash
-python <this skill>/scripts/serve_store.py ~/data            # serves every *.zarr under ~/data
+python <this skill>/scripts/serve_store.py ~/data            # serves every *.zarr and *.zip in ~/data
 python <this skill>/scripts/serve_store.py ~/data --port 9000
 ```
 
-It prints a URL per store, such as `http://127.0.0.1:8000/xenium.zarr`. It
+It prints a URL per store, such as
+`http://127.0.0.1:8000/<token>/xenium.zarr`. Treat the URL like a password.
+CORS has to allow any origin, because sandboxed viewers send `Origin: null`.
+So the random token is what stops other web pages reading the files from
+loopback. `--no-token` gives a stable URL without that protection. The server
 binds to loopback only. `--host 0.0.0.0` would expose every file under that
 directory to the network, so use it only when the user asks and the network
 is trusted. If the port is taken, choose another.

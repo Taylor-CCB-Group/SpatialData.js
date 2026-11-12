@@ -66,10 +66,15 @@ spatialdata-js-util points morton-from-zarr out.zarr --points-key transcripts
 spatialdata-js-util tables to-csc out.zarr
 ```
 
-If no image needs work, the images step won't create the new store. In that
-case run `tables to-csc in.zarr out.zarr` first, which copies, then
-Morton-sort on `out.zarr`. Otherwise, before touching `in.zarr` in place,
-confirm with the user that they have a backup.
+If no image needs work, the images step won't create the new store, so make
+the copy another way:
+- **The store has tables.** Run `tables to-csc in.zarr out.zarr`, which copies
+  the store, then Morton-sort `out.zarr`.
+- **It has none.** Copy it with `cp -R in.zarr out.zarr`. `to-csc` would copy,
+  then fail with "No table elements found".
+
+Before touching `in.zarr` in place, confirm with the user that they have a
+backup.
 
 If images only need pyramid levels, not recompression, and copying the store
 is too costly, there is an in-place option:

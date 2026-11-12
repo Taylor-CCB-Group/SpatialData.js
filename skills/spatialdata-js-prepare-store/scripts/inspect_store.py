@@ -85,8 +85,9 @@ def raster_report(name: str, kind: str, nodes: dict) -> dict:
               "levels": len(paths), "codecs": codecs, "suggest": []}
     # Mirrors spatialdata-js-util >= 0.3: shallow pyramids are extended too.
     if spatial and max(spatial) > PYRAMID_TARGET:
-        report["suggest"].append("add pyramid (images recompress --pyramid, or images add-pyramid"
-                                 + (" --labels" if kind == "labels" else "") + ")")
+        # recompress --pyramid only builds image levels; labels need add-pyramid --labels.
+        report["suggest"].append("add pyramid (images add-pyramid --labels)" if kind == "labels" else
+                                 "add pyramid (images recompress --pyramid, or images add-pyramid)")
     if kind == "images":
         if not BROWSER_CODECS & set(codecs):
             if dtype in CODEC_DTYPES:
@@ -126,11 +127,18 @@ def points_report(name: str, store: Path, nodes: dict) -> dict:
 
 
 def table_report(name: str, nodes: dict) -> dict:
+    def encoding_of(node: dict) -> str:
+        return node.get("attributes", {}).get("encoding-type") or (
+            "dense" if node.get("node_type") == "array" else "missing")
+
     x = nodes.get(f"tables/{name}/X", {})
-    encoding = x.get("attributes", {}).get("encoding-type") or ("dense" if x.get("node_type") == "array" else "missing")
-    report = {"element": f"tables/{name}", "X": encoding,
+    prefix = f"tables/{name}/layers/"
+    layers = {k[len(prefix):]: encoding_of(v) for k, v in nodes.items()
+              if k.startswith(prefix) and "/" not in k[len(prefix):]}
+    report = {"element": f"tables/{name}", "X": encoding_of(x), "layers": layers,
               "shape": x.get("attributes", {}).get("shape") or x.get("shape"), "suggest": []}
-    if encoding == "csr_matrix":
+    # to-csc converts X and every layer by default.
+    if "csr_matrix" in (report["X"], *layers.values()):
         report["suggest"].append(f"convert to CSC (tables to-csc <store> --table {name})")
     return report
 

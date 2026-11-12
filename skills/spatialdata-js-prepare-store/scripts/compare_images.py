@@ -38,7 +38,9 @@ def main() -> None:
     parser.add_argument("--pair", action="append", default=[], help="original_key=converted_key")
     args = parser.parse_args()
 
-    a, b = sd.read_zarr(args.original), sd.read_zarr(args.converted)
+    # Images only: shapes would be materialised in full, which large segmentations cannot afford.
+    a = sd.read_zarr(args.original, selection=("images",))
+    b = sd.read_zarr(args.converted, selection=("images",))
     pairs = dict(p.split("=", 1) for p in args.pair) or {k: k for k in a.images if k in b.images}
     if args.image:
         pairs = {k: v for k, v in pairs.items() if k in args.image}

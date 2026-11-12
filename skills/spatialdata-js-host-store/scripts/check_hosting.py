@@ -18,8 +18,13 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
-BROWSER_HEADERS = {"Accept-Encoding": "gzip, deflate, br", "User-Agent": "spatialdata-js-check/1"}
+USER_AGENT = {"User-Agent": "spatialdata-js-check/1"}
+# What a browser sends: compressed encodings normally, `identity` alongside Range (Fetch spec).
+WHOLE_ENCODING = {"Accept-Encoding": "gzip, deflate"}
+RANGE_ENCODING = {"Accept-Encoding": "identity"}
+PROBE_BYTES = 8
 
 results: list[tuple[str, str, str]] = []  # (status, check, detail)
 
@@ -29,15 +34,29 @@ def record(status: str, check: str, detail: str = "") -> None:
 
 
 def request(url: str, origin: str, method: str = "GET", headers: dict | None = None,
-            read: bool = True) -> tuple[int, dict, bytes]:
-    req = urllib.request.Request(url, method=method,
-                                 headers={**BROWSER_HEADERS, "Origin": origin, **(headers or {})})
+            limit: int | None = None) -> tuple[int, dict, bytes]:
+    """Fetch `url`. With `limit`, read at most that many body bytes, so a server
+    that ignores Range cannot stream a whole store into memory."""
+    is_range = "Range" in (headers or {})
+    req = urllib.request.Request(url, method=method, headers={
+        **USER_AGENT, **(RANGE_ENCODING if is_range else WHOLE_ENCODING),
+        "Origin": origin, **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read() if read and method != "HEAD" else b""
-            return resp.status, {k.lower(): v for k, v in resp.headers.items()}, body
+            status = resp.status
+            hdrs = {k.lower(): v for k, v in resp.headers.items()}
+            if method == "HEAD":
+                return status, hdrs, b""
+            body = resp.read(limit) if limit is not None else resp.read()
     except urllib.error.HTTPError as e:
         return e.code, {k.lower(): v for k, v in e.headers.items()}, b""
+    if limit is None:  # urllib does not decode; the browser would
+        encoding = hdrs.get("content-encoding", "identity")
+        if encoding == "gzip":
+            body = zlib.decompress(body, 16 + zlib.MAX_WBITS)
+        elif encoding == "deflate":
+            body = zlib.decompress(body)
+    return status, hdrs, body
 
 
 def header_list(headers: dict, name: str) -> set[str]:
@@ -53,21 +72,36 @@ def check_cors(headers: dict, origin: str, label: str) -> bool:
     return False
 
 
-def check_file(url: str, origin: str, label: str, suffix: bool = True) -> None:
-    """The range shapes zarr shards and Parquet readers need, against one file.
-    A zip archive is sized with HEAD and read with bounded ranges only."""
+def check_head(url: str, origin: str, label: str, zip_archive: bool) -> bool:
+    """Returns whether the size came from Content-Length (else ranges must expose Content-Range)."""
     status, headers, _ = request(url, origin, "HEAD")
     if status != 200:
         record("FAIL", f"{label}: HEAD", f"status {status}. Readers size files with HEAD "
                "(zarrita for shard indexes, the zip reader for the archive).")
-    elif "content-length" not in headers:
-        record("FAIL", f"{label}: HEAD", "no Content-Length; readers size files from it.")
-    elif check_cors(headers, origin, f"{label}: HEAD"):
+        return False
+    if not check_cors(headers, origin, f"{label}: HEAD"):
+        return False
+    if "content-length" in headers:
         record("PASS", f"{label}: HEAD", f"Content-Length {headers['content-length']}")
+        return True
+    if zip_archive:
+        # The zip reader falls back to a one-byte read and the total in Content-Range.
+        _, probe, _ = request(url, origin, headers={"Range": "bytes=0-0"}, limit=2)
+        exposed = header_list(probe, "access-control-expose-headers")
+        if "/" in probe.get("content-range", "") and ("content-range" in exposed or "*" in exposed):
+            record("PASS", f"{label}: size", "no Content-Length on HEAD; the reader's "
+                   "bytes=0-0 fallback gets the size from Content-Range")
+            return False
+    record("FAIL", f"{label}: HEAD", "no Content-Length; readers size files from it.")
+    return False
 
-    shapes = [("bounded range", "bytes=0-7")] + ([("suffix range", "bytes=-8")] if suffix else [])
+
+def check_ranges(url: str, origin: str, label: str, suffix: bool, need_content_range: bool) -> None:
+    shapes = [("bounded range", f"bytes=0-{PROBE_BYTES - 1}")]
+    if suffix:
+        shapes.append(("suffix range", f"bytes=-{PROBE_BYTES}"))
     for shape, rng in shapes:
-        status, headers, body = request(url, origin, headers={"Range": rng})
+        status, headers, body = request(url, origin, headers={"Range": rng}, limit=PROBE_BYTES + 1)
         check = f"{label}: {shape} ({rng})"
         if status == 200:
             record("FAIL", check, "200 with the whole body: the server ignores Range. Readers would "
@@ -84,38 +118,45 @@ def check_file(url: str, origin: str, label: str, suffix: bool = True) -> None:
             continue
         problems = []
         if headers.get("content-encoding", "identity") != "identity":
-            problems.append(f"Content-Encoding {headers['content-encoding']} on a range: byte offsets "
-                            "refer to the encoded body. Disable compression for .zarr/.parquet paths.")
-        if len(body) != 8:
-            problems.append(f"returned {len(body)} bytes, expected 8")
+            problems.append(f"Content-Encoding {headers['content-encoding']} on a range despite "
+                            "Accept-Encoding: identity; byte offsets refer to the encoded body. "
+                            "Disable compression for .zarr/.parquet/.zip paths.")
+        if len(body) != PROBE_BYTES:
+            problems.append(f"returned {'more than ' if len(body) > PROBE_BYTES else ''}"
+                            f"{min(len(body), PROBE_BYTES)} bytes, expected {PROBE_BYTES}")
         if "content-range" not in headers:
             problems.append("no Content-Range header")
         exposed = header_list(headers, "access-control-expose-headers")
-        if "content-range" not in exposed and "*" not in exposed:
+        if need_content_range and "content-range" not in exposed and "*" not in exposed:
             problems.append("Content-Range is not in Access-Control-Expose-Headers, so the browser "
-                            "hides it; Parquet readers learn the file size from it.")
+                            "hides it; readers learn the file size from it.")
         if problems:
             record("FAIL", check, " ".join(problems))
         else:
             record("PASS", check, headers.get("content-range", ""))
 
 
-def check_preflight(url: str, origin: str) -> None:
-    """Range is not a CORS-safelisted header, so every ranged read is preflighted."""
+def check_preflight(url: str, origin: str, label: str, required: bool) -> None:
+    """Range is CORS-safelisted only as a single bounded range, so suffix reads are preflighted."""
     status, headers, _ = request(url, origin, "OPTIONS", headers={
         "Access-Control-Request-Method": "GET",
         "Access-Control-Request-Headers": "range",
     })
     allowed = header_list(headers, "access-control-allow-headers")
+    problem = None
     if status >= 300:
-        record("FAIL", "CORS preflight", f"OPTIONS returned {status}; ranged reads will be blocked.")
+        problem = f"OPTIONS returned {status}"
     elif headers.get("access-control-allow-origin") not in ("*", origin):
-        record("FAIL", "CORS preflight", "no matching Access-Control-Allow-Origin on the OPTIONS reply.")
+        problem = "no matching Access-Control-Allow-Origin on the OPTIONS reply"
     elif "range" not in allowed and "*" not in allowed:
-        record("FAIL", "CORS preflight", f"Access-Control-Allow-Headers is {sorted(allowed)}; "
-               "it must include Range.")
+        problem = f"Access-Control-Allow-Headers is {sorted(allowed)}; it must include Range"
+    if problem is None:
+        record("PASS", f"{label}: CORS preflight", f"status {status}")
+    elif required:
+        record("FAIL", f"{label}: CORS preflight", f"{problem}. Suffix-range reads will be blocked.")
     else:
-        record("PASS", "CORS preflight", f"status {status}")
+        record("WARN", f"{label}: CORS preflight", f"{problem}. Bounded ranges need no preflight, "
+               "but suffix ranges or extra request headers would.")
 
 
 def find_parquet(store: str, origin: str, metadata: dict) -> str | None:
@@ -143,8 +184,10 @@ def main() -> None:
     store = args.store_url.rstrip("/")
 
     if urllib.parse.urlparse(store).path.lower().endswith(".zip"):
-        check_preflight(store, args.origin)
-        check_file(store, args.origin, "zip archive", suffix=False)
+        # The zip reader sizes the archive with HEAD and reads bounded ranges only.
+        check_preflight(store, args.origin, "zip archive", required=False)
+        has_length = check_head(store, args.origin, "zip archive", zip_archive=True)
+        check_ranges(store, args.origin, "zip archive", suffix=False, need_content_range=not has_length)
         report(args.json)
         return
 
@@ -172,15 +215,19 @@ def main() -> None:
             record("WARN", "caching", f"Cache-Control {cache!r}. If this store is rewritten in place, "
                    "browsers can mix stale metadata with new chunks. Use no-cache, or a new URL per rewrite.")
 
-    check_preflight(meta_url, args.origin)
-    check_file(meta_url, args.origin, "metadata file")
+    # zarrita reads chunks and shards with HEAD and bounded ranges.
+    check_preflight(meta_url, args.origin, "metadata file", required=False)
+    check_head(meta_url, args.origin, "metadata file", zip_archive=False)
+    check_ranges(meta_url, args.origin, "metadata file", suffix=False, need_content_range=False)
+    # The Parquet reader reads footers with suffix ranges, which are preflighted.
     parquet = f"{store}/{args.parquet}" if args.parquet else find_parquet(store, args.origin, metadata)
     if parquet:
-        check_file(parquet, args.origin, "points parquet")
+        check_preflight(parquet, args.origin, "points parquet", required=True)
+        check_head(parquet, args.origin, "points parquet", zip_archive=False)
+        check_ranges(parquet, args.origin, "points parquet", suffix=True, need_content_range=True)
     elif any(k.startswith("points/") for k in metadata):
         record("WARN", "points parquet", "points elements exist but no Parquet was found to test; "
                "pass --parquet")
-
     report(args.json)
 
 

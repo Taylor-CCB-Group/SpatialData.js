@@ -24,8 +24,14 @@ Two shared pieces carry all of them:
   looking at, so it has to be legible.
 - **A local store server.** It serves a directory or zip with CORS, `Range`, suffix ranges, and
   exposed `Content-Length`/`Content-Range`. The CLI, the Python command, a local MCP server and
-  the "local file in a tile" case all need it. `serve_store.py` in the hosting skill is a
-  standard-library version, and `check_hosting.py` is its acceptance test.
+  the "local file in a tile" case all need it.
+  - **Access control.** CORS must allow any origin, because sandboxed views send
+    `Origin: null`. So origin checks cannot be the gate. Instead, every server serves its
+    stores under a random path token and binds to loopback. The token goes in the URL handed
+    to the viewer, and any page without it gets a 404.
+  - `serve_store.py` in the hosting skill implements this in the standard library, and
+    `check_hosting.py` is its acceptance test. The CLI and MCP server should match it, and
+    add a check that the `Host` header is loopback.
 
 ## What the sandbox allows
 
@@ -98,7 +104,9 @@ Still to measure:
    - Server tools:
      - `describe_store` (read with core in Node, list elements, coordinate systems and table
        columns);
-     - `show_spatialdata` (takes a `RenderStack`);
+     - `show_spatialdata`, which takes `{ store, renderStack, viewState? }`. `store` is a URL,
+       or for a local MCP server a path under its root, which the server maps to a token URL.
+       A `RenderStack` names elements but not the store they belong to;
      - app-only tools so the tile can hand state back.
    - Give `entry.props` a typed schema per element type first. It is `record<string, unknown>`
      today, so the model gets no guidance.
@@ -113,5 +121,9 @@ Still to measure:
 
 - Whether Claude Science renders MCP App tiles, and how its `host.app(...)(artifact_id=...)`
   binding works. That binding is a host convention beyond SEP-1865.
-- Local stores in a tile. The tile's origin must reach the store server, and sandboxes without
-  `allow-same-origin` cannot fetch localhost at all.
+- Local stores in a tile. The tile's origin must reach the store server.
+  - An opaque origin does not by itself forbid a CORS fetch to localhost. But in the probe
+    harness, Chrome blocked localhost fetches from a sandbox without `allow-same-origin`,
+    consistent with its local-network restrictions.
+  - Whether Claude's hosts allow it, possibly after a permission prompt, needs testing in
+    each host.
