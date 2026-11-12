@@ -1,6 +1,6 @@
 ---
 name: spatialdata-js-host-store
-description: Serve a SpatialData .zarr store over HTTP so SpatialData.js can read it in a browser, and diagnose why a served store will not load. Covers byte-range requests (including suffix ranges), CORS and preflight, exposed headers, caching after rewrites, local serving, and S3/GCS/R2/nginx setup. Use this whenever someone wants to open a local or cloud SpatialData store in the SpatialData.js demo, MDV, a notebook widget or a Claude tile; asks for a URL for their store; or reports a store that loads in Python but fails, hangs or is slow in the browser (CORS errors, 416, "Failed to fetch", points never appearing). Use spatialdata-js-prepare-store first if the store has not been optimised.
+description: Get a SpatialData .zarr (or zipped) store into SpatialData.js in a browser — opened locally or served over HTTP — and diagnose why a served store will not load. Covers byte-range requests (including suffix ranges), CORS and preflight, exposed headers, caching after rewrites, local serving, and S3/GCS/R2/nginx setup. Use this whenever someone wants to open a local or cloud SpatialData store in the SpatialData.js demo, MDV, a notebook widget or a Claude tile; asks for a URL for their store; or reports a store that loads in Python but fails, hangs or is slow in the browser (CORS errors, 416, "Failed to fetch", points never appearing). Use spatialdata-js-prepare-store first if the store has not been optimised.
 compatibility: Python 3 (standard library only) for the bundled scripts.
 ---
 
@@ -11,6 +11,24 @@ and it never downloads the whole store. That only works if the server answers
 those requests exactly as browsers expect. Most failures are server
 configuration problems, not data problems. A store that opens fine in Python
 can still fail, or silently become slow, in a browser.
+
+## First: does this need a server?
+
+To look at a local store in the SpatialData.js demo, it doesn't. The demo
+(<https://taylor-ccb-group.github.io/SpatialData.js/docs/demo/>, or a local dev
+build) has **Open folder…** and **Open zip…** buttons that read the store
+straight from disk. Use those. They avoid every problem below, including
+browsers that block public pages from reading `localhost`.
+
+Host the store when it needs a URL:
+- to share it,
+- for viewers without a file picker (MDV, notebook widgets, Claude tiles),
+- or for a `?url=` link.
+
+A zipped store (`spatialdata-js-util zip`) can be hosted as a single `.zip`
+file. The reader opens any URL ending in `.zip` as an archive and range-reads
+it. That only needs `HEAD` with `Content-Length`, bounded ranges and CORS on
+the one file.
 
 ## What the server must do
 

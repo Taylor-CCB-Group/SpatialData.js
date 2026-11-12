@@ -1,7 +1,7 @@
 ---
 name: spatialdata-js-prepare-store
 description: Make a SpatialData .zarr store fast to view in a web browser with SpatialData.js, using the spatialdata-js-util Python CLI. Recompresses images as HTJ2K/JPEG 2000, adds multiscale pyramids, Morton-sorts points Parquet, and converts table matrices to CSC. Use this whenever someone wants to view, share, publish or serve a SpatialData store (Xenium, MERFISH, Visium HD, CosMx and similar) in a browser, MDV, a notebook widget or a Claude tile, complains a store is slow to load or pan in the browser, or asks about spatialdata-js-util, HTJ2K or Morton-sorted points. This skill does not serve the store over HTTP; use spatialdata-js-host-store for that.
-compatibility: Python 3.12+, a local filesystem copy of the store, and spatialdata >= 0.8 (installed by the `write` extra).
+compatibility: Python 3.12+, a local filesystem copy of the store, spatialdata-js-util >= 0.3 and spatialdata >= 0.8 (installed by the `write` extra).
 ---
 
 # Prepare a SpatialData store for browser reading
@@ -12,7 +12,7 @@ instead. `spatialdata-js-util` fixes the three common causes:
 
 | Element | Problem in the browser | Fix |
 |---|---|---|
-| images | Single-resolution rasters mean full-resolution reads when zoomed out. Generic compressors also decode slowly. | Add a pyramid, then recompress as HTJ2K or JPEG 2000. |
+| images | Single-resolution or shallow pyramids mean large reads when zoomed out. Generic compressors also decode slowly. | Add pyramid levels, then recompress as HTJ2K or JPEG 2000. |
 | points | Unsorted Parquet means downloading every row to draw any viewport. | Morton-sort with bounding-box sentinel rows and controlled row groups. |
 | tables | CSR `X` means reading one gene's values scans every cell. | Convert `X` (and layers) to CSC. |
 
@@ -21,14 +21,7 @@ Shapes and anything not listed are copied through untouched.
 ## 1. Install
 
 ```bash
-pip install 'spatialdata-js-util[write]'
-```
-
-If pip says the package does not exist (it may not be on PyPI yet), install
-from the repository instead:
-
-```bash
-pip install 'spatialdata-js-util[write] @ git+https://github.com/Taylor-CCB-Group/SpatialData.js#subdirectory=python/spatialdata-js-util'
+pip install 'spatialdata-js-util[write]>=0.3'
 ```
 
 Then run `spatialdata-js-util codecs info`. `"selected": "imagecodecs"` means
@@ -57,7 +50,7 @@ Points worth checking in the output:
 
 ## 3. Run, writing a new store first
 
-Image commands always write a new store. The points and tables commands
+`images recompress` always writes a new store. The points and tables commands
 rewrite in place by default. So do images first into a new output, then run
 points and tables on that output. The user's original stays untouched.
 
@@ -77,6 +70,16 @@ If no image needs work, the images step won't create the new store. In that
 case run `tables to-csc in.zarr out.zarr` first, which copies, then
 Morton-sort on `out.zarr`. Otherwise, before touching `in.zarr` in place,
 confirm with the user that they have a backup.
+
+If images only need pyramid levels, not recompression, and copying the store
+is too costly, there is an in-place option:
+`spatialdata-js-util images add-pyramid in.zarr --in-place`. It appends the new
+levels and declares them last, and never rewrites existing arrays. An
+interrupted run leaves the store readable, and rerunning completes it. It still
+changes the user's store, so ask first.
+
+For transcript-scale stores, pass `--temp-dir` to `recompress` and
+`morton-from-zarr` to keep their spill files off a small system disk.
 
 ### Choosing image options
 
@@ -103,9 +106,10 @@ confirm with the user that they have a backup.
   ```json
   { "images": { "morphology_focus": {}, "he_image": { "preset": "lossless" } } }
   ```
-- **`--pyramid`.** Only acts on single-level images larger than 1024 px on a
-  side. For labels, use `images add-pyramid --labels`. It downsamples without
-  averaging ids together.
+- **`--pyramid`.** Adds levels to any image whose coarsest level is still
+  larger than 1024 px on a side (`--pyramid-min-size`). It keeps the levels
+  that already exist. For labels, use `images add-pyramid --labels`. It
+  downsamples without averaging ids together.
 
 `images recompress` also rewrites every labels element with Blosc/zstd. That
 is lossless, and happens even when `--image-key` names only images, so mention
@@ -153,6 +157,10 @@ changed, and any element left alone and why.
 
 ## Next
 
-To view the result in a browser, it has to be served over HTTP with range
-requests and CORS. Plain `python -m http.server` does not do either. See the
-`spatialdata-js-host-store` skill.
+To share the result as one file, pack it:
+`spatialdata-js-util zip out.zarr out.zarr.zip`. This makes an uncompressed
+zip that SpatialData.js range-reads chunk by chunk.
+
+To view it, see the `spatialdata-js-host-store` skill. The SpatialData.js demo
+can open a local folder or zip directly. Any other viewer needs the store
+served over HTTP with range requests and CORS.

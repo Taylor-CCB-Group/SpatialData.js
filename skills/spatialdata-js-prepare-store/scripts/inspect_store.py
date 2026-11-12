@@ -77,12 +77,14 @@ def raster_report(name: str, kind: str, nodes: dict) -> dict:
     full = levels[0]
     shape = full.get("shape", [])
     axes = [a["name"] if isinstance(a, dict) else a for a in multiscales[0].get("axes", [])]
-    spatial = [n for n, a in zip(shape, axes) if a in ("x", "y")] or shape[-2:]
+    coarsest = levels[-1].get("shape", shape)
+    spatial = [n for n, a in zip(coarsest, axes) if a in ("x", "y")] or coarsest[-2:]
     dtype = dtype_of(full)
     codecs = codec_names(full)
     report = {"element": f"{kind}/{name}", "dtype": dtype, "shape": shape, "axes": axes,
               "levels": len(paths), "codecs": codecs, "suggest": []}
-    if len(paths) == 1 and spatial and max(spatial) > PYRAMID_TARGET:
+    # Mirrors spatialdata-js-util >= 0.3: shallow pyramids are extended too.
+    if spatial and max(spatial) > PYRAMID_TARGET:
         report["suggest"].append("add pyramid (images recompress --pyramid, or images add-pyramid"
                                  + (" --labels" if kind == "labels" else "") + ")")
     if kind == "images":

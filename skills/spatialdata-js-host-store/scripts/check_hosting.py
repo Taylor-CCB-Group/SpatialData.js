@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BROWSER_HEADERS = {"Accept-Encoding": "gzip, deflate, br", "User-Agent": "spatialdata-js-check/1"}
@@ -52,17 +53,20 @@ def check_cors(headers: dict, origin: str, label: str) -> bool:
     return False
 
 
-def check_file(url: str, origin: str, label: str) -> None:
-    """The range shapes zarr shards and Parquet readers need, against one file."""
+def check_file(url: str, origin: str, label: str, suffix: bool = True) -> None:
+    """The range shapes zarr shards and Parquet readers need, against one file.
+    A zip archive is sized with HEAD and read with bounded ranges only."""
     status, headers, _ = request(url, origin, "HEAD")
     if status != 200:
-        record("FAIL", f"{label}: HEAD", f"status {status}. zarrita sizes sharded arrays with HEAD.")
+        record("FAIL", f"{label}: HEAD", f"status {status}. Readers size files with HEAD "
+               "(zarrita for shard indexes, the zip reader for the archive).")
     elif "content-length" not in headers:
-        record("FAIL", f"{label}: HEAD", "no Content-Length; zarrita needs it to find shard indexes.")
-    else:
+        record("FAIL", f"{label}: HEAD", "no Content-Length; readers size files from it.")
+    elif check_cors(headers, origin, f"{label}: HEAD"):
         record("PASS", f"{label}: HEAD", f"Content-Length {headers['content-length']}")
 
-    for shape, rng in (("bounded range", "bytes=0-7"), ("suffix range", "bytes=-8")):
+    shapes = [("bounded range", "bytes=0-7")] + ([("suffix range", "bytes=-8")] if suffix else [])
+    for shape, rng in shapes:
         status, headers, body = request(url, origin, headers={"Range": rng})
         check = f"{label}: {shape} ({rng})"
         if status == 200:
@@ -129,7 +133,7 @@ def find_parquet(store: str, origin: str, metadata: dict) -> str | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("store_url", help="URL of the .zarr store root")
+    parser.add_argument("store_url", help="URL of the .zarr store root, or of a zipped store (.zip)")
     parser.add_argument("--origin", default="https://example.org",
                         help="Origin of the page that will read the store (default: %(default)s)")
     parser.add_argument("--parquet", help="Store-relative Parquet path to range-test "
@@ -137,6 +141,12 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="Print results as JSON")
     args = parser.parse_args()
     store = args.store_url.rstrip("/")
+
+    if urllib.parse.urlparse(store).path.lower().endswith(".zip"):
+        check_preflight(store, args.origin)
+        check_file(store, args.origin, "zip archive", suffix=False)
+        report(args.json)
+        return
 
     metadata: dict = {}
     status, headers, body = request(f"{store}/zarr.json", args.origin)
@@ -171,7 +181,11 @@ def main() -> None:
         record("WARN", "points parquet", "points elements exist but no Parquet was found to test; "
                "pass --parquet")
 
-    if args.json:
+    report(args.json)
+
+
+def report(as_json: bool) -> None:
+    if as_json:
         print(json.dumps([{"status": s, "check": c, "detail": d} for s, c, d in results], indent=2))
     else:
         for s, c, d in results:
