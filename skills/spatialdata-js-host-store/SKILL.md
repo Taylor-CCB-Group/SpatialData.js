@@ -41,8 +41,10 @@ Each requirement exists because a specific reader depends on it:
    bytes. The Parquet reader uses this to read file footers. Many static
    servers return `416` here, and SpatialData.js then falls back to
    whole-file Parquet downloads. Points still appear, just slowly.
-3. **`HEAD` with `Content-Length`.** zarrita sizes sharded arrays this way
-   before reading a shard index.
+3. **`HEAD` with `Content-Length` on shard files.** zarrita sizes a shard this
+   way before reading its index. Nothing sends `HEAD` for metadata or Parquet.
+   A server may drop `Content-Length` from a `HEAD` on gzip-compressed JSON,
+   and that is harmless.
 4. **CORS.**
    - Responses must carry `Access-Control-Allow-Origin`, either `*` or the
      viewer page's origin.

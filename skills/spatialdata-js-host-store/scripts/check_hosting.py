@@ -78,7 +78,8 @@ def check_head(url: str, origin: str, label: str, zip_archive: bool) -> bool:
     """Returns whether the size came from Content-Length (else ranges must expose Content-Range)."""
     status, headers, _ = request(url, origin, "HEAD")
     if status != 200:
-        record("FAIL", f"{label}: HEAD", f"status {status}. Readers size files with HEAD "
+        hint = " (an empty shard may simply not exist)" if status == 404 else ""
+        record("FAIL", f"{label}: HEAD", f"status {status}{hint}. Readers size files with HEAD "
                "(zarrita for shard indexes, the zip reader for the archive).")
         return False
     if not check_cors(headers, origin, f"{label}: HEAD"):
@@ -174,6 +175,26 @@ def check_preflight(url: str, origin: str, label: str, required: bool) -> None:
                "but suffix ranges or extra request headers would.")
 
 
+def first_shard_url(store: str, metadata: dict) -> str | None:
+    """A shard file of the first array whose index sits at the shard's end. zarrita reads
+    such an index with HEAD (for the size) and a bounded range; nothing else HEADs a store."""
+    for path, node in sorted(metadata.items()):
+        if node.get("node_type") != "array":
+            continue
+        shards = [c for c in node.get("codecs", []) if c.get("name") == "sharding_indexed"]
+        if not shards or shards[0].get("configuration", {}).get("index_location") == "start":
+            continue
+        encoding = node.get("chunk_key_encoding") or {}
+        separator = encoding.get("configuration", {}).get("separator", "/")
+        zeros = ["0"] * len(node.get("shape", []))
+        if encoding.get("name") == "v2":
+            key = separator.join(zeros) or "0"
+        else:
+            key = separator.join(["c", *zeros])
+        return f"{store}/{path}/{key}"
+    return None
+
+
 def find_parquet(store: str, origin: str, metadata: dict) -> str | None:
     """First points element's Parquet. A directory of parts cannot be listed over HTTP,
     so try the single-file layout, then the first part spatialdata writes. Static
@@ -230,15 +251,17 @@ def main() -> None:
             record("WARN", "caching", f"Cache-Control {cache!r}. If this store is rewritten in place, "
                    "browsers can mix stale metadata with new chunks. Use no-cache, or a new URL per rewrite.")
 
-    # zarrita reads chunks and shards with HEAD and bounded ranges.
+    # zarrita reads chunks with bounded ranges, and sizes shards with HEAD to find their index.
     check_preflight(meta_url, args.origin, "metadata file", required=False)
-    check_head(meta_url, args.origin, "metadata file", zip_archive=False)
     check_ranges(meta_url, args.origin, "metadata file", suffix=False, need_content_range=False)
+    shard = first_shard_url(store, metadata)
+    if shard:
+        # A HEAD on gzip-encoded text can legitimately omit Content-Length, so test a real shard.
+        check_head(shard, args.origin, "shard file", zip_archive=False)
     # The Parquet reader reads footers with suffix ranges, which are preflighted.
     parquet = f"{store}/{args.parquet}" if args.parquet else find_parquet(store, args.origin, metadata)
     if parquet:
         check_preflight(parquet, args.origin, "points parquet", required=True)
-        check_head(parquet, args.origin, "points parquet", zip_archive=False)
         check_ranges(parquet, args.origin, "points parquet", suffix=True, need_content_range=True)
     elif any(k.startswith("points/") for k in metadata):
         record("WARN", "points parquet", "points elements exist but no Parquet was found to test; "
