@@ -16,6 +16,7 @@ import {
   resolveShapeFeatureFromPick,
   resolveShapeTooltipFromPickInfo,
   resolveShapeTooltipRowIndex,
+  type ShapeFeatureStateRuntime,
   type ShapesRenderDataLike,
 } from '../src/shapesLayer';
 
@@ -575,6 +576,89 @@ describe('binary (flat-polygons) render path', () => {
     expect((second[0].props as any).ringPositions).toBe((first[0].props as any).ringPositions);
     // Stable per-feature colour buffer identity → no colour texture rebuild.
     expect((second[0].props as any).featureColors).toBe((first[0].props as any).featureColors);
+  });
+
+  it('repaints a new default fill colour without resolving each feature again', () => {
+    // A default fill change is cosmetic: no feature changes its own colour, hidden or
+    // faded status. Re-resolving every feature against the runtime's Maps/Sets for it
+    // is a ~70ms main-thread stall at 140k shapes, on every step of a colour picker.
+    let lookups = 0;
+    type Rgba = [number, number, number, number];
+    class CountingMap extends Map<string, Rgba> {
+      override get(key: string) {
+        lookups += 1;
+        return super.get(key);
+      }
+      override has(key: string) {
+        lookups += 1;
+        return super.has(key);
+      }
+    }
+    class CountingSet extends Set<string> {
+      override has(value: string) {
+        lookups += 1;
+        return super.has(value);
+      }
+    }
+    const featureIds = ['own', 'hidden', 'faded', 'plain', 'faded-own'];
+    const data: ShapesRenderDataLike = {
+      kind: 'flat-polygons',
+      geometryKind: 'polygon',
+      elementKey: 'cells',
+      featureIds,
+      polygonBinary: {
+        positions: new Float32Array(featureIds.flatMap((_, i) => [i, i, i + 1, i, i, i + 1])),
+        startIndices: new Int32Array(featureIds.map((_, i) => i * 3).concat(featureIds.length * 3)),
+      },
+      rowIndexByFeatureIndex: new Int32Array(featureIds.map((_, i) => i)),
+    };
+    const featureState: ShapeFeatureStateRuntime = {
+      fillColorByFeatureId: new CountingMap([
+        ['own', [1, 2, 3, 255]],
+        ['faded-own', [4, 5, 6, 255]],
+      ]),
+      strokeColorByFeatureId: new CountingMap(),
+      hiddenFeatureIds: new CountingSet(['hidden']),
+      fadedFeatureIds: new CountingSet(['faded', 'faded-own']),
+      filteredOpacityMultiplier: 0.5,
+    };
+    const prebuilt = buildShapesPrebuiltData(data);
+    const colorsFor = (defaultFillColor: Rgba) => {
+      const layers = createShapesDeckLayer(
+        data,
+        { kind: 'shapes', elementKey: 'cells', visible: true, defaultFillColor, featureState },
+        { id: 'x' },
+        prebuilt
+      );
+      if (!Array.isArray(layers)) {
+        throw new Error('Expected the binary path to return a single-layer array');
+      }
+      const colors: unknown = Reflect.get(layers[0].props, 'featureColors');
+      if (!(colors instanceof Uint8Array)) {
+        throw new Error('Expected a per-feature colour buffer');
+      }
+      return Array.from({ length: featureIds.length }, (_, f) =>
+        Array.from(colors.slice(f * 4, f * 4 + 4))
+      );
+    };
+
+    expect(colorsFor([200, 0, 0, 200])).toEqual([
+      [1, 2, 3, 255],
+      [0, 0, 0, 0],
+      [200, 0, 0, 100],
+      [200, 0, 0, 200],
+      [4, 5, 6, 128],
+    ]);
+
+    lookups = 0;
+    expect(colorsFor([0, 0, 200, 100])).toEqual([
+      [1, 2, 3, 255],
+      [0, 0, 0, 0],
+      [0, 0, 200, 50],
+      [0, 0, 200, 100],
+      [4, 5, 6, 128],
+    ]);
+    expect(lookups).toBe(0);
   });
 
   it('does not thrash the per-feature colour buffer between two layers sharing a runtime', () => {
