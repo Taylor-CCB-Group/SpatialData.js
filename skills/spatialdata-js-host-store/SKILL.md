@@ -38,22 +38,25 @@ Each requirement exists because a specific reader depends on it:
    bytes. This is how zarr chunks and Parquet column chunks are read. A server
    that ignores `Range` and returns `200` with the whole file breaks offsets.
 2. **Suffix ranges.** `Range: bytes=-N` must return `206` with the last N
-   bytes. The Parquet reader uses this to read file footers. Many static
-   servers return `416` here, and SpatialData.js then falls back to
-   whole-file Parquet downloads. Points still appear, just slowly.
-3. **`HEAD` with `Content-Length` on shard files.** zarrita sizes a shard this
-   way before reading its index. Nothing sends `HEAD` for metadata or Parquet.
-   A server may drop `Content-Length` from a `HEAD` on gzip-compressed JSON,
-   and that is harmless.
+   bytes. The streaming Parquet reader uses this to read file footers. Many
+   static servers return `416` here, and SpatialData.js then skips streaming
+   for coarser reads (whole row groups or whole files). Points still appear,
+   just slowly.
+3. **`HEAD` with `Content-Length` on shard and Parquet files.** zarrita sizes
+   a shard this way before reading its index, and reads a Parquet footer as a
+   `HEAD` then a bounded range. Nothing sends `HEAD` for metadata, so a server
+   may drop `Content-Length` from a `HEAD` on gzip-compressed JSON harmlessly.
 4. **CORS.**
    - Responses must carry `Access-Control-Allow-Origin`, either `*` or the
      viewer page's origin.
    - `Range` is CORS-safelisted only as a single bounded range, so suffix
-     reads (the Parquet footers) are preflighted. `OPTIONS` must succeed and
+     reads (the streaming Parquet reader) are preflighted. `OPTIONS` must succeed and
      allow the `Range` header. Zip archives and zarr chunks use bounded ranges
      only.
-   - `Access-Control-Expose-Headers` must include `Content-Range`, otherwise
-     the browser hides it from the reader.
+   - `Access-Control-Expose-Headers` must include `Content-Range` for a zip
+     archive whose `HEAD` lacks `Content-Length`: the zip reader then takes the
+     size from a one-byte range. No other reader uses it, and `Content-Length`
+     is readable cross-origin without being exposed.
 5. **No compression on ranged files.** Do not apply
    `Content-Encoding: gzip`/`br` to `.zarr` chunks or `.parquet` files. Range
    offsets would refer to the compressed stream. The data is already
