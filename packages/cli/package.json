@@ -1,0 +1,37 @@
+{
+  "name": "@spatialdata/cli",
+  "version": "0.0.0",
+  "description": "sdjs: serve local SpatialData stores and browse them in the SpatialData.js viewer",
+  "type": "module",
+  "bin": {
+    "sdjs": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "app"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json && node ../../scripts/build-viewer-app.mjs app",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@spatialdata/vis": "workspace:*",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Taylor-CCB-Group/SpatialData.js.git",
+    "directory": "packages/cli"
+  }
+}

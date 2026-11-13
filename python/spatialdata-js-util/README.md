@@ -364,6 +364,16 @@ Packs a store into an uncompressed zip with its contents at the archive root, so
 a browser can range-read any one chunk (zarrextra's `ZipStore`). Files are
 streamed rather than read into memory, and the zip appears only once it is complete.
 
+## Serve
+
+```bash
+spatialdata-js-util serve ~/data
+```
+
+Browses every store under a directory in the SpatialData.js viewer. This is the
+[`sdjs`](../sdjs) server, which is also installable on its own (`uvx sdjs serve`)
+without this package's dependencies.
+
 ## Python API
 
 ```python

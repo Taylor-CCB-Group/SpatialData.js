@@ -30,12 +30,14 @@ publishing is intentionally manual for now.
 - `zarrextra` participates in the first prerelease because `@spatialdata/core`
   depends on it, but it is not fixed to the `@spatialdata/*` version train for
   future releases.
-- `spatialdata-js-util` (the PyPI package in `python/spatialdata-js-util`) is
-  versioned by Changesets through a private `package.json` shim there.
-  `pnpm version-packages` copies its version into `pyproject.toml` and `uv.lock`.
-  It is not fixed to any npm package. `changeset publish` does not publish it,
-  but tags each new version `spatialdata-js-util@<version>`, and PyPI releases
-  are built from that tag; see [Python package](#python-package-pypi).
+- The PyPI packages `spatialdata-js-util` and `sdjs` (in `python/`) are
+  versioned by Changesets through a private `package.json` shim in each.
+  `pnpm version-packages` copies the versions into `pyproject.toml` and
+  `uv.lock`. `changeset publish` does not publish them, but tags each new
+  version `<package>@<version>`, and PyPI releases are built from that tag; see
+  [Python packages](#python-packages-pypi).
+- `sdjs` is fixed to `@spatialdata/cli`, its npm twin: the same `sdjs serve`
+  command, so both carry the same version.
 
 ## Dist-tags
 
@@ -107,7 +109,11 @@ npm dist-tag add zarrextra@<latest-version> next
    pnpm --filter zarrextra publish --dry-run --no-git-checks
    pnpm --filter @spatialdata/core publish --dry-run --no-git-checks
    pnpm --filter @spatialdata/vis publish --dry-run --no-git-checks
+   pnpm --filter @spatialdata/cli publish --dry-run --no-git-checks
    ```
+
+   The `@spatialdata/cli` file list should include `app/index.html`, the bundled
+   viewer that `pnpm build` puts there.
 
 8. Confirm the generated `@spatialdata/core` package manifest depends on
    `zarrextra`, not `@spatialdata/zarrextra`:
@@ -145,10 +151,15 @@ npm dist-tag add zarrextra@<latest-version> next
     pnpm add @spatialdata/vis
     ```
 
-## Python package (PyPI)
+## Python packages (PyPI)
 
-Publishing is manual. The merged version PR has already set the version in the
+Publishing is manual. The merged version PR has already set each version in its
 shim, `pyproject.toml` and `uv.lock`; do not rerun `pnpm version-packages`.
+
+`spatialdata-js-util` depends on `sdjs`, so when both have a new version,
+publish `sdjs` first: the util's smoke test in step 3 resolves `sdjs` from PyPI.
+
+For each package with a new version:
 
 1. Tag the version. Step 9 of the normal flow does this. If the version PR
    changed no npm package, create and push the tag without publishing:
@@ -161,30 +172,35 @@ shim, `pyproject.toml` and `uv.lock`; do not rerun `pnpm version-packages`.
 2. Build both artifacts from that tag:
 
    ```bash
-   git checkout spatialdata-js-util@<version>
-   pnpm build:python --release
+   git checkout <package>@<version>
+   pnpm build:python --release <package>
    ```
 
-   This vendors the OpenJPH WASM, builds into `python/spatialdata-js-util/dist/`,
-   and fails unless HEAD carries the tag and the wheel and sdist both contain
-   every vendored file and the shim's version. Do not publish the output of a
-   bare `uv build`: it succeeds without the WASM.
+   This bundles the package's gitignored runtime files (the OpenJPH WASM for
+   `spatialdata-js-util`, the viewer for `sdjs`), builds into
+   `python/<package>/dist/`, and fails unless HEAD carries the tag and the
+   wheel and sdist both contain every one of those files. Do not publish the
+   output of a bare `uv build`: it succeeds without them.
 
 3. Smoke-test the wheel in a throwaway environment:
 
    ```bash
-   uv run --isolated --with python/spatialdata-js-util/dist/*.whl spatialdata-js-util --help
+   uv run --isolated --no-project --with python/<package>/dist/*.whl <package> --help
    ```
 
-4. Publish, with a PyPI API token scoped to `spatialdata-js-util`:
+4. Publish, with a PyPI API token scoped to that package:
 
    ```bash
-   uv publish python/spatialdata-js-util/dist/*
+   uv publish python/<package>/dist/*
    ```
 
    `uv publish` prompts for the token, or reads `UV_PUBLISH_TOKEN`.
    PyPI never accepts a version twice, even after deletion, so a bad release
    is fixed by yanking it and publishing the next version.
+
+   A package's first upload is what registers its name on PyPI, and a token
+   can only be scoped to a project that exists, so that upload needs an
+   account-wide token. Replace it with a project-scoped one afterwards.
 
 ## Release tooling
 
