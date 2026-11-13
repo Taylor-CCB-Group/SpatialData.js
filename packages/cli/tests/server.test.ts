@@ -1,9 +1,19 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resolveServedRoot } from '../src/catalog.ts';
+import { isServablePath, resolveServedRoot } from '../src/catalog.ts';
 import { createStoreServer, parseRange } from '../src/server.ts';
 
 let dir: string;
@@ -44,6 +54,9 @@ beforeAll(async () => {
     join(dir, 'other', 'plain.zarr', 'zarr.json'),
     '{"zarr_format":3,"node_type":"group"}'
   );
+  await mkdir(join(dir, 'other', 'bad.zarr'), { recursive: true });
+  await writeFile(join(dir, 'other', 'bad.zarr', 'zarr.json'), '{not json');
+  await writeFile(join(dir, 'a.zarr', 'images', 'big'), Buffer.alloc(32 << 20));
   await mkdir(join(dir, '.hidden', 'd.zarr'), { recursive: true });
   await writeFile(join(dir, 'secret.txt'), 'nope');
   // A symlink loop must not hang discovery.
@@ -52,6 +65,20 @@ beforeAll(async () => {
   await writeFile(join(dir, 'app', 'index.html'), '<html>viewer</html>');
   ({ server, base } = await start(dir, TOKEN, join(dir, 'app')));
 });
+
+/** This process's open file descriptors on `path`: /proc on Linux, lsof elsewhere. */
+async function handlesOpenOn(path: string): Promise<number> {
+  const target = await realpath(path);
+  const fds = await readdir('/proc/self/fd').catch(() => null);
+  if (fds) {
+    const links = await Promise.all(
+      fds.map((fd) => readlink(`/proc/self/fd/${fd}`).catch(() => ''))
+    );
+    return links.filter((link) => link === target).length;
+  }
+  const out = execFileSync('lsof', ['-a', '-p', String(process.pid), '-Fn'], { encoding: 'utf8' });
+  return out.split('\n').filter((line) => line === `n${target}`).length;
+}
 
 afterAll(async () => {
   server?.close();
@@ -66,6 +93,8 @@ describe('catalog', () => {
     expect(catalog).toMatchObject({ version: 1, name: expect.any(String) });
     expect(catalog).toHaveProperty('stores', [
       { path: 'a.zarr', url: 'data/a.zarr', kind: 'spatialdata' },
+      // Malformed metadata flags that store rather than failing the catalog.
+      { path: 'other/bad.zarr', url: 'data/other/bad.zarr', kind: 'unknown' },
       { path: 'other/plain.zarr', url: 'data/other/plain.zarr', kind: 'zarr' },
       { path: 'other/v2.zarr', url: 'data/other/v2.zarr', kind: 'spatialdata' },
       // Zips are listed without being inspected.
@@ -112,7 +141,28 @@ describe('data', () => {
     ]) {
       expect((await fetch(`${data()}/${path}`)).status, path).toBe(404);
     }
+    // Windows path joining reads `C:..` as `..` on that drive.
+    expect(isServablePath(['a.zarr', 'C:..', 'secret.txt'])).toBe(false);
+    expect(isServablePath(['a.zarr', 'images', 'chunk'])).toBe(true);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'closes the file when a client abandons a response',
+    async () => {
+      const big = join(dir, 'a.zarr', 'images', 'big');
+      const controller = new AbortController();
+      const res = await fetch(`${data()}/a.zarr/images/big`, { signal: controller.signal });
+      await res.body?.getReader().read();
+      expect(await handlesOpenOn(big)).toBe(1);
+      controller.abort();
+      let open = await handlesOpenOn(big);
+      for (let i = 0; i < 50 && open > 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        open = await handlesOpenOn(big);
+      }
+      expect(open).toBe(0);
+    }
+  );
 
   it('answers bounded, open-ended and suffix ranges', async () => {
     const get = (range: string) =>

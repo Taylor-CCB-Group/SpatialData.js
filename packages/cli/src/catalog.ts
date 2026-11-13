@@ -92,10 +92,10 @@ export async function findStores(root: ServedRoot, maxDepth = 8): Promise<string
 
 async function readRootAttributes(dir: string): Promise<Record<string, unknown> | null> {
   const readJson = (name: string) =>
-    readFile(join(dir, name), 'utf8').then(
-      (text): unknown => JSON.parse(text),
-      () => undefined
-    );
+    // Unreadable or malformed metadata marks the store, not the whole catalog.
+    readFile(join(dir, name), 'utf8')
+      .then((text): unknown => JSON.parse(text))
+      .catch(() => undefined);
   const isRecord = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
   const v3 = await readJson('zarr.json');
@@ -138,8 +138,11 @@ export async function buildCatalog(root: ServedRoot, stores: string[]): Promise<
  * Name-based, so stores added after start are served; hidden segments are refused
  * only above the store, since `.zattrs` and friends live inside it.
  */
+/** Separators, NUL, or a drive (`C:`), which Windows path joining can treat as a jump. */
+export const UNSAFE_SEGMENT = /[\\/\0]|^[A-Za-z]:/;
+
 export function isServablePath(segments: string[], only?: string): boolean {
-  const unsafe = (s: string) => s === '' || s === '.' || s === '..' || /[\\/\0]/.test(s);
+  const unsafe = (s: string) => s === '' || s === '.' || s === '..' || UNSAFE_SEGMENT.test(s);
   if (segments.some(unsafe)) return false;
   const last = segments.length - 1;
   const store = segments.findIndex(

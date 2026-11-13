@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import urllib.parse
 from dataclasses import dataclass
 from email.utils import formatdate
@@ -21,7 +22,8 @@ DATA_PREFIX = "data/"
 SKIPPED_DIRS = {"node_modules", "__pycache__"}
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
-UNSAFE = re.compile(r"[\\/\0]")
+# Separators, NUL, or a drive (`C:`), which Windows pathlib joins as a jump (`C:..` is `..`).
+UNSAFE = re.compile(r"[\\/\0]|^[A-Za-z]:")
 MIME = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript",
@@ -79,7 +81,11 @@ def find_stores(root: ServedRoot, max_depth: int = 8) -> list[str]:
             if _skipped(name):
                 continue
             child = directory / name
-            is_dir = child.is_dir()
+            try:
+                # Python 3.10's is_dir raises PermissionError rather than returning False.
+                is_dir = child.is_dir()
+            except OSError:
+                continue
             if is_store_name(name, is_dir):
                 found.append("/".join([*rel, name]))
             elif is_dir and depth < max_depth:
@@ -313,4 +319,9 @@ def create_server(root: ServedRoot, token: str | None, app_dir: Path | None, hos
         "root": root, "prefix": stores_prefix(token), "app_dir": app_dir,
         "loopback_only": loopback_only, "max_depth": max_depth,
     })
-    return ThreadingHTTPServer((host, port), handler)
+    server_class = _IPv6Server if ":" in host else ThreadingHTTPServer
+    return server_class((host, port), handler)
+
+
+class _IPv6Server(ThreadingHTTPServer):
+    address_family = socket.AF_INET6

@@ -5,6 +5,8 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import socket
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -12,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from sdjs.server import create_server, parse_range, resolve_served_root
+from sdjs.server import create_server, find_stores, is_servable_path, parse_range, resolve_served_root
 
 TOKEN = "tok"
 SD_ROOT = '{"zarr_format":3,"node_type":"group","attributes":{"spatialdata_attrs":{"version":"0.2"}}}'
@@ -48,6 +50,8 @@ def tree(tmp_path_factory):
     (d / "other" / "v2.zarr" / ".zattrs").write_text('{"spatialdata_attrs":{}}')
     (d / "other" / "plain.zarr").mkdir(parents=True)
     (d / "other" / "plain.zarr" / "zarr.json").write_text('{"zarr_format":3,"node_type":"group"}')
+    (d / "other" / "bad.zarr").mkdir(parents=True)
+    (d / "other" / "bad.zarr" / "zarr.json").write_text("{not json")
     (d / ".hidden" / "d.zarr").mkdir(parents=True)
     (d / "secret.txt").write_text("nope")
     os.symlink(d, d / "project" / "loop")
@@ -66,6 +70,8 @@ def test_catalog_lists_nested_stores(tree):
     assert catalog["version"] == 1
     assert catalog["stores"] == [
         {"path": "a.zarr", "url": "data/a.zarr", "kind": "spatialdata"},
+        # Malformed metadata flags that store rather than failing the catalog.
+        {"path": "other/bad.zarr", "url": "data/other/bad.zarr", "kind": "unknown"},
         {"path": "other/plain.zarr", "url": "data/other/plain.zarr", "kind": "zarr"},
         {"path": "other/v2.zarr", "url": "data/other/v2.zarr", "kind": "spatialdata"},
         # Zips are listed without being inspected.
@@ -100,6 +106,9 @@ def test_serves_inside_stores_only(tree):
     assert fetch(f"{data}/project/run%201/b.zarr/inner.zarr")[0] == 404
     for path in ["secret.txt", "a.zarr/%2e%2e/secret.txt", ".hidden/d.zarr", "a.zarr%2f..%2fsecret.txt"]:
         assert fetch(f"{data}/{path}")[0] == 404, path
+    # Windows pathlib joins `C:..` as `..` on that drive.
+    assert not is_servable_path(["a.zarr", "C:..", "secret.txt"])
+    assert is_servable_path(["a.zarr", "images", "chunk"])
 
 
 def test_dot_segments_are_refused_unnormalised(tree):
@@ -150,3 +159,28 @@ def test_parse_range_fallbacks():
     assert parse_range("bytes=0-1,4-5", 10) is None
     assert parse_range("bytes=-", 10) is None
     assert parse_range("bytes=-20", 10) == (0, 9)
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0,
+                    reason="needs POSIX permissions that apply to this user")
+def test_discovery_skips_entries_it_cannot_stat(tmp_path):
+    (tmp_path / "ok.zarr").mkdir()
+    (tmp_path / "locked" / "sub").mkdir(parents=True)
+    # Listable but not searchable: listing works, stat-ing an entry does not.
+    os.chmod(tmp_path / "locked", 0o444)
+    try:
+        assert find_stores(resolve_served_root(tmp_path)) == ["ok.zarr"]
+    finally:
+        os.chmod(tmp_path / "locked", 0o755)
+
+
+@pytest.mark.skipif(not socket.has_ipv6, reason="no IPv6")
+def test_serves_on_ipv6_loopback(tmp_path):
+    (tmp_path / "a.zarr").mkdir()
+    server = create_server(resolve_served_root(tmp_path), None, None, "::1", 0, True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        status, _, body = fetch(f"http://[::1]:{server.server_address[1]}/stores/catalog.json")
+        assert status == 200 and json.loads(body)["stores"][0]["path"] == "a.zarr"
+    finally:
+        server.shutdown()

@@ -2,12 +2,14 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join } from 'node:path';
+import { pipeline } from 'node:stream';
 import {
   buildCatalog,
   DATA_PREFIX,
   findStores,
   isServablePath,
   type ServedRoot,
+  UNSAFE_SEGMENT,
 } from './catalog.ts';
 
 export interface StoreServerOptions {
@@ -96,9 +98,8 @@ async function sendFile(
     res.end();
     return true;
   }
-  createReadStream(path, { start, end })
-    .on('error', () => res.destroy())
-    .pipe(res);
+  // Unlike .pipe, pipeline closes the file when the client disconnects mid-response.
+  pipeline(createReadStream(path, { start, end }), res, () => {});
   return true;
 }
 
@@ -167,7 +168,7 @@ export function createStoreServer(options: StoreServerOptions): Server {
     } catch {
       return notFound(res);
     }
-    if (decoded.some((s) => s === '..' || s.startsWith('.') || /[\\/\0]/.test(s))) {
+    if (decoded.some((s) => s === '..' || s.startsWith('.') || UNSAFE_SEGMENT.test(s))) {
       return notFound(res);
     }
     if (decoded.length > 0 && (await sendFile(req, res, join(appDir, ...decoded)))) return;
