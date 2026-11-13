@@ -53,14 +53,13 @@ def serve(args: argparse.Namespace) -> None:
             pass
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="sdjs")
-    commands = parser.add_subparsers(dest="command", required=True)
-    p = commands.add_parser(
-        "serve",
-        help="Serve the SpatialData stores under a directory and open them in the viewer",
-        description="Serve the SpatialData stores (*.zarr, *.zarr.zip) under root, and open "
-                    "them in the bundled viewer.")
+SERVE_DESCRIPTION = ("Serve the SpatialData stores (*.zarr, *.zarr.zip) under root, and open "
+                     "them in the bundled viewer.")
+SERVE_HELP = "Serve the SpatialData stores under a directory and open them in the viewer"
+
+
+def add_serve_arguments(p: argparse.ArgumentParser) -> None:
+    """Adds `serve`'s flags; spatialdata-js-util reuses this for its own `serve`."""
     p.add_argument("root", nargs="?", default=".", help="Directory or store (default: current directory)")
     p.add_argument("--port", type=int, default=None, help="Port (default 8000, or a free one if taken)")
     p.add_argument("--host", default="127.0.0.1", help="Interface to bind (default 127.0.0.1)")
@@ -69,6 +68,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-open", action="store_true", help="Do not open a browser")
     p.add_argument("--depth", type=int, default=8, help="How deep to look for stores (default 8)")
     p.set_defaults(func=serve)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="sdjs")
+    commands = parser.add_subparsers(dest="command", required=True)
+    add_serve_arguments(commands.add_parser("serve", help=SERVE_HELP, description=SERVE_DESCRIPTION))
     args = parser.parse_args(argv)
     args.func(args)
 

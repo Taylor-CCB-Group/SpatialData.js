@@ -147,7 +147,11 @@ npm dist-tag add zarrextra@<latest-version> next
 
 ## Python package (PyPI)
 
-Publishing is manual. The merged version PR has already set the version in the
+Publishing is manual. `spatialdata-js-util` depends on `sdjs` (`python/sdjs`),
+so the first release of each, and any util release needing a newer `sdjs`, must
+follow that `sdjs` release on PyPI; otherwise step 3 fails to resolve.
+
+The merged version PR has already set the version in the
 shim, `pyproject.toml` and `uv.lock`; do not rerun `pnpm version-packages`.
 
 1. Tag the version. Step 9 of the normal flow does this. If the version PR
