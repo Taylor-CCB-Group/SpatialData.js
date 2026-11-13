@@ -1,4 +1,4 @@
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 /**
@@ -17,7 +17,15 @@ export interface CatalogEntry {
   path: string;
   /** Relative to the catalog URL. */
   url: string;
+  /** Absent when not inspected (zip archives). */
+  kind?: StoreKind;
 }
+
+/**
+ * `zarr` is a zarr group without SpatialData's root attributes; `unknown` has no zarr
+ * root metadata at all.
+ */
+export type StoreKind = 'spatialdata' | 'zarr' | 'unknown';
 
 /** Where store files are served, relative to the token prefix. */
 export const DATA_PREFIX = 'data/';
@@ -82,14 +90,46 @@ export async function findStores(root: ServedRoot, maxDepth = 8): Promise<string
   return found;
 }
 
-export function buildCatalog(name: string, stores: string[]): Catalog {
+async function readRootAttributes(dir: string): Promise<Record<string, unknown> | null> {
+  const readJson = (name: string) =>
+    readFile(join(dir, name), 'utf8').then(
+      (text): unknown => JSON.parse(text),
+      () => undefined
+    );
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  const v3 = await readJson('zarr.json');
+  if (isRecord(v3)) return isRecord(v3.attributes) ? v3.attributes : {};
+  if ((await readJson('.zgroup')) === undefined) return null;
+  const v2 = await readJson('.zattrs');
+  return isRecord(v2) ? v2 : {};
+}
+
+/**
+ * Reads one root metadata file. Zips are not inspected: finding a member means reading
+ * the whole central directory, which for a large archive is most of a catalog request.
+ */
+export async function classifyStore(path: string): Promise<StoreKind | undefined> {
+  if (isStoreName(basename(path), false)) return undefined;
+  const attrs = await readRootAttributes(path);
+  if (attrs === null) return 'unknown';
+  return 'spatialdata_attrs' in attrs ? 'spatialdata' : 'zarr';
+}
+
+export async function buildCatalog(root: ServedRoot, stores: string[]): Promise<Catalog> {
   return {
     version: 1,
-    name,
-    stores: stores.map((path) => ({
-      path,
-      url: DATA_PREFIX + path.split('/').map(encodeURIComponent).join('/'),
-    })),
+    name: basename(root.only ?? root.dir),
+    stores: await Promise.all(
+      stores.map(async (path) => {
+        const kind = await classifyStore(join(root.dir, ...path.split('/')));
+        return {
+          path,
+          url: DATA_PREFIX + path.split('/').map(encodeURIComponent).join('/'),
+          ...(kind && { kind }),
+        };
+      })
+    ),
   };
 }
 

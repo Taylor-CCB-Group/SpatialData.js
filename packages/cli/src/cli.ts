@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { findStores, resolveServedRoot } from './catalog.ts';
+import { buildCatalog, findStores, resolveServedRoot, type StoreKind } from './catalog.ts';
 import { createStoreServer, storesPrefix } from './server.ts';
 
 const USAGE = `Usage: sdjs serve [root] [options]
@@ -22,6 +22,12 @@ Options:
 `;
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
+
+const KIND_NOTE: Record<StoreKind, string> = {
+  spatialdata: '',
+  zarr: '  (zarr, not SpatialData)',
+  unknown: '  (no zarr metadata)',
+};
 
 function openBrowser(url: string): void {
   const [cmd, args] =
@@ -86,10 +92,10 @@ async function serve(argv: string[]): Promise<void> {
 
   const origin = `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
   const catalogPath = `${storesPrefix(token)}catalog.json`;
-  const stores = await findStores(root, maxDepth);
+  const { stores } = await buildCatalog(root, await findStores(root, maxDepth));
   const viewer = `${origin}/?catalog=${encodeURIComponent(catalogPath)}`;
   console.log(`Serving ${stores.length} store(s) under ${root.dir}`);
-  for (const path of stores) console.log(`  ${path}`);
+  for (const { path, kind } of stores) console.log(`  ${path}${KIND_NOTE[kind ?? 'spatialdata']}`);
   console.log(`\nViewer:  ${viewer}\nCatalog: ${origin}${catalogPath}`);
   if (token) console.log('The URL carries an access token: share it like a password.');
   if (!existsSync(appDir)) console.log('(No bundled viewer in this install; serving data only.)');

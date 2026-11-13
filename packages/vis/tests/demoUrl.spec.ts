@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDemoPageHref,
+  catalogStoreProblem,
   DEFAULT_DEMO_SPATIALDATA_URL,
   getCatalogUrlFromSearchParams,
   getSpatialDataUrlFromSearchParams,
@@ -60,5 +61,29 @@ describe('catalog', () => {
       { path: 'run 1/a.zarr', url: 'http://127.0.0.1:8000/tok/data/run%201/a.zarr' },
     ]);
     expect(() => parseCatalog({ nope: true }, catalog)).toThrow();
+  });
+
+  it('keeps known store kinds and flags the ones that will not open', () => {
+    const catalog = 'http://127.0.0.1:8000/tok/catalog.json';
+    const stores = parseCatalog(
+      {
+        stores: [
+          { path: 'a.zarr', url: 'data/a.zarr', kind: 'spatialdata' },
+          { path: 'b.zarr', url: 'data/b.zarr', kind: 'zarr' },
+          { path: 'c.zarr', url: 'data/c.zarr', kind: 'unknown' },
+          { path: 'd.zarr.zip', url: 'data/d.zarr.zip' },
+          { path: 'e.zarr', url: 'data/e.zarr', kind: 'future-kind' },
+        ],
+      },
+      catalog
+    );
+    expect(stores.map(catalogStoreProblem)).toEqual([
+      null,
+      'zarr, not SpatialData',
+      'no zarr metadata',
+      null,
+      null,
+    ]);
+    expect(stores[4]).not.toHaveProperty('kind');
   });
 });

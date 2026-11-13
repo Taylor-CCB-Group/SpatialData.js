@@ -10,10 +10,11 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from sdjs.server import create_server, find_stores, resolve_served_root, stores_prefix
+from sdjs.server import build_catalog, create_server, find_stores, resolve_served_root, stores_prefix
 
 APP_DIR = Path(__file__).parent / "app"
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+KIND_NOTE = {"zarr": "  (zarr, not SpatialData)", "unknown": "  (no zarr metadata)"}
 
 
 def serve(args: argparse.Namespace) -> None:
@@ -33,10 +34,10 @@ def serve(args: argparse.Namespace) -> None:
     origin = f"http://{host}:{port}"
     catalog_path = f"{stores_prefix(token)}catalog.json"
     viewer = f"{origin}/?catalog={urllib.parse.quote(catalog_path, safe='')}"
-    stores = find_stores(root, args.depth)
+    stores = build_catalog(root, find_stores(root, args.depth))["stores"]
     print(f"Serving {len(stores)} store(s) under {root.dir}")
-    for path in stores:
-        print(f"  {path}")
+    for store in stores:
+        print(f"  {store['path']}{KIND_NOTE.get(store.get('kind'), '')}")
     print(f"\nViewer:  {viewer}\nCatalog: {origin}{catalog_path}")
     if token:
         print("The URL carries an access token: share it like a password.")

@@ -8,6 +8,7 @@ import SpatialDataTree from '../Tree';
 import {
   buildDemoPageHref,
   type CatalogStore,
+  catalogStoreProblem,
   DEFAULT_DEMO_SPATIALDATA_URL,
   getCatalogUrlFromSearchParams,
   getSpatialDataUrlFromSearchParams,
@@ -88,7 +89,13 @@ function DataSource({ children }: React.PropsWithChildren) {
   const [localStatus, setLocalStatus] = useState<string | null>(null);
   const [catalogUrl] = useState(getCatalogUrl);
   const catalog = useCatalog(catalogUrl);
-  const firstStore = catalog?.status === 'ready' ? catalog.stores[0]?.url : undefined;
+  const firstStore =
+    catalog?.status === 'ready'
+      ? (
+          catalog.stores.find((store) => store.kind === 'spatialdata') ??
+          catalog.stores.find((store) => !catalogStoreProblem(store))
+        )?.url
+      : undefined;
   const url = chosenUrl ?? (initialUrl || firstStore || '');
 
   useEffect(() => {
@@ -218,9 +225,13 @@ function CatalogPicker({
   if (catalog.status === 'error') {
     return <div style={{ fontSize: 11, color: '#c96', marginTop: 6 }}>{catalog.message}</div>;
   }
+  const flagged = catalog.stores.filter((store) => catalogStoreProblem(store)).length;
   return (
     <label style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginTop: 6, fontSize: 12 }}>
-      <span style={{ color: '#888' }}>Store ({catalog.stores.length})</span>
+      <span style={{ color: '#888' }}>
+        Store ({catalog.stores.length - flagged}
+        {flagged ? `, ${flagged} not SpatialData` : ''})
+      </span>
       <select
         value={catalog.stores.some((s) => s.url === url) ? url : ''}
         onChange={(e) => onChoose(e.target.value)}
@@ -229,11 +240,14 @@ function CatalogPicker({
         <option value="" disabled>
           {catalog.stores.length ? 'Choose a store…' : 'No stores found'}
         </option>
-        {catalog.stores.map((store) => (
-          <option key={store.url} value={store.url}>
-            {store.path}
-          </option>
-        ))}
+        {catalog.stores.map((store) => {
+          const problem = catalogStoreProblem(store);
+          return (
+            <option key={store.url} value={store.url} disabled={problem !== null}>
+              {problem ? `${store.path} (${problem})` : store.path}
+            </option>
+          );
+        })}
       </select>
     </label>
   );

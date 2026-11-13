@@ -89,15 +89,45 @@ def find_stores(root: ServedRoot, max_depth: int = 8) -> list[str]:
     return found
 
 
-def build_catalog(name: str, stores: list[str]) -> dict:
-    return {
-        "version": 1,
-        "name": name,
-        "stores": [
-            {"path": p, "url": DATA_PREFIX + "/".join(urllib.parse.quote(s, safe="") for s in p.split("/"))}
-            for p in stores
-        ],
-    }
+def _read_json(path: Path):
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _root_attributes(store: Path) -> dict | None:
+    v3 = _read_json(store / "zarr.json")
+    if isinstance(v3, dict):
+        attrs = v3.get("attributes")
+        return attrs if isinstance(attrs, dict) else {}
+    if _read_json(store / ".zgroup") is None:
+        return None
+    v2 = _read_json(store / ".zattrs")
+    return v2 if isinstance(v2, dict) else {}
+
+
+def classify_store(path: Path) -> str | None:
+    """"spatialdata", "zarr" (a zarr group without SpatialData's root attributes),
+    "unknown" (no zarr root metadata), or None for a zip, which is not inspected:
+    finding a member means reading the whole central directory."""
+    if is_store_name(path.name, False):
+        return None
+    attrs = _root_attributes(path)
+    if attrs is None:
+        return "unknown"
+    return "spatialdata" if "spatialdata_attrs" in attrs else "zarr"
+
+
+def build_catalog(root: ServedRoot, stores: list[str]) -> dict:
+    entries = []
+    for p in stores:
+        entry = {"path": p, "url": DATA_PREFIX + "/".join(urllib.parse.quote(s, safe="") for s in p.split("/"))}
+        kind = classify_store(root.dir.joinpath(*p.split("/")))
+        if kind:
+            entry["kind"] = kind
+        entries.append(entry)
+    return {"version": 1, "name": root.only or root.dir.name, "stores": entries}
 
 
 def is_servable_path(segments: list[str], only: str | None = None) -> bool:
@@ -191,8 +221,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if rest == "catalog.json":
-            name = self.root.only or self.root.dir.name
-            body = json.dumps(build_catalog(name, find_stores(self.root, self.max_depth))).encode()
+            body = json.dumps(build_catalog(self.root, find_stores(self.root, self.max_depth))).encode()
             self.send_response(HTTPStatus.OK)
             for k, v in cors.items():
                 self.send_header(k, v)

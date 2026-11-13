@@ -15,6 +15,7 @@ import pytest
 from sdjs.server import create_server, parse_range, resolve_served_root
 
 TOKEN = "tok"
+SD_ROOT = '{"zarr_format":3,"node_type":"group","attributes":{"spatialdata_attrs":{"version":"0.2"}}}'
 
 
 def start(root: Path, token: str | None, app: Path | None = None):
@@ -36,11 +37,17 @@ def fetch(url: str, method: str = "GET", headers: dict | None = None):
 def tree(tmp_path_factory):
     d = tmp_path_factory.mktemp("sdjs")
     (d / "a.zarr" / "images").mkdir(parents=True)
-    (d / "a.zarr" / "zarr.json").write_text('{"zarr_format":3}')
+    (d / "a.zarr" / "zarr.json").write_text(SD_ROOT)
     (d / "a.zarr" / ".zattrs").write_text("{}")
     (d / "a.zarr" / "images" / "chunk").write_bytes(b"0123456789")
     (d / "project" / "run 1" / "b.zarr" / "inner.zarr").mkdir(parents=True)
     (d / "project" / "c.zarr.zip").write_bytes(b"PK")
+    # zarr v2 SpatialData, and a zarr group that is not SpatialData.
+    (d / "other" / "v2.zarr").mkdir(parents=True)
+    (d / "other" / "v2.zarr" / ".zgroup").write_text('{"zarr_format":2}')
+    (d / "other" / "v2.zarr" / ".zattrs").write_text('{"spatialdata_attrs":{}}')
+    (d / "other" / "plain.zarr").mkdir(parents=True)
+    (d / "other" / "plain.zarr" / "zarr.json").write_text('{"zarr_format":3,"node_type":"group"}')
     (d / ".hidden" / "d.zarr").mkdir(parents=True)
     (d / "secret.txt").write_text("nope")
     os.symlink(d, d / "project" / "loop")
@@ -58,9 +65,12 @@ def test_catalog_lists_nested_stores(tree):
     catalog = json.loads(body)
     assert catalog["version"] == 1
     assert catalog["stores"] == [
-        {"path": "a.zarr", "url": "data/a.zarr"},
+        {"path": "a.zarr", "url": "data/a.zarr", "kind": "spatialdata"},
+        {"path": "other/plain.zarr", "url": "data/other/plain.zarr", "kind": "zarr"},
+        {"path": "other/v2.zarr", "url": "data/other/v2.zarr", "kind": "spatialdata"},
+        # Zips are listed without being inspected.
         {"path": "project/c.zarr.zip", "url": "data/project/c.zarr.zip"},
-        {"path": "project/run 1/b.zarr", "url": "data/project/run%201/b.zarr"},
+        {"path": "project/run 1/b.zarr", "url": "data/project/run%201/b.zarr", "kind": "unknown"},
     ]
 
 
@@ -75,7 +85,7 @@ def test_single_store_root(tree):
     server, base = start(d / "a.zarr", None)
     try:
         catalog = json.loads(fetch(f"{base}/stores/catalog.json")[2])
-        assert catalog["stores"] == [{"path": "a.zarr", "url": "data/a.zarr"}]
+        assert catalog["stores"] == [{"path": "a.zarr", "url": "data/a.zarr", "kind": "spatialdata"}]
         assert fetch(f"{base}/stores/data/a.zarr/zarr.json")[0] == 200
         assert fetch(f"{base}/stores/data/project/c.zarr.zip")[0] == 404
     finally:
@@ -85,7 +95,7 @@ def test_single_store_root(tree):
 def test_serves_inside_stores_only(tree):
     _, base = tree
     data = f"{base}/{TOKEN}/data"
-    assert fetch(f"{data}/a.zarr/zarr.json")[2] == b'{"zarr_format":3}'
+    assert fetch(f"{data}/a.zarr/zarr.json")[2] == SD_ROOT.encode()
     assert fetch(f"{data}/a.zarr/.zattrs")[0] == 200
     assert fetch(f"{data}/project/run%201/b.zarr/inner.zarr")[0] == 404
     for path in ["secret.txt", "a.zarr/%2e%2e/secret.txt", ".hidden/d.zarr", "a.zarr%2f..%2fsecret.txt"]:

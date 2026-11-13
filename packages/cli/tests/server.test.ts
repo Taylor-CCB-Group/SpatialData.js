@@ -10,6 +10,8 @@ let dir: string;
 let server: Server;
 let base: string;
 const TOKEN = 'tok';
+const SD_ROOT =
+  '{"zarr_format":3,"node_type":"group","attributes":{"spatialdata_attrs":{"version":"0.2"}}}';
 
 async function start(root: string, token: string | null, app: string | null = null) {
   const s = createStoreServer({
@@ -27,12 +29,21 @@ async function start(root: string, token: string | null, app: string | null = nu
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'sdjs-'));
   await mkdir(join(dir, 'a.zarr', 'images'), { recursive: true });
-  await writeFile(join(dir, 'a.zarr', 'zarr.json'), '{"zarr_format":3}');
+  await writeFile(join(dir, 'a.zarr', 'zarr.json'), SD_ROOT);
   await writeFile(join(dir, 'a.zarr', '.zattrs'), '{}');
   await writeFile(join(dir, 'a.zarr', 'images', 'chunk'), Buffer.from('0123456789'));
   // Nested, and a store inside a store is not listed separately.
   await mkdir(join(dir, 'project', 'run 1', 'b.zarr', 'inner.zarr'), { recursive: true });
   await writeFile(join(dir, 'project', 'c.zarr.zip'), 'PK');
+  // zarr v2 SpatialData, and a zarr group that is not SpatialData.
+  await mkdir(join(dir, 'other', 'v2.zarr'), { recursive: true });
+  await writeFile(join(dir, 'other', 'v2.zarr', '.zgroup'), '{"zarr_format":2}');
+  await writeFile(join(dir, 'other', 'v2.zarr', '.zattrs'), '{"spatialdata_attrs":{}}');
+  await mkdir(join(dir, 'other', 'plain.zarr'), { recursive: true });
+  await writeFile(
+    join(dir, 'other', 'plain.zarr', 'zarr.json'),
+    '{"zarr_format":3,"node_type":"group"}'
+  );
   await mkdir(join(dir, '.hidden', 'd.zarr'), { recursive: true });
   await writeFile(join(dir, 'secret.txt'), 'nope');
   // A symlink loop must not hang discovery.
@@ -54,9 +65,12 @@ describe('catalog', () => {
     const catalog = await res.json();
     expect(catalog).toMatchObject({ version: 1, name: expect.any(String) });
     expect(catalog).toHaveProperty('stores', [
-      { path: 'a.zarr', url: 'data/a.zarr' },
+      { path: 'a.zarr', url: 'data/a.zarr', kind: 'spatialdata' },
+      { path: 'other/plain.zarr', url: 'data/other/plain.zarr', kind: 'zarr' },
+      { path: 'other/v2.zarr', url: 'data/other/v2.zarr', kind: 'spatialdata' },
+      // Zips are listed without being inspected.
       { path: 'project/c.zarr.zip', url: 'data/project/c.zarr.zip' },
-      { path: 'project/run 1/b.zarr', url: 'data/project/run%201/b.zarr' },
+      { path: 'project/run 1/b.zarr', url: 'data/project/run%201/b.zarr', kind: 'unknown' },
     ]);
   });
 
@@ -69,7 +83,9 @@ describe('catalog', () => {
     const single = await start(join(dir, 'a.zarr'), null);
     try {
       const catalog = await (await fetch(`${single.base}/stores/catalog.json`)).json();
-      expect(catalog).toHaveProperty('stores', [{ path: 'a.zarr', url: 'data/a.zarr' }]);
+      expect(catalog).toHaveProperty('stores', [
+        { path: 'a.zarr', url: 'data/a.zarr', kind: 'spatialdata' },
+      ]);
       expect((await fetch(`${single.base}/stores/data/a.zarr/zarr.json`)).status).toBe(200);
       expect((await fetch(`${single.base}/stores/data/project/c.zarr.zip`)).status).toBe(404);
     } finally {
@@ -82,7 +98,7 @@ describe('data', () => {
   const data = () => `${base}/${TOKEN}/data`;
 
   it('serves files inside stores, including dotfiles', async () => {
-    expect(await (await fetch(`${data()}/a.zarr/zarr.json`)).text()).toBe('{"zarr_format":3}');
+    expect(await (await fetch(`${data()}/a.zarr/zarr.json`)).text()).toBe(SD_ROOT);
     expect((await fetch(`${data()}/a.zarr/.zattrs`)).status).toBe(200);
     expect((await fetch(`${data()}/project/run%201/b.zarr/inner.zarr`)).status).toBe(404);
   });

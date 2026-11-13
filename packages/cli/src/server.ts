@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { basename, extname, join } from 'node:path';
+import { extname, join } from 'node:path';
 import {
   buildCatalog,
   DATA_PREFIX,
@@ -133,7 +133,7 @@ export function createStoreServer(options: StoreServerOptions): Server {
     }
     if (rest === 'catalog.json') {
       const stores = await findStores(root, maxDepth);
-      const body = JSON.stringify(buildCatalog(basename(root.only ?? root.dir), stores));
+      const body = JSON.stringify(await buildCatalog(root, stores));
       res.writeHead(200, {
         'Content-Type': 'application/json',
         'Content-Length': String(Buffer.byteLength(body)),
