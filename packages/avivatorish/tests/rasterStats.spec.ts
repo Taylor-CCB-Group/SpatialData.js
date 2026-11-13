@@ -52,8 +52,10 @@ describe('computeChannelStats', () => {
     expect(computeChannelStats(data)).toEqual(vivStats(data));
   });
 
-  it('does not reorder integer data', () => {
-    const data = fill(new Uint16Array(10_000), 0, 65536, 6);
+  it.each([
+    ['Uint16Array', fill(new Uint16Array(10_000), 0, 65536, 6)],
+    ['Float32Array', Float32Array.from({ length: 10_000 }, (_, i) => Math.sin(i) * 10)],
+  ] as const)('does not reorder %s data', (_name, data) => {
     const before = data.slice();
     computeChannelStats(data);
     expect(data).toEqual(before);
@@ -61,6 +63,6 @@ describe('computeChannelStats', () => {
 
   it('defers to Viv for float data', () => {
     const data = Float32Array.from({ length: 5000 }, (_, i) => Math.sin(i) * 10);
-    expect(computeChannelStats(data.slice())).toEqual(expect.objectContaining(vivStats(data)));
+    expect(computeChannelStats(data)).toEqual(expect.objectContaining(vivStats(data)));
   });
 });

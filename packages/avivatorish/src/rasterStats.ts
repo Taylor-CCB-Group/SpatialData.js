@@ -20,14 +20,14 @@ function isSmallIntArray(data: unknown): data is SmallIntArray {
  * Viv's `domain` and `contrastLimits` for a channel raster.
  *
  * 8/16-bit integers use a counting histogram: exact same values as Viv's
- * quickselect, ~20x faster, and `data` is not reordered. Other dtypes defer to
- * Viv, which reorders `data` in place.
+ * quickselect, ~20x faster. Other dtypes defer to Viv on a copy, because its
+ * quickselect reorders the array in place. Either way `data` is left untouched.
  */
 export function computeChannelStats(data: VivTypedArray): {
   domain: number[];
   contrastLimits: number[];
 } {
-  if (!isSmallIntArray(data)) return getChannelStats(data);
+  if (!isSmallIntArray(data)) return getChannelStats(data.slice());
 
   const signed = data instanceof Int8Array || data instanceof Int16Array;
   const bins = data.BYTES_PER_ELEMENT === 1 ? 256 : 65536;

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { getChannelStatsMock } = vi.hoisted(() => ({
-  getChannelStatsMock: vi.fn((data: number) => ({
+  getChannelStatsMock: vi.fn(([data]: Float32Array) => ({
     domain: [data, data + 1],
     contrastLimits: [data + 2, data + 3],
   })),
@@ -30,7 +30,7 @@ describe('getSingleSelectionStats2D', () => {
     const selection = { c: 0, z: 0, t: 0 };
     const getRaster = vi.fn(
       async ({ selection: currentSelection }: { selection: Record<string, number> }) => ({
-        data: 10,
+        data: Float32Array.of(10),
         selection: currentSelection,
       })
     );
@@ -78,7 +78,7 @@ describe('getSingleSelectionStats2D', () => {
 
   it('omits raster by default', async () => {
     const getRaster = vi.fn(async () => ({
-      data: 10,
+      data: Float32Array.of(10),
       width: 8,
       height: 8,
     }));
@@ -133,7 +133,7 @@ describe('getSingleSelectionStats3D', () => {
 
   it('uses uppercase Z labels when sampling 3D stats', async () => {
     const getRaster = vi.fn(async ({ selection }: { selection: { c?: number; z?: number } }) => ({
-      data: selection.z ?? -1,
+      data: Float32Array.of(selection.z ?? -1),
     }));
     const loader = {
       labels: ['c', 'Z', 'y', 'x'],
@@ -160,7 +160,7 @@ describe('getSingleSelectionStats3D', () => {
     const selection = { c: 0, z: 0, t: 0 };
     const getRaster = vi.fn(
       async ({ selection: currentSelection }: { selection: { c?: number } }) => ({
-        data: 10,
+        data: Float32Array.of(10),
         selection: currentSelection,
       })
     );
