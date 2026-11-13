@@ -84,6 +84,30 @@ Still to measure:
 - marimo WASM notebooks: Python in Pyodide, no server route for local stores;
 - Jupyter.
 
+## Shared memory
+
+`SharedArrayBuffer` needs a cross-origin-isolated page, and a page can only isolate
+itself. Pages we serve can opt in: the demo, `sdjs serve`, a self-hosted MDV. Hosts we
+embed in cannot. Measured in local marimo and the probe harness, the page is not
+isolated, and Claude's hosts are reported not to be. The probe's `crossOriginIsolated`
+result settles that in each host. So shared memory is an optional fast path, detected
+at runtime, and the embed build works without it.
+
+That costs little for SpatialData.js today. Decoded chunks already move from worker to
+page without copying (transferred `ArrayBuffer`s). The remaining copy is fizarrita
+assembling each tile into a fresh output array, even when the tile is one whole chunk:
+- **Cost.** It is about 9 ms for a 32 MB tile (oranus, 4096² `uint16`) and about 1 ms for
+  7 M pixels.
+- **Comparison.** Computing channel stats on the main thread costs about 250 ms per channel
+  at the coarsest level.
+- **Removing it.** fizarrita's shared-memory mode avoids the copy only when no chunk cache
+  is passed, and we always pass one. The host-independent fix is to return the cached chunk
+  itself when a request is exactly one chunk. Worth doing only if profiling ever shows the
+  copy.
+
+An MDV `ui://` app would face the same constraint. MDV relies on `SharedArrayBuffer`, so
+in embedded hosts it needs a path without it.
+
 ## Steps
 
 1. **Capability probe** (built, unmerged). Next: run it in each Claude surface and record the

@@ -1,0 +1,29 @@
+{
+  "name": "@spatialdata/mcp-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP App capability probe: what a host's sandboxed iframe allows a SpatialData.js view to do",
+  "scripts": {
+    "build": "vite build && vite build --config vite.widget.config.ts && vite build --config vite.server.config.ts",
+    "typecheck": "tsc --noEmit",
+    "start": "vite build && node main.ts",
+    "dev": "concurrently --raw \"vite build --watch --mode development\" \"node --watch main.ts\"",
+    "harness": "vite --port 5190 --strictPort"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "concurrently": "^9.2.1",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
