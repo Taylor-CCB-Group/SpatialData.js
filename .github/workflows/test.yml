@@ -198,6 +198,35 @@ jobs:
       - name: Check the native HTJ2K backend works without Node.js
         run: uv run --no-project --python .floor-venv python -m pytest -p no:cacheprovider tests/test_htj2k_native_floor.py
 
+  # sdjs is the standard library only and is run through `uvx` on whatever Python the
+  # user has, so test its floor and the newest release on each OS rather than once.
+  sdjs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.10', '3.14']
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: python/sdjs
+    steps:
+      - name: Check out repository (sdjs)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup uv (sdjs)
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Run sdjs tests
+        run: uv run --python ${{ matrix.python }} pytest
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -303,9 +332,9 @@ jobs:
       - name: Run spatialdata-js-util tests
         run: uv run --directory python/spatialdata-js-util --extra write --extra tui pytest
 
-      # A bare `uv build` succeeds without the vendored WASM; this is the build
-      # RELEASE.md publishes, and it fails if either artifact is missing a file.
-      - name: Build spatialdata-js-util release artifacts
+      # A bare `uv build` succeeds without the vendored WASM or the sdjs viewer; this is
+      # the build RELEASE.md publishes, and it fails if any artifact is missing a file.
+      - name: Build PyPI release artifacts
         run: pnpm build:python
 
       - name: Run unit tests
