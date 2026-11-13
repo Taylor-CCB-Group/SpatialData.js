@@ -1,5 +1,20 @@
 # @spatialdata/layers
 
+## 0.16.0
+
+### Minor Changes
+
+- [#292](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/292) [`3c5835b`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3c5835bdcd310204c585a61a6ae8fadd1b47cc2d) Thanks [@xinaesthete](https://github.com/xinaesthete)! - The Render Stack is now a tree (`schemaVersion: 2`): a `group` entry holds its children as entries, with typed `opacity`, `blendMode` and `isolate` props, and ids are unique across the tree. `renderStackSchema` upgrades a saved v1 stack, and `migrateRenderStack(stack)` does the same as a plain function, returning notices for any child ids it dropped. Code that reads `stack.entries` directly sees only the top level; use `walkRenderStackEntries` or `findRenderStackEntry` to reach entries inside groups.
+  
+  `renderStackToDeckLayers(stack, { entryLayers, hostLayerResolver })` turns a stack into deck layers, wrapping each isolated group, or group with a blend mode other than `pass-through`, in an `IsolatedGroupLayer`. It needs no SpatialData or Viv, and `SpatialViewer` uses it when given `renderStack`. Feature pick events carry the resolved `entryId`, and `resolvePickedEntryId(info)` does the same for hosts reading deck picks themselves.
+  
+  `IsolatedGroupLayer` draws members under ids scoped to the group (`<group>/<member>`). Use `getIsolatedGroupMemberId(info)` for the member's own id; `getIsolatedGroupMember(info).id` is now the scoped one.
+
+### Patch Changes
+
+- Updated dependencies [[`3c5835b`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3c5835bdcd310204c585a61a6ae8fadd1b47cc2d)]:
+  - @spatialdata/core@0.16.0
+
 ## 0.15.2
 
 ### Patch Changes
