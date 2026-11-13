@@ -54,3 +54,47 @@ export function isAntialiasDisabled(searchParams: URLSearchParams): boolean {
   const value = searchParams.get('antialias')?.trim().toLowerCase();
   return value === '0' || value === 'false';
 }
+
+/** One store in a catalog, with its URL made absolute. */
+export interface CatalogStore {
+  path: string;
+  url: string;
+}
+
+/** `?catalog=` (resolved against the page), or null. Written by `sdjs serve`. */
+export function getCatalogUrlFromSearchParams(
+  searchParams: URLSearchParams,
+  base: string
+): string | null {
+  const raw = searchParams.get('catalog')?.trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw, base).href;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/**
+ * Read a store catalog: `{ stores: [{ path, url }] }`, each `url` relative to the
+ * catalog's own URL. Entries that are not of that shape are dropped.
+ */
+export function parseCatalog(json: unknown, catalogUrl: string): CatalogStore[] {
+  if (!isRecord(json) || !Array.isArray(json.stores)) {
+    throw new Error('Not a store catalog: expected { stores: [...] }');
+  }
+  return json.stores.flatMap((entry: unknown) => {
+    if (!isRecord(entry) || typeof entry.path !== 'string' || typeof entry.url !== 'string') {
+      return [];
+    }
+    try {
+      return [{ path: entry.path, url: new URL(entry.url, catalogUrl).href }];
+    } catch {
+      return [];
+    }
+  });
+}

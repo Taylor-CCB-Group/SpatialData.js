@@ -56,3 +56,6 @@ pnpm-debug.log*
 
 # local tarballs from scripts/pack-local.sh
 .local-pack/
+packages/cli/app/
+python/sdjs/src/sdjs/app/
+python/sdjs/.venv/
