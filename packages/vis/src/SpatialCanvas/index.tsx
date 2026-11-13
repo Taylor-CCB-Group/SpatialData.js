@@ -47,7 +47,7 @@ import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import type { ImageLayerConfig } from './useLayerData';
-import { generateLayerId, getAllCoordinateSystems } from './utils';
+import { generateLayerId, getAllCoordinateSystems, pickCoordinateSystem } from './utils';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 
 // ============================================
@@ -398,6 +398,7 @@ interface SpatialCanvasInnerProps {
    */
   hoverTooltipMode?: HoverTooltipMode;
   deckProps?: Partial<DeckGLProps>;
+  keepLayersOnSourceChange?: boolean;
 }
 
 function SpatialCanvasInner({
@@ -405,6 +406,7 @@ function SpatialCanvasInner({
   renderTooltip,
   hoverTooltipMode = DEFAULT_HOVER_TOOLTIP_MODE,
   deckProps,
+  keepLayersOnSourceChange = false,
 }: SpatialCanvasInnerProps) {
   // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
   // subscribes to the engine via useSyncExternalStore), so this component no
@@ -517,17 +519,24 @@ function SpatialCanvasInner({
   }, [actions, getWorldBoundsForVisibleLayers, hasEnabledLayers, isBlocking, vh, vw]);
 
   useEffect(() => {
+    if (keepLayersOnSourceChange) {
+      // Layers outlive dataset and coordinate-system changes; one whose element is
+      // missing stays dormant until a dataset has it. Once the next dataset has
+      // loaded, the view refits and an unusable coordinate system is replaced.
+      if (!spatialData) return;
+      actions.setViewState(null);
+      const nextCoordinateSystem = pickCoordinateSystem(coordinateSystem, coordinateSystems);
+      if (nextCoordinateSystem !== coordinateSystem) {
+        actions.setCoordinateSystem(nextCoordinateSystem);
+      }
+      return;
+    }
     actions.reset();
-    const nextCoordinateSystem =
-      coordinateSystem && coordinateSystems.includes(coordinateSystem)
-        ? coordinateSystem
-        : coordinateSystems.length === 1
-          ? coordinateSystems[0]
-          : null;
+    const nextCoordinateSystem = pickCoordinateSystem(coordinateSystem, coordinateSystems);
     if (nextCoordinateSystem) {
       actions.setCoordinateSystem(nextCoordinateSystem);
     }
-  }, [coordinateSystem, coordinateSystems, actions]);
+  }, [coordinateSystem, coordinateSystems, actions, keepLayersOnSourceChange, spatialData]);
 
   useEffect(() => {
     if (selectedLayerId && !layerOrder.includes(selectedLayerId)) {
@@ -731,6 +740,9 @@ function SpatialCanvasInner({
               selectedLayerId={selectedLayerId}
               onSelect={actions.setSelectedLayerId}
               reorderLayers={actions.reorderLayers}
+              getUnresolvedReason={(id) =>
+                getEntryStatus(id)?.errors.find((e) => e.resource === 'element')?.error.message
+              }
             />
           </aside>
 
@@ -977,6 +989,13 @@ export interface SpatialCanvasProps {
    * WebGPU (experimental).
    */
   deckProps?: Partial<DeckGLProps>;
+  /**
+   * Keep the layers when the `SpatialDataProvider` source changes, so a store with
+   * the same element names opens with the same view. A layer whose element (type and
+   * key) the new store lacks stays in the list, marked and drawing nothing, until a
+   * store has it again. Also stops a coordinate-system change from clearing the layers.
+   */
+  keepLayersOnSourceChange?: boolean;
 }
 
 /**
@@ -1033,6 +1052,7 @@ export default function SpatialCanvas({
   renderTooltip,
   hoverTooltipMode,
   deckProps,
+  keepLayersOnSourceChange,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -1042,6 +1062,7 @@ export default function SpatialCanvas({
           renderTooltip={renderTooltip}
           hoverTooltipMode={hoverTooltipMode}
           deckProps={deckProps}
+          keepLayersOnSourceChange={keepLayersOnSourceChange}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

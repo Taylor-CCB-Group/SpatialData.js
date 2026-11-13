@@ -333,8 +333,12 @@ export default function Sketch() {
             {device.kind === 'webgl' && device.deckProps ? ' (WebGL, MSAA off)' : ''}
           </h3>
           <div style={{ flex: 1, minHeight: 0 }}>
-            {device.kind === 'webgl' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
-            {device.kind === 'webgpu' ? <SpatialCanvas deckProps={device.deckProps} /> : null}
+            {device.kind === 'webgl' ? (
+              <SpatialCanvas deckProps={device.deckProps} keepLayersOnSourceChange />
+            ) : null}
+            {device.kind === 'webgpu' ? (
+              <SpatialCanvas deckProps={device.deckProps} keepLayersOnSourceChange />
+            ) : null}
             {device.kind === 'loading' ? 'Loading WebGPU…' : null}
             {device.kind === 'unavailable' ? device.reason : null}
           </div>

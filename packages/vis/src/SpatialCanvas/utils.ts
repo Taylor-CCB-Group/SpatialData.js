@@ -87,6 +87,12 @@ export function getElementTransform(
   return undefined;
 }
 
+/** Keep `current` if `available` has it, else take the only one on offer, else none. */
+export function pickCoordinateSystem(current: string | null, available: string[]): string | null {
+  if (current && available.includes(current)) return current;
+  return available.length === 1 ? (available[0] ?? null) : null;
+}
+
 /**
  * Generate a unique layer ID for an element
  */
