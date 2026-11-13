@@ -1,5 +1,11 @@
 # spatialdata-js-util
 
+## 0.3.1
+
+### Patch Changes
+
+- [#285](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/285) [`242a52a`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/242a52ad13b1e1402470d0180753b3dd13507e7a) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Adding pyramid levels keeps the image's channel names. New levels were numbered `0, 1, …`, so an image with named channels came out with mismatched levels that SpatialData refused to write.
+
 ## 0.3.0
 
 ### Minor Changes
