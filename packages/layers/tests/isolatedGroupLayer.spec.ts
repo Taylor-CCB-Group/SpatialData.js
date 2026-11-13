@@ -1,7 +1,12 @@
-import type { Layer, PickingInfo } from '@deck.gl/core';
+import { Layer, type PickingInfo } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { describe, expect, it, vi } from 'vitest';
-import { getIsolatedGroupMember, IsolatedGroupLayer } from '../src/groups/IsolatedGroupLayer';
+import {
+  getIsolatedGroupMember,
+  getIsolatedGroupMemberId,
+  IsolatedGroupLayer,
+  isIsolatedGroupDescendant,
+} from '../src/groups/IsolatedGroupLayer';
 
 function circles(id: string): ScatterplotLayer {
   return new ScatterplotLayer({ id, data: [{}], getPosition: [0, 0] });
@@ -70,6 +75,42 @@ describe('IsolatedGroupLayer picking', () => {
     expect(getIsolatedGroupMember(bubblePick(tile))).toBe(entry);
   });
 
+  it('draws members under group-scoped ids, and resolves picks to the id as given', () => {
+    const g = new IsolatedGroupLayer({ id: 'g', layers: [circles('cells')] });
+    const drawn = g.renderLayers().flat()[0];
+    if (!(drawn instanceof Layer)) throw new Error('expected a member');
+    expect(drawn.id).toBe('g/cells');
+    drawn.parent = g;
+
+    const info = bubblePick(drawn);
+    expect(getIsolatedGroupMember(info)).toBe(drawn);
+    expect(getIsolatedGroupMemberId(info)).toBe('cells');
+  });
+
+  it('keeps member ids apart when group and member ids contain a slash', () => {
+    const drawnIds = (groupId: string, memberId: string) => {
+      const g = new IsolatedGroupLayer({ id: groupId, layers: [circles(memberId)] });
+      const drawn = g.renderLayers().flat()[0];
+      if (!(drawn instanceof Layer)) throw new Error('expected a member');
+      drawn.parent = g;
+      return { id: drawn.id, memberId: getIsolatedGroupMemberId(bubblePick(drawn)) };
+    };
+
+    const one = drawnIds('a', 'b/c');
+    const other = drawnIds('a/b', 'c');
+    expect(one.id).not.toBe(other.id);
+    expect(one.memberId).toBe('b/c');
+    expect(other.memberId).toBe('c');
+    expect(drawnIds('50%', 'c').memberId).toBe('c');
+  });
+
+  it('keeps the innermost record when a pick passes through nested groups', () => {
+    const cells = circles('cells');
+    const inner = group('inner', [cells]);
+    group('outer', [inner]);
+    expect(getIsolatedGroupMemberId(bubblePick(cells))).toBe('cells');
+  });
+
   it('hands hover highlighting to the picked member only', () => {
     const red = circles('red');
     const green = circles('green');
@@ -88,5 +129,24 @@ describe('IsolatedGroupLayer picking', () => {
     g.updateAutoHighlight(cleared);
     expect(toGreen).toHaveBeenLastCalledWith(cleared);
     expect(toRed).not.toHaveBeenCalled();
+  });
+});
+
+describe('IsolatedGroupLayer membership', () => {
+  it('counts a sublayer whose parent chain runs through earlier instances', () => {
+    // deck re-points a sublayer's parent only when its composite re-renders. A member
+    // matched with unchanged props keeps sublayers pointing at the previous member,
+    // whose parent is the previous group.
+    const tile = circles('g/points-tile-3');
+    group('g', [circles('g/points')]);
+    const oldMember = circles('g/points');
+    tile.parent = oldMember;
+    group('g', [oldMember]);
+    const current = new IsolatedGroupLayer({ id: 'g', layers: [circles('g/points')] });
+
+    expect(isIsolatedGroupDescendant(tile, current)).toBe(true);
+    expect(
+      isIsolatedGroupDescendant(tile, new IsolatedGroupLayer({ id: 'other', layers: [] }))
+    ).toBe(false);
   });
 });

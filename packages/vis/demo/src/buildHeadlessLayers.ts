@@ -46,5 +46,5 @@ export function buildHeadlessRenderStackForCoordinateSystem(
     }
   }
 
-  return { schemaVersion: 1, entries };
+  return { schemaVersion: 2, entries };
 }

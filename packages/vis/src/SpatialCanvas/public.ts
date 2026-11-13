@@ -24,6 +24,11 @@ export type { FeatureRowState, FeatureRowStateInput, FeatureRowTone } from './fe
 // re-derive that precedence, and any drift shows up as a panel telling the user
 // something different from what the canvas is doing.
 export { describeFeatureRowState, featureRowOpacity } from './featureRowState';
+export {
+  normalizeDeckLayerId,
+  pickedLayerId,
+  resolvePickedEntryId,
+} from './featureTooltipHover';
 export { useSpatialViewState, useViewStateUrl } from './hooks';
 export type { ImageLayerContextValue } from './ImageLayerContext';
 export { ImageLayerContextProvider, useImageLayerContext } from './ImageLayerContext';
@@ -39,12 +44,14 @@ export type {
 // subtree in <PointsFeatureStateProvider>, and consume the usePoints* hooks.
 export { PointsFeatureStateProvider, usePointsFeatureState } from './PointsFeatureState';
 export type {
+  RenderStackDeckLayerOptions,
   RenderStackHostLayerResolver,
   RenderStackLayerInputs,
   UnknownRenderStackHostLayerHandler,
 } from './renderStackAdapters';
 export {
   renderStackOrder,
+  renderStackToDeckLayers,
   renderStackToLayerInputs,
   resolveRenderStackHostLayers,
   sortLayersByRenderStackOrder,

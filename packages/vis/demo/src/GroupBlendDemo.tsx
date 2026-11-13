@@ -31,7 +31,7 @@ import {
   applyWebGPUPickingFix,
   applyWebGPUViewFix,
   type GroupBlendMode,
-  getIsolatedGroupMember,
+  getIsolatedGroupMemberId,
   IsolatedGroupLayer,
 } from '@spatialdata/layers';
 import { useEffect, useRef, useState } from 'react';
@@ -208,7 +208,7 @@ export default function GroupBlendDemo() {
       onHover: (info) => {
         setHover(
           info.layer
-            ? `layer=${info.layer.id} member=${getIsolatedGroupMember(info)?.id ?? '-'} index=${info.index}`
+            ? `layer=${info.layer.id} member=${getIsolatedGroupMemberId(info) ?? '-'} index=${info.index}`
             : 'none'
         );
       },

@@ -22,11 +22,12 @@ import type {
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
 import { DeckGL } from '@deck.gl/react';
 import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
-import { DeviceAdaptiveImageLayer } from '@spatialdata/layers';
+import { DeviceAdaptiveImageLayer, type RenderStack } from '@spatialdata/layers';
 import { DetailView, ScaleBarView } from '@vivjs/views';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
 import { withWebGPUFixes } from './deckDevice';
+import { renderStackOrder, renderStackToDeckLayers } from './renderStackAdapters';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -103,6 +104,8 @@ export interface VivSpatialViewerProps {
   extraLayers?: Layer[];
   /** Global SpatialCanvas layer order, bottom to top. */
   layerOrder?: string[];
+  /** Places layers by the stack's tree, with its groups, instead of `layerOrder`. */
+  renderStack?: RenderStack;
   /** Viewport width */
   width: number;
   /** Viewport height */
@@ -161,13 +164,39 @@ function sortLayerRecords(records: OrderedLayerRecord[], layerOrder?: string[]):
     .map((record) => record.layer);
 }
 
+/**
+ * Layers placed by the stack's tree, with its groups built. Records no stack entry
+ * claims go on top, in their own order. Members already carry the view token; a
+ * group is a new top-level layer, so it is given one here.
+ */
+function placeLayerRecords(
+  records: OrderedLayerRecord[],
+  renderStack: RenderStack,
+  withViewToken: (layer: Layer) => Layer
+): Layer[] {
+  const stackIds = new Set(renderStackOrder(renderStack, []));
+  const entryLayers = new Map<string, Layer[]>();
+  const unplaced: Layer[] = [];
+  for (const { layer, orderId } of records) {
+    if (orderId === undefined || !stackIds.has(orderId)) {
+      unplaced.push(layer);
+      continue;
+    }
+    entryLayers.set(orderId, [...(entryLayers.get(orderId) ?? []), layer]);
+  }
+  return [...renderStackToDeckLayers(renderStack, { entryLayers }).map(withViewToken), ...unplaced];
+}
+
 function composeLayers(
   orderedLayers: OrderedLayerRecord[],
   deckPropsLayers: LayersList = [],
   scaleBarLayer?: Layer,
-  layerOrder?: string[]
+  layerOrder?: string[],
+  placement?: { renderStack: RenderStack; withViewToken: (layer: Layer) => Layer }
 ): LayersList {
-  const layers: LayersList = sortLayerRecords(orderedLayers, layerOrder);
+  const layers: LayersList = placement
+    ? placeLayerRecords(orderedLayers, placement.renderStack, placement.withViewToken)
+    : sortLayerRecords(orderedLayers, layerOrder);
 
   // Caller-supplied deckProps layers are not necessarily SpatialData layers, so
   // keep them above the generated stack unless a future API gives them order ids.
@@ -406,7 +435,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   }
 
   _renderLayers(): LayersList {
-    const { vivLayerProps, extraLayers, layerOrder, deckProps, onHover } = this.props;
+    const { vivLayerProps, extraLayers, layerOrder, renderStack, deckProps, onHover } = this.props;
     const { viewStates } = this.state;
 
     // Shared by all paths: layerFilter requires layer IDs to include the Viv viewport token
@@ -422,9 +451,16 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       };
     });
     const deckPropsLayersWithVivId = normalizeVivLayers(deckProps?.layers ?? []).map(withVivId);
+    const placement = renderStack ? { renderStack, withViewToken: withVivId } : undefined;
 
     if (vivLayerProps.length === 0) {
-      return composeLayers(extraLayerRecords, deckPropsLayersWithVivId, undefined, layerOrder);
+      return composeLayers(
+        extraLayerRecords,
+        deckPropsLayersWithVivId,
+        undefined,
+        layerOrder,
+        placement
+      );
     }
 
     const orderedLayers: OrderedLayerRecord[] = [...extraLayerRecords];
@@ -494,7 +530,13 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       scaleBarLayer = scaleBarLayers.find((layer) => layer instanceof ScaleBarLayer);
     }
 
-    return composeLayers(orderedLayers, deckPropsLayersWithVivId, scaleBarLayer, layerOrder);
+    return composeLayers(
+      orderedLayers,
+      deckPropsLayersWithVivId,
+      scaleBarLayer,
+      layerOrder,
+      placement
+    );
   }
 
   render() {

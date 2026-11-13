@@ -7,29 +7,41 @@
 // Guarded by tests/renderStackShim.spec.ts, which asserts re-export by identity.
 export type {
   RenderStack,
+  RenderStackBlendMode,
   RenderStackEntry,
+  RenderStackGroupBlendMode,
   RenderStackGroupEntry,
+  RenderStackGroupProps,
   RenderStackHostEntry,
+  RenderStackMigrationNotice,
   RenderStackSpatialElementType,
   RenderStackSpatialEntry,
+  RenderStackV1,
   SpatialLabelsSublayer,
   SpatialLayerProps,
   SpatialShapesSublayer,
 } from '@spatialdata/core';
 export {
+  findRenderStackEntry,
   getRenderStackEntryIds,
   getRenderStackHostLayerIds,
+  migrateRenderStack,
   migrateSpatialLayerProps,
   RENDER_STACK_SCHEMA_VERSION,
+  renderStackBlendModeSchema,
   renderStackEntrySchema,
+  renderStackGroupBlendModeSchema,
   renderStackGroupEntrySchema,
+  renderStackGroupPropsSchema,
   renderStackHostEntrySchema,
   renderStackSchema,
   renderStackSpatialElementTypeSchema,
   renderStackSpatialEntrySchema,
+  resolveRenderStackGroupProps,
   SPATIAL_LAYER_PROPS_SCHEMA_VERSION,
   spatialLayerPropsSchema,
   spatialSublayerSchema,
+  walkRenderStackEntries,
 } from '@spatialdata/core';
 // The shapes and labels Renderer Adapters (ADR 0004 §4). `PointsRendererAdapter` is
 // absent because nothing outside holds one: `PointsDataEngine` owns it privately.
@@ -88,6 +100,7 @@ export {
 export type { GroupBlendMode } from './groups/groupBlend';
 export {
   getIsolatedGroupMember,
+  getIsolatedGroupMemberId,
   IsolatedGroupLayer,
   type IsolatedGroupLayerProps,
 } from './groups/IsolatedGroupLayer';

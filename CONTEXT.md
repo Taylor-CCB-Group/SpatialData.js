@@ -21,8 +21,16 @@ A **Stack Entry** whose source is owned by the host application and resolved at 
 _Avoid_: external layer tail, raw saved deck layer
 
 **Group Entry**:
-A reserved **Stack Entry** that names ordered children for future blending or aggregation behavior.
-_Avoid_: framebuffer layer until the rendering behavior exists
+A **Stack Entry** that holds ordered child entries and combines them with what is beneath it. Pass-through by default: its visibility and opacity pass to its children. See **Isolation** ([ADR 0007](docs/adr/0007-render-stack-groups.md)).
+_Avoid_: naming children by id; a group as a deck layer when it is pass-through
+
+**Blend Mode**:
+How an isolated group's composite combines with the backdrop: `normal | additive | multiply | screen | max | min`, plus `pass-through` on groups, meaning each child blends by its own mode.
+_Avoid_: blending a pass-through group as a whole
+
+**Isolation**:
+Drawing a **Group Entry**'s children into their own transparent target, then compositing that once with the group's opacity and **Blend Mode**. Removes overlap bleed under group opacity. Set by `isolate`, and implied by any blend mode other than `pass-through`.
+_Avoid_: a second deck; isolation as saved resolution or target-size config
 
 **Resource Resolver**:
 The store-agnostic **and renderer-agnostic** boundary that turns structural **Render Stack** inputs into stable loaded resources for renderers. Owns the cache, request supersession, cancellation, streaming partials, eviction, and world bounds. Lives in `@spatialdata/core`: it depends on neither deck.gl nor React, and is consumed by every **Renderer Adapter** ([ADR 0004](docs/adr/0004-resource-resolver-owned-by-core.md)).
@@ -90,7 +98,7 @@ _Avoid_: quota, limit, budget-as-a-guess
 - A **Resource Resolver** is shared across **Renderer Adapters** (deck.gl, Viv, three.js/WebGPU, headless); it knows about none of them.
 - A cached payload exists in an **Encoded Tier**, a **Decoded Tier**, or both; a **Resource Ceiling** bounds them.
 - A **Host Overlay** is saved as a descriptor and materialized by the host application at runtime.
-- A **Group Entry** may order child entries, but does not yet imply framebuffer or blending behavior.
+- A **Group Entry** contains child **Stack Entries**, of any kind, host entries included; it draws through **Isolation** only when isolated.
 - A **Runtime Attachment** may observe or materialize stack entries, but is not part of saved **Render Stack** config.
 - A **MobX Control Island** may edit MDV state directly, but default SpatialData.js renderer APIs remain plain-object APIs.
 

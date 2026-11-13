@@ -19,12 +19,22 @@
  * Caching: a target is the size of one viewport, and is keyed by that viewport's
  * projection (`Viewport.equals`: size and matrices, not position). Views that show the
  * same thing — a grid of cells sharing one view state — share one target, drawn once
- * and composited into each. A target is redrawn only when its projection changes or
- * something inside the group asked deck for a redraw.
+ * and composited into each. Sizes must match to the pixel: cells that differ by one
+ * pixel each get a target and a draw of their own, so round cell sizes once. A target
+ * is redrawn only when its projection changes or something inside the group asked
+ * deck for a redraw.
  *
  * Picking: deck reports the outermost layer as `info.layer`, so a pick inside a group
  * names the group. The innermost group records the child the pick came through, and
- * `getIsolatedGroupMember` reads it back.
+ * `getIsolatedGroupMember` / `getIsolatedGroupMemberId` read it back.
+ *
+ * Member ids: members draw under ids scoped to the group (`<group>/<member>`, with
+ * `/` and `%` in the group id escaped as `%2F` and `%25`). deck
+ * matches layers to their previous instance by id across the whole tree, and a
+ * composite whose props did not change keeps its old sublayers, whose `parent` chain
+ * still runs through the old context. A member moved into or out of a group under its
+ * own id would then be filtered by a group it no longer belongs to, or bypass the one
+ * it joined. Scoping the id makes a move a fresh layer.
  */
 
 import {
@@ -48,15 +58,35 @@ import { groupBlendParameters } from './groupBlend';
 
 const ISOLATION_PASS_PREFIX = 'group-isolate:';
 const GROUP_MEMBER_KEY = 'isolatedGroupMember';
+const GROUP_MEMBER_ID_KEY = 'isolatedGroupMemberId';
 
 /**
  * The layer a pick resolves to when groups are looked through: the direct child of
- * the innermost isolated group the pick passed through. Null when the pick did not
- * pass through a group, in which case `info.layer` is already that layer.
+ * the innermost isolated group the pick passed through, as drawn (its id is scoped to
+ * the group). Null when the pick did not pass through a group, in which case
+ * `info.layer` is already that layer.
  */
 export function getIsolatedGroupMember(info: object): Layer | null {
   const member: unknown = Reflect.get(info, GROUP_MEMBER_KEY);
   return member instanceof Layer ? member : null;
+}
+
+/**
+ * The id the member a pick came through had in the group's `layers` prop, before the
+ * group scoped it. Null when the pick did not pass through a group.
+ */
+export function getIsolatedGroupMemberId(info: object): string | null {
+  const id: unknown = Reflect.get(info, GROUP_MEMBER_ID_KEY);
+  return typeof id === 'string' ? id : null;
+}
+
+/**
+ * `<group>/`, with any `/` or `%` in the group id escaped, so the first `/` always ends
+ * the group's part: group `a` with member `b/c` and group `a/b` with member `c` stay
+ * apart.
+ */
+function memberIdPrefix(groupId: string): string {
+  return `${groupId.replaceAll('%', '%25').replaceAll('/', '%2F')}/`;
 }
 
 function isolationPassName(groupId: string): string {
@@ -77,9 +107,15 @@ function flattenLayers(list: LayersList, out: Layer[] = []): Layer[] {
   return out;
 }
 
-function isDescendantOf(layer: Layer, ancestor: Layer): boolean {
+/**
+ * Whether `layer` sits under the group. Ancestors are matched by id, not identity:
+ * deck only re-points a sublayer's `parent` when its composite re-renders, so a
+ * member matched with unchanged props keeps sublayers whose chain runs through the
+ * previous instances of the member and the group.
+ */
+export function isIsolatedGroupDescendant(layer: Layer, group: Layer): boolean {
   for (let p = layer.parent; p; p = p.parent) {
-    if (p === ancestor) return true;
+    if (p === group || p.id === group.id) return true;
   }
   return false;
 }
@@ -174,8 +210,11 @@ export class IsolatedGroupLayer extends CompositeLayer<IsolatedGroupLayerProps> 
 
   renderLayers(): LayersList {
     const { blendMode = 'normal', opacity } = this.props;
+    const prefix = memberIdPrefix(this.props.id);
     return [
-      ...flattenLayers(this.props.layers),
+      ...flattenLayers(this.props.layers).map((layer) =>
+        layer.clone({ id: `${prefix}${layer.id}` })
+      ),
       new GroupCompositeLayer({
         id: `${this.props.id}-composite`,
         groupId: this.props.id,
@@ -205,11 +244,19 @@ export class IsolatedGroupLayer extends CompositeLayer<IsolatedGroupLayerProps> 
   /**
    * deck walks a pick up the layer tree, setting `info.layer` to each ancestor in turn
    * and passing the layer below as `sourceLayer`. The innermost group sees the member
-   * the pick came through; outer groups see a group, and leave the record alone.
+   * the pick came through and records it, with the id it had before the group scoped
+   * it; outer groups find a record already there and leave it alone.
    */
   getPickingInfo({ info, sourceLayer }: GetPickingInfoParams): PickingInfo {
-    if (!sourceLayer || sourceLayer instanceof IsolatedGroupLayer) return info;
-    return Object.assign(info, { [GROUP_MEMBER_KEY]: sourceLayer });
+    if (!sourceLayer || Reflect.has(info, GROUP_MEMBER_KEY)) return info;
+    const prefix = memberIdPrefix(this.props.id);
+    const memberId = sourceLayer.id.startsWith(prefix)
+      ? sourceLayer.id.slice(prefix.length)
+      : sourceLayer.id;
+    return Object.assign(info, {
+      [GROUP_MEMBER_KEY]: sourceLayer,
+      [GROUP_MEMBER_ID_KEY]: memberId,
+    });
   }
 
   /**
@@ -330,7 +377,7 @@ class GroupIsolationEffect implements Effect {
           pass.render({
             ...opts,
             pass: isolationPassName(group.id),
-            layers: opts.layers.filter((layer) => isDescendantOf(layer, group)),
+            layers: opts.layers.filter((layer) => isIsolatedGroupDescendant(layer, group)),
             viewports: [atOrigin(viewport)],
             target: target.framebuffer,
             clearCanvas: true,

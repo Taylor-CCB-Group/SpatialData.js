@@ -40,7 +40,7 @@ const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
 const [viewState, setViewState] = useState<ViewState | null>(null);
 
 const renderStack: RenderStack = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   entries: [
     {
       kind: 'spatial',
@@ -139,7 +139,7 @@ const mdvScatter = new ScatterplotLayer({
 <SpatialCanvasViewer
   /* ...controlled props... */
   renderStack={{
-    schemaVersion: 1,
+    schemaVersion: 2,
     entries: [
       { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'my_image' } },
       { kind: 'host', id: 'deck:scatter', source: { hostLayerId: 'deck:scatter' } },
@@ -160,6 +160,43 @@ The older `deckLayers` prop remains as a compatibility tail for simple overlays
 that always sit above SpatialData output. It should not be used for saved MDV
 layer-stack interleaving.
 
+## Groups
+
+Any entry, host overlays included, can sit in a group. A group that isolates its
+children composites them as one image, so where a scatter overlay and its
+background points overlap at 50% opacity, the overlap doesn't come out darker:
+
+```tsx
+import { renderStackSchema } from '@spatialdata/vis';
+
+// Parsing fills in each entry's `visible` and `props`; a group left without
+// `visible` would hide everything in it.
+const renderStack = renderStackSchema.parse({
+  schemaVersion: 2,
+  entries: [
+    { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'my_image' } },
+    {
+      kind: 'group',
+      id: 'scatter',
+      props: { opacity: 0.5, isolate: true },
+      children: [
+        { kind: 'host', id: 'deck:grey_scatter', source: { hostLayerId: 'deck:grey_scatter' } },
+        { kind: 'host', id: 'deck:scatter', source: { hostLayerId: 'deck:scatter' } },
+      ],
+    },
+  ],
+});
+```
+
+`hostLayerResolver` is called for host entries at any depth. The
+[layers overview](../layers/overview#groups) describes group props and what isolation
+costs. Hosts that draw without the viewer can get the same layers from
+`renderStackToDeckLayers`.
+
+Feature events carry `entryId`, the id of the stack entry that was picked, also
+when it is inside a group. For raw deck picks from `onHover`, `resolvePickedEntryId(info)`
+does the same.
+
 ## Tooltips: internal, external, or off
 
 | `renderTooltip` | Behaviour |
@@ -172,8 +209,8 @@ layer-stack interleaving.
 <SpatialCanvasViewer
   renderTooltip={false}
   onFeatureHover={(event) => {
-    // event.elementKind is "shapes" or "labels".
-    // event.spatialElement.key, event.featureId, event.rowIndex, event.tooltip, event.pickInfo, ...
+    // event.elementKind is "shapes", "labels" or "points".
+    // event.entryId, event.spatialElement.key, event.featureId, event.rowIndex, event.tooltip, event.pickInfo, ...
   }}
   onFeatureClick={(event) => {
     if (event.elementKind !== 'labels') return;

@@ -37,7 +37,7 @@ function HeadlessBlobsViewer({ fixtureUrl }: { fixtureUrl: string }) {
   // console.log(tables);
 
   const [coordinateSystem, setCoordinateSystem] = useState<string | null>(null);
-  const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 1, entries: [] });
+  const [renderStack, setRenderStack] = useState<RenderStack>({ schemaVersion: 2, entries: [] });
   const [viewState, setViewState] = useState<ViewState | null>(null);
   const [lastFeatureHover, setLastFeatureHover] = useState<SpatialFeaturePickEvent | null>(null);
   const [tone, setTone] = useState({ brightness: 0.72, contrast: 0.35 });

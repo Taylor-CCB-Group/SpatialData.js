@@ -1,8 +1,10 @@
+import { Layer } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
-import { renderStackSchema } from '@spatialdata/layers';
+import { IsolatedGroupLayer, renderStackSchema } from '@spatialdata/layers';
 import { describe, expect, it } from 'vitest';
 import {
   renderStackOrder,
+  renderStackToDeckLayers,
   renderStackToLayerInputs,
   resolveRenderStackHostLayers,
   sortLayersByRenderStackOrder,
@@ -130,18 +132,203 @@ describe('render stack adapters', () => {
     ).toEqual(['deck:scatter', 'shapes-cells', 'unmanaged']);
   });
 
-  it('uses group child ids as reserved ordering slots', () => {
+  it('orders entries at any depth, groups in place', () => {
     const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        host('deck:a'),
+        { kind: 'group', id: 'g', children: [host('deck:b'), image('image-a')] },
+        host('deck:c'),
+      ],
+    });
+
+    expect(renderStackOrder(stack, [])).toEqual(['deck:a', 'deck:b', 'image-a', 'deck:c']);
+  });
+
+  it('keeps the order a v1 stack drew with its group', () => {
+    const stack = renderStackSchema.parse({
+      entries: [
+        image('image-a'),
+        host('deck:b'),
+        { kind: 'group', id: 'group:blend', children: ['deck:b', 'image-a'] },
+      ],
+    });
+
+    expect(renderStackOrder(stack, [])).toEqual(['deck:b', 'image-a']);
+  });
+});
+
+const host = (id: string) => ({ kind: 'host' as const, id, source: { hostLayerId: id } });
+const image = (id: string, props: Record<string, unknown> = {}) => ({
+  kind: 'spatial' as const,
+  id,
+  source: { elementType: 'image' as const, elementKey: id },
+  props,
+});
+const scatter = (id: string, props: Record<string, unknown> = {}) =>
+  new ScatterplotLayer({ id, data: [], getPosition: [0, 0], ...props });
+const resolveScatter = (entry: { id: string }) => scatter(`runtime-${entry.id}`);
+
+describe('render stack tree walking', () => {
+  const stack = renderStackSchema.parse({
+    schemaVersion: 2,
+    entries: [
+      {
+        kind: 'group',
+        id: 'hidden',
+        visible: false,
+        children: [image('image-hidden'), host('deck:hidden')],
+      },
+      {
+        kind: 'group',
+        id: 'faded',
+        props: { opacity: 0.5 },
+        children: [
+          image('image-faded', { opacity: 0.8 }),
+          host('deck:faded'),
+          {
+            kind: 'group',
+            id: 'isolated',
+            props: { isolate: true, opacity: 0.25 },
+            children: [image('image-isolated'), host('deck:isolated')],
+          },
+        ],
+      },
+    ],
+  });
+
+  it('inherits visibility and pass-through opacity into layer inputs', () => {
+    const { layers, layerOrder } = renderStackToLayerInputs(stack);
+
+    expect(layerOrder).toEqual(['image-hidden', 'image-faded', 'image-isolated']);
+    expect(layers['image-hidden']).toMatchObject({ visible: false });
+    expect(layers['image-faded']).toMatchObject({ visible: true, opacity: 0.4 });
+    // An isolated group's opacity belongs to its composite, not its members.
+    expect(layers['image-isolated']).toMatchObject({ visible: true, opacity: 1 });
+  });
+
+  it('resolves only visible host entries, with pass-through opacity', () => {
+    const resolved = resolveRenderStackHostLayers(stack, resolveScatter);
+
+    expect(resolved.map((layer) => [layer.id, layer.props.opacity])).toEqual([
+      ['deck:faded', 0.5],
+      ['deck:isolated', 1],
+    ]);
+  });
+});
+
+describe('renderStackToDeckLayers', () => {
+  const ids = (layers: Layer[]) => layers.map((layer) => layer.id);
+
+  it('builds a host-only stack, wrapping an isolated multiply group', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        host('deck:under'),
+        {
+          kind: 'group',
+          id: 'points',
+          props: { blendMode: 'multiply', opacity: 0.5 },
+          children: [host('deck:grey_scatter'), host('deck:scatter')],
+        },
+        host('deck:over'),
+      ],
+    });
+
+    const layers = renderStackToDeckLayers(stack, { hostLayerResolver: resolveScatter });
+
+    expect(ids(layers)).toEqual(['deck:under', 'points', 'deck:over']);
+    const group = layers[1];
+    expect(group).toBeInstanceOf(IsolatedGroupLayer);
+    expect(group?.props).toMatchObject({ blendMode: 'multiply', opacity: 0.5 });
+    const members = group instanceof IsolatedGroupLayer ? group.props.layers.flat() : [];
+    expect(ids(members.filter((member) => member instanceof Layer))).toEqual([
+      'deck:grey_scatter',
+      'deck:scatter',
+    ]);
+  });
+
+  it('adds no layer for a pass-through group, and multiplies its opacity', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
       entries: [
         {
           kind: 'group',
-          id: 'group:blend',
-          children: ['image-a', 'labels-a'],
+          id: 'g',
+          props: { opacity: 0.5 },
+          children: [host('deck:a'), host('deck:b')],
         },
       ],
     });
 
-    expect(renderStackOrder(stack, [])).toEqual(['image-a', 'labels-a']);
+    const layers = renderStackToDeckLayers(stack, { hostLayerResolver: resolveScatter });
+
+    expect(layers.some((layer) => layer instanceof IsolatedGroupLayer)).toBe(false);
+    expect(layers.map((layer) => [layer.id, layer.props.opacity])).toEqual([
+      ['deck:a', 0.5],
+      ['deck:b', 0.5],
+    ]);
+  });
+
+  it('isolates with normal blending when only isolate is set, and nests', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        {
+          kind: 'group',
+          id: 'outer',
+          props: { opacity: 0.5 },
+          children: [
+            {
+              kind: 'group',
+              id: 'inner',
+              props: { isolate: true, opacity: 0.5 },
+              children: [host('deck:a')],
+            },
+          ],
+        },
+      ],
+    });
+
+    const [inner] = renderStackToDeckLayers(stack, { hostLayerResolver: resolveScatter });
+
+    expect(inner).toBeInstanceOf(IsolatedGroupLayer);
+    expect(inner?.props).toMatchObject({ id: 'inner', blendMode: 'normal', opacity: 0.25 });
+  });
+
+  it('uses layers the caller built, and skips hidden or empty groups', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        image('image-a'),
+        {
+          kind: 'group',
+          id: 'hidden',
+          visible: false,
+          props: { isolate: true },
+          children: [image('image-b'), host('deck:hidden')],
+        },
+        { kind: 'group', id: 'empty', props: { isolate: true }, children: [] },
+      ],
+    });
+    const built = scatter('image-a-#view#');
+    const hiddenBuilt = scatter('image-b-#view#', { visible: false });
+    const resolved: string[] = [];
+
+    const layers = renderStackToDeckLayers(stack, {
+      entryLayers: new Map([
+        ['image-a', [built]],
+        ['image-b', [hiddenBuilt]],
+      ]),
+      hostLayerResolver: (entry) => {
+        resolved.push(entry.id);
+        return resolveScatter(entry);
+      },
+    });
+
+    // The hidden layer stays in the list, unwrapped, so deck keeps its state.
+    expect(layers).toEqual([built, hiddenBuilt]);
+    expect(resolved).toEqual([]);
   });
 });
 

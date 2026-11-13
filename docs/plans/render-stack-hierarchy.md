@@ -79,16 +79,16 @@ WebGPU only:
 
 ## Where things stand
 
-- `renderStackSchema` (`core/src/renderStack.ts`) is flat and at `schemaVersion: 1`.
-  A `group` entry holds `children: string[]`, which are ids of other top-level
-  entries, and opaque `props`.
-- The only consumer of groups is `renderStackOrder`
-  (`vis/src/SpatialCanvas/renderStackAdapters.ts`). It splices the children's ids in
-  at the group's position.
-  - An entry that is both top-level and a group child appears in the order twice.
-    `sortLayersByRenderStackOrder` keeps the later index, so the group's position
-    wins silently.
-  - The example in `docs/docs/layers/overview.mdx` does exactly this.
+- `renderStackSchema` (`core/src/renderStack.ts`) is the v2 tree described below,
+  with the v1 migration. Leaf `blendMode` is saved but not drawn yet; blending goes
+  through groups.
+- `renderStackOrder`, `renderStackToLayerInputs` and `resolveRenderStackHostLayers`
+  walk the tree. Visibility inherits, and so does a pass-through group's opacity,
+  applied where each leaf layer is built.
+- `renderStackToDeckLayers` (`vis/src/SpatialCanvas/renderStackAdapters.ts`) builds
+  the groups. `VivSpatialViewer` uses it when given the stack; MDV's SpatialData
+  chart drives it that way, and its abstract scatterplot can call it with host layers
+  alone.
 - `SpatialLayerProps.sublayers` (core) with the `SpatialLayer` composite (layers) is
   a second hierarchy. It renders only shapes, and only its own tests use it.
 - The full-UI `SpatialCanvas` store holds `layers` plus a flat `layerOrder`, not a
@@ -265,7 +265,9 @@ question.
   - Each v1 group takes the top-level entries its `children` ids name.
   - The group keeps its own position, which matches today's effective order.
   - Ids that name nothing are dropped, with a notice.
-  - MDV passes stacks through this parser, so a saved v1 stack keeps loading.
+  - `migrateRenderStack` is the same upgrade as a plain function, returning the
+    notices. MDV keeps its stack as MobX state rather than parsing it, and runs this
+    on load.
 - `derived` is **not** added in v2. Adding a union member is additive and needs no
   version bump, so it lands in phase 4 with the behaviour behind it. CONTEXT.md
   warns against reserving kinds before the behaviour exists; that is why `group` sat
@@ -363,8 +365,15 @@ picking passes, and deck only draws the view under the pointer.
   - deck hands hover highlighting to the root layer. A group forwards it only to the
     picked member: forwarding to every member, as composites do, would light up the
     same object index in sibling layers.
-  - Hosts that read `pickInfo.layer` from feature events, MDV among them, still see
-    the group, and need `getIsolatedGroupMember`.
+  - Feature events carry the resolved `entryId`, and hosts reading deck picks
+    themselves use `resolvePickedEntryId`.
+- **Member ids are scoped to the group.** deck matches layers to their previous
+  instance by id across the whole tree, and a composite with unchanged props keeps
+  its old sublayers, whose `parent` chain runs through the old context. A layer moved
+  into a group under its own id then bypassed the group; moved out, it stayed
+  filtered by the group it had left and drew nothing. Members now draw as
+  `<group>/<member>`, so a move is a fresh layer, and `getIsolatedGroupMemberId`
+  gives the member's own id.
 - **Groups must be built where `VivSpatialViewer` composes layers.** Viv assigns
   layers to views through deck's `layerFilter`, by matching the view id against each
   top-level layer's id. deck's `View` has no layer list of its own, so this filter is
@@ -401,13 +410,11 @@ picking passes, and deck only draws the view under the pointer.
 
 ## Phase 1 deliverables
 
-1. Agree the semantics above. Write ADR 0006, and update CONTEXT.md: revise Group
-   Entry, and add Derived Entry, Blend Mode and Isolation.
-2. Schema v2 with the v1 migration, and tests for the migration and for tree-wide id
-   uniqueness.
-3. `renderStackOrder`, `renderStackToLayerInputs` and `resolveRenderStackHostLayers`
-   walk the tree. Visibility inherits. No rendering change beyond that.
-4. Deprecate `SpatialLayer`, `spatialLayerPropsSchema` and `migrateSpatialLayerProps`
+Schema v2, the migration and the tree-walking adapters are done. Left:
+
+1. ADR 0007 for the group semantics, and CONTEXT.md: revise Group Entry, and add
+   Derived Entry, Blend Mode and Isolation.
+2. Deprecate `SpatialLayer`, `spatialLayerPropsSchema` and `migrateSpatialLayerProps`
    with a changeset, and fix the layers and avivatorish READMEs. Remove them in a
    later minor.
 
@@ -424,8 +431,9 @@ picking passes, and deck only draws the view under the pointer.
 - **Viv on WebGL.** Do Viv's image layers honour a `parameters` blend override?
   Unchecked. If they don't, image blend modes are WebGPU-only in phase 2. Check this
   alongside the phase 1 spike.
-- **Host overlays.** Applying `blendMode` means cloning the host's layer with
-  `parameters`, which may override parameters the host set itself.
+- **Host overlays.** Applying a leaf `blendMode` means cloning the host's layer with
+  `parameters`, which may override parameters the host set itself. Until phase 2
+  settles this, leaf blend modes are saved but not drawn.
 - **Shared channel maps.** The example repeats one map in two inputs. Should a
   derived entry define its maps once and have inputs refer to them by name? That
   guarantees the keys agree. Maps might also be worth saving outside any one
