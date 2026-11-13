@@ -199,10 +199,11 @@ async function readCapped(r: Response, limit: number): Promise<number> {
 async function rangeRead(
   url: string,
   range: string,
-  needContentRange: boolean
+  needContentRange: boolean,
+  signal: AbortSignal
 ): Promise<ProbeRecord> {
   try {
-    const r = await fetch(url, { headers: { Range: range }, cache: 'no-store' });
+    const r = await fetch(url, { headers: { Range: range }, cache: 'no-store', signal });
     const contentRange = r.headers.get('content-range');
     const bytes = await readCapped(r, PROBE_BYTES);
     const match = contentRange ? CONTENT_RANGE.exec(contentRange) : null;
@@ -231,9 +232,9 @@ async function rangeRead(
   }
 }
 
-async function head(url: string): Promise<ProbeRecord> {
+async function head(url: string, signal: AbortSignal): Promise<ProbeRecord> {
   try {
-    const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+    const r = await fetch(url, { method: 'HEAD', cache: 'no-store', signal });
     const contentLength = r.headers.get('content-length');
     return {
       ok: r.ok && contentLength !== null,
@@ -246,10 +247,12 @@ async function head(url: string): Promise<ProbeRecord> {
   }
 }
 
-type Metadata = Record<
+type MetadataNode = { node_type?: string; shape?: number[]; codecs?: unknown[] } & Record<
   string,
-  { node_type?: string; shape?: number[]; codecs?: unknown[] } & Record<string, unknown>
+  unknown
 >;
+/** Entries come from the network, so an entry may be null or not an object at all. */
+type Metadata = Record<string, MetadataNode | null | undefined>;
 
 /**
  * Shards whose index sits at their end: zarrita sizes them with HEAD before reading the
@@ -260,6 +263,7 @@ function shardPaths(metadata: Metadata): string[] {
   for (const [path, node] of Object.entries(metadata).sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0
   )) {
+    if (typeof node !== 'object' || node === null) continue;
     if (node.node_type !== 'array' || !Array.isArray(node.codecs)) continue;
     const shard = node.codecs.find(
       (c): c is { configuration?: { index_location?: string } } =>
@@ -272,7 +276,7 @@ function shardPaths(metadata: Metadata): string[] {
       Reflect.get(Object(encoding.configuration), 'separator') ??
         (encoding.name === 'v2' ? '.' : '/')
     );
-    const zeros = (node.shape ?? []).map(() => '0');
+    const zeros = (Array.isArray(node.shape) ? node.shape : []).map(() => '0');
     const key =
       encoding.name === 'v2' ? zeros.join(separator) || '0' : ['c', ...zeros].join(separator);
     paths.push(`${path}/${key}`);
@@ -281,13 +285,17 @@ function shardPaths(metadata: Metadata): string[] {
 }
 
 /** An all-fill shard (often a mask) is never written, so try a few before reporting failure. */
-async function shardHead(base: string, metadata: Metadata): Promise<ProbeRecord> {
+async function shardHead(
+  base: string,
+  metadata: Metadata,
+  signal: AbortSignal
+): Promise<ProbeRecord> {
   const candidates = shardPaths(metadata).slice(0, 4);
   if (candidates.length === 0) return { ok: true, skipped: 'no sharded arrays' };
   let first: ProbeRecord | undefined;
   let allAbsent = true;
   for (const path of candidates) {
-    const result: ProbeRecord = { path, ...(await head(`${base}/${path}`)) };
+    const result: ProbeRecord = { path, ...(await head(`${base}/${path}`, signal)) };
     if (result.ok === true) return result;
     // Only a visible 404 means "not written"; an opaque failure may be CORS.
     if (result.status !== 404) allAbsent = false;
@@ -299,8 +307,21 @@ async function shardHead(base: string, metadata: Metadata): Promise<ProbeRecord>
   return { ...first, tried: candidates.length };
 }
 
-/** First points Parquet file; a directory of parts often answers HEAD with an HTML listing. */
-async function findParquet(base: string, metadata: Metadata): Promise<string | null> {
+type ParquetDiscovery =
+  | { kind: 'found'; url: string }
+  | { kind: 'none' }
+  | { kind: 'failed'; attempts: ProbeRecord[] };
+
+/**
+ * First points Parquet file; a directory of parts often answers HEAD with an HTML
+ * listing. A store with points but no readable Parquet is a failure, not a skip:
+ * CORS or CSP can block the HEADs as easily as the reads.
+ */
+async function findParquet(
+  base: string,
+  metadata: Metadata,
+  signal: AbortSignal
+): Promise<ParquetDiscovery> {
   const keys = [
     ...new Set(
       Object.keys(metadata)
@@ -308,33 +329,42 @@ async function findParquet(base: string, metadata: Metadata): Promise<string | n
         .map((k) => k.split('/')[1])
     ),
   ];
+  if (keys.length === 0) return { kind: 'none' };
+  const attempts: ProbeRecord[] = [];
   for (const key of keys.sort()) {
     for (const path of [
       `points/${key}/points.parquet`,
       `points/${key}/points.parquet/part.0.parquet`,
     ]) {
-      const h = await head(`${base}/${path}`);
-      if (h.status === 200 && !String(h.contentType ?? '').startsWith('text/html'))
-        return `${base}/${path}`;
+      const h = await head(`${base}/${path}`, signal);
+      if (h.status === 200 && !String(h.contentType ?? '').startsWith('text/html')) {
+        return { kind: 'found', url: `${base}/${path}` };
+      }
+      attempts.push({ path, ...h });
     }
   }
-  return null;
+  return { kind: 'failed', attempts };
 }
 
-async function storeReport(storeUrl: string): Promise<ProbeRecord> {
+async function storeReport(storeUrl: string, signal: AbortSignal): Promise<ProbeRecord> {
   const base = storeUrl.replace(/\/$/, '');
   const t0 = performance.now();
   const out: ProbeRecord = { url: base };
   if (new URL(base, location.href).pathname.toLowerCase().endsWith('.zip')) {
     // The zip reader sizes the archive with HEAD, then reads bounded ranges.
-    out.head = await head(base);
+    out.head = await head(base, signal);
     // Without a Content-Length on HEAD, the reader takes the size from Content-Range.
-    out.bounded = await rangeRead(base, `bytes=0-${PROBE_BYTES - 1}`, !okAt(out, 'head', 'ok'));
+    out.bounded = await rangeRead(
+      base,
+      `bytes=0-${PROBE_BYTES - 1}`,
+      !okAt(out, 'head', 'ok'),
+      signal
+    );
     out.ok = okAt(out, 'bounded', 'ok');
   } else {
     let metadata: Metadata = {};
     try {
-      const r = await fetch(`${base}/zarr.json`, { cache: 'no-store' });
+      const r = await fetch(`${base}/zarr.json`, { cache: 'no-store', signal });
       const doc: unknown = r.ok ? await r.json() : null;
       const consolidated = Object(Reflect.get(Object(doc), 'consolidated_metadata'));
       metadata = Object(consolidated.metadata);
@@ -347,13 +377,24 @@ async function storeReport(storeUrl: string): Promise<ProbeRecord> {
       out.metadata = { ok: false, error: errorText(e) };
     }
     // zarrita: bounded chunk reads, plus HEAD to size a shard before its index.
-    out.bounded = await rangeRead(`${base}/zarr.json`, `bytes=0-${PROBE_BYTES - 1}`, false);
-    out.shardHead = await shardHead(base, metadata);
+    out.bounded = await rangeRead(`${base}/zarr.json`, `bytes=0-${PROBE_BYTES - 1}`, false, signal);
+    out.shardHead = await shardHead(base, metadata, signal);
     // parquet-wasm: suffix reads for footers, the one shape that needs a CORS preflight.
-    const parquet = await findParquet(base, metadata);
-    out.parquetSuffix = parquet
-      ? { url: parquet, ...(await rangeRead(parquet, `bytes=-${PROBE_BYTES}`, true)) }
-      : { ok: true, skipped: 'no points Parquet found' };
+    const parquet = await findParquet(base, metadata, signal);
+    if (parquet.kind === 'found') {
+      out.parquetSuffix = {
+        url: parquet.url,
+        ...(await rangeRead(parquet.url, `bytes=-${PROBE_BYTES}`, true, signal)),
+      };
+    } else if (parquet.kind === 'none') {
+      out.parquetSuffix = { ok: true, skipped: 'no points elements' };
+    } else {
+      out.parquetSuffix = {
+        ok: false,
+        error: 'no readable points Parquet',
+        attempts: parquet.attempts,
+      };
+    }
     out.ok = ['metadata', 'bounded', 'shardHead', 'parquetSuffix'].every((k) => okAt(out, k, 'ok'));
   }
   out.elapsedMs = Math.round(performance.now() - t0);
@@ -407,39 +448,61 @@ async function runtimeReport(): Promise<ProbeRecord> {
 
 const STEP_TIMEOUT_MS = 10_000;
 
-/** In an unknown host a step can hang rather than fail; that is a result too. */
-function withTimeout(run: () => ProbeRecord | Promise<ProbeRecord>): Promise<ProbeRecord> {
+/**
+ * In an unknown host a step can hang rather than fail; that is a result too. The step's
+ * signal aborts on timeout or when the whole run is cancelled, so a hung fetch does not
+ * outlive its step. Steps that cannot be cancelled (a GPU adapter request) just ignore it.
+ */
+function withTimeout(
+  run: (signal: AbortSignal) => ProbeRecord | Promise<ProbeRecord>,
+  outer: AbortSignal
+): Promise<ProbeRecord> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  outer.addEventListener('abort', cancel, { once: true });
   return new Promise<ProbeRecord>((resolve) => {
-    const timer = setTimeout(
-      () => resolve({ ok: false, error: `no answer after ${STEP_TIMEOUT_MS}ms` }),
-      STEP_TIMEOUT_MS
-    );
+    const timer = setTimeout(() => {
+      controller.abort();
+      resolve({ ok: false, error: `no answer after ${STEP_TIMEOUT_MS}ms` });
+    }, STEP_TIMEOUT_MS);
     Promise.resolve()
-      .then(run)
+      .then(() => run(controller.signal))
       .then(resolve, (e: unknown) => resolve({ ok: false, error: errorText(e) }))
-      .finally(() => clearTimeout(timer));
+      .finally(() => {
+        clearTimeout(timer);
+        outer.removeEventListener('abort', cancel);
+      });
   });
 }
 
-/** Yields `[name, result]` as each probe finishes, so a slow one is visible as it runs. */
-export async function* runProbes(storeUrls: string[]): AsyncGenerator<[string, ProbeRecord]> {
+/**
+ * Yields `[name, result]` as each probe finishes, so a slow one is visible as it runs.
+ * Aborting `signal` cancels the step in progress and ends the run.
+ */
+export async function* runProbes(
+  storeUrls: string[],
+  signal: AbortSignal = new AbortController().signal
+): AsyncGenerator<[string, ProbeRecord]> {
   violations.length = 0;
-  const steps: [string, () => ProbeRecord | Promise<ProbeRecord>][] = [
+  const steps: [string, (signal: AbortSignal) => ProbeRecord | Promise<ProbeRecord>][] = [
     ['webgl2', webgl2Report],
     ['webgpu', webgpuReport],
     ['workers', workerReport],
     ['wasm', wasmReport],
     ['blobImport', blobImportReport],
     // One entry per store: a public HTTPS store and a loopback one answer different questions.
-    ...storeUrls.map((url, i): [string, () => Promise<ProbeRecord>] => [
+    ...storeUrls.map((url, i): [string, (signal: AbortSignal) => Promise<ProbeRecord>] => [
       `store_${i}`,
-      () => storeReport(url),
+      (stepSignal) => storeReport(url, stepSignal),
     ]),
     ['runtime', runtimeReport],
     ['csp', cspReport],
   ];
   for (const [name, run] of steps) {
-    yield [name, await withTimeout(run)];
+    if (signal.aborted) return;
+    const result = await withTimeout(run, signal);
+    if (signal.aborted) return;
+    yield [name, result];
   }
 }
 

@@ -88,15 +88,12 @@ bridge.oninitialized = async () => {
   void bridge.sendToolResult(result);
 };
 
-frame.addEventListener(
-  'load',
-  () => {
-    const target = frame.contentWindow;
-    if (!target) throw new Error('iframe has no window');
-    void bridge.connect(new PostMessageTransport(target, target));
-  },
-  { once: true }
-);
+// Listen before the View exists: its App.connect() sends ui/initialize as its script
+// runs, which can be before the iframe's load event. The iframe keeps one WindowProxy
+// across the srcdoc navigation, so the transport recognises the View's messages.
+const target = frame.contentWindow;
+if (!target) throw new Error('iframe has no window');
+await bridge.connect(new PostMessageTransport(target, target));
 frame.sandbox.value =
   sandboxMode === 'opaque' ? 'allow-scripts' : 'allow-scripts allow-same-origin';
 const meta = `<meta http-equiv="Content-Security-Policy" content="${csp}">`;

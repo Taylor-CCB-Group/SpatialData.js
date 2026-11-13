@@ -3,6 +3,7 @@ import {
   hostHeaderValidation,
   localhostHostValidation,
   NodeStreamableHTTPServerTransport,
+  originValidation,
 } from '@modelcontextprotocol/node';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { connectDomains, createServer, defaultStoreUrls } from './server.ts';
@@ -22,15 +23,18 @@ function startHttp(): void {
     .filter(Boolean);
   const validateHost =
     allowedHosts.length > 0
-      ? hostHeaderValidation(['localhost', '127.0.0.1', '[::1]', ...allowedHosts])
+      ? hostHeaderValidation([...LOOPBACK, ...allowedHosts])
       : localhostHostValidation();
+  // The transport spec requires it: a browser page elsewhere must not drive this server,
+  // even with an allowed Host. Requests with no Origin (non-browser clients) pass.
+  const validateOrigin = originValidation([...LOOPBACK, ...allowedHosts]);
 
   const httpServer = createHttpServer(async (req, res) => {
     if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/mcp') {
       res.writeHead(404).end();
       return;
     }
-    if (!validateHost(req, res)) return;
+    if (!validateHost(req, res) || !validateOrigin(req, res)) return;
     // Claude calls this from its own process, not a page, so CORS is only for
     // browser-based local hosts (the harness, MCP Inspector).
     const origin = req.headers.origin;

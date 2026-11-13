@@ -44,23 +44,32 @@ export default {
     pre.style.cssText = 'font: 12px/1.45 ui-monospace, monospace; margin: 0; white-space: pre-wrap';
     el.replaceChildren(pre);
     let current = 0;
+    let abort: AbortController | undefined;
 
     const run = async () => {
       const id = ++current;
+      // A new store list supersedes the run in progress, requests and all.
+      abort?.abort();
+      abort = new AbortController();
+      const { signal } = abort;
       const value = model.get('store_urls');
       const storeUrls = Array.isArray(value)
         ? value.filter((u): u is string => typeof u === 'string')
         : [];
       if (storeUrls.length === 0) {
         pre.textContent = 'Set store_urls to probe stores.';
+        // The previous run's results describe stores that are no longer asked about.
+        model.set('results', {});
+        model.save_changes();
         return;
       }
       const results: ProbeRecord = { module: moduleReport(el) };
-      for await (const [name, result] of runProbes(storeUrls)) {
+      for await (const [name, result] of runProbes(storeUrls, signal)) {
         if (id !== current) return;
         results[name] = result;
         pre.textContent = `Probing… finished ${name}`;
       }
+      if (id !== current) return;
       pre.textContent = ['SpatialData probe', ...summarize(results)].join('\n');
       model.set('results', results);
       model.save_changes();
@@ -70,6 +79,7 @@ export default {
     void run();
     return () => {
       current++;
+      abort?.abort();
       model.off('change:store_urls', run);
     };
   },

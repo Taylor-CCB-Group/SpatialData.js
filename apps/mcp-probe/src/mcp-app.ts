@@ -19,7 +19,9 @@ const app = new App({ name: 'SpatialData probe', version: '0.1.0' }, {}, { autoR
 
 let storeUrls: string[] = [];
 let lastResults: ProbeRecord = {};
-let running: Promise<ProbeRecord> | undefined;
+// Every run goes through start(): only the newest may render, publish or clear itself.
+let generation = 0;
+let current: { key: string; promise: Promise<ProbeRecord>; abort: AbortController } | undefined;
 
 function hostReport(): ProbeRecord {
   const { styles: _styles, ...context } = app.getHostContext() ?? {};
@@ -51,15 +53,16 @@ function renderTable(results: ProbeRecord): void {
   tableEl.replaceChildren(...rows);
 }
 
-async function probe(urls: string[]): Promise<ProbeRecord> {
-  storeUrls = urls;
+async function probe(urls: string[], run: number, signal: AbortSignal): Promise<ProbeRecord> {
   const results: ProbeRecord = { host: hostReport() };
   lastResults = results;
-  for await (const [name, result] of runProbes(urls)) {
+  for await (const [name, result] of runProbes(urls, signal)) {
+    if (run !== generation) return results;
     summaryEl.textContent = `Probing… finished ${name}`;
     results[name] = result;
     renderTable(results);
   }
+  if (run !== generation) return results;
   const verdicts = summarize(results);
   summaryEl.textContent = verdicts.join('\n');
   summaryEl.style.whiteSpace = 'pre';
@@ -73,12 +76,19 @@ async function probe(urls: string[]): Promise<ProbeRecord> {
   return results;
 }
 
-function start(urls: string[]): Promise<ProbeRecord> {
-  if (running && urls.join() === storeUrls.join()) return running;
-  running = probe(urls).finally(() => {
-    running = undefined;
+/** Joins a run already in progress for the same stores unless `force` asks for a fresh one. */
+function start(urls: string[], force = false): Promise<ProbeRecord> {
+  const key = urls.join('\n');
+  if (current && current.key === key && !force) return current.promise;
+  current?.abort.abort();
+  const run = ++generation;
+  storeUrls = urls;
+  const abort = new AbortController();
+  const promise = probe(urls, run, abort.signal).finally(() => {
+    if (current?.promise === promise) current = undefined;
   });
-  return running;
+  current = { key, promise, abort };
+  return promise;
 }
 
 const toolArguments = z.object({ store_urls: z.array(z.string()).optional() });
@@ -116,7 +126,7 @@ app.registerTool(
     if (urls.length === 0) {
       return { content: [{ type: 'text', text: 'No store URLs yet.' }], isError: true };
     }
-    const results = await probe(urls);
+    const results = await start(urls, true);
     return {
       content: [{ type: 'text', text: summarize(results).join('\n') }],
       structuredContent: results,
@@ -125,7 +135,7 @@ app.registerTool(
 );
 
 rerunButton.addEventListener('click', () => {
-  if (storeUrls.length > 0) void probe(storeUrls);
+  if (storeUrls.length > 0) void start(storeUrls, true);
 });
 sendButton.addEventListener('click', () => {
   void app.callServerTool({ name: 'report_probe', arguments: { results: lastResults } });
