@@ -196,7 +196,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isGroupPropKey(key: string): key is keyof typeof groupPropsShape {
-  return key in groupPropsShape;
+  return Object.hasOwn(groupPropsShape, key);
 }
 
 /** v2 group props: other keys kept, typed keys kept only when valid. */
@@ -288,9 +288,15 @@ export function migrateRenderStack(input: unknown): {
     if (!isRecord(entry) || entry.kind !== 'group' || typeof entry.id !== 'string') return entry;
     const groupId = entry.id;
     const children: unknown[] = [];
+    // A group naming one id twice keeps it once; pass 1 noted the repeat as claimed.
+    const taken = new Set<string>();
     for (const child of childrenOf(entry)) {
-      if (typeof child !== 'string') children.push(build(child));
-      else if (parentOf.get(child) === groupId) children.push(build(byId.get(child)));
+      if (typeof child !== 'string') {
+        children.push(build(child));
+      } else if (parentOf.get(child) === groupId && !taken.has(child)) {
+        taken.add(child);
+        children.push(build(byId.get(child)));
+      }
     }
     return { ...entry, props: migrateGroupProps(groupId, entry.props, notices), children };
   };

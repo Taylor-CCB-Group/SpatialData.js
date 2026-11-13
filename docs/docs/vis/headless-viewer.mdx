@@ -167,7 +167,11 @@ children composites them as one image, so where a scatter overlay and its
 background points overlap at 50% opacity, the overlap doesn't come out darker:
 
 ```tsx
-renderStack={{
+import { renderStackSchema } from '@spatialdata/vis';
+
+// Parsing fills in each entry's `visible` and `props`; a group left without
+// `visible` would hide everything in it.
+const renderStack = renderStackSchema.parse({
   schemaVersion: 2,
   entries: [
     { kind: 'spatial', id: 'image', source: { elementType: 'image', elementKey: 'my_image' } },
@@ -181,7 +185,7 @@ renderStack={{
       ],
     },
   ],
-}}
+});
 ```
 
 `hostLayerResolver` is called for host entries at any depth. The

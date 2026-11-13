@@ -352,6 +352,28 @@ describe('migrateRenderStack', () => {
     });
   });
 
+  it('keeps an id a group names twice once', () => {
+    const { stack, notices } = migrateRenderStack({
+      schemaVersion: 1,
+      entries: [host('a'), { kind: 'group', id: 'g', children: ['a', 'a'], props: {} }],
+    });
+
+    expect(notices).toEqual([{ groupId: 'g', childId: 'a', reason: 'claimed' }]);
+    expect(getRenderStackEntryIds(renderStackSchema.parse(stack))).toEqual(['g', 'a']);
+  });
+
+  it('keeps group props named like Object.prototype members', () => {
+    const { stack, notices } = migrateRenderStack({
+      schemaVersion: 1,
+      entries: [{ kind: 'group', id: 'g', children: [], props: { constructor: 'metadata' } }],
+    });
+
+    expect(notices).toEqual([]);
+    expect(findRenderStackEntry(renderStackSchema.parse(stack), 'g')).toMatchObject({
+      props: { constructor: 'metadata' },
+    });
+  });
+
   it('passes anything that is not a stack through for the schema to reject', () => {
     expect(migrateRenderStack(null).stack).toBe(null);
     expect(renderStackSchema.safeParse({ schemaVersion: 3, entries: [] }).success).toBe(false);

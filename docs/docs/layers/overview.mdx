@@ -81,9 +81,10 @@ The public saved/render order is `renderStack.entries`, not a separate
 `layerOrder` array:
 
 ```ts
-import type { RenderStack } from '@spatialdata/layers';
+import { renderStackSchema } from '@spatialdata/layers';
 
-const renderStack: RenderStack = {
+// Parsing fills in the defaults: `visible`, `props` and `children`.
+const renderStack = renderStackSchema.parse({
   schemaVersion: 2,
   entries: [
     {
@@ -101,7 +102,7 @@ const renderStack: RenderStack = {
       ],
     },
   ],
-};
+});
 ```
 
 `source` holds structural identity. `props` holds renderer inputs. The

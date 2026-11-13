@@ -87,6 +87,23 @@ describe('IsolatedGroupLayer picking', () => {
     expect(getIsolatedGroupMemberId(info)).toBe('cells');
   });
 
+  it('keeps member ids apart when group and member ids contain a slash', () => {
+    const drawnIds = (groupId: string, memberId: string) => {
+      const g = new IsolatedGroupLayer({ id: groupId, layers: [circles(memberId)] });
+      const drawn = g.renderLayers().flat()[0];
+      if (!(drawn instanceof Layer)) throw new Error('expected a member');
+      drawn.parent = g;
+      return { id: drawn.id, memberId: getIsolatedGroupMemberId(bubblePick(drawn)) };
+    };
+
+    const one = drawnIds('a', 'b/c');
+    const other = drawnIds('a/b', 'c');
+    expect(one.id).not.toBe(other.id);
+    expect(one.memberId).toBe('b/c');
+    expect(other.memberId).toBe('c');
+    expect(drawnIds('50%', 'c').memberId).toBe('c');
+  });
+
   it('keeps the innermost record when a pick passes through nested groups', () => {
     const cells = circles('cells');
     const inner = group('inner', [cells]);

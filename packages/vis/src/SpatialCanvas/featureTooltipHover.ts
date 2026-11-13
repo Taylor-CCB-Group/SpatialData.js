@@ -100,7 +100,8 @@ export function pickedLayerId(info: { layer?: { id?: unknown } | null }): string
 
 /** Strips the view token a Viv-style viewer appends to top-level layer ids. */
 export function normalizeDeckLayerId(rawLayerId: string): string {
-  return rawLayerId.replace(/-#.*#$/, '');
+  // Only the last token: a group member's id carries the group's token as well.
+  return rawLayerId.replace(/-#[^#]*#$/, '');
 }
 
 /**
@@ -127,7 +128,10 @@ function resolveLogicalLayerId(rawLayerId: string, logicalLayerIds: string[] | u
       normalized === candidate ||
       normalized.startsWith(`${candidate}-`) ||
       normalized.endsWith(`-${candidate}`) ||
-      normalized.includes(`-${candidate}-`)
+      normalized.includes(`-${candidate}-`) ||
+      // An isolated group's member draws as `<group>/<member>`.
+      normalized.endsWith(`/${candidate}`) ||
+      normalized.includes(`/${candidate}-`)
     ) {
       return candidate;
     }

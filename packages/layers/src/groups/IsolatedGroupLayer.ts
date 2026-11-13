@@ -28,7 +28,8 @@
  * names the group. The innermost group records the child the pick came through, and
  * `getIsolatedGroupMember` / `getIsolatedGroupMemberId` read it back.
  *
- * Member ids: members draw under ids scoped to the group (`<group>/<member>`). deck
+ * Member ids: members draw under ids scoped to the group (`<group>/<member>`, with
+ * `/` and `%` in the group id escaped as `%2F` and `%25`). deck
  * matches layers to their previous instance by id across the whole tree, and a
  * composite whose props did not change keeps its old sublayers, whose `parent` chain
  * still runs through the old context. A member moved into or out of a group under its
@@ -79,8 +80,13 @@ export function getIsolatedGroupMemberId(info: object): string | null {
   return typeof id === 'string' ? id : null;
 }
 
+/**
+ * `<group>/`, with any `/` or `%` in the group id escaped, so the first `/` always ends
+ * the group's part: group `a` with member `b/c` and group `a/b` with member `c` stay
+ * apart.
+ */
 function memberIdPrefix(groupId: string): string {
-  return `${groupId}/`;
+  return `${groupId.replaceAll('%', '%25').replaceAll('/', '%2F')}/`;
 }
 
 function isolationPassName(groupId: string): string {

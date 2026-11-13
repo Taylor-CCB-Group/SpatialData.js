@@ -32,6 +32,11 @@ export interface SpatialViewerProps {
   /**
    * When given, layers are placed by this stack's tree instead of `layerOrder`, and its
    * isolated groups are drawn. `layers` and `vivLayerProps` are matched to entries by id.
+   *
+   * They are drawn as given, so they must already carry the visibility and opacity
+   * their entries inherit from pass-through groups, as `useSpatialCanvasRenderer`
+   * builds them. It can't be applied here: Viv's image layer ignores an outer
+   * `opacity`, so it has to go in when a layer is built.
    */
   renderStack?: RenderStack;
   /** Optional: Viv layer props for image layers */

@@ -97,6 +97,9 @@ const LABELS_BITMASK_LAYER_ID = 'sub-layer-0-0-0-0,512,512,0-labels:mask-#spatia
 describe('featureTooltipHover', () => {
   it('normalizes viv-suffixed deck layer ids', () => {
     expect(normalizeDeckLayerId('shapes:cells-#image-a#')).toBe('shapes:cells');
+    expect(normalizeDeckLayerId('g-#image-a#/shapes:cells-#image-a#')).toBe(
+      'g-#image-a#/shapes:cells'
+    );
   });
 
   it('aggregates tooltips from multiple layer picks', () => {
@@ -317,6 +320,28 @@ describe('featureTooltipHover', () => {
         ['shapes:cells', 'labels:mask']
       )
     ).toEqual(['shapes:cells-#spatial-view#', 'labels:mask-#spatial-view#']);
+  });
+
+  it('resolves logical ids to the members of an isolated group', () => {
+    const deck = {
+      props: {
+        layers: [{ id: 'g-#spatial-view#' }, { id: 'shapes:cells-#spatial-view#' }],
+      },
+      layerManager: {
+        getLayers: () => [
+          { id: 'g-#spatial-view#/points:tx-#spatial-view#' },
+          { id: 'g-#spatial-view#/points:tx-#spatial-view#-tile-3' },
+          { id: 'g-#spatial-view#-composite' },
+          { id: 'shapes:cells-#spatial-view#' },
+        ],
+      },
+      pickMultipleObjects: () => [],
+    };
+    expect(resolveDeckPickLayerIds(deck, ['shapes:cells', 'points:tx'])).toEqual([
+      'shapes:cells-#spatial-view#',
+      'g-#spatial-view#/points:tx-#spatial-view#',
+      'g-#spatial-view#/points:tx-#spatial-view#-tile-3',
+    ]);
   });
 
   it('resolves logical label ids to flattened bitmask tile layer ids', () => {
