@@ -24,7 +24,7 @@ semantics, see [Feature table associations and annotation columns](./feature-tab
 ## `@spatialdata/layers`
 
 - **`SpatialLayer`** `CompositeLayer` and versioned **`SpatialLayerProps`** (Zod + `schemaVersion` + **`migrateSpatialLayerProps`**).
-- The canonical home for **`RenderStack`** saved/render order, including SpatialData entries, host overlay descriptors, and reserved group entries.
+- The canonical home for **`RenderStack`** saved/render order, including SpatialData entries, host overlay descriptors, and groups that blend or isolate their children.
 - Deck renderers for shapes, labels and points. `SpatialLayer` itself renders shapes sublayers only; vis composes the rest.
 - **No MobX**; plain TypeScript and deck APIs.
 

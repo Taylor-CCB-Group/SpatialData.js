@@ -13,8 +13,10 @@ ordered **`RenderStack`** contract, a top-level **`SpatialLayer`**
 - **`SpatialLayer`** — validates props and renders `shapes` sublayers. Images,
   labels and points are composed by `@spatialdata/vis` from the layers below.
 - **`RenderStack`** — ordered saved/render state for SpatialData entries, host
-  overlay descriptors, and reserved group entries. This replaces public
+  overlay descriptors, and the groups that hold them. This replaces public
   dependence on parallel `layers` maps plus `layerOrder` arrays.
+- **`IsolatedGroupLayer`** — draws a group's members into their own target and
+  composites it with an opacity and blend mode.
 - **`spatialLayerPropsSchema`** / **`migrateSpatialLayerProps`** — runtime validation and migrations for saved views, URL state, and integrators (e.g. MDV chart config).
 - **Renderers** — `createShapesDeckLayer`, `LabelsLayer`, and `PointsLayer`
   with its `PointsDataEngine`.
@@ -102,16 +104,57 @@ const renderStack: RenderStack = {
 };
 ```
 
-A group draws its children in order. A group whose blend mode isn't `pass-through`,
-or that sets `isolate`, draws them into its own target first and composites that with
-its opacity and blend mode. `renderStackSchema` upgrades a saved v1 stack, and
-`migrateRenderStack` does the same as a plain function, returning notices for any
-child ids it had to drop.
-
 `source` holds structural identity. `props` holds renderer inputs. The
 [Resource Resolver](../core/resource-resolver) and deck/Viv `updateTriggers` decide what actually invalidates IO,
 geometry, attributes, or tile data; do not add a second visual-vs-structural
 prop registry.
+
+### Groups
+
+The stack is a tree. A `group` entry holds its children as entries, drawn in
+order, bottom to top, and entry ids are unique across the whole tree. Code that
+reads `stack.entries` sees only the top level: use `walkRenderStackEntries` to
+visit every entry, or `findRenderStackEntry` to look one up by id.
+
+A group's props are typed, and all optional:
+
+| Prop | Default | Meaning |
+|------|---------|---------|
+| `opacity` | `1` | The group's opacity, from 0 to 1 |
+| `blendMode` | `'pass-through'` | `pass-through`, `normal`, `additive`, `multiply`, `screen`, `max` or `min` |
+| `isolate` | `false` | Draw the children into their own target before compositing |
+
+`resolveRenderStackGroupProps(group)` applies the defaults. The two ways a group
+draws differ where its children overlap:
+
+- **Pass-through** (the default) adds no layer. The group's visibility and opacity
+  multiply into each child's, so at 50% two overlapping children each draw at 50%
+  and their overlap comes out darker than either. It costs nothing.
+- **Isolated** (`isolate: true`, or any blend mode but `pass-through`) draws the
+  children into a target of their own, then composites that once with the group's
+  opacity and blend mode, so the overlap matches the rest of the group. It costs
+  one viewport-sized target per group and view.
+
+Leaf entries also accept `props.blendMode`. It is saved, but not drawn yet:
+blending goes through groups.
+
+`renderStackToDeckLayers` in `@spatialdata/vis` turns a stack into deck layers,
+with an `IsolatedGroupLayer` for each isolated group. It needs no SpatialData or
+Viv, so a host with only its own layers can use groups too. `IsolatedGroupLayer`
+draws its members under ids scoped to the group (`<group>/<member>`), so a layer
+moving into or out of a group never keeps deck state from its old place. A pick
+through a group names the member's layer; `getIsolatedGroupMemberId(info)` gives
+its own, unscoped id.
+
+### Saved v1 stacks
+
+v1 stacks were flat, with each group naming other top-level entries by id.
+`renderStackSchema` upgrades them on parse. `migrateRenderStack` does the same as
+a plain function, for hosts that keep the stack as live state, and returns notices
+for child ids it had to drop: ids that name no entry, or that an earlier group
+already took. A saved stack never fails to load for that reason. See
+[ADR 0007](https://github.com/Taylor-CCB-Group/SpatialData.js/blob/main/docs/adr/0007-render-stack-groups.md)
+for the decisions behind groups.
 
 ## React-agnostic usage
 

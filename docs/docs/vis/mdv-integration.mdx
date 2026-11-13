@@ -178,8 +178,8 @@ The first-pass chart can deliberately avoid replacing the channel dialog and mos
 
 ## Render stack and MDV state model
 
-The next MDV pass should treat `@spatialdata/layers` **`RenderStack`** as the
-canonical saved/render order:
+MDV treats `@spatialdata/layers` **`RenderStack`** as the canonical saved/render
+order:
 
 ```ts
 const renderStack = {
@@ -196,6 +196,12 @@ Host overlays are descriptors in saved config. MDV owns the runtime resolver
 that turns `deck:scatter`, gates, selections, contours, or ROI descriptors into
 deck.gl layers. This avoids storing raw deck layer instances in project state
 and avoids parallel `stackOrder` / `layerOrder` arrays.
+
+MDV keeps the stack as live MobX state and edits it in place, so it upgrades
+saved v1 stacks with `migrateRenderStack` rather than by parsing, and reports the
+notices that function returns. Groups put entries below the top level, so MDV
+code that looks entries up walks the tree with `walkRenderStackEntries` or
+`findRenderStackEntry`.
 
 Listeners follow the same split. Saved `renderStack.entries[*].props` should
 contain serializable renderer input only. MDV-owned callbacks such as
