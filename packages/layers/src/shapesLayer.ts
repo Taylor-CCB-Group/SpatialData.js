@@ -495,44 +495,98 @@ function getTessellation(positions: Float32Array, startIndices: Int32Array): Tes
  * dropped. (A strong `Map` keyed by layer id would pin a million-element `Uint8Array`
  * per discarded layer id forever.) Two layers whose three keys all match legitimately
  * share one buffer: identical inputs mean identical bytes.
+ *
+ * The per-feature lookups depend only on the first two keys, so they run once per
+ * feature-state into a `FeatureColorTemplate`. A new default colour — cosmetic, and
+ * sent on every step of a colour picker — then copies the template and writes the
+ * default into the features that use it, without consulting a Map or Set.
  */
+interface FeatureColorTemplate {
+  /** Features with their own colour, faded as needed; hidden and default-coloured ones are 0. */
+  base: Uint8Array;
+  /** Features drawn in the default colour. */
+  defaultIndices: Uint32Array;
+  /** Faded features drawn in the default colour. */
+  fadedDefaultIndices: Uint32Array;
+  byColor: WeakMap<object, Uint8Array>;
+}
+
 const featureColorsCache = new WeakMap<
   ShapeFeatureStateRuntime,
-  WeakMap<object, WeakMap<object, Uint8Array>>
+  WeakMap<object, FeatureColorTemplate>
 >();
+
+function buildFeatureColorTemplate(
+  featureState: ShapeFeatureStateRuntime,
+  featureIds: readonly string[]
+): FeatureColorTemplate {
+  const featureCount = featureIds.length;
+  const base = new Uint8Array(featureCount * 4);
+  const defaultIndices = new Uint32Array(featureCount);
+  const fadedDefaultIndices = new Uint32Array(featureCount);
+  let defaultCount = 0;
+  let fadedDefaultCount = 0;
+  const { fillColorByFeatureId, hiddenFeatureIds, fadedFeatureIds } = featureState;
+  for (let f = 0; f < featureCount; f += 1) {
+    const featureId = featureIds[f];
+    if (!featureId || hiddenFeatureIds.has(featureId)) {
+      continue;
+    }
+    const faded = fadedFeatureIds.has(featureId);
+    const own = fillColorByFeatureId.get(featureId);
+    if (!own) {
+      if (faded) {
+        fadedDefaultIndices[fadedDefaultCount++] = f;
+      } else {
+        defaultIndices[defaultCount++] = f;
+      }
+      continue;
+    }
+    base.set(faded ? multiplyAlpha(own, featureState.filteredOpacityMultiplier) : own, f * 4);
+  }
+  return {
+    base,
+    defaultIndices: defaultIndices.subarray(0, defaultCount),
+    fadedDefaultIndices: fadedDefaultIndices.subarray(0, fadedDefaultCount),
+    byColor: new WeakMap(),
+  };
+}
+
+/** One RGBA colour as the `Uint32` holding its four bytes in this platform's order. */
+function packRgba(color: readonly number[]): number {
+  return new Uint32Array(Uint8Array.of(color[0], color[1], color[2], color[3]).buffer)[0];
+}
 
 function getFeatureColors(
   featureState: ShapeFeatureStateRuntime,
   featureIds: readonly string[],
-  defaultColor: readonly number[],
-  colorForFeatureIndex: (index: number) => [number, number, number, number]
+  defaultColor: [number, number, number, number]
 ): Uint8Array {
-  const idsKey = featureIds as unknown as object;
-  const colorKey = defaultColor as unknown as object;
   let byIds = featureColorsCache.get(featureState);
   if (!byIds) {
     byIds = new WeakMap();
     featureColorsCache.set(featureState, byIds);
   }
-  let byColor = byIds.get(idsKey);
-  if (!byColor) {
-    byColor = new WeakMap();
-    byIds.set(idsKey, byColor);
+  let template = byIds.get(featureIds);
+  if (!template) {
+    template = buildFeatureColorTemplate(featureState, featureIds);
+    byIds.set(featureIds, template);
   }
-  const cached = byColor.get(colorKey);
+  const cached = template.byColor.get(defaultColor);
   if (cached) {
     return cached;
   }
-  const featureCount = featureIds.length;
-  const colors = new Uint8Array(featureCount * 4);
-  for (let f = 0; f < featureCount; f += 1) {
-    const c = colorForFeatureIndex(f);
-    colors[f * 4] = c[0];
-    colors[f * 4 + 1] = c[1];
-    colors[f * 4 + 2] = c[2];
-    colors[f * 4 + 3] = c[3];
+  const colors = template.base.slice();
+  const texels = new Uint32Array(colors.buffer);
+  const plain = packRgba(defaultColor);
+  for (const f of template.defaultIndices) {
+    texels[f] = plain;
   }
-  byColor.set(colorKey, colors);
+  const faded = packRgba(multiplyAlpha(defaultColor, featureState.filteredOpacityMultiplier));
+  for (const f of template.fadedDefaultIndices) {
+    texels[f] = faded;
+  }
+  template.byColor.set(defaultColor, colors);
   return colors;
 }
 
@@ -1055,26 +1109,12 @@ function createBinaryPolygonDeckLayers(
     return [];
   }
 
-  const fillColorAt = (index: number): [number, number, number, number] => {
-    const featureId = featureIds[index];
-    if (!featureId || featureState.hiddenFeatureIds.has(featureId)) {
-      return TRANSPARENT_RGBA;
-    }
-    return resolveFeatureColor(
-      featureId,
-      featureState.fillColorByFeatureId,
-      EMPTY_SHAPE_FEATURE_STATE_RUNTIME.fillColorByFeatureId,
-      defaultFillColor,
-      featureState
-    );
-  };
-
   // A caller-supplied buffer is used verbatim — no build, no per-feature lookup.
   // It is padded/truncated to the feature count so a short buffer cannot read past
   // the end of the texture (the tail simply renders transparent).
   const featureColors = options.featureColors
     ? fitFeatureColorBuffer(options.featureColors, featureIds.length)
-    : getFeatureColors(featureState, featureIds, defaultFillColor, fillColorAt);
+    : getFeatureColors(featureState, featureIds, defaultFillColor);
 
   const layer = new FlatPolygonLayer({
     id: options.id,
