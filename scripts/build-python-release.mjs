@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 /**
- * Build the spatialdata-js-util sdist and wheel for PyPI, and refuse to call
- * the result good unless both carry the vendored OpenJPH WASM.
+ * Build the sdist and wheel of each PyPI package, and refuse to call the result
+ * good unless both carry the gitignored files the package needs at runtime:
  *
- * The WASM is gitignored and only exists after
- * `scripts/vendor-openjph-for-python.mjs` has run. setuptools' package-data
- * globs match nothing rather than failing when it is absent, so `uv build`
- * alone happily produces a release whose HTJ2K encoder is missing.
+ *   spatialdata-js-util  the vendored OpenJPH WASM (scripts/vendor-openjph-for-python.mjs)
+ *   sdjs                 the bundled viewer (scripts/build-viewer-app.mjs)
  *
- * Output: python/spatialdata-js-util/dist/. It and setuptools' in-tree state
- * (build/, *.egg-info, whose SOURCES.txt feeds the sdist) are cleared first.
+ * setuptools' package-data globs match nothing rather than failing when those
+ * are absent, so `uv build` alone happily produces a release without them.
  *
- * `--release` additionally requires HEAD to carry the
- * `spatialdata-js-util@<version>` tag that `changeset publish` creates, so a
- * PyPI upload is always built from the commit that version names rather than
- * from a later `main`. CI builds without it.
+ * Usage: build-python-release.mjs [--release] [package ...]   (default: every package)
+ *
+ * Output: python/<package>/dist/. It and setuptools' in-tree state (build/,
+ * *.egg-info, whose SOURCES.txt feeds the sdist) are cleared first.
+ *
+ * `--release` additionally requires HEAD to carry the `<package>@<version>` tag
+ * that `changeset publish` creates, so a PyPI upload is always built from the
+ * commit that version names rather than from a later `main`. CI builds without it.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -22,9 +24,22 @@ import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const pkgDir = join(repoRoot, 'python', 'spatialdata-js-util');
-const distDir = join(pkgDir, 'dist');
-const vendorDir = join(pkgDir, 'src', 'spatialdata_js_util', 'codecs', 'vendor', 'openjph');
+const scripts = join(repoRoot, 'scripts');
+
+const PACKAGES = {
+  'spatialdata-js-util': {
+    module: 'spatialdata_js_util',
+    payload: 'codecs/vendor/openjph',
+    prepare: (_payloadDir) => [join(scripts, 'vendor-openjph-for-python.mjs')],
+    check: (files) => files.some((f) => f.endsWith('.wasm')) || 'no .wasm file',
+  },
+  sdjs: {
+    module: 'sdjs',
+    payload: 'app',
+    prepare: (payloadDir) => [join(scripts, 'build-viewer-app.mjs'), payloadDir],
+    check: (files) => files.some((f) => f.endsWith('/app/index.html')) || 'no app/index.html',
+  },
+};
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
@@ -57,65 +72,79 @@ function archiveMembers(path) {
   return new Set(JSON.parse(result.stdout));
 }
 
-const { version } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
-
-if (process.argv.includes('--release')) {
-  const tag = `spatialdata-js-util@${version}`;
-  const tags = run('git', ['tag', '--points-at', 'HEAD'], {
+function tagsAtHead() {
+  return run('git', ['tag', '--points-at', 'HEAD'], {
     cwd: repoRoot,
     stdio: ['ignore', 'pipe', 'inherit'],
     encoding: 'utf8',
   }).stdout.split('\n');
-  if (!tags.includes(tag)) {
-    console.error(
-      `HEAD is not tagged ${tag}. Check out that tag (see RELEASE.md) before building a release.`
+}
+
+/** Builds one package; returns its problems, or [] if both artifacts are complete. */
+function build(name, release) {
+  const { module, payload, prepare, check } = PACKAGES[name];
+  const pkgDir = join(repoRoot, 'python', name);
+  const srcDir = join(pkgDir, 'src');
+  const distDir = join(pkgDir, 'dist');
+  const payloadDir = join(srcDir, module, payload);
+  const { version } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
+
+  if (release && !tagsAtHead().includes(`${name}@${version}`)) {
+    return [`HEAD is not tagged ${name}@${version}. Check out that tag (see RELEASE.md).`];
+  }
+
+  run(process.execPath, prepare(payloadDir));
+  const payloadFiles = listFiles(payloadDir).map((path) =>
+    relative(srcDir, path).split(sep).join('/')
+  );
+  const verdict = check(payloadFiles);
+  if (verdict !== true) return [`${relative(repoRoot, payloadDir)}: ${verdict} after preparing it`];
+
+  for (const stale of [distDir, join(pkgDir, 'build'), join(srcDir, `${module}.egg-info`)]) {
+    rmSync(stale, { recursive: true, force: true });
+  }
+  run('uv', ['build', '--directory', pkgDir, '--out-dir', distDir]);
+
+  const problems = [];
+  for (const [label, path, prefix] of [
+    ['wheel', join(distDir, `${module}-${version}-py3-none-any.whl`), ''],
+    ['sdist', join(distDir, `${module}-${version}.tar.gz`), `${module}-${version}/src/`],
+  ]) {
+    if (!existsSync(path)) {
+      problems.push(
+        `${label}: expected ${relative(repoRoot, path)} (is pyproject.toml's version in sync with package.json?)`
+      );
+      continue;
+    }
+    const members = archiveMembers(path);
+    const missing = payloadFiles.filter((file) => !members.has(prefix + file));
+    if (missing.length > 0) problems.push(`${label}: missing ${missing.join(', ')}`);
+  }
+  if (problems.length === 0) {
+    console.log(
+      `\nBuilt ${name} ${version} with ${payloadFiles.length} ${payload} files in both artifacts.\n`
     );
-    process.exit(1);
+  }
+  return problems;
+}
+
+const args = process.argv.slice(2);
+const release = args.includes('--release');
+const names = args.filter((a) => a !== '--release');
+const unknown = names.filter((n) => !(n in PACKAGES));
+if (unknown.length > 0) {
+  console.error(
+    `Unknown package ${unknown.join(', ')}; expected ${Object.keys(PACKAGES).join(', ')}.`
+  );
+  process.exit(2);
+}
+
+let failed = false;
+for (const name of names.length > 0 ? names : Object.keys(PACKAGES)) {
+  const problems = build(name, release);
+  if (problems.length > 0) {
+    console.error(`\n${name} release build is incomplete:\n  ${problems.join('\n  ')}`);
+    failed = true;
   }
 }
-
-run(process.execPath, [join(repoRoot, 'scripts', 'vendor-openjph-for-python.mjs')]);
-
-const vendored = listFiles(vendorDir).map((path) =>
-  relative(join(pkgDir, 'src'), path).split(sep).join('/')
-);
-if (!vendored.some((path) => path.endsWith('.wasm'))) {
-  throw new Error(`No .wasm file under ${vendorDir} after vendoring.`);
-}
-
-for (const stale of [
-  distDir,
-  join(pkgDir, 'build'),
-  join(pkgDir, 'src', 'spatialdata_js_util.egg-info'),
-]) {
-  rmSync(stale, { recursive: true, force: true });
-}
-run('uv', ['build', '--directory', pkgDir, '--out-dir', distDir]);
-
-const wheel = join(distDir, `spatialdata_js_util-${version}-py3-none-any.whl`);
-const sdist = join(distDir, `spatialdata_js_util-${version}.tar.gz`);
-const problems = [];
-
-for (const [label, path, prefix] of [
-  ['wheel', wheel, ''],
-  ['sdist', sdist, `spatialdata_js_util-${version}/src/`],
-]) {
-  if (!existsSync(path)) {
-    problems.push(
-      `${label}: expected ${relative(repoRoot, path)} (is pyproject.toml's version in sync with package.json?)`
-    );
-    continue;
-  }
-  const members = archiveMembers(path);
-  for (const file of vendored) {
-    if (!members.has(prefix + file)) problems.push(`${label}: missing ${file}`);
-  }
-}
-
-if (problems.length > 0) {
-  console.error(`\nspatialdata-js-util release build is incomplete:\n  ${problems.join('\n  ')}`);
-  process.exit(1);
-}
-console.log(
-  `\nBuilt spatialdata-js-util ${version} with ${vendored.length} vendored OpenJPH files in both artifacts.`
-);
+process.exit(failed ? 1 : 0);

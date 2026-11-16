@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDemoPageHref,
+  catalogStoreProblem,
   DEFAULT_DEMO_SPATIALDATA_URL,
+  getCatalogUrlFromSearchParams,
   getSpatialDataUrlFromSearchParams,
+  parseCatalog,
 } from '../src/Sketch/demoUrl.js';
 
 describe('getSpatialDataUrlFromSearchParams', () => {
@@ -35,5 +38,52 @@ describe('buildDemoPageHref', () => {
   it('sets url search param', () => {
     const href = buildDemoPageHref('https://example.com/dataset.zarr', 'https://demo.test/sketch');
     expect(href).toBe('https://demo.test/sketch?url=https%3A%2F%2Fexample.com%2Fdataset.zarr');
+  });
+});
+
+describe('catalog', () => {
+  const page = 'http://127.0.0.1:8000/?catalog=%2Ftok%2Fcatalog.json';
+
+  it('resolves ?catalog= against the page', () => {
+    const params = new URL(page).searchParams;
+    expect(getCatalogUrlFromSearchParams(params, page)).toBe(
+      'http://127.0.0.1:8000/tok/catalog.json'
+    );
+    expect(getCatalogUrlFromSearchParams(new URLSearchParams(), page)).toBeNull();
+  });
+
+  it('resolves store urls against the catalog and drops malformed entries', () => {
+    const catalog = 'http://127.0.0.1:8000/tok/catalog.json';
+    const json = {
+      stores: [{ path: 'run 1/a.zarr', url: 'data/run%201/a.zarr' }, { path: 3 }, 'x'],
+    };
+    expect(parseCatalog(json, catalog)).toEqual([
+      { path: 'run 1/a.zarr', url: 'http://127.0.0.1:8000/tok/data/run%201/a.zarr' },
+    ]);
+    expect(() => parseCatalog({ nope: true }, catalog)).toThrow();
+  });
+
+  it('keeps known store kinds and flags the ones that will not open', () => {
+    const catalog = 'http://127.0.0.1:8000/tok/catalog.json';
+    const stores = parseCatalog(
+      {
+        stores: [
+          { path: 'a.zarr', url: 'data/a.zarr', kind: 'spatialdata' },
+          { path: 'b.zarr', url: 'data/b.zarr', kind: 'zarr' },
+          { path: 'c.zarr', url: 'data/c.zarr', kind: 'unknown' },
+          { path: 'd.zarr.zip', url: 'data/d.zarr.zip' },
+          { path: 'e.zarr', url: 'data/e.zarr', kind: 'future-kind' },
+        ],
+      },
+      catalog
+    );
+    expect(stores.map(catalogStoreProblem)).toEqual([
+      null,
+      'zarr, not SpatialData',
+      'no zarr metadata',
+      null,
+      null,
+    ]);
+    expect(stores[4]).not.toHaveProperty('kind');
   });
 });

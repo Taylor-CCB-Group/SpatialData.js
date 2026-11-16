@@ -67,7 +67,13 @@ describe('worker chunk decode setup', () => {
     expect(workerUrl).not.toContain('codec-worker.ts');
   });
 
-  it('bundles the fizarrita codec-worker message handler', async () => {
+  it.each([
+    // zarrextra's own codec-worker build.
+    ['without tree-shaking', false],
+    // An app bundling the source worker via `?worker`, as the vis demo does: fizarrita
+    // declares `sideEffects: false`, so a bare import of its handler is dropped here.
+    ['with tree-shaking', undefined],
+  ])('bundles the fizarrita codec-worker message handler %s', async (_label, treeshake) => {
     const bundle = await build({
       configFile: false,
       logLevel: 'silent',
@@ -85,7 +91,7 @@ describe('worker chunk decode setup', () => {
         },
         rollupOptions: {
           external: () => false,
-          treeshake: false,
+          treeshake,
           output: {
             codeSplitting: false,
           },

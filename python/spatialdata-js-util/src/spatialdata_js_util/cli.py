@@ -6,6 +6,7 @@ Subcommands are grouped by what they act on:
     points   Morton-index Points elements
     tables   convert table matrices to CSC
     zip      pack a store into an uncompressed zip
+    serve    browse local stores in the SpatialData.js viewer
     codecs   inspect codec backend availability
     tui      interactive workflow UI
 """
@@ -832,6 +833,15 @@ def _add_zip_command(subparsers: argparse._SubParsersAction) -> None:
     zip_parser.set_defaults(func=_zip)
 
 
+# --------------------------------------------------------------------------- serve
+
+
+def _add_serve_command(subparsers: argparse._SubParsersAction) -> None:
+    from sdjs.cli import SERVE_DESCRIPTION, SERVE_HELP, add_serve_arguments
+
+    add_serve_arguments(subparsers.add_parser("serve", help=SERVE_HELP, description=SERVE_DESCRIPTION))
+
+
 # --------------------------------------------------------------------------- codecs
 
 
@@ -909,6 +919,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_points_commands(subparsers)
     _add_tables_commands(subparsers)
     _add_zip_command(subparsers)
+    _add_serve_command(subparsers)
     _add_codecs_commands(subparsers)
     _add_tui_command(subparsers)
     return parser

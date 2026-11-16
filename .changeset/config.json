@@ -14,7 +14,8 @@
       "@spatialdata/layers",
       "@spatialdata/avivatorish",
       "@spatialdata/vis"
-    ]
+    ],
+    ["@spatialdata/cli", "sdjs"]
   ],
   "linked": [],
   "access": "public",

@@ -7,10 +7,14 @@ import Transforms from '../Transforms';
 import SpatialDataTree from '../Tree';
 import {
   buildDemoPageHref,
+  type CatalogStore,
+  catalogStoreProblem,
   DEFAULT_DEMO_SPATIALDATA_URL,
+  getCatalogUrlFromSearchParams,
   getSpatialDataUrlFromSearchParams,
   isAntialiasDisabled,
   isWebGPURequested,
+  parseCatalog,
 } from './demoUrl';
 
 const dataSourceBarStyle: CSSProperties = {
@@ -20,11 +24,51 @@ const dataSourceBarStyle: CSSProperties = {
   background: '#1e1e1e',
 };
 
+function getCatalogUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  return getCatalogUrlFromSearchParams(
+    new URLSearchParams(window.location.search),
+    window.location.href
+  );
+}
+
+/** With a catalog and no `?url=`, start empty: the catalog's first store is picked once it loads. */
 function getInitialDemoUrl(): string {
   if (typeof window === 'undefined') {
     return DEFAULT_DEMO_SPATIALDATA_URL;
   }
-  return getSpatialDataUrlFromSearchParams(new URLSearchParams(window.location.search));
+  const fallback = getCatalogUrl() ? '' : DEFAULT_DEMO_SPATIALDATA_URL;
+  return getSpatialDataUrlFromSearchParams(new URLSearchParams(window.location.search), fallback);
+}
+
+type CatalogState =
+  | { status: 'loading' }
+  | { status: 'ready'; stores: CatalogStore[] }
+  | { status: 'error'; message: string };
+
+function useCatalog(catalogUrl: string | null): CatalogState | null {
+  const [state, setState] = useState<CatalogState | null>(
+    catalogUrl ? { status: 'loading' } : null
+  );
+  useEffect(() => {
+    if (!catalogUrl) return;
+    let cancelled = false;
+    fetch(catalogUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json();
+      })
+      .then((json: unknown) => {
+        if (!cancelled) setState({ status: 'ready', stores: parseCatalog(json, catalogUrl) });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setState({ status: 'error', message: `Could not read catalog: ${error}` });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogUrl]);
+  return state;
 }
 
 /** A store opened from a local zip or folder; it has no URL to share or put in `?url=`. */
@@ -38,11 +82,24 @@ function setDirectoryPicker(input: HTMLInputElement | null) {
 }
 
 function DataSource({ children }: React.PropsWithChildren) {
-  const [url, setUrl] = useState(getInitialDemoUrl);
+  const [initialUrl] = useState(getInitialDemoUrl);
+  // null until the user picks or types; until then a catalog's first store stands in.
+  const [chosenUrl, setUrl] = useState<string | null>(null);
   const [local, setLocal] = useState<LocalSource | null>(null);
   const [localStatus, setLocalStatus] = useState<string | null>(null);
+  const [catalogUrl] = useState(getCatalogUrl);
+  const catalog = useCatalog(catalogUrl);
+  const firstStore =
+    catalog?.status === 'ready'
+      ? (
+          catalog.stores.find((store) => store.kind === 'spatialdata') ??
+          catalog.stores.find((store) => !catalogStoreProblem(store))
+        )?.url
+      : undefined;
+  const url = chosenUrl ?? (initialUrl || firstStore || '');
 
   useEffect(() => {
+    if (!url) return;
     const nextHref = buildDemoPageHref(url);
     if (window.location.href !== nextHref) {
       window.history.replaceState(null, '', nextHref);
@@ -51,10 +108,20 @@ function DataSource({ children }: React.PropsWithChildren) {
 
   const shareHref =
     typeof window !== 'undefined' && !local
-      ? buildDemoPageHref(url, `${window.location.origin}${window.location.pathname}`)
+      ? buildDemoPageHref(
+          url,
+          `${window.location.origin}${window.location.pathname}${catalogUrl ? `?catalog=${encodeURIComponent(catalogUrl)}` : ''}`
+        )
       : '';
 
-  const source = local?.store ?? (url.trim() || DEFAULT_DEMO_SPATIALDATA_URL);
+  const source = local?.store ?? (url.trim() || (catalog ? null : DEFAULT_DEMO_SPATIALDATA_URL));
+
+  const chooseUrl = (next: string) => {
+    selection.current += 1;
+    setLocal(null);
+    setLocalStatus(null);
+    setUrl(next);
+  };
 
   // Bumped by every source change, so a zip that finishes opening after the user
   // has moved on (another zip, a folder, a URL edit) is dropped, not shown.
@@ -99,12 +166,7 @@ function DataSource({ children }: React.PropsWithChildren) {
         <input
           type="text"
           value={url}
-          onChange={(e) => {
-            selection.current += 1;
-            setLocal(null);
-            setLocalStatus(null);
-            setUrl(e.target.value);
-          }}
+          onChange={(e) => chooseUrl(e.target.value)}
           style={{
             width: '100%',
             boxSizing: 'border-box',
@@ -112,6 +174,7 @@ function DataSource({ children }: React.PropsWithChildren) {
             opacity: local ? 0.5 : 1,
           }}
         />
+        {catalog ? <CatalogPicker catalog={catalog} url={url} onChoose={chooseUrl} /> : null}
         <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginTop: 6 }}>
           {shareHref ? (
             <a href={shareHref} style={{ fontSize: 11, color: '#8af' }}>
@@ -135,9 +198,58 @@ function DataSource({ children }: React.PropsWithChildren) {
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        <SpatialDataProvider source={source}>{children}</SpatialDataProvider>
+        {source ? (
+          <SpatialDataProvider source={source}>{children}</SpatialDataProvider>
+        ) : (
+          <div style={{ padding: 12, color: '#888' }}>
+            {catalog?.status === 'ready' ? 'No stores found.' : null}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function CatalogPicker({
+  catalog,
+  url,
+  onChoose,
+}: {
+  catalog: CatalogState;
+  url: string;
+  onChoose: (url: string) => void;
+}) {
+  if (catalog.status === 'loading') {
+    return <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>Loading catalog…</div>;
+  }
+  if (catalog.status === 'error') {
+    return <div style={{ fontSize: 11, color: '#c96', marginTop: 6 }}>{catalog.message}</div>;
+  }
+  const flagged = catalog.stores.filter((store) => catalogStoreProblem(store)).length;
+  return (
+    <label style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginTop: 6, fontSize: 12 }}>
+      <span style={{ color: '#888' }}>
+        Store ({catalog.stores.length - flagged}
+        {flagged ? `, ${flagged} not SpatialData` : ''})
+      </span>
+      <select
+        value={catalog.stores.some((s) => s.url === url) ? url : ''}
+        onChange={(e) => onChoose(e.target.value)}
+        style={{ flex: 1, minWidth: 0 }}
+      >
+        <option value="" disabled>
+          {catalog.stores.length ? 'Choose a store…' : 'No stores found'}
+        </option>
+        {catalog.stores.map((store) => {
+          const problem = catalogStoreProblem(store);
+          return (
+            <option key={store.url} value={store.url} disabled={problem !== null}>
+              {problem ? `${store.path} (${problem})` : store.path}
+            </option>
+          );
+        })}
+      </select>
+    </label>
   );
 }
 

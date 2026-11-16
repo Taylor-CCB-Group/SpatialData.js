@@ -1,0 +1,41 @@
+[project]
+name = "sdjs"
+version = "0.0.0"
+description = "Serve local SpatialData stores and browse them in the SpatialData.js viewer"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "SpatialData.js contributors" }]
+keywords = ["spatialdata", "zarr", "ome-zarr", "viewer", "spatial-omics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# Deliberately none: the server is standard library, the viewer is bundled static files.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Taylor-CCB-Group/SpatialData.js"
+Repository = "https://github.com/Taylor-CCB-Group/SpatialData.js"
+
+[project.scripts]
+sdjs = "sdjs.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Built by `node scripts/build-viewer-app.mjs python/sdjs/src/sdjs/app`; gitignored.
+sdjs = ["app/*", "app/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

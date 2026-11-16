@@ -114,16 +114,17 @@ in embedded hosts it needs a path without it.
    results here.
 2. **Controller and single-file embed build**, with decode fallbacks chosen by step 1. Drive the
    canvas from a `ResizeObserver`; the host resizes tiles.
-3. **CLI and local store server.** These do not depend on the sandbox result.
-   - `sdjs serve <root>` discovers SpatialData stores (`*.zarr`, `*.zarr.zip`) in nested
-     directories and stops at each store.
-   - It serves an index of them as JSON alongside the data, and opens the demo built into the
-     package on loopback. A hosted public page cannot reliably read `localhost`.
-   - The demo gains a catalog mode that reads such an index. A statically hosted index then
-     works the same way as the CLI.
-   - **Naming.** `sdjs` is free on PyPI. npm will likely refuse it unscoped because `sd.js`
-     exists, so the fallback is a scoped package with an `sdjs` bin. Keep the Python package
-     light, without the `write` stack.
+3. **CLI and local store server** (built: `packages/cli`, `python/sdjs`, not yet published).
+   - `sdjs serve [root]` finds `*.zarr` and `*.zarr.zip` under root, stopping at each store,
+     and serves the bundled viewer at `/` with `?catalog=<prefix>/catalog.json`. Store files
+     are under `<prefix>/data/`, and only paths inside a store are served.
+   - The Node and Python servers are separate implementations with matching tests; keep
+     them in step.
+   - The viewer's catalog mode reads any `{ stores: [{ path, url }] }` with URLs relative to
+     the catalog, so a statically hosted `catalog.json` works the same way.
+   - **Naming.** PyPI `sdjs` is free. npm will refuse unscoped `sdjs` as too close to
+     `sd.js`, so the npm package is `@spatialdata/cli` with an `sdjs` bin
+     (`npx @spatialdata/cli serve`).
 4. **MCP server, skill and plugin.**
    - Server tools:
      - `describe_store` (read with core in Node, list elements, coordinate systems and table

@@ -20,6 +20,8 @@ dependencies = [
     "numpy>=2.0",
     "pandas>=2.2",
     "pyarrow>=18",
+    # `serve`; sdjs has no dependencies, so this keeps it the single copy of the server.
+    "sdjs>=0.0.0",
     "zarr>=3.3.0",
 ]
 
@@ -71,6 +73,9 @@ spatialdata_js_util = [
 
 [tool.uv]
 package = true
+
+[tool.uv.sources]
+sdjs = { path = "../sdjs", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

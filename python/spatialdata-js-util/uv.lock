@@ -2195,6 +2195,16 @@ settings = [
 ]
 
 [[package]]
+name = "sdjs"
+version = "0.0.0"
+source = { editable = "../sdjs" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
+
+[[package]]
 name = "session-info2"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2353,6 +2363,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "sdjs" },
     { name = "zarr" },
 ]
 
@@ -2393,6 +2404,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2" },
     { name = "pyarrow", specifier = ">=18" },
     { name = "scipy", marker = "extra == 'write'", specifier = ">=1.11" },
+    { name = "sdjs", editable = "../sdjs" },
     { name = "spatialdata", marker = "extra == 'write'", specifier = ">=0.8.0" },
     { name = "spatialdata-js-util", extras = ["write", "tui"], marker = "extra == 'all'" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=1.0" },

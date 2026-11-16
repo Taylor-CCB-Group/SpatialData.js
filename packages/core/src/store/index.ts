@@ -227,5 +227,5 @@ export async function readZarr(
   if (result.ok) {
     return new SpatialData(normalizedSource, result.value, selection, onBadFiles);
   }
-  throw new Error(`${result.error}`);
+  throw result.error;
 }
