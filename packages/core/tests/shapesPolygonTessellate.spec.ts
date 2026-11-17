@@ -158,6 +158,64 @@ describe('tessellateFlatPolygons', () => {
     expect(featureScale[0]).toBeCloseTo(Math.sqrt(12), 5);
   });
 
+  it('outlines boundary edges that span collinear vertices earcut drops', () => {
+    // 4×4 square with a collinear midpoint on every side, plus a hole. With holes,
+    // earcut filters collinear points, so triangle edges span ring vertices i → i+2.
+    const positions = new Float32Array([
+      0, 0, 2, 0, 4, 0, 4, 2, 4, 4, 2, 4, 0, 4, 0, 2, 0, 0, 1, 1, 3, 1, 3, 3, 1, 3, 1, 1,
+    ]);
+    const startIndices = new Int32Array([0, 14]);
+    const parts = {
+      geometryOffsets: new Int32Array([0, 1]),
+      polygonOffsets: new Int32Array([0, 2]),
+      ringOffsets: new Int32Array([0, 9, 14]),
+    };
+    const { ringPositions, triangleData, triangleCount } = tessellateFlatPolygons(
+      positions,
+      startIndices,
+      parts
+    );
+    const pos = (g: number): [number, number] => [ringPositions[g * 2], ringPositions[g * 2 + 1]];
+    // Every exterior side's sample points must be ~0 from a drawn boundary.
+    const samples: Array<[number, number]> = [
+      [1, 0],
+      [3, 0],
+      [4, 1],
+      [4, 3],
+      [3, 4],
+      [1, 4],
+      [0, 3],
+      [0, 1],
+    ];
+    for (const [px, py] of samples) {
+      let best = Number.POSITIVE_INFINITY;
+      for (let t = 0; t < triangleCount; t += 1) {
+        const A = pos(triangleData[t * 4]);
+        const B = pos(triangleData[t * 4 + 1]);
+        const C = pos(triangleData[t * 4 + 2]);
+        const flags = triangleData[t * 4 + 3] & 7;
+        const corners = [A, B, C];
+        // Only triangles with an edge through the sample point.
+        const hasEdge = corners.some((p, i) => {
+          const q = corners[(i + 1) % 3];
+          const cross = (q[0] - p[0]) * (py - p[1]) - (q[1] - p[1]) * (px - p[0]);
+          const within =
+            Math.min(p[0], q[0]) <= px &&
+            px <= Math.max(p[0], q[0]) &&
+            Math.min(p[1], q[1]) <= py &&
+            py <= Math.max(p[1], q[1]);
+          return cross === 0 && within && (p[0] !== q[0] || p[1] !== q[1]);
+        });
+        if (!hasEdge) continue;
+        const eA = cornerEdgeDist(A, B, C, flags, 0);
+        const eB = cornerEdgeDist(A, B, C, flags, 1);
+        const eC = cornerEdgeDist(A, B, C, flags, 2);
+        best = Math.min(best, minEdgeDistanceAt(A, B, C, eA, eB, eC, px, py));
+      }
+      expect(best, `outline at (${px}, ${py})`).toBeCloseTo(0, 5);
+    }
+  });
+
   it('draws every part of a multi-part feature under that feature index', () => {
     // Feature 0: two unit squares; feature 1: one 2×2 square.
     const sq = (x: number, s: number) => [x, 0, x + s, 0, x + s, s, x, s, x, 0];

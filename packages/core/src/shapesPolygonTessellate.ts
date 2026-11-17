@@ -146,10 +146,33 @@ export function tessellateFlatPolygons(
   // edge is a boundary edge iff both ends share a ring and are adjacent in it.
   const vRingStart = new Int32Array(maxPolyVerts);
   const vRingLen = new Int32Array(maxPolyVerts);
+  let base = 0;
+  // Earcut's own collinearity test: it drops a vertex whose turn area is exactly 0.
+  const isCollinear = (prev: number, v: number, next: number): boolean => {
+    const px = ringPositions[(base + prev) * 2];
+    const py = ringPositions[(base + prev) * 2 + 1];
+    const vx = ringPositions[(base + v) * 2];
+    const vy = ringPositions[(base + v) * 2 + 1];
+    const nx = ringPositions[(base + next) * 2];
+    const ny = ringPositions[(base + next) * 2 + 1];
+    return (vy - py) * (nx - vx) - (vx - px) * (ny - vy) === 0;
+  };
+  // True if every ring vertex strictly between `from` and `to` (walking forward) is
+  // collinear, i.e. earcut filtered that run and `from → to` lies along the ring.
+  const spansCollinearRun = (from: number, to: number): boolean => {
+    const start = vRingStart[from];
+    const len = vRingLen[from];
+    const step = (i: number) => start + ((i - start + 1) % len);
+    for (let prev = from, v = step(from); v !== to; prev = v, v = step(v)) {
+      if (!isCollinear(prev, v, step(v))) return false;
+    }
+    return true;
+  };
   const isBoundaryEdge = (a: number, b: number): boolean => {
     if (vRingStart[a] !== vRingStart[b]) return false;
     const d = Math.abs(a - b);
-    return d === 1 || d === vRingLen[a] - 1;
+    if (d === 1 || d === vRingLen[a] - 1) return true;
+    return spansCollinearRun(a, b) || spansCollinearRun(b, a);
   };
 
   // Pass 2: fill shared positions + per-triangle topology; accumulate feature area.
@@ -159,7 +182,7 @@ export function tessellateFlatPolygons(
     for (let p = firstPolygon(f); p < firstPolygon(f + 1); p += 1) {
       const tris = polyTris[p];
       if (tris.length === 0) continue;
-      const base = polyVertStart[p];
+      base = polyVertStart[p];
       let k = 0;
       for (let r = firstRing(p); r < firstRing(p + 1); r += 1) {
         const len = ringLen[r];
