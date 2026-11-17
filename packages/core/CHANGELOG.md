@@ -1,5 +1,13 @@
 # @spatialdata/core
 
+## 0.16.1
+
+### Patch Changes
+
+- [#294](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/294) [`996fde6`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/996fde69a2060df4eea5beae30bb5225ec30d262) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `readZarr` rethrows the error from opening a store as is, rather than wrapping it in a new `Error` whose message began "Error: Error:".
+
+- [#302](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/302) [`80564cc`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/80564cc45c7339b371244dfa6efbdecbaf3336be) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Polygon shapes now draw holes and every part of a MultiPolygon; previously only the first part's exterior ring was drawn, filled solid. `FlatPolygonGeometry` gains optional `parts` (GeoArrow-style feature → part → ring offsets), and `positions` now holds every ring. A hovered feature's `polygon` is its first part with holes.
+
 ## 0.16.0
 
 ### Minor Changes
