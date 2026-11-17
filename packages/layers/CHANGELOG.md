@@ -1,5 +1,15 @@
 # @spatialdata/layers
 
+## 0.16.1
+
+### Patch Changes
+
+- [#295](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/295) [`cb58520`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/cb58520fc20f1a4db6df643a7eabb1ff8e7a8e6c) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Changing a polygon shapes layer's default fill colour no longer re-resolves every feature's colour, hidden and faded state. At 140k shapes a colour-picker step drops from about 70ms of main-thread work to under 3ms.
+
+- [#302](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/302) [`80564cc`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/80564cc45c7339b371244dfa6efbdecbaf3336be) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Polygon shapes now draw holes and every part of a MultiPolygon; previously only the first part's exterior ring was drawn, filled solid. `FlatPolygonGeometry` gains optional `parts` (GeoArrow-style feature → part → ring offsets), and `positions` now holds every ring. A hovered feature's `polygon` is its first part with holes.
+- Updated dependencies [[`996fde6`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/996fde69a2060df4eea5beae30bb5225ec30d262), [`80564cc`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/80564cc45c7339b371244dfa6efbdecbaf3336be)]:
+  - @spatialdata/core@0.16.1
+
 ## 0.16.0
 
 ### Minor Changes

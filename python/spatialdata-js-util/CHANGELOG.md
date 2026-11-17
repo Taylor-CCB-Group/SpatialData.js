@@ -1,5 +1,11 @@
 # spatialdata-js-util
 
+## 0.4.0
+
+### Minor Changes
+
+- [#294](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/294) [`996fde6`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/996fde69a2060df4eea5beae30bb5225ec30d262) Thanks [@xinaesthete](https://github.com/xinaesthete)! - New `spatialdata-js-util serve [root]` browses local stores in the SpatialData.js viewer. It is the `sdjs` server, which the package now depends on.
+
 ## 0.3.1
 
 ### Patch Changes
