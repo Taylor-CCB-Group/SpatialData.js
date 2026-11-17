@@ -620,13 +620,18 @@ async function handleDecodeShapesGeometry(
   if (geometry.kind === 'polygon') {
     // Tessellate here, off the main thread, so the render topology transfers back
     // ready to upload — no ~seconds-long main-thread tessellation on first paint.
-    const tessellation = tessellateFlatPolygons(geometry.positions, geometry.startIndices);
+    const tessellation = tessellateFlatPolygons(
+      geometry.positions,
+      geometry.startIndices,
+      geometry.parts
+    );
     return {
       ok: true,
       result: {
         kind: 'shapesGeometryPolygon',
         positions: geometry.positions,
         startIndices: geometry.startIndices,
+        parts: geometry.parts,
         featureCount: geometry.featureCount,
         tessellation,
       },
@@ -915,7 +920,14 @@ self.onmessage = (event: MessageEvent<ParquetWorkerMessage>) => {
         } else if (response.result.kind === 'featureCounts') {
           transferables.push(response.result.codes.buffer, response.result.counts.buffer);
         } else if (response.result.kind === 'shapesGeometryPolygon') {
-          transferables.push(response.result.positions.buffer, response.result.startIndices.buffer);
+          const { parts } = response.result;
+          transferables.push(
+            response.result.positions.buffer,
+            response.result.startIndices.buffer,
+            parts.geometryOffsets.buffer,
+            parts.polygonOffsets.buffer,
+            parts.ringOffsets.buffer
+          );
           const tess = response.result.tessellation;
           if (tess) {
             transferables.push(

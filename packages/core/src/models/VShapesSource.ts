@@ -503,6 +503,7 @@ export default class SpatialDataShapesSource extends SpatialDataTableSource {
       polygonBinary: {
         positions: flat.positions,
         startIndices: flat.startIndices,
+        parts: flat.parts,
         tessellation: flat.tessellation,
       },
       geometryColumnName,

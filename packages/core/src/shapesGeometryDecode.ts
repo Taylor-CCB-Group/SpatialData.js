@@ -13,17 +13,21 @@
 import type { Table as ArrowTable } from 'apache-arrow';
 import type { Vector } from 'apache-arrow/vector';
 import WKB from 'ol/format/WKB.js';
-import type { TessellatedPolygons } from './shapesPolygonTessellate.js';
+import MultiPolygon from 'ol/geom/MultiPolygon.js';
+import Polygon from 'ol/geom/Polygon.js';
+import type { PolygonPartOffsets, TessellatedPolygons } from './shapesPolygonTessellate.js';
 
 export interface FlatPolygonGeometry {
   kind: 'polygon';
-  /** Interleaved exterior-ring coordinates `[x0, y0, x1, y1, …]` for all features. */
+  /** Interleaved coordinates `[x0, y0, x1, y1, …]` of every ring of every feature. */
   positions: Float32Array;
   /**
-   * Vertex offset where each feature's ring begins; length `featureCount + 1`,
-   * last entry = total vertex count. This is deck.gl's binary `startIndices`.
+   * Vertex offset where each feature's rings begin; length `featureCount + 1`,
+   * last entry = total vertex count.
    */
   startIndices: Int32Array;
+  /** Part/hole structure of `positions`. */
+  parts: PolygonPartOffsets;
   featureCount: number;
   /** Vertex-pulling render topology, tessellated in the worker. Absent on the
    *  main-thread decode path (the renderer tessellates lazily there). */
@@ -70,81 +74,90 @@ export function isWkbColumn(table: ArrowTable, columnName: string): boolean {
 }
 
 /**
- * The exterior ring of a decoded WKB geometry's coordinate tree, matching the
- * historical `getCoordinates()[0]` behaviour exactly:
- *
- *  - Polygon      → `coords[0]` IS the exterior ring (`[[x,y], …]`). Holes dropped.
- *  - MultiPolygon → `coords[0]` is the first sub-polygon's rings; take its
- *    exterior (`coords[0][0]`). Remaining sub-polygons + holes dropped.
- *
- * Returns `null` for anything that doesn't shape like a ring, so the caller can
- * emit an empty feature rather than throw on stray geometry.
+ * The flat XY coordinates and ring ends of a decoded WKB geometry, as polygon parts.
+ * Polygon → one part; MultiPolygon → one per sub-polygon. Anything else → no parts,
+ * so stray geometry becomes an empty feature rather than a throw.
  */
-function exteriorRing(coordinateTree: unknown): ReadonlyArray<readonly [number, number]> | null {
-  if (!Array.isArray(coordinateTree) || coordinateTree.length === 0) {
-    return null;
+function polygonParts(geometry: unknown): { flat: number[]; stride: number; endss: number[][] } {
+  if (geometry instanceof Polygon) {
+    return {
+      flat: geometry.getFlatCoordinates(),
+      stride: geometry.getStride(),
+      endss: [geometry.getEnds()],
+    };
   }
-  const first = coordinateTree[0];
-  if (Array.isArray(first) && typeof first[0] === 'number') {
-    // coordinateTree is already a ring: [[x, y], …]
-    return coordinateTree as ReadonlyArray<readonly [number, number]>;
+  if (geometry instanceof MultiPolygon) {
+    return {
+      flat: geometry.getFlatCoordinates(),
+      stride: geometry.getStride(),
+      endss: geometry.getEndss(),
+    };
   }
-  if (Array.isArray(first) && Array.isArray(first[0])) {
-    // `first` is EITHER the exterior ring (Polygon: coords = [ring, …holes]) OR the
-    // first sub-polygon's rings (MultiPolygon: coords = [[ring, …holes], …polys]).
-    // Both shapes reach here, so one more level of nesting disambiguates them: a
-    // ring's first element is a coordinate pair (numbers); a sub-polygon's first
-    // element is itself a ring (arrays). Returning `first` for a MultiPolygon would
-    // hand back an array of rings, and the caller's `Number()` fill would emit NaN.
-    if (typeof first[0][0] === 'number') {
-      return first as ReadonlyArray<readonly [number, number]>;
-    }
-    if (Array.isArray(first[0][0])) {
-      return first[0] as ReadonlyArray<readonly [number, number]>;
-    }
-  }
-  return null;
+  return { flat: [], stride: 2, endss: [] };
 }
 
 /**
- * Decode a WKB polygon column into flat exterior-ring positions + `startIndices`.
+ * Decode a WKB polygon column into flat ring positions, per-feature `startIndices`,
+ * and GeoArrow MultiPolygon offsets (every part and hole kept).
  *
- * Two passes so the output buffers are exactly sized (no oversized allocation,
- * no per-feature array growth): count vertices first, then fill. The nested
- * `getCoordinates()` allocation is transient and — on the worker path — off the
- * main thread.
+ * Two passes so the output buffers are exactly sized: count first, then fill.
  */
 export function decodeWkbPolygonColumnFlat(geometryColumn: Vector): FlatPolygonGeometry {
   const wkb = new WKB();
   const raw = geometryColumn.toArray() as ArrayLike<ArrayBuffer>;
   const featureCount = raw.length;
 
-  const rings: Array<ReadonlyArray<readonly [number, number]> | null> = new Array(featureCount);
+  const decoded: ReturnType<typeof polygonParts>[] = new Array(featureCount);
+  let polygonCount = 0;
+  let ringCount = 0;
+  let vertexCount = 0;
+  for (let i = 0; i < featureCount; i += 1) {
+    const parts = polygonParts(wkb.readGeometry(raw[i]));
+    decoded[i] = parts;
+    polygonCount += parts.endss.length;
+    for (const ends of parts.endss) {
+      ringCount += ends.length;
+    }
+    vertexCount += parts.flat.length / parts.stride;
+  }
+
+  const positions = new Float32Array(vertexCount * 2);
   const startIndices = new Int32Array(featureCount + 1);
-  let totalVertices = 0;
+  const geometryOffsets = new Int32Array(featureCount + 1);
+  const polygonOffsets = new Int32Array(polygonCount + 1);
+  const ringOffsets = new Int32Array(ringCount + 1);
+  let p = 0;
+  let r = 0;
+  let v = 0;
   for (let i = 0; i < featureCount; i += 1) {
-    const geometry = wkb.readGeometry(raw[i]) as unknown as { getCoordinates: () => unknown };
-    const ring = exteriorRing(geometry.getCoordinates());
-    rings[i] = ring;
-    startIndices[i] = totalVertices;
-    totalVertices += ring ? ring.length : 0;
-  }
-  startIndices[featureCount] = totalVertices;
-
-  const positions = new Float32Array(totalVertices * 2);
-  let cursor = 0;
-  for (let i = 0; i < featureCount; i += 1) {
-    const ring = rings[i];
-    if (!ring) {
-      continue;
-    }
-    for (let v = 0; v < ring.length; v += 1) {
-      positions[cursor++] = Number(ring[v][0]);
-      positions[cursor++] = Number(ring[v][1]);
+    const { flat, stride, endss } = decoded[i];
+    startIndices[i] = v;
+    geometryOffsets[i] = p;
+    let offset = 0;
+    for (const ends of endss) {
+      polygonOffsets[p++] = r;
+      for (const end of ends) {
+        ringOffsets[r++] = v;
+        for (; offset < end; offset += stride) {
+          positions[v * 2] = flat[offset];
+          positions[v * 2 + 1] = flat[offset + 1];
+          v += 1;
+        }
+      }
     }
   }
+  startIndices[featureCount] = v;
+  geometryOffsets[featureCount] = p;
+  polygonOffsets[polygonCount] = r;
+  ringOffsets[ringCount] = v;
 
-  return { kind: 'polygon', positions, startIndices, featureCount };
+  return {
+    kind: 'polygon',
+    positions,
+    startIndices,
+    parts: { geometryOffsets, polygonOffsets, ringOffsets },
+    featureCount,
+  };
 }
 
 /**

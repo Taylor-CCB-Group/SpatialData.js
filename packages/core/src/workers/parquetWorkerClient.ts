@@ -1055,6 +1055,7 @@ export async function decodeShapesGeometryInWorker(
       kind: 'polygon',
       positions: result.positions,
       startIndices: result.startIndices,
+      parts: result.parts,
       featureCount: result.featureCount,
       tessellation: result.tessellation,
     };

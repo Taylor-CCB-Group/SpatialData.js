@@ -1,5 +1,5 @@
 import type { PointsFeatureCatalog } from '../pointsTiling.js';
-import type { TessellatedPolygons } from '../shapesPolygonTessellate.js';
+import type { PolygonPartOffsets, TessellatedPolygons } from '../shapesPolygonTessellate.js';
 import type { PointsColumnarData } from '../spatialViewFit.js';
 
 export type ParquetRowGroupBytesChunk = {
@@ -300,6 +300,7 @@ export type ParquetWorkerResponse =
             kind: 'shapesGeometryPolygon';
             positions: Float32Array;
             startIndices: Int32Array;
+            parts: PolygonPartOffsets;
             featureCount: number;
             /** Vertex-pulling render topology, tessellated in the worker. */
             tessellation?: TessellatedPolygons;

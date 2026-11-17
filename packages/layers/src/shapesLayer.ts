@@ -2,6 +2,7 @@ import type { Layer, PickingInfo } from '@deck.gl/core';
 import { PolygonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { Matrix4 } from '@math.gl/core';
 import {
+  type PolygonPartOffsets,
   type SpatialShapesSublayer,
   type TessellatedPolygons,
   tessellateFlatPolygons,
@@ -45,6 +46,8 @@ export interface ShapeCircleColumnarLike {
 export interface FlatPolygonGeometryLike {
   positions: Float32Array;
   startIndices: Int32Array;
+  /** Part/hole structure. Absent ⇒ each feature is one simple exterior ring. */
+  parts?: PolygonPartOffsets;
   /** Off-thread-tessellated render topology (worker path); absent → tessellate lazily. */
   tessellation?: TessellatedPolygons;
 }
@@ -138,6 +141,7 @@ export interface ShapeTooltipRuntimeData {
 export interface ShapesBinaryPolygonData {
   positions: Float32Array;
   startIndices: Int32Array;
+  parts?: PolygonPartOffsets;
   featureIds: string[];
   rowIndexByFeatureIndex?: Int32Array;
   /** Off-thread-tessellated render topology; when absent the layer tessellates lazily. */
@@ -456,24 +460,29 @@ const TRANSPARENT_RGBA: [number, number, number, number] = [0, 0, 0, 0];
 
 /** Shared ring positions + per-triangle topology for vertex pulling, memoised on the
  *  positions buffer (stable, resolver-owned) so tessellation runs once. */
-const tessellationCache = new WeakMap<Float32Array, WeakMap<Int32Array, TessellatedPolygons>>();
+const tessellationCache = new WeakMap<Float32Array, WeakMap<object, TessellatedPolygons>>();
 
-function getTessellation(positions: Float32Array, startIndices: Int32Array): TessellatedPolygons {
-  // Keyed on BOTH buffers: the topology depends on the offsets as much as the
-  // coordinates, so keying on `positions` alone would serve one element's topology
-  // for another that reuses the coordinate buffer with different offsets (wrong
-  // triangles, wrong picking indices).
-  let byStartIndices = tessellationCache.get(positions);
-  const cached = byStartIndices?.get(startIndices);
+function getTessellation(
+  positions: Float32Array,
+  startIndices: Int32Array,
+  parts: PolygonPartOffsets | undefined
+): TessellatedPolygons {
+  // Keyed on positions AND offsets: the topology depends on the offsets as much as
+  // the coordinates, so keying on `positions` alone would serve one element's
+  // topology for another that reuses the coordinate buffer with different offsets
+  // (wrong triangles, wrong picking indices).
+  const offsetsKey = parts ?? startIndices;
+  let byOffsets = tessellationCache.get(positions);
+  const cached = byOffsets?.get(offsetsKey);
   if (cached) {
     return cached;
   }
-  const tess = tessellateFlatPolygons(positions, startIndices);
-  if (!byStartIndices) {
-    byStartIndices = new WeakMap();
-    tessellationCache.set(positions, byStartIndices);
+  const tess = tessellateFlatPolygons(positions, startIndices, parts);
+  if (!byOffsets) {
+    byOffsets = new WeakMap();
+    tessellationCache.set(positions, byOffsets);
   }
-  byStartIndices.set(startIndices, tess);
+  byOffsets.set(offsetsKey, tess);
   return tess;
 }
 
@@ -618,6 +627,30 @@ function fitFeatureColorBuffer(buffer: FeatureColorBuffer, featureCount: number)
   return fitted;
 }
 
+/** A feature's first polygon part as rings (exterior, then holes); `ShapePolygon`
+ *  has no slot for further parts. */
+function firstPartRings(binary: ShapesBinaryPolygonData, index: number): ShapePolygon {
+  const { positions, startIndices, parts } = binary;
+  const ringBounds: Array<[number, number]> = [];
+  if (parts) {
+    const p = parts.geometryOffsets[index];
+    if (p < parts.geometryOffsets[index + 1]) {
+      for (let r = parts.polygonOffsets[p]; r < parts.polygonOffsets[p + 1]; r += 1) {
+        ringBounds.push([parts.ringOffsets[r], parts.ringOffsets[r + 1]]);
+      }
+    }
+  } else if (index + 1 < startIndices.length) {
+    ringBounds.push([startIndices[index], startIndices[index + 1]]);
+  }
+  return ringBounds.map(([start, end]) => {
+    const ring: Array<[number, number]> = [];
+    for (let v = start; v < end; v += 1) {
+      ring.push([positions[v * 2], positions[v * 2 + 1]]);
+    }
+    return ring;
+  });
+}
+
 /**
  * Reconstruct a single feature's descriptor (including its polygon ring) from the
  * binary buffers. Called only at pick/tooltip time — one feature, so the nested
@@ -631,19 +664,11 @@ export function featureFromBinary(
   if (!Number.isInteger(index) || index < 0 || !featureId) {
     return undefined;
   }
-  const start = binary.startIndices[index];
-  const end = binary.startIndices[index + 1];
-  const ring: Array<[number, number]> = [];
-  if (Number.isFinite(start) && Number.isFinite(end)) {
-    for (let v = start; v < end; v += 1) {
-      ring.push([binary.positions[v * 2], binary.positions[v * 2 + 1]]);
-    }
-  }
   const rowIndex = binary.rowIndexByFeatureIndex?.[index];
   return {
     featureId,
     featureIndex: index,
-    polygon: [ring],
+    polygon: firstPartRings(binary, index),
     rowIndex: rowIndex !== undefined && rowIndex >= 0 ? rowIndex : undefined,
   };
 }
@@ -793,6 +818,7 @@ export function buildShapesPrebuiltData(
       binary: {
         positions: renderData.polygonBinary.positions,
         startIndices: renderData.polygonBinary.startIndices,
+        parts: renderData.polygonBinary.parts,
         featureIds: renderData.featureIds,
         rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
         tessellation: renderData.polygonBinary.tessellation,
@@ -1100,11 +1126,11 @@ function createBinaryPolygonDeckLayers(
   const featureState = normalizeShapeFeatureState(sublayer.featureState);
   const defaultFillColor = sublayer.defaultFillColor ?? DEFAULT_SHAPE_FILL_COLOR;
 
-  const { positions, startIndices, featureIds } = binary;
+  const { positions, startIndices, parts, featureIds } = binary;
 
   // Prefer the topology tessellated off the main thread by the geometry worker; fall
   // back to lazy main-thread tessellation only when the worker path didn't provide it.
-  const tess = binary.tessellation ?? getTessellation(positions, startIndices);
+  const tess = binary.tessellation ?? getTessellation(positions, startIndices, parts);
   if (tess.triangleCount === 0) {
     return [];
   }
@@ -1267,6 +1293,7 @@ export function createShapesDeckLayer(
           {
             positions: renderData.polygonBinary.positions,
             startIndices: renderData.polygonBinary.startIndices,
+            parts: renderData.polygonBinary.parts,
             featureIds: renderData.featureIds,
             rowIndexByFeatureIndex: renderData.rowIndexByFeatureIndex,
             tessellation: renderData.polygonBinary.tessellation,
