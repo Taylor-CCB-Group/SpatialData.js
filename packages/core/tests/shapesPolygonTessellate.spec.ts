@@ -108,6 +108,79 @@ describe('tessellateFlatPolygons', () => {
     }
   });
 
+  it('leaves holes unfilled and outlines their edges', () => {
+    // 4×4 square with a 2×2 hole in the middle; closed rings.
+    const positions = new Float32Array([
+      0, 0, 4, 0, 4, 4, 0, 4, 0, 0, 1, 1, 3, 1, 3, 3, 1, 3, 1, 1,
+    ]);
+    const startIndices = new Int32Array([0, 10]);
+    const parts = {
+      geometryOffsets: new Int32Array([0, 1]),
+      polygonOffsets: new Int32Array([0, 2]),
+      ringOffsets: new Int32Array([0, 5, 10]),
+    };
+    const { ringPositions, triangleData, triangleCount, ringVertexCount, featureScale } =
+      tessellateFlatPolygons(positions, startIndices, parts);
+
+    expect(ringVertexCount).toBe(8);
+    const pos = (g: number): [number, number] => [ringPositions[g * 2], ringPositions[g * 2 + 1]];
+    let area = 0;
+    let holeEdgeDrawn = false;
+    for (let t = 0; t < triangleCount; t += 1) {
+      const A = pos(triangleData[t * 4]);
+      const B = pos(triangleData[t * 4 + 1]);
+      const C = pos(triangleData[t * 4 + 2]);
+      const packed = triangleData[t * 4 + 3];
+      expect(packed >>> 3).toBe(0);
+      area += Math.abs((B[0] - A[0]) * (C[1] - A[1]) - (B[1] - A[1]) * (C[0] - A[0])) / 2;
+      const flags = packed & 7;
+      const eA = cornerEdgeDist(A, B, C, flags, 0);
+      const eB = cornerEdgeDist(A, B, C, flags, 1);
+      const eC = cornerEdgeDist(A, B, C, flags, 2);
+      const corners = [A, B, C];
+      for (let i = 0; i < 3; i += 1) {
+        const p = corners[i];
+        const q = corners[(i + 1) % 3];
+        const onHole =
+          p.every((c) => c >= 1 && c <= 3) &&
+          q.every((c) => c >= 1 && c <= 3) &&
+          (p[0] === q[0] || p[1] === q[1]);
+        if (onHole) {
+          const d = minEdgeDistanceAt(A, B, C, eA, eB, eC, (p[0] + q[0]) / 2, (p[1] + q[1]) / 2);
+          expect(d).toBeCloseTo(0, 5);
+          holeEdgeDrawn = true;
+        }
+      }
+    }
+    // Filled area excludes the hole.
+    expect(area).toBeCloseTo(12, 5);
+    expect(holeEdgeDrawn).toBe(true);
+    expect(featureScale[0]).toBeCloseTo(Math.sqrt(12), 5);
+  });
+
+  it('draws every part of a multi-part feature under that feature index', () => {
+    // Feature 0: two unit squares; feature 1: one 2×2 square.
+    const sq = (x: number, s: number) => [x, 0, x + s, 0, x + s, s, x, s, x, 0];
+    const positions = new Float32Array([...sq(0, 1), ...sq(5, 1), ...sq(10, 2)]);
+    const startIndices = new Int32Array([0, 10, 15]);
+    const parts = {
+      geometryOffsets: new Int32Array([0, 2, 3]),
+      polygonOffsets: new Int32Array([0, 1, 2, 3]),
+      ringOffsets: new Int32Array([0, 5, 10, 15]),
+    };
+    const { triangleData, triangleCount, featureScale } = tessellateFlatPolygons(
+      positions,
+      startIndices,
+      parts
+    );
+    expect(triangleCount).toBe(6);
+    const features = Array.from({ length: triangleCount }, (_, t) => triangleData[t * 4 + 3] >>> 3);
+    expect(features).toEqual([0, 0, 0, 0, 1, 1]);
+    expect(featureScale.length).toBe(2);
+    expect(featureScale[0]).toBeCloseTo(Math.SQRT2, 5);
+    expect(featureScale[1]).toBeCloseTo(2, 5);
+  });
+
   it('skips degenerate rings (< 3 distinct vertices)', () => {
     const positions = new Float32Array([0, 0, 1, 1, 0, 0]);
     const startIndices = new Int32Array([0, 3]);

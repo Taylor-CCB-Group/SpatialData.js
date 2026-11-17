@@ -11,9 +11,9 @@ import {
 
 /**
  * The WKB→flat-buffer decode, the CPU-heavy half of shapes loading that now runs
- * off-thread. The claims under test are the flattening ones: exterior-ring
- * coordinates land interleaved in `positions`, and `startIndices` slices them
- * back into features (deck.gl's binary polygon contract). Round-tripped through
+ * off-thread. The claims under test are the flattening ones: ring coordinates
+ * land interleaved in `positions`, `startIndices` slices them back into features,
+ * and `parts` recovers the part/hole structure. Round-tripped through
  * ol's own WKB writer so it exercises the real parse, not a hand-rolled fixture.
  */
 
@@ -79,36 +79,34 @@ describe('decodeWkbPolygonColumnFlat', () => {
     expect(result.positions[triangleVerts * 2 + 1]).toBe(10);
   });
 
-  it('takes the first sub-polygon exterior ring of a MultiPolygon', () => {
-    // A MultiPolygon's coordinates nest one level deeper than a Polygon's:
-    // [[ring, …holes], …subPolygons]. Returning the first sub-polygon's RINGS array
-    // (rather than its exterior ring) fed arrays to `Number()` and emitted NaN.
-    const multi = new MultiPolygon([
-      [
-        [
-          [0, 0],
-          [2, 0],
-          [1, 2],
-          [0, 0],
-        ],
-      ],
-      [
-        [
-          [10, 10],
-          [12, 10],
-          [11, 12],
-          [10, 10],
-        ],
-      ],
-    ]);
+  it('keeps holes and every MultiPolygon part, indexed feature → part → ring', () => {
+    const square = (x: number, y: number, s: number): Array<[number, number]> => [
+      [x, y],
+      [x + s, y],
+      [x + s, y + s],
+      [x, y + s],
+      [x, y],
+    ];
+    const holed = new Polygon([square(0, 0, 4), square(1, 1, 1), square(2, 2, 1)]);
+    const multi = new MultiPolygon([[square(10, 10, 2)], [square(20, 20, 4), square(21, 21, 1)]]);
 
-    const result = decodeWkbPolygonColumnFlat(wkbColumn([multi]));
-    expect(result.featureCount).toBe(1);
-    // Every coordinate is a real number — the NaN regression.
-    expect(Array.from(result.positions).every(Number.isFinite)).toBe(true);
-    // Exactly the FIRST sub-polygon's exterior ring; later sub-polygons are dropped.
-    expect(Array.from(result.positions)).toEqual([0, 0, 2, 0, 1, 2, 0, 0]);
-    expect(Array.from(result.startIndices)).toEqual([0, 4]);
+    const result = decodeWkbPolygonColumnFlat(wkbColumn([holed, multi]));
+
+    expect(result.featureCount).toBe(2);
+    expect(result.parts).toBeDefined();
+    const { geometryOffsets, polygonOffsets, ringOffsets } = result.parts ?? {};
+    // Feature 0 is one part; feature 1 is two.
+    expect(Array.from(geometryOffsets ?? [])).toEqual([0, 1, 3]);
+    // Part 0: exterior + 2 holes; part 1: exterior; part 2: exterior + 1 hole.
+    expect(Array.from(polygonOffsets ?? [])).toEqual([0, 3, 4, 6]);
+    // Six closed 5-vertex rings.
+    expect(Array.from(ringOffsets ?? [])).toEqual([0, 5, 10, 15, 20, 25, 30]);
+    // startIndices still slices whole features: every ring of a feature is contiguous.
+    expect(Array.from(result.startIndices)).toEqual([0, 15, 30]);
+    expect(result.positions.length).toBe(60);
+    // Second hole of feature 0, and the second part of feature 1, are present.
+    expect([result.positions[20], result.positions[21]]).toEqual([2, 2]);
+    expect([result.positions[40], result.positions[41]]).toEqual([20, 20]);
   });
 });
 
