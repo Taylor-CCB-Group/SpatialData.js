@@ -36,6 +36,7 @@ import {
   unionBoundsList,
 } from '@spatialdata/core';
 import {
+  type AlphaFromIntensity,
   createTileDebugStore,
   featureFilterAwaitingRowCodes,
   formatPointsTileDebugTooltip,
@@ -129,6 +130,7 @@ export interface ImageLayerConfig {
   modelMatrix?: Matrix4; // Transformation matrix for coordinate system alignment
   opacity?: number; // Layer opacity (0-1)
   visible?: boolean; // Whether layer is visible
+  alphaFromIntensity?: AlphaFromIntensity;
   /** Merged extension / host Viv props for detailView.getLayers({ props }). */
   vivProps?: Record<string, unknown>;
 }
@@ -1838,6 +1840,7 @@ export function useLayerData(
         modelMatrix: elem.transform, // Apply coordinate transformation
         opacity: config.opacity,
         visible: config.visible,
+        alphaFromIntensity: config.alphaFromIntensity,
         vivProps: mergedVivProps,
       });
     }

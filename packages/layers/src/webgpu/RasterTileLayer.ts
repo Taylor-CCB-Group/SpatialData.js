@@ -3,6 +3,7 @@ import { color, Layer, picking, project32 } from '@deck.gl/core';
 import { MAX_CHANNELS } from '@hms-dbmi/viv';
 import type { Texture, TextureFormat } from '@luma.gl/core';
 import { Model } from '@luma.gl/engine';
+import { resolveAlphaFromIntensity } from '../alphaFromIntensity';
 import { resolveLabelPickingInfo } from '../LabelsBitmaskTileLayer';
 import {
   DEFAULT_LABEL_HIGHLIGHT_COLOR,
@@ -68,6 +69,7 @@ const DEFAULT_PROPS = {
   colors: { type: 'array', value: [], compare: true },
   channelsVisible: { type: 'array', value: [], compare: true },
   interpolation: { type: 'string', value: 'nearest' },
+  alphaFromIntensity: { type: 'object', value: null, compare: true },
   // labels — same prop names as LabelsBitmaskTileLayer so LabelsLayer can swap classes
   channelColors: { type: 'array', value: [[255, 255, 255]], compare: true },
   channelsFilled: { type: 'array', value: [true], compare: true },
@@ -186,6 +188,7 @@ export class RasterTileLayer extends (Layer as any) {
     const useLut = lut && p.featureColorTexture ? 1 : 0;
     const highlight = (p.highlightColor as number[] | undefined) ?? DEFAULT_LABEL_HIGHLIGHT_COLOR;
     const labelVisible = p.channelsVisible?.[0] ?? true;
+    const alphaOption = mode === 0 ? resolveAlphaFromIntensity(p.alphaFromIntensity) : null;
 
     model.shaderInputs.setProps({
       raster: {
@@ -206,6 +209,9 @@ export class RasterTileLayer extends (Layer as any) {
         outlineOpacity: p.channelOutlineOpacities?.[0] ?? 0.95,
         strokeWidth: p.channelStrokeWidths?.[0] ?? 1.5,
         opacity: mode === 1 && !labelVisible ? 0 : opacity,
+        alphaFromIntensity: alphaOption ? 1 : 0,
+        alphaThreshold: alphaOption?.threshold ?? 0,
+        alphaGain: alphaOption?.gain ?? 1,
         rasterData: texture,
         rasterLut: useLut ? p.featureColorTexture : this.state.fallbackLut,
       },

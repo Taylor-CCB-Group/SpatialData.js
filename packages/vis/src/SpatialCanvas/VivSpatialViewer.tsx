@@ -489,6 +489,9 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       if (imageLayerProps.modelMatrix) {
         layerProps.modelMatrix = imageLayerProps.modelMatrix;
       }
+      if (imageLayerProps.alphaFromIntensity) {
+        layerProps.alphaFromIntensity = imageLayerProps.alphaFromIntensity;
+      }
 
       const passthrough = imageLayerProps.vivProps;
       if (passthrough) {

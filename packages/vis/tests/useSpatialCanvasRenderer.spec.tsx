@@ -1,10 +1,11 @@
 import { Matrix4 } from '@math.gl/core';
 import type { SpatialData } from '@spatialdata/core';
+import type { RenderStack } from '@spatialdata/layers';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { describe, expect, it } from 'vitest';
+import { renderStackToLayerInputs } from '../src/SpatialCanvas/renderStackAdapters.js';
 import { useSpatialCanvasRendererFromLayerInputs } from '../src/SpatialCanvas/SpatialCanvasViewer.js';
-import type { LayerConfig } from '../src/SpatialCanvas/types.js';
 import { VivLoaderRegistryProvider } from '../src/SpatialCanvas/VivLoaderRegistry.js';
 
 /**
@@ -22,7 +23,7 @@ function controllableFetch() {
   return { fetch, pending };
 }
 
-function renderImageLayer(fetch: () => Promise<unknown>) {
+function renderImageLayer(fetch: () => Promise<unknown>, entryProps: Record<string, unknown> = {}) {
   const registry = { getOmeZarrMultiscalesData: fetch };
   const wrapper = ({ children }: PropsWithChildren) => (
     <VivLoaderRegistryProvider value={registry}>{children}</VivLoaderRegistryProvider>
@@ -37,17 +38,26 @@ function renderImageLayer(fetch: () => Promise<unknown>) {
   };
   // A stub: the renderer reads only `images` and each element's transform here.
   const spatialData = { images: { img: image } } as unknown as SpatialData;
-  const layers: Record<string, LayerConfig> = {
-    'layer-img': { id: 'layer-img', type: 'image', elementKey: 'img', visible: true, opacity: 1 },
+  const renderStack: RenderStack = {
+    schemaVersion: 2,
+    entries: [
+      {
+        kind: 'spatial',
+        id: 'layer-img',
+        visible: true,
+        source: { elementType: 'image', elementKey: 'img' },
+        props: entryProps,
+      },
+    ],
   };
-  const layerOrder = ['layer-img'];
+  const layerInputs = renderStackToLayerInputs(renderStack);
 
   return renderHook(
     () =>
       useSpatialCanvasRendererFromLayerInputs({
         spatialData,
         coordinateSystem: 'global',
-        layerInputs: { layers, layerOrder },
+        layerInputs,
         width: 100,
         height: 100,
         autoFit: false,
@@ -75,6 +85,23 @@ describe('useSpatialCanvasRendererFromLayerInputs — image loads under StrictMo
     expect(result.current.getImageLoadedDataByElementKey('img')?.loader).toBe(live);
     await waitFor(() => {
       expect(result.current.vivLayerProps.map((props) => props.loader)).toEqual([live]);
+    });
+  });
+});
+
+describe('useSpatialCanvasRendererFromLayerInputs — image entry props', () => {
+  it('carries a saved alphaFromIntensity through to the Viv layer props', async () => {
+    const { fetch, pending } = controllableFetch();
+    const alphaFromIntensity = { threshold: 0.1, gain: 4 };
+    const { result } = renderImageLayer(fetch, { alphaFromIntensity });
+
+    await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    await act(async () => {
+      for (const resolve of pending) resolve({ loaded: true });
+    });
+
+    await waitFor(() => {
+      expect(result.current.vivLayerProps[0]?.alphaFromIntensity).toEqual(alphaFromIntensity);
     });
   });
 });

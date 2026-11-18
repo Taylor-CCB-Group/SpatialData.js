@@ -65,6 +65,12 @@ export {
   shapeFillColorAlpha,
 } from './adapters/ShapesRendererAdapter.js';
 export {
+  type AlphaFromIntensity,
+  AlphaFromIntensityExtension,
+  type ResolvedAlphaFromIntensity,
+  resolveAlphaFromIntensity,
+} from './alphaFromIntensity';
+export {
   PointsDataEngine,
   type PointsDataEngineCallbacks,
   type PointsLoadStatus,

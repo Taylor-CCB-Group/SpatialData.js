@@ -1,6 +1,7 @@
 import type { Layer } from '@deck.gl/core';
 import { CompositeLayer } from '@deck.gl/core';
 import { ImageLayer } from '@hms-dbmi/viv';
+import { alphaFromIntensityExtension, resolveAlphaFromIntensity } from '../alphaFromIntensity';
 import { RasterTileLayer } from './RasterTileLayer';
 
 const RGB_PROPS = {
@@ -130,6 +131,17 @@ export class RasterImageLayer extends UntypedImageLayer {
   }
 }
 
+/** The Viv layer's extensions, plus the alpha-from-intensity one when its prop is set. */
+function webglExtensions(vivLayer: Layer): Layer['props']['extensions'] {
+  const { props } = vivLayer;
+  const option = 'alphaFromIntensity' in props ? props.alphaFromIntensity : undefined;
+  const extensions = props.extensions ?? [];
+  if (!resolveAlphaFromIntensity(option) || extensions.includes(alphaFromIntensityExtension)) {
+    return extensions;
+  }
+  return [...extensions, alphaFromIntensityExtension];
+}
+
 type DeviceAdaptiveImageLayerProps = {
   id: string;
   /** A Viv image layer as built for WebGL (e.g. from `DetailView.getLayers`). */
@@ -145,6 +157,10 @@ type DeviceAdaptiveImageLayerProps = {
  * compositing they did is built into the WGSL — and the background layer is off,
  * since it is a hard-coded XRLayer. A single-resolution loader is Viv's ImageLayer,
  * which has no sub-layer seam, so it becomes `RasterImageLayer` instead.
+ *
+ * An `alphaFromIntensity` prop on the Viv layer is honoured on both: on WebGL by adding
+ * `AlphaFromIntensityExtension` to its extensions (Viv's interleaved-RGB tiles drop
+ * extensions, so it does not reach those), on WebGPU by `RasterTileLayer` itself.
  */
 export class DeviceAdaptiveImageLayer extends CompositeLayer<DeviceAdaptiveImageLayerProps> {
   static layerName = 'DeviceAdaptiveImageLayer';
@@ -155,7 +171,7 @@ export class DeviceAdaptiveImageLayer extends CompositeLayer<DeviceAdaptiveImage
     // so under Viv's id a regrouped image reuses its old instance and parent chain.
     const id = `${this.props.id}-viv`;
     if (this.context.device.type !== 'webgpu') {
-      return vivLayer.clone({ id });
+      return vivLayer.clone({ id, extensions: webglExtensions(vivLayer) });
     }
     if (vivLayer instanceof ImageLayer) {
       return new RasterImageLayer({ ...vivLayer.props, id, extensions: [] }) as unknown as Layer;
