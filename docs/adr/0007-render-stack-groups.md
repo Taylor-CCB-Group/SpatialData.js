@@ -30,14 +30,25 @@ which nothing drew.
 5. **Picks name the entry, not the group.** Feature events carry the resolved
    `entryId`. Group members draw under group-scoped ids, so a layer moving into or out
    of a group never inherits deck state from its old place in the tree.
-6. **Leaf blend modes are saved but not drawn yet.** Drawing them means overriding the
-   `parameters` of layers we don't own, including Viv's on WebGL. Until that is settled,
-   blending goes through groups.
+6. **Leaf blend modes are drawn only inside an isolated group.** A member with a blend
+   mode other than `normal` draws as an isolated group of its own, so it reaches its
+   group's target already premultiplied, on both backends, and the member's layers keep
+   their own `parameters` (Viv's included). Outside an isolated group a leaf blend mode
+   is saved but not drawn.
+7. **Compositing operators make layers act as masks.** `intersect`, `cut-out`, `xor`
+   and `clip` are the Porter–Duff operators destination-in, destination-out, xor and
+   source-atop. Like leaf blend modes, they act only inside an isolated group, whose
+   target starts transparent, so they reach only that group's contents; a group with
+   an operator outside one composites as `normal`. This is pixel coverage, not a
+   per-feature comparison.
 
 ## Consequences
 
 - Code that reads `stack.entries` sees only the top level; it must walk the tree.
 - Isolation costs one viewport-sized target per group and view, drawn only when its
-  contents change. Pass-through costs nothing.
+  contents change. Pass-through costs nothing. A blended leaf costs the same as a
+  group.
+- Giving a member a blend mode, or taking it away, moves it in or out of its own group,
+  so its layers start fresh, as for any move between groups.
 - Migration notices are returned values. A saved stack never fails to load because a
   v1 group named an entry that is gone.

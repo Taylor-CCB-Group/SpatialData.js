@@ -1,6 +1,7 @@
 import type { Layer } from '@deck.gl/core';
 import {
   IsolatedGroupLayer,
+  isGroupCompositingOperator,
   type RenderStack,
   type RenderStackEntry,
   type RenderStackHostEntry,
@@ -159,6 +160,12 @@ export interface RenderStackDeckLayerOptions {
  * with a blend mode other than `pass-through`, becomes an `IsolatedGroupLayer` with
  * the entry's id, holding its members' layers. Pass-through groups add no layer.
  *
+ * Inside an isolated group, a leaf with a blend mode other than `normal` becomes a
+ * one-member `IsolatedGroupLayer` with that mode, so its layers keep their own blend
+ * `parameters` and reach the target premultiplied on either backend. Outside one, leaf
+ * modes are not drawn, and a group with a compositing operator composites as `normal`
+ * (ADR 0007).
+ *
  * Hidden entries contribute only what `entryLayers` already has for them, unwrapped,
  * so their layers keep their deck state while hidden.
  *
@@ -170,40 +177,55 @@ export function renderStackToDeckLayers(
   renderStack: RenderStack,
   { entryLayers, hostLayerResolver, onUnknownHostLayer }: RenderStackDeckLayerOptions = {}
 ): Layer[] {
-  const build = (entries: readonly RenderStackEntry[], inherited: InheritedState): Layer[] =>
+  const build = (
+    entries: readonly RenderStackEntry[],
+    inherited: InheritedState,
+    inIsolatedGroup: boolean
+  ): Layer[] =>
     entries.flatMap((entry): Layer[] => {
       const visible = inherited.visible && entry.visible;
       if (entry.kind !== 'group') {
-        const given = entryLayers?.get(entry.id);
-        if (given) return [...given];
-        if (entry.kind !== 'host' || !visible || !hostLayerResolver) return [];
-        return resolveHostEntry(
-          entry,
-          { visible, opacity: inherited.opacity },
-          hostLayerResolver,
-          onUnknownHostLayer
-        );
+        const layers = leafLayers(entry, visible, inherited.opacity);
+        const blendMode = entry.props.blendMode ?? 'normal';
+        if (!visible || !inIsolatedGroup || blendMode === 'normal' || layers.length === 0) {
+          return layers;
+        }
+        // Entry ids are unique across the tree, so no group shares this id.
+        return [new IsolatedGroupLayer({ id: entry.id, layers, blendMode })];
       }
       const group = resolveRenderStackGroupProps(entry);
       if (!visible || !group.isolate) {
-        return build(entry.children, {
-          visible,
-          opacity: inherited.opacity * group.opacity,
-        });
+        return build(
+          entry.children,
+          { visible, opacity: inherited.opacity * group.opacity },
+          inIsolatedGroup
+        );
       }
-      const members = build(entry.children, { visible, opacity: 1 });
+      const members = build(entry.children, { visible, opacity: 1 }, true);
       if (members.length === 0) return [];
+      const blendMode =
+        group.blendMode === 'pass-through' ||
+        (!inIsolatedGroup && isGroupCompositingOperator(group.blendMode))
+          ? 'normal'
+          : group.blendMode;
       return [
         new IsolatedGroupLayer({
           id: entry.id,
           layers: members,
-          blendMode: group.blendMode === 'pass-through' ? 'normal' : group.blendMode,
+          blendMode,
           opacity: inherited.opacity * group.opacity,
         }),
       ];
     });
 
-  return build(renderStack.entries, { visible: true, opacity: 1 });
+  const leafLayers = (entry: RenderStackLeaf, visible: boolean, opacity: number): Layer[] => {
+    const given = entryLayers?.get(entry.id);
+    if (given) return [...given];
+    if (entry.kind !== 'host' || !visible || !hostLayerResolver) return [];
+    return resolveHostEntry(entry, { visible, opacity }, hostLayerResolver, onUnknownHostLayer);
+  };
+
+  return build(renderStack.entries, { visible: true, opacity: 1 }, false);
 }
 
 export function sortLayersByRenderStackOrder(layers: Layer[], order: string[]): Layer[] {

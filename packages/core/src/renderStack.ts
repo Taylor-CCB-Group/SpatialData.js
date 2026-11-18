@@ -5,7 +5,17 @@ export const RENDER_STACK_SCHEMA_VERSION = 2 as const;
 
 export const renderStackSpatialElementTypeSchema = z.enum(['image', 'shapes', 'points', 'labels']);
 
-/** How an entry, or an isolated group's composite, blends with what is beneath it. */
+/**
+ * How an entry, or an isolated group's composite, blends with what is beneath it.
+ * A leaf's mode is drawn only inside an isolated group (ADR 0007).
+ *
+ * The last four are Porter–Duff compositing operators, which make a layer act as a
+ * mask on what is beneath it in its group: `intersect` (destination-in) keeps that
+ * only where the layer covers it, `cut-out` (destination-out) keeps it only where the
+ * layer does not, `xor` keeps each only where the other is absent, and `clip`
+ * (source-atop) draws the layer only within it. They act only inside an isolated
+ * group; elsewhere they draw as `normal`.
+ */
 export const renderStackBlendModeSchema = z.enum([
   'normal',
   'additive',
@@ -13,6 +23,10 @@ export const renderStackBlendModeSchema = z.enum([
   'screen',
   'max',
   'min',
+  'intersect',
+  'cut-out',
+  'xor',
+  'clip',
 ]);
 
 /** A group's blend mode. `pass-through` means each child blends by its own mode. */
@@ -27,7 +41,7 @@ export const renderStackGroupBlendModeSchema = z.enum([
  */
 const leafPropsSchema = z
   .looseObject({
-    /** Saved, but not yet drawn: blending goes through groups for now. */
+    /** Drawn only inside an isolated group; saved but not drawn elsewhere. */
     blendMode: renderStackBlendModeSchema.optional(),
   })
   .default({});

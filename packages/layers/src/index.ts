@@ -97,7 +97,12 @@ export {
 } from './featureColorEncoding';
 // Experimental: isolated groups, from the render-to-target spike in
 // docs/plans/render-stack-hierarchy.md. Not yet a supported API.
-export type { GroupBlendMode } from './groups/groupBlend';
+export {
+  GROUP_COMPOSITING_OPERATORS,
+  type GroupBlendMode,
+  type GroupCompositingOperator,
+  isGroupCompositingOperator,
+} from './groups/groupBlend';
 export {
   getIsolatedGroupMember,
   getIsolatedGroupMemberId,
