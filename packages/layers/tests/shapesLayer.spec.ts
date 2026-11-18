@@ -230,6 +230,28 @@ describe('createShapesDeckLayer', () => {
     expect(props.lineWidthMaxPixels).toBe(2);
   });
 
+  it('scales common-unit polygon strokes by the element transform, but not pixel strokes', () => {
+    const scale = 0.25;
+    const strokeFor = (units: 'common' | 'pixels') => {
+      const props = single(
+        createShapesDeckLayer(
+          renderData,
+          {
+            kind: 'shapes',
+            elementKey: 'cells',
+            visible: true,
+            defaultStrokeWidth: 4,
+            defaultStrokeWidthUnits: units,
+          },
+          { id: `stroke-${units}`, modelMatrix: new Matrix4().scale([scale, scale, 1]) }
+        )
+      ).props as unknown as { getLineWidth: number; lineWidthScale?: number };
+      return props.getLineWidth * (props.lineWidthScale ?? 1);
+    };
+    expect(strokeFor('common')).toBeCloseTo(4 * scale, 6);
+    expect(strokeFor('pixels')).toBe(4);
+  });
+
   it('emits enriched pick callbacks', () => {
     const onShapeHover = vi.fn();
     const layer = createShapesDeckLayer(

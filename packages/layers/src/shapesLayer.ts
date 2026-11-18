@@ -1065,6 +1065,9 @@ function createPolygonDeckLayer(
         : resolveStrokeColor(d.featureId, featureState, resolvedDefaultStroke),
     getLineWidth: defaultStrokeWidth,
     lineWidthUnits: defaultStrokeWidthUnits,
+    // As for circle radii: deck leaves common-unit widths out of modelMatrix.
+    lineWidthScale:
+      defaultStrokeWidthUnits === 'common' ? modelMatrixUniformScale(options.modelMatrix) : 1,
     lineWidthMinPixels: defaultStrokeWidthMinPixels,
     lineWidthMaxPixels: defaultStrokeWidthMaxPixels,
     updateTriggers: {
