@@ -5,6 +5,7 @@
 import type { Matrix4 } from '@math.gl/core';
 import type { PointsTilingMode, SpatialElement } from '@spatialdata/core';
 import type {
+  AlphaFromIntensity,
   FeatureCategoricalPaletteSpec,
   FeatureMissingValueOptions,
   FeatureNumericDomain,
@@ -131,6 +132,11 @@ export interface ImageLayerConfig extends BaseLayerConfig {
   type: 'image';
   /** Optional: Advanced channel configuration (for full Viv controls) */
   channels?: ChannelConfig;
+  /**
+   * Take opacity from brightness so a dark-background image (fluorescence, IMC) can
+   * draw over another, such as H&E. Omit to draw the image opaque as usual.
+   */
+  alphaFromIntensity?: AlphaFromIntensity;
   /**
    * Serializable Viv/deck props merged into `detailView.getLayers({ props })`.
    * Host-owned schema for extension state (brightness, contrast, colormap, etc.).

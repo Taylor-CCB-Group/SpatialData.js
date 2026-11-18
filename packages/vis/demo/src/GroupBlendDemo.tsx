@@ -19,7 +19,8 @@
  * `?image=1` adds a Viv image under the circles, inside the group. It is built the way
  * `VivSpatialViewer` builds image layers (`DetailView.getLayers`, wrapped in
  * `DeviceAdaptiveImageLayer`), from a synthetic in-memory loader: one uint8 channel of
- * constant value, so the expected pixels can be worked out.
+ * constant value, so the expected pixels can be worked out. `?alpha=threshold,gain`
+ * sets the image's `alphaFromIntensity`.
  *
  * `?member=<mode>` draws the green circle as a member with that blend mode, the way
  * `renderStackToDeckLayers` draws a blended leaf: a one-member group inside the group.
@@ -69,6 +70,15 @@ const FIX = params.get('fix') !== '0';
 const CLEAR_INSET = params.get('clear') !== '0';
 const GROUPED = params.get('group') !== '0';
 const IMAGE = params.get('image') === '1' || MASK !== null;
+const ALPHA = params.get('alpha');
+const ALPHA_PROPS = ALPHA
+  ? {
+      alphaFromIntensity: {
+        threshold: Number(ALPHA.split(',')[0] ?? 0),
+        gain: Number(ALPHA.split(',')[1] ?? 1),
+      },
+    }
+  : {};
 
 type ViewId = 'main' | 'inset';
 const INSET = { x: 400, y: 200, width: 220, height: 140 };
@@ -84,7 +94,7 @@ function flatChildren(group: IsolatedGroupLayer): Layer[] {
 const imageLoader = IMAGE ? syntheticImageLoader() : null;
 
 function imageLayers(view: ViewId): Layer[] {
-  return imageLoader ? vivImageLayers(imageLoader, `@${view}`, WIDTH, HEIGHT) : [];
+  return imageLoader ? vivImageLayers(imageLoader, `@${view}`, WIDTH, HEIGHT, ALPHA_PROPS) : [];
 }
 
 /** A member drawn with its own blend mode, as `renderStackToDeckLayers` draws a leaf. */
@@ -252,6 +262,7 @@ export default function GroupBlendDemo() {
       ...(NESTED ? { nested: '1' } : {}),
       ...(VIEWS ? { views: '2' } : {}),
       ...(IMAGE ? { image: '1' } : {}),
+      ...(ALPHA ? { alpha: ALPHA } : {}),
       ...(GROUPED ? {} : { group: '0' }),
       ...(FIX ? {} : { fix: '0' }),
       ...query,

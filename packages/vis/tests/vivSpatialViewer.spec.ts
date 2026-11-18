@@ -42,4 +42,32 @@ describe('VivSpatialViewer passthrough', () => {
     expect(props.loader).toBeDefined();
     expect(props.colors).toEqual([[255, 255, 255]]);
   });
+
+  it('passes alphaFromIntensity to Viv alongside the channel props', () => {
+    const getLayers = vi.fn((_args: { props: Record<string, unknown> }) => []);
+    const viewer = new VivSpatialViewer({
+      vivLayerProps: [
+        {
+          id: 'image-1',
+          loader: { labels: ['y', 'x'], shape: [64, 64] },
+          colors: [[255, 255, 255]],
+          contrastLimits: [[0, 255]],
+          channelsVisible: [true],
+          selections: [{}],
+          alphaFromIntensity: { threshold: 0.2, gain: 3 },
+        } satisfies ImageLayerConfig,
+      ],
+      width: 512,
+      height: 512,
+      viewState: { target: [0, 0], zoom: 0 },
+      onViewStateChange: () => {},
+    });
+
+    // @ts-expect-error - test hook into private detail view
+    viewer.detailView = { getLayers };
+    viewer._renderLayers();
+
+    const props = getLayers.mock.calls[0]?.[0]?.props;
+    expect(props?.alphaFromIntensity).toEqual({ threshold: 0.2, gain: 3 });
+  });
 });

@@ -63,7 +63,8 @@ export function vivImageLayers(
   loader: unknown,
   idSuffix: string,
   width: number,
-  height: number
+  height: number,
+  extraProps: Record<string, unknown> = {}
 ): Layer[] {
   const detail = new DetailView({ id: `image${idSuffix}`, width, height });
   const result: unknown = detail.getLayers({
@@ -74,6 +75,7 @@ export function vivImageLayers(
       channelsVisible: [true],
       selections: [{ c: 0 }],
       modelMatrix: new Matrix4().translate(IMAGE_ORIGIN),
+      ...extraProps,
     },
   });
   const vivLayers = (Array.isArray(result) ? result.flat(Infinity) : [result]).filter(

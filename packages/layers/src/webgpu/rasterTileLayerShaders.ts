@@ -30,6 +30,10 @@ struct RasterUniforms {
   outlineOpacity: f32,
   strokeWidth: f32,
   opacity: f32,
+  // alphaFromIntensity: enabled flag, threshold, gain (see alphaFromIntensity.ts).
+  alphaFromIntensity: f32,
+  alphaThreshold: f32,
+  alphaGain: f32,
 };
 
 @group(0) @binding(auto) var<uniform> raster: RasterUniforms;
@@ -57,6 +61,9 @@ export type RasterUniformProps = {
   outlineOpacity: number;
   strokeWidth: number;
   opacity: number;
+  alphaFromIntensity: number;
+  alphaThreshold: number;
+  alphaGain: number;
   rasterData: Texture;
   rasterLut: Texture;
 };
@@ -83,6 +90,9 @@ export const rasterUniforms = {
     outlineOpacity: 'f32',
     strokeWidth: 'f32',
     opacity: 'f32',
+    alphaFromIntensity: 'f32',
+    alphaThreshold: 'f32',
+    alphaGain: 'f32',
   },
 } as const;
 
@@ -154,7 +164,15 @@ fn raster_image(texelPosition: vec2<f32>, size: vec2<i32>) -> vec4<f32> {
     let intensity = clamp((value - range.x) / max(range.y - range.x, 1e-20), 0.0, 1.0);
     rgb = rgb + color.rgb * intensity;
   }
-  return vec4<f32>(min(rgb, vec3<f32>(1.0)), raster.opacity);
+  rgb = min(rgb, vec3<f32>(1.0));
+  var alpha = raster.opacity;
+  if (raster.alphaFromIntensity > 0.5) {
+    let brightness = max(max(rgb.r, rgb.g), rgb.b);
+    let scale = clamp((brightness - raster.alphaThreshold) * raster.alphaGain, 0.0, 1.0);
+    rgb = rgb / max(max(scale, brightness), 1e-6);
+    alpha = alpha * scale;
+  }
+  return vec4<f32>(rgb, alpha);
 }
 
 fn raster_label_at(texelPosition: vec2<f32>, size: vec2<i32>) -> u32 {
