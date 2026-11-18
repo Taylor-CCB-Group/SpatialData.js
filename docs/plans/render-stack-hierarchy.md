@@ -23,10 +23,10 @@ and draw what an operator computes from them. Typical cases:
    Deprecate `SpatialLayer`.
 2. **Groups with no offscreen pass.**
    - Visibility, and opacity inherited by children.
-   - Per-entry `blendMode` through deck `parameters` on WebGL and WebGPU.
    - Groups in the layer list UI.
 3. **Isolated groups.** Children render to a screen-aligned target, which is
    composited with any blend mode, including ones fixed-function blending cannot do.
+   Per-entry `blendMode` and compositing operators draw inside them.
    This is also the substrate ADR 0003's FBO caching asks for. Works on both
    backends; see [Render-to-target spike](#render-to-target-spike).
 4. **Derived Entries.**
@@ -47,8 +47,7 @@ WebGPU only:
 | Feature | WebGPU | WebGL |
 |---|---|---|
 | Nested groups, inherited visibility and opacity (pass-through) | yes | yes |
-| Fixed-function `blendMode` on deck layers we own (shapes, points, labels) | yes | yes |
-| Fixed-function `blendMode` on image entries | yes: our `RasterTileLayer` | only if Viv honours `parameters`; unchecked |
+| Leaf `blendMode` inside an isolated group, any layer kind | yes | yes |
 | Opacity and blend mode per image channel | to add in our WGSL composite | a local Viv extension, then upstream |
 | Isolated groups, and modes that need a composite shader | yes | yes |
 | Derived Entries | yes | not planned |
@@ -80,8 +79,8 @@ WebGPU only:
 ## Where things stand
 
 - `renderStackSchema` (`core/src/renderStack.ts`) is the v2 tree described below,
-  with the v1 migration. Leaf `blendMode` is saved but not drawn yet; blending goes
-  through groups.
+  with the v1 migration. Leaf `blendMode` is drawn only inside an isolated group,
+  where the leaf becomes a one-member group (ADR 0007).
 - `renderStackOrder`, `renderStackToLayerInputs` and `resolveRenderStackHostLayers`
   walk the tree. Visibility inherits, and so does a pass-through group's opacity,
   applied where each leaf layer is built.
@@ -118,12 +117,15 @@ it.
   in phase 3 needs to build that policy; the composite step just must not assume
   the target matches the canvas size.
 
-Blend modes on any entry: `normal | additive | multiply | screen | max | min`, plus
-`pass-through` on groups. These six all map to fixed-function blend state.
+Blend modes on any entry: `normal | additive | multiply | screen | max | min`, the
+compositing operators `intersect | cut-out | xor | clip`, plus `pass-through` on
+groups. All map to fixed-function blend state on a premultiplied composite. Leaf modes
+and operators act only inside an isolated group.
 - `overlay`, OKLab mixing and similar need an isolated composite shader. They are
   added in phase 3.
-- The exact blend factors depend on whether deck's colour output is premultiplied.
-  They are chosen and checked per backend in phase 2.
+- deck's WebGL layers output straight alpha and its WGSL layers premultiplied, so
+  blend factors are only backend-independent on a group's composite. That is why
+  leaf modes draw through a one-member group rather than layer `parameters`.
 
 ## Derived Entry
 

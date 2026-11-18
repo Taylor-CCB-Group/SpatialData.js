@@ -21,6 +21,12 @@
  * `DeviceAdaptiveImageLayer`), from a synthetic in-memory loader: one uint8 channel of
  * constant value, so the expected pixels can be worked out.
  *
+ * `?member=<mode>` draws the green circle as a member with that blend mode, the way
+ * `renderStackToDeckLayers` draws a blended leaf: a one-member group inside the group.
+ * `?mask=<mode>` puts the Viv image on top of the circles instead, as a member with that
+ * mode, which checks that Viv's own blend parameters survive. Both take the compositing
+ * operators (`intersect`, `cut-out`, `xor`, `clip`) as well as the blend modes.
+ *
  * WebGPU runs with `applyWebGPUViewFix` and `applyWebGPUPickingFix`; `?fix=0` leaves
  * deck unpatched to show the bugs they work around.
  */
@@ -30,6 +36,7 @@ import { webgpuAdapter } from '@luma.gl/webgpu';
 import {
   applyWebGPUPickingFix,
   applyWebGPUViewFix,
+  GROUP_COMPOSITING_OPERATORS,
   type GroupBlendMode,
   getIsolatedGroupMemberId,
   IsolatedGroupLayer,
@@ -49,15 +56,19 @@ const HEIGHT = 360;
 const params = new URLSearchParams(window.location.search);
 const DEVICE: 'webgl' | 'webgpu' = params.get('device') === 'webgl' ? 'webgl' : 'webgpu';
 const BLEND_MODES: GroupBlendMode[] = ['normal', 'additive', 'multiply', 'screen', 'max', 'min'];
-const BLEND = (BLEND_MODES.find((mode) => mode === params.get('blend')) ??
-  'normal') satisfies GroupBlendMode;
+const MEMBER_MODES: GroupBlendMode[] = [...BLEND_MODES, ...GROUP_COMPOSITING_OPERATORS];
+const modeParam = (name: string, modes: GroupBlendMode[]): GroupBlendMode =>
+  modes.find((mode) => mode === params.get(name)) ?? 'normal';
+const BLEND = modeParam('blend', BLEND_MODES);
+const MEMBER = modeParam('member', MEMBER_MODES);
+const MASK = params.has('mask') ? modeParam('mask', MEMBER_MODES) : null;
 const NESTED = params.get('nested') === '1';
 const VIEWS = params.get('views') === '2';
 const FIX = params.get('fix') !== '0';
 /** `?clear=0` leaves the inset uncleared, so it draws on unpatched WebGPU (`?fix=0`). */
 const CLEAR_INSET = params.get('clear') !== '0';
 const GROUPED = params.get('group') !== '0';
-const IMAGE = params.get('image') === '1';
+const IMAGE = params.get('image') === '1' || MASK !== null;
 
 type ViewId = 'main' | 'inset';
 const INSET = { x: 400, y: 200, width: 220, height: 140 };
@@ -74,6 +85,11 @@ const imageLoader = IMAGE ? syntheticImageLoader() : null;
 
 function imageLayers(view: ViewId): Layer[] {
   return imageLoader ? vivImageLayers(imageLoader, `@${view}`, WIDTH, HEIGHT) : [];
+}
+
+/** A member drawn with its own blend mode, as `renderStackToDeckLayers` draws a leaf. */
+function blended(id: string, layers: Layer[], blendMode: GroupBlendMode): Layer[] {
+  return blendMode === 'normal' ? layers : [new IsolatedGroupLayer({ id, layers, blendMode })];
 }
 
 function buildLayers(view: ViewId): Layer[] {
@@ -95,9 +111,14 @@ function buildLayers(view: ViewId): Layer[] {
     opacity: 0.5,
     blendMode: BLEND,
     layers: [
-      ...imageLayers(view),
+      ...(MASK ? [] : imageLayers(view)),
       circles(tag('iso-red'), [{ position: [120, 0], radius: 70, color: RED }], 1),
-      circles(tag('iso-green'), [{ position: [200, 0], radius: 70, color: GREEN }], 1),
+      ...blended(
+        tag('iso-green-blend'),
+        [circles(tag('iso-green'), [{ position: [200, 0], radius: 70, color: GREEN }], 1)],
+        MEMBER
+      ),
+      ...(MASK ? blended(tag('iso-mask'), imageLayers(view), MASK) : []),
     ],
   });
   const group = NESTED
@@ -129,6 +150,8 @@ const WORLD_SAMPLES: Array<[string, ViewId, [number, number]]> = [
   ['loose red only', 'main', [-235, 0]],
   ['iso overlap', 'main', [160, 0]],
   ['iso red only', 'main', [85, 0]],
+  ['iso green only', 'main', [235, 0]],
+  ['iso red outside image', 'main', [55, 0]],
   ['iso backdrop only (empty group)', 'main', [160, 110]],
   ['iso image only', 'main', [250, 110]],
   ['outside everything', 'main', [0, 170]],
@@ -224,6 +247,8 @@ export default function GroupBlendDemo() {
     const next = new URLSearchParams({
       device: DEVICE,
       blend: BLEND,
+      ...(MEMBER === 'normal' ? {} : { member: MEMBER }),
+      ...(MASK ? { mask: MASK } : {}),
       ...(NESTED ? { nested: '1' } : {}),
       ...(VIEWS ? { views: '2' } : {}),
       ...(IMAGE ? { image: '1' } : {}),
@@ -243,7 +268,15 @@ export default function GroupBlendDemo() {
       <div style={{ marginBottom: 8 }}>
         device: {link('webgpu', { device: 'webgpu' })}
         {link('webgl', { device: 'webgl' })} | blend:{' '}
-        {BLEND_MODES.map((mode) => link(mode, { blend: mode }))} |{' '}
+        {BLEND_MODES.map((mode) => link(mode, { blend: mode }))}
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        green member: {MEMBER_MODES.map((mode) => link(mode, { member: mode }))}
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        image mask: {MEMBER_MODES.map((mode) => link(mode, { mask: mode }))}
+      </div>
+      <div style={{ marginBottom: 8 }}>
         {link(NESTED ? 'unnest' : 'nest', { nested: NESTED ? '0' : '1' })}{' '}
         {link(VIEWS ? 'one view' : 'inset view', { views: VIEWS ? '1' : '2' })}{' '}
         {link(IMAGE ? 'no image' : 'viv image', { image: IMAGE ? '0' : '1' })}{' '}
@@ -255,7 +288,8 @@ export default function GroupBlendDemo() {
         style={{ position: 'relative', width: WIDTH, height: HEIGHT, background: '#000' }}
       />
       <div>
-        {status} · device={DEVICE} blend={BLEND} nested={String(NESTED)} views=
+        {status} · device={DEVICE} blend={BLEND} member={MEMBER} mask={MASK ?? '-'} nested=
+        {String(NESTED)} views=
         {VIEWS ? 2 : 1}
       </div>
       <pre>{samples}</pre>

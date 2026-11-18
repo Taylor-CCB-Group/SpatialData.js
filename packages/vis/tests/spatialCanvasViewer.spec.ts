@@ -332,6 +332,89 @@ describe('renderStackToDeckLayers', () => {
   });
 });
 
+describe('renderStackToDeckLayers leaf blend modes', () => {
+  const blendedHost = (id: string, blendMode: string) => ({
+    ...host(id),
+    props: { blendMode },
+  });
+  const membersOf = (layer: Layer | undefined): Layer[] =>
+    layer instanceof IsolatedGroupLayer
+      ? layer.props.layers.flat().filter((member) => member instanceof Layer)
+      : [];
+
+  it('draws a blended leaf inside an isolated group as a one-member group', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        {
+          kind: 'group',
+          id: 'overlap',
+          props: { isolate: true },
+          children: [
+            host('deck:a'),
+            {
+              kind: 'group',
+              id: 'pass',
+              children: [blendedHost('deck:b', 'intersect')],
+            },
+          ],
+        },
+      ],
+    });
+
+    const [group] = renderStackToDeckLayers(stack, { hostLayerResolver: resolveScatter });
+    const [a, b] = membersOf(group);
+
+    expect(a).not.toBeInstanceOf(IsolatedGroupLayer);
+    expect(b).toBeInstanceOf(IsolatedGroupLayer);
+    expect(b?.props).toMatchObject({ id: 'deck:b', blendMode: 'intersect' });
+    expect(membersOf(b).map((layer) => layer.id)).toEqual(['deck:b']);
+  });
+
+  it('does not draw leaf blend modes outside an isolated group', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        blendedHost('deck:a', 'multiply'),
+        { kind: 'group', id: 'pass', children: [blendedHost('deck:b', 'cut-out')] },
+      ],
+    });
+
+    const layers = renderStackToDeckLayers(stack, { hostLayerResolver: resolveScatter });
+
+    expect(layers.some((layer) => layer instanceof IsolatedGroupLayer)).toBe(false);
+    expect(layers.map((layer) => layer.id)).toEqual(['deck:a', 'deck:b']);
+  });
+
+  it('composites a group operator as normal unless it sits in an isolated group', () => {
+    const stack = renderStackSchema.parse({
+      schemaVersion: 2,
+      entries: [
+        {
+          kind: 'group',
+          id: 'outer',
+          props: { blendMode: 'xor' },
+          children: [
+            host('deck:a'),
+            {
+              kind: 'group',
+              id: 'inner',
+              props: { blendMode: 'clip' },
+              children: [host('deck:b')],
+            },
+          ],
+        },
+      ],
+    });
+
+    const [outer] = renderStackToDeckLayers(stack, { hostLayerResolver: resolveScatter });
+    const inner = membersOf(outer)[1];
+
+    expect(outer?.props).toMatchObject({ blendMode: 'normal' });
+    expect(inner?.props).toMatchObject({ id: 'inner', blendMode: 'clip' });
+  });
+});
+
 describe('shouldAutoFitSpatialView', () => {
   it('only auto-fits when the view is unset and renderable dimensions are available', () => {
     expect(
