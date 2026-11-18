@@ -1,4 +1,5 @@
 import type { Layer } from '@deck.gl/core';
+import { Matrix4 } from '@math.gl/core';
 import { describe, expect, it, vi } from 'vitest';
 import { SpatialLayer } from '../src/SpatialLayer';
 import {
@@ -313,6 +314,38 @@ describe('createShapesDeckLayer', () => {
       (props.data as Array<{ featureId: string; radius: number }>).map((d) => d.featureId)
     ).toEqual(['cell-1', 'cell-2']);
     expect((props.getRadius as (d: { radius: number }) => number)(props.data[1])).toBe(2);
+  });
+
+  it('scales circle radii by the element transform, as deck does positions', () => {
+    // Visium spots in a downscaled_lowres CS: positions shrink by the transform, so
+    // radii must too or neighbouring spots overlap into one blob.
+    const scale = 0.027815122;
+    const circleRenderData: ShapesRenderDataLike = {
+      kind: 'wkb-parquet',
+      geometryKind: 'circle',
+      elementKey: 'spots',
+      featureIds: ['a', 'b'],
+      circles: {
+        positions: [new Float32Array([0, 300]), new Float32Array([0, 0])],
+        radii: new Float32Array([100, 100]),
+      },
+      rowIndexByFeatureIndex: new Int32Array([0, 1]),
+    };
+    const layerFor = (modelMatrix?: Matrix4) =>
+      single(
+        createShapesDeckLayer(
+          circleRenderData,
+          { kind: 'shapes', elementKey: 'spots', visible: true },
+          { id: 'spots', ...(modelMatrix ? { modelMatrix } : {}) }
+        )
+      ).props as any;
+    const renderedRadius = (props: any) =>
+      (props.getRadius as (d: { radius: number }) => number)(props.data[0]) *
+      (props.radiusScale ?? 1);
+    // Rendered spacing (300 * scale) must still exceed the rendered diameter.
+    const scaled = layerFor(new Matrix4().scale([scale, scale, 1]));
+    expect(renderedRadius(scaled)).toBeCloseTo(100 * scale, 6);
+    expect(renderedRadius(layerFor())).toBeCloseTo(100, 6);
   });
 
   it('renders geoarrow-table data through the shared backend branch', () => {

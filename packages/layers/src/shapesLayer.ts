@@ -9,6 +9,7 @@ import {
 } from '@spatialdata/core';
 import { FlatPolygonLayer } from './FlatPolygonLayer';
 import { type FeatureColorBuffer, featureColorAt } from './featureColorEncoding';
+import { modelMatrixUniformScale } from './pointsScatterLayer';
 
 export type ShapePolygon = Array<Array<[number, number]>>;
 
@@ -1193,6 +1194,8 @@ function createCircleDeckLayer(
     getPosition: (d) => d.position,
     getRadius: (d) => d.radius,
     radiusUnits,
+    // Deck applies modelMatrix to positions but not to a common-unit radius.
+    radiusScale: radiusUnits === 'common' ? modelMatrixUniformScale(options.modelMatrix) : 1,
     getFillColor: (d) => {
       // Uncovered features go transparent, as on the polygon and binary paths.
       const fromBuffer = options.featureColors
