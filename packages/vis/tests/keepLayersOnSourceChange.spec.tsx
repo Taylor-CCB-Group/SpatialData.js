@@ -165,6 +165,8 @@ describe('SpatialCanvas keepLayersOnSourceChange', () => {
     switchTo(dataset(['aligned', 'micron'], { images: ['morphology'] }));
     expect(store.getState().coordinateSystem).toBeNull();
     expect(store.getState().layerOrder).toEqual([morphology.id, cells.id, transcripts.id]);
+    // Missing elements are marked even before a coordinate system is chosen.
+    expect(screen.getAllByText('unavailable')).toHaveLength(2);
   });
 
   it('keeps the layers through a coordinate-system change', () => {

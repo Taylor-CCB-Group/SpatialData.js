@@ -277,8 +277,16 @@ function ViewerSection({
     [actions]
   );
 
+  // Latched once loading is seen while waiting to fit: shapes load without blocking,
+  // so "no bounds" means "not yet" until that loading has finished.
+  const fitLoadingObservedRef = useRef(false);
+
   // Auto-fit: fires once when viewState is null and layers become renderable.
   useEffect(() => {
+    if (viewState !== null) {
+      fitLoadingObservedRef.current = false;
+      return;
+    }
     if (
       !shouldAutoFitSpatialView({
         autoFit: true,
@@ -291,15 +299,19 @@ function ViewerSection({
     ) {
       return;
     }
+    if (isLoading) fitLoadingObservedRef.current = true;
     const bounds = getWorldBoundsForVisibleLayers();
-    handleViewStateChange(
-      bounds ? viewStateFromBounds(bounds, vw, vh) : { target: [0, 0], zoom: 0 }
-    );
+    if (bounds) {
+      handleViewStateChange(viewStateFromBounds(bounds, vw, vh));
+    } else if (fitLoadingObservedRef.current && !isLoading) {
+      handleViewStateChange({ target: [0, 0], zoom: 0 });
+    }
   }, [
     hasEnabledLayers,
     vh,
     vw,
     isBlocking,
+    isLoading,
     getWorldBoundsForVisibleLayers,
     handleViewStateChange,
     viewState,
@@ -484,6 +496,13 @@ function SpatialCanvasInner({
     vivLayerProps,
   } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
+
+  // A visible layer whose element is missing or untransformable never loads, so the
+  // viewer waits only on the rest when deciding whether there is anything to frame.
+  const getUnresolvedReason = (id: string) =>
+    getEntryStatus(id)?.errors.find((e) => e.resource === 'element')?.error.message;
+  const hasLoadableLayers =
+    !!coordinateSystem && layerOrder.some((id) => layers[id]?.visible && !getUnresolvedReason(id));
 
   // Shared hover-tooltip machinery (pick → tooltip → portal); see
   // useHoverFeatureTooltip. `handleHover` below stays local (the drag guard).
@@ -740,9 +759,7 @@ function SpatialCanvasInner({
               selectedLayerId={selectedLayerId}
               onSelect={actions.setSelectedLayerId}
               reorderLayers={actions.reorderLayers}
-              getUnresolvedReason={(id) =>
-                getEntryStatus(id)?.errors.find((e) => e.resource === 'element')?.error.message
-              }
+              getUnresolvedReason={getUnresolvedReason}
             />
           </aside>
 
@@ -751,7 +768,7 @@ function SpatialCanvasInner({
               deckLayers={deckLayers}
               layerOrder={layerOrder}
               vivLayerProps={vivLayerProps}
-              hasEnabledLayers={hasEnabledLayers}
+              hasEnabledLayers={hasLoadableLayers}
               isBlocking={isBlocking}
               isLoading={isLoading}
               hasLayersDrawn={hasLayersDrawn}

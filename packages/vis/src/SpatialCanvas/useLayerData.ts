@@ -56,7 +56,7 @@ import {
   type TileDebugStore,
 } from '@spatialdata/layers';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type EntryStatus, EntryStatusCache } from './entryStatus';
+import { type EntryStatus, EntryStatusCache, hasLayerElement } from './entryStatus';
 import { createFeatureColorStabilizer, type FeatureColorResolver } from './featureColorResolver';
 import type { LabelsChannelDefaults } from './imageLoaderChannelDefaults';
 import {
@@ -1476,8 +1476,12 @@ export function useLayerData(
         const snapshot = ctx ? store.snapshot(ctx) : undefined;
         return snapshot ? entryStatusCache.fromSnapshot(snapshot) : undefined;
       }
-      // The reconcile effect skips an entry it cannot resolve; say why instead.
-      if (!spatialData || !coordinateSystem) return undefined;
+      // The reconcile effect skips an entry it cannot resolve; say why instead. A
+      // missing element is reported even before a coordinate system is chosen.
+      if (!spatialData) return undefined;
+      if (!coordinateSystem && hasLayerElement(spatialData, config.type, config.elementKey)) {
+        return undefined;
+      }
       return entryStatusCache.fromUnresolved(
         layerId,
         spatialData,
