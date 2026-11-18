@@ -3,8 +3,9 @@ import {
   MAX_CHANNELS,
   mergeLayerChannelState,
 } from '@spatialdata/avivatorish';
+import type { AlphaFromIntensity } from '@spatialdata/layers';
 import type { CSSProperties } from 'react';
-import type { ChannelConfig } from './types';
+import type { ChannelConfig, ImageLayerConfig } from './types';
 import type { ImageLoaderData } from './useLayerData';
 
 const inputStyle: CSSProperties = {
@@ -41,11 +42,77 @@ function emptySelectionRow(axisSizes: AxisSizes | undefined): SelectionRow {
   return o;
 }
 
+const DEFAULT_ALPHA_FROM_INTENSITY = { threshold: 0, gain: 1 };
+
+interface AlphaFromIntensityControlProps {
+  value: AlphaFromIntensity | undefined;
+  onChange: (next: AlphaFromIntensity | undefined) => void;
+}
+
+function AlphaFromIntensityControl({ value, onChange }: AlphaFromIntensityControlProps) {
+  const threshold = value?.threshold ?? DEFAULT_ALPHA_FROM_INTENSITY.threshold;
+  const gain = value?.gain ?? DEFAULT_ALPHA_FROM_INTENSITY.gain;
+  const slider = (
+    label: string,
+    key: 'threshold' | 'gain',
+    current: number,
+    range: { min: number; max: number; step: number }
+  ) => (
+    <label style={{ display: 'block' }}>
+      <span style={labelStyle}>
+        {label}: {current.toFixed(2)}
+      </span>
+      <input
+        type="range"
+        {...range}
+        value={current}
+        style={{ width: '100%' }}
+        onChange={(e) => onChange({ threshold, gain, [key]: Number(e.target.value) })}
+      />
+    </label>
+  );
+  return (
+    <div
+      style={{
+        border: '1px solid #333',
+        borderRadius: 6,
+        padding: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      <label
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+        title="Dark areas become transparent, so this image can be drawn over another such as H&E"
+      >
+        <input
+          type="checkbox"
+          checked={value !== undefined}
+          onChange={(e) =>
+            onChange(e.target.checked ? { ...DEFAULT_ALPHA_FROM_INTENSITY } : undefined)
+          }
+        />
+        <span style={{ color: '#aaa', fontSize: '12px' }}>Opacity from brightness</span>
+      </label>
+      {value !== undefined && (
+        <>
+          {slider('Threshold', 'threshold', threshold, { min: 0, max: 1, step: 0.01 })}
+          {slider('Gain', 'gain', gain, { min: 0.1, max: 10, step: 0.1 })}
+        </>
+      )}
+    </div>
+  );
+}
+
 export interface ImageChannelPanelProps {
   layerId: string;
   channels: ChannelConfig;
   onChannelsChange: (next: ChannelConfig) => void;
   defaults?: ImageLoaderData;
+  alphaFromIntensity?: AlphaFromIntensity;
+  /** Shows the opacity-from-brightness control when given. */
+  onAlphaFromIntensityChange?: (next: AlphaFromIntensity | undefined) => void;
 }
 
 export function ImageChannelPanel({
@@ -53,6 +120,8 @@ export function ImageChannelPanel({
   channels,
   onChannelsChange,
   defaults,
+  alphaFromIntensity,
+  onAlphaFromIntensityChange,
 }: ImageChannelPanelProps) {
   const m = mergeLayerChannelState(channels, defaults, layerId);
   const axisSizes = defaults?.selectionAxisSizes;
@@ -70,6 +139,12 @@ export function ImageChannelPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {onAlphaFromIntensityChange && (
+        <AlphaFromIntensityControl
+          value={alphaFromIntensity}
+          onChange={onAlphaFromIntensityChange}
+        />
+      )}
       <div style={{ color: '#ccc', fontSize: '12px', fontWeight: 600 }}>
         Channels (max {MAX_CHANNELS})
       </div>
@@ -213,9 +288,12 @@ export function ImageChannelPanel({
 /** Demo-shell adapter: updates layer config via SpatialCanvas store actions. */
 export interface ImageChannelPanelStoreProps {
   layerId: string;
-  config: { channels?: ChannelConfig };
+  config: Pick<ImageLayerConfig, 'channels' | 'alphaFromIntensity'>;
   defaults?: ImageLoaderData;
-  updateLayer: (id: string, updates: { channels?: ChannelConfig }) => void;
+  updateLayer: (
+    id: string,
+    updates: Partial<Pick<ImageLayerConfig, 'channels' | 'alphaFromIntensity'>>
+  ) => void;
 }
 
 export function ImageChannelPanelFromStore({
@@ -230,6 +308,8 @@ export function ImageChannelPanelFromStore({
       channels={config.channels ?? {}}
       defaults={defaults}
       onChannelsChange={(next) => updateLayer(layerId, { channels: next })}
+      alphaFromIntensity={config.alphaFromIntensity}
+      onAlphaFromIntensityChange={(next) => updateLayer(layerId, { alphaFromIntensity: next })}
     />
   );
 }
