@@ -52,22 +52,26 @@ interface AlphaFromIntensityControlProps {
 function AlphaFromIntensityControl({ value, onChange }: AlphaFromIntensityControlProps) {
   const threshold = value?.threshold ?? DEFAULT_ALPHA_FROM_INTENSITY.threshold;
   const gain = value?.gain ?? DEFAULT_ALPHA_FROM_INTENSITY.gain;
+  // Sliders run over `toSlider(value)`; gain is logarithmic so steep, near-binary cuts
+  // (gain ~100) are reachable without losing resolution near 1.
   const slider = (
     label: string,
     key: 'threshold' | 'gain',
     current: number,
-    range: { min: number; max: number; step: number }
+    range: { min: number; max: number; step: number },
+    toSlider: (value: number) => number = (value) => value,
+    fromSlider: (position: number) => number = (position) => position
   ) => (
     <label style={{ display: 'block' }}>
       <span style={labelStyle}>
-        {label}: {current.toFixed(2)}
+        {label}: {current < 10 ? current.toFixed(2) : current.toFixed(0)}
       </span>
       <input
         type="range"
         {...range}
-        value={current}
+        value={toSlider(current)}
         style={{ width: '100%' }}
-        onChange={(e) => onChange({ threshold, gain, [key]: Number(e.target.value) })}
+        onChange={(e) => onChange({ threshold, gain, [key]: fromSlider(Number(e.target.value)) })}
       />
     </label>
   );
@@ -98,7 +102,9 @@ function AlphaFromIntensityControl({ value, onChange }: AlphaFromIntensityContro
       {value !== undefined && (
         <>
           {slider('Threshold', 'threshold', threshold, { min: 0, max: 1, step: 0.01 })}
-          {slider('Gain', 'gain', gain, { min: 0.1, max: 10, step: 0.1 })}
+          {slider('Gain', 'gain', gain, { min: -1, max: 2, step: 0.01 }, Math.log10, (position) =>
+            Number((10 ** position).toPrecision(3))
+          )}
         </>
       )}
     </div>

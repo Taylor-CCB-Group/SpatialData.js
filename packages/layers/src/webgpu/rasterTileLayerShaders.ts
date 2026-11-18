@@ -168,10 +168,9 @@ fn raster_image(texelPosition: vec2<f32>, size: vec2<i32>) -> vec4<f32> {
   var alpha = raster.opacity;
   if (raster.alphaFromIntensity > 0.5) {
     let brightness = max(max(rgb.r, rgb.g), rgb.b);
-    if (brightness > 0.0) {
-      rgb = rgb / brightness;
-    }
-    alpha = alpha * clamp((brightness - raster.alphaThreshold) * raster.alphaGain, 0.0, 1.0);
+    let scale = clamp((brightness - raster.alphaThreshold) * raster.alphaGain, 0.0, 1.0);
+    rgb = rgb / max(max(scale, brightness), 1e-6);
+    alpha = alpha * scale;
   }
   return vec4<f32>(rgb, alpha);
 }

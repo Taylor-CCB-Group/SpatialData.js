@@ -3,9 +3,10 @@ import { type Layer, LayerExtension } from '@deck.gl/core';
 /**
  * Opacity from brightness, for drawing a dark-background image (fluorescence, IMC)
  * over another (brightfield). With `b` the brightest of R, G and B after the channel
- * colour mix, the pixel's alpha is scaled by `clamp((b - threshold) * gain, 0, 1)` and
- * its colour is divided by `b`. At the defaults (0, 1) the image over black looks as it
- * did without the option.
+ * colour mix, the pixel's alpha is scaled by `a = clamp((b - threshold) * gain, 0, 1)`
+ * and its colour divided by `max(a, b)`. Where `a >= b` the image over black looks as it
+ * did without the option; a low threshold with a high gain is close to a binary cut,
+ * hiding near-black and leaving the rest as it was.
  */
 export type AlphaFromIntensity = {
   /** Brightness (0-1) at or below which the image is fully transparent. Default 0. */
@@ -49,7 +50,7 @@ uniform alphaFromIntensityUniforms {
   if (alphaScale <= 0.0) {
     discard;
   }
-  color.rgb /= max(alphaBrightness, 1e-6);
+  color.rgb /= max(max(alphaScale, alphaBrightness), 1e-6);
   color.a *= alphaScale;
 `,
   },

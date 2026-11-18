@@ -33,8 +33,9 @@ describe('ImageChannelPanel opacity from brightness', () => {
     fireEvent.change(screen.getByRole('slider', { name: /Threshold/ }), {
       target: { value: '0.3' },
     });
-    fireEvent.change(screen.getByRole('slider', { name: /Gain/ }), { target: { value: '4' } });
-    expect(config.alphaFromIntensity).toEqual({ threshold: 0.3, gain: 4 });
+    // Gain is logarithmic: slider position 2 is gain 100.
+    fireEvent.change(screen.getByRole('slider', { name: /Gain/ }), { target: { value: '2' } });
+    expect(config.alphaFromIntensity).toEqual({ threshold: 0.3, gain: 100 });
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Opacity from brightness' }));
     expect(config.alphaFromIntensity).toBeUndefined();
