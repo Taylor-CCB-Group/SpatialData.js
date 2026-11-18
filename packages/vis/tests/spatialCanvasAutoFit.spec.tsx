@@ -4,7 +4,7 @@
  */
 
 import type { SpatialData } from '@spatialdata/core';
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SpatialCanvas from '../src/SpatialCanvas/index.js';
 import { createSpatialCanvasStore } from '../src/SpatialCanvas/stores.js';
@@ -15,6 +15,7 @@ const renderer = vi.hoisted(() => {
   return {
     state: {
       isLoading: false,
+      isBlocking: false,
       bounds: null as null | { minX: number; minY: number; maxX: number; maxY: number },
     },
     listeners,
@@ -33,7 +34,7 @@ function setRenderer(next: Partial<typeof renderer.state>) {
 }
 
 const spatialData = {
-  coordinateSystems: ['global'],
+  coordinateSystems: ['global', 'micron'],
   shapes: { cells: {} },
   getAssociatedTable: () => undefined,
 } as unknown as SpatialData;
@@ -77,8 +78,7 @@ vi.mock('../src/SpatialCanvas/SpatialCanvasViewer.js', async (importOriginal) =>
         setHoveredLabel: () => {},
         hasLayersDrawn: false,
         hasRenderableLayerData: () => false,
-        // Shapes never block.
-        isBlocking: false,
+        isBlocking: state.isBlocking,
         isLoading: state.isLoading,
         pointsEngine: undefined,
         resolvePointsTarget: () => undefined,
@@ -89,9 +89,9 @@ vi.mock('../src/SpatialCanvas/SpatialCanvasViewer.js', async (importOriginal) =>
   };
 });
 
-describe('SpatialCanvas auto-fit with a shapes-only view', () => {
+describe('SpatialCanvas auto-fit', () => {
   beforeEach(() => {
-    renderer.state = { isLoading: false, bounds: null };
+    renderer.state = { isLoading: false, isBlocking: false, bounds: null };
   });
 
   function setup() {
@@ -127,5 +127,24 @@ describe('SpatialCanvas auto-fit with a shapes-only view', () => {
     setRenderer({ isLoading: true });
     setRenderer({ isLoading: false });
     expect(store.getState().viewState).toEqual({ target: [0, 0], zoom: 0 });
+  });
+
+  it('settles the view when a blocking load fails without bounds', () => {
+    const store = setup();
+    setRenderer({ isLoading: true, isBlocking: true });
+    setRenderer({ isLoading: false, isBlocking: false });
+    expect(store.getState().viewState).toEqual({ target: [0, 0], zoom: 0 });
+  });
+
+  it('refits after the coordinate system is cleared and chosen again', () => {
+    const store = setup();
+    setRenderer({ isLoading: true });
+    setRenderer({ isLoading: false, bounds: { minX: 100, minY: 100, maxX: 300, maxY: 200 } });
+    const select = screen.getByDisplayValue('global');
+
+    fireEvent.change(select, { target: { value: '' } });
+    fireEvent.change(select, { target: { value: 'global' } });
+
+    expect(store.getState().viewState?.target).toEqual([200, 150]);
   });
 });

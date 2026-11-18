@@ -9,7 +9,7 @@
 
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
-import { viewStateFromBounds } from '@spatialdata/core';
+import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
 import {
@@ -287,6 +287,8 @@ function ViewerSection({
       fitLoadingObservedRef.current = false;
       return;
     }
+    // Before the guard, so a blocking load that fails still counts as settled.
+    if (isLoading) fitLoadingObservedRef.current = true;
     if (
       !shouldAutoFitSpatialView({
         autoFit: true,
@@ -299,7 +301,6 @@ function ViewerSection({
     ) {
       return;
     }
-    if (isLoading) fitLoadingObservedRef.current = true;
     const bounds = getWorldBoundsForVisibleLayers();
     if (bounds) {
       handleViewStateChange(viewStateFromBounds(bounds, vw, vh));
@@ -537,13 +538,19 @@ function SpatialCanvasInner({
     pendingFullscreenRefitSizeRef.current = null;
   }, [actions, getWorldBoundsForVisibleLayers, hasEnabledLayers, isBlocking, vh, vw]);
 
+  const viewClearedForRef = useRef<SpatialData | null>(null);
   useEffect(() => {
     if (keepLayersOnSourceChange) {
       // Layers outlive dataset and coordinate-system changes; one whose element is
       // missing stays dormant until a dataset has it. Once the next dataset has
       // loaded, the view refits and an unusable coordinate system is replaced.
+      // (A coordinate-system pick refits from handleCSChange: clearing it here, after
+      // the viewer's own fit effect has run, would discard that fit.)
       if (!spatialData) return;
-      actions.setViewState(null);
+      if (viewClearedForRef.current !== spatialData) {
+        viewClearedForRef.current = spatialData;
+        actions.setViewState(null);
+      }
       const nextCoordinateSystem = pickCoordinateSystem(coordinateSystem, coordinateSystems);
       if (nextCoordinateSystem !== coordinateSystem) {
         actions.setCoordinateSystem(nextCoordinateSystem);
@@ -566,8 +573,9 @@ function SpatialCanvasInner({
   const handleCSChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       actions.setCoordinateSystem(e.target.value || null);
+      if (keepLayersOnSourceChange) actions.setViewState(null);
     },
-    [actions]
+    [actions, keepLayersOnSourceChange]
   );
 
   const handleToggleLayer = useCallback(
