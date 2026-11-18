@@ -27,6 +27,8 @@ export interface LayerOrderListProps {
   selectedLayerId: string | null;
   onSelect: (id: string) => void;
   reorderLayers: (order: string[]) => void;
+  /** Why a layer has nothing to draw here (e.g. its element is not in this dataset), if so. */
+  getUnresolvedReason?: (id: string) => string | undefined;
 }
 
 export function LayerOrderList({
@@ -35,6 +37,7 @@ export function LayerOrderList({
   selectedLayerId,
   onSelect,
   reorderLayers,
+  getUnresolvedReason,
 }: LayerOrderListProps) {
   const onDragStart = (e: DragEvent<HTMLSpanElement>, id: string) => {
     e.dataTransfer.setData('text/plain', id);
@@ -71,11 +74,13 @@ export function LayerOrderList({
       {layerOrder.map((id) => {
         const layer = layers[id];
         if (!layer) return null;
+        const unresolved = getUnresolvedReason?.(id);
         return (
           // biome-ignore lint/a11y/noStaticElementInteractions: drag-reorder drop target; keyboard a11y not yet implemented for this dev panel.
           <div
             key={id}
-            style={rowStyle(selectedLayerId === id)}
+            style={{ ...rowStyle(selectedLayerId === id), opacity: unresolved ? 0.5 : 1 }}
+            title={unresolved}
             onDragOver={onDragOver}
             onDrop={(e) => onDrop(e, id)}
           >
@@ -107,6 +112,7 @@ export function LayerOrderList({
               }}
               onClick={() => onSelect(id)}
             />
+            {unresolved ? <span style={{ color: '#c96' }}>unavailable</span> : null}
             <span style={{ color: layer.visible ? '#6a9' : '#666' }}>
               {layer.visible ? 'on' : 'off'}
             </span>

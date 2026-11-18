@@ -9,7 +9,7 @@
 
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
-import { viewStateFromBounds } from '@spatialdata/core';
+import { type SpatialData, viewStateFromBounds } from '@spatialdata/core';
 import { useSpatialData } from '@spatialdata/react';
 import { useMeasure } from '@uidotdev/usehooks';
 import {
@@ -47,7 +47,7 @@ import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
 import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import type { ImageLayerConfig } from './useLayerData';
-import { generateLayerId, getAllCoordinateSystems } from './utils';
+import { generateLayerId, getAllCoordinateSystems, pickCoordinateSystem } from './utils';
 import { VivLoaderRegistryProvider } from './VivLoaderRegistry';
 
 // ============================================
@@ -277,8 +277,18 @@ function ViewerSection({
     [actions]
   );
 
+  // Latched once loading is seen while waiting to fit: shapes load without blocking,
+  // so "no bounds" means "not yet" until that loading has finished.
+  const fitLoadingObservedRef = useRef(false);
+
   // Auto-fit: fires once when viewState is null and layers become renderable.
   useEffect(() => {
+    if (viewState !== null) {
+      fitLoadingObservedRef.current = false;
+      return;
+    }
+    // Before the guard, so a blocking load that fails still counts as settled.
+    if (isLoading) fitLoadingObservedRef.current = true;
     if (
       !shouldAutoFitSpatialView({
         autoFit: true,
@@ -292,14 +302,17 @@ function ViewerSection({
       return;
     }
     const bounds = getWorldBoundsForVisibleLayers();
-    handleViewStateChange(
-      bounds ? viewStateFromBounds(bounds, vw, vh) : { target: [0, 0], zoom: 0 }
-    );
+    if (bounds) {
+      handleViewStateChange(viewStateFromBounds(bounds, vw, vh));
+    } else if (fitLoadingObservedRef.current && !isLoading) {
+      handleViewStateChange({ target: [0, 0], zoom: 0 });
+    }
   }, [
     hasEnabledLayers,
     vh,
     vw,
     isBlocking,
+    isLoading,
     getWorldBoundsForVisibleLayers,
     handleViewStateChange,
     viewState,
@@ -398,6 +411,7 @@ interface SpatialCanvasInnerProps {
    */
   hoverTooltipMode?: HoverTooltipMode;
   deckProps?: Partial<DeckGLProps>;
+  keepLayersOnSourceChange?: boolean;
 }
 
 function SpatialCanvasInner({
@@ -405,6 +419,7 @@ function SpatialCanvasInner({
   renderTooltip,
   hoverTooltipMode = DEFAULT_HOVER_TOOLTIP_MODE,
   deckProps,
+  keepLayersOnSourceChange = false,
 }: SpatialCanvasInnerProps) {
   // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
   // subscribes to the engine via useSyncExternalStore), so this component no
@@ -483,6 +498,13 @@ function SpatialCanvasInner({
   } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
 
+  // A visible layer whose element is missing or untransformable never loads, so the
+  // viewer waits only on the rest when deciding whether there is anything to frame.
+  const getUnresolvedReason = (id: string) =>
+    getEntryStatus(id)?.errors.find((e) => e.resource === 'element')?.error.message;
+  const hasLoadableLayers =
+    !!coordinateSystem && layerOrder.some((id) => layers[id]?.visible && !getUnresolvedReason(id));
+
   // Shared hover-tooltip machinery (pick → tooltip → portal); see
   // useHoverFeatureTooltip. `handleHover` below stays local (the drag guard).
   const { containerRef, resolveTooltip, clearTooltip, tooltipPortal } = useHoverFeatureTooltip({
@@ -516,18 +538,31 @@ function SpatialCanvasInner({
     pendingFullscreenRefitSizeRef.current = null;
   }, [actions, getWorldBoundsForVisibleLayers, hasEnabledLayers, isBlocking, vh, vw]);
 
+  const viewClearedForRef = useRef<SpatialData | null>(null);
   useEffect(() => {
+    if (keepLayersOnSourceChange) {
+      // Layers outlive dataset and coordinate-system changes; one whose element is
+      // missing stays dormant until a dataset has it. Once the next dataset has
+      // loaded, the view refits and an unusable coordinate system is replaced.
+      // (A coordinate-system pick refits from handleCSChange: clearing it here, after
+      // the viewer's own fit effect has run, would discard that fit.)
+      if (!spatialData) return;
+      if (viewClearedForRef.current !== spatialData) {
+        viewClearedForRef.current = spatialData;
+        actions.setViewState(null);
+      }
+      const nextCoordinateSystem = pickCoordinateSystem(coordinateSystem, coordinateSystems);
+      if (nextCoordinateSystem !== coordinateSystem) {
+        actions.setCoordinateSystem(nextCoordinateSystem);
+      }
+      return;
+    }
     actions.reset();
-    const nextCoordinateSystem =
-      coordinateSystem && coordinateSystems.includes(coordinateSystem)
-        ? coordinateSystem
-        : coordinateSystems.length === 1
-          ? coordinateSystems[0]
-          : null;
+    const nextCoordinateSystem = pickCoordinateSystem(coordinateSystem, coordinateSystems);
     if (nextCoordinateSystem) {
       actions.setCoordinateSystem(nextCoordinateSystem);
     }
-  }, [coordinateSystem, coordinateSystems, actions]);
+  }, [coordinateSystem, coordinateSystems, actions, keepLayersOnSourceChange, spatialData]);
 
   useEffect(() => {
     if (selectedLayerId && !layerOrder.includes(selectedLayerId)) {
@@ -538,8 +573,9 @@ function SpatialCanvasInner({
   const handleCSChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       actions.setCoordinateSystem(e.target.value || null);
+      if (keepLayersOnSourceChange) actions.setViewState(null);
     },
-    [actions]
+    [actions, keepLayersOnSourceChange]
   );
 
   const handleToggleLayer = useCallback(
@@ -731,6 +767,7 @@ function SpatialCanvasInner({
               selectedLayerId={selectedLayerId}
               onSelect={actions.setSelectedLayerId}
               reorderLayers={actions.reorderLayers}
+              getUnresolvedReason={getUnresolvedReason}
             />
           </aside>
 
@@ -739,7 +776,7 @@ function SpatialCanvasInner({
               deckLayers={deckLayers}
               layerOrder={layerOrder}
               vivLayerProps={vivLayerProps}
-              hasEnabledLayers={hasEnabledLayers}
+              hasEnabledLayers={hasLoadableLayers}
               isBlocking={isBlocking}
               isLoading={isLoading}
               hasLayersDrawn={hasLayersDrawn}
@@ -977,6 +1014,13 @@ export interface SpatialCanvasProps {
    * WebGPU (experimental).
    */
   deckProps?: Partial<DeckGLProps>;
+  /**
+   * Keep the layers when the `SpatialDataProvider` source changes, so a store with
+   * the same element names opens with the same view. A layer whose element (type and
+   * key) the new store lacks stays in the list, marked and drawing nothing, until a
+   * store has it again. Also stops a coordinate-system change from clearing the layers.
+   */
+  keepLayersOnSourceChange?: boolean;
 }
 
 /**
@@ -1033,6 +1077,7 @@ export default function SpatialCanvas({
   renderTooltip,
   hoverTooltipMode,
   deckProps,
+  keepLayersOnSourceChange,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -1042,6 +1087,7 @@ export default function SpatialCanvas({
           renderTooltip={renderTooltip}
           hoverTooltipMode={hoverTooltipMode}
           deckProps={deckProps}
+          keepLayersOnSourceChange={keepLayersOnSourceChange}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

@@ -30,19 +30,28 @@ const ENTRY_KIND: Record<LayerType, SpatialEntryKind> = {
   labels: 'labels',
 };
 
+/** Whether the store has an element of this layer type and key. */
+export function hasLayerElement(
+  spatialData: SpatialData,
+  type: LayerType,
+  elementKey: string
+): boolean {
+  return Boolean(spatialData[ENTRY_KIND[type]]?.[elementKey]);
+}
+
 /**
  * Why a layer's element could not be resolved: missing from the store, or present
  * without a transform to the active coordinate system.
  */
 export function describeUnresolvedElement(
   spatialData: SpatialData,
-  coordinateSystem: string,
+  coordinateSystem: string | null,
   type: LayerType,
   elementKey: string
 ): SpatialEntryError {
   const kind = ENTRY_KIND[type];
   const element = spatialData[kind]?.[elementKey];
-  if (element) {
+  if (element && coordinateSystem) {
     const transform = element.getTransformation(coordinateSystem);
     if (!transform.ok) {
       return toSpatialEntryError(transform.error, {
@@ -119,11 +128,11 @@ export class EntryStatusCache {
   fromUnresolved(
     entryId: string,
     spatialData: SpatialData,
-    coordinateSystem: string,
+    coordinateSystem: string | null,
     type: LayerType,
     elementKey: string
   ): EntryStatus {
-    const signature = `${type}\u0000${elementKey}\u0000${coordinateSystem}`;
+    const signature = `${type}\u0000${elementKey}\u0000${coordinateSystem ?? ''}`;
     const held = this.unresolved.get(entryId);
     if (held && held.spatialData === spatialData && held.signature === signature) {
       return held.status;
