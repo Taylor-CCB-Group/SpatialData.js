@@ -151,13 +151,17 @@ export class DeviceAdaptiveImageLayer extends CompositeLayer<DeviceAdaptiveImage
 
   renderLayers(): Layer {
     const { vivLayer } = this.props;
+    // Derived from our id, not Viv's: deck matches layers by id across the whole tree,
+    // so under Viv's id a regrouped image reuses its old instance and parent chain.
+    const id = `${this.props.id}-viv`;
     if (this.context.device.type !== 'webgpu') {
-      return vivLayer;
+      return vivLayer.clone({ id });
     }
     if (vivLayer instanceof ImageLayer) {
-      return new RasterImageLayer({ ...vivLayer.props, extensions: [] }) as unknown as Layer;
+      return new RasterImageLayer({ ...vivLayer.props, id, extensions: [] }) as unknown as Layer;
     }
     return vivLayer.clone({
+      id,
       renderSubLayers: renderRasterImageTile,
       excludeBackground: true,
       extensions: [],
