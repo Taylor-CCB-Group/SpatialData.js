@@ -2,6 +2,7 @@ import {
   _LayersPass,
   type EffectContext,
   Layer,
+  type LayerContext,
   OrthographicViewport,
   type PickingInfo,
   type PreRenderOptions,
@@ -9,6 +10,7 @@ import {
 } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { describe, expect, it, vi } from 'vitest';
+import { GroupCompositeLayer } from '../src/groups/GroupCompositeLayer';
 import {
   GroupIsolationEffect,
   getIsolatedGroupMember,
@@ -195,13 +197,14 @@ describe('GroupIsolationEffect targets', () => {
     effect: GroupIsolationEffect,
     layer: IsolatedGroupLayer,
     viewports: Viewport[],
-    hidden: string[] = []
+    hidden: string[] = [],
+    pixelRatio = 1
   ) {
     const opts = {
       isPicking: false,
       layers: [layer],
       viewports,
-      canvasContext: { cssToDeviceRatio: () => 1 },
+      canvasContext: { cssToDeviceRatio: () => pixelRatio },
       layerFilter: ({ viewport }: { viewport: Viewport }) => !hidden.includes(viewport.id),
     };
     // Only the fields the effect reads; the rest go to the mocked pass.
@@ -247,6 +250,21 @@ describe('GroupIsolationEffect targets', () => {
     pass(effect, layer, [cell('b')]);
     await endFrame();
     expect(reasons(events)).toEqual(['new', 'contents']);
+  });
+
+  it('has the composite sample the target its pass drew, when the pixel ratio changes', async () => {
+    const { effect, layer, created } = setUp();
+    // A canvas is often not sized yet on the first frame, so its pixel ratio is off.
+    pass(effect, layer, [cell('a')], [], 0.5);
+    await endFrame();
+    pass(effect, layer, [cell('a')], [], 1);
+    const drawn = created.at(-2); // the texture of the target just drawn (then its framebuffer)
+    expect(drawn?.width).toBe(200);
+
+    const composite = new GroupCompositeLayer({ id: 'g-composite', groupId: 'g' });
+    // deck sets `context` when it draws; only the viewport is read.
+    composite.context = { viewport: cell('a') } as unknown as LayerContext;
+    expect(effect.getShaderModuleProps(composite)?.groupComposite).toEqual({ groupTarget: drawn });
   });
 
   it('frees a target once a whole frame has passed without it', async () => {

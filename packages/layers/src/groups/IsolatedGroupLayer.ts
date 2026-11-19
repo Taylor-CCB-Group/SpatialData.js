@@ -322,6 +322,10 @@ export class GroupIsolationEffect implements Effect {
   /** Per group: one target per distinct projection seen in the last frame. */
   private targets = new Map<string, IsolationTarget[]>();
   private frame: IsolationFrame | null = null;
+  /** Per group: the targets this pass drew or reused, which its composites sample. A
+   *  frame can also hold an equal-viewport target of the wrong size (the pixel ratio
+   *  changed), freed only when the frame ends. */
+  private passTargets = new Map<string, IsolationTarget[]>();
 
   setup({ device }: EffectContext): void {
     this.device = device;
@@ -340,6 +344,7 @@ export class GroupIsolationEffect implements Effect {
     );
     // Before any early return, so a frame without groups still frees their targets.
     const frame = this._currentFrame();
+    this.passTargets.clear();
     for (const group of groups) frame.liveGroups.add(group.id);
     const canvasContext = opts.canvasContext ?? device.canvasContext;
     if (groups.length === 0 || !canvasContext) return;
@@ -350,6 +355,8 @@ export class GroupIsolationEffect implements Effect {
     for (const group of groups.reverse()) {
       const version = group._contentsVersion();
       const targets = this.targets.get(group.id) ?? [];
+      const passTargets: IsolationTarget[] = [];
+      this.passTargets.set(group.id, passTargets);
       let drewAny = false;
 
       for (const viewport of this._viewportsShowing(group, opts)) {
@@ -394,6 +401,7 @@ export class GroupIsolationEffect implements Effect {
         }
         target.viewport = viewport;
         frame.used.add(target);
+        passTargets.push(target);
       }
 
       this.targets.set(group.id, targets);
@@ -445,7 +453,7 @@ export class GroupIsolationEffect implements Effect {
   getShaderModuleProps(layer: Layer): Record<string, unknown> | undefined {
     if (!(layer instanceof GroupCompositeLayer)) return undefined;
     const viewport = layer.context.viewport;
-    const target = this.targets
+    const target = this.passTargets
       .get(layer.props.groupId)
       ?.find((candidate) => candidate.viewport.equals(viewport));
     return { groupComposite: { groupTarget: target?.color ?? this.dummyTexture } };
@@ -456,6 +464,7 @@ export class GroupIsolationEffect implements Effect {
       for (const target of targets) destroyTarget(target);
     }
     this.targets.clear();
+    this.passTargets.clear();
     this.frame = null;
     this.dummyTexture?.destroy();
     this.dummyTexture = null;
