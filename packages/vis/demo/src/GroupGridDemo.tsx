@@ -299,8 +299,9 @@ export default function GroupGridDemo() {
             const d = context.getImageData(px, py, 1, 1).data;
             return `(${d[0]}, ${d[1]}, ${d[2]})`;
           };
-          // Inside the image, outside every circle: grey once the tile has drawn, else black.
-          const image = IMAGE ? `  image ${pick([300, -110])}` : '';
+          // Inside the image, outside every circle and inside the narrow cell: grey once
+          // the tile has drawn, else black.
+          const image = IMAGE ? `  image ${pick([268, -115])}` : '';
           return `cell ${i}: shared overlap ${pick([160, 0])}  overlay ${pick([60 + 30 * i, 100])}${image}`;
         });
         setSamples(lines.join('\n'));
