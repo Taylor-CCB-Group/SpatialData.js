@@ -1,5 +1,11 @@
 # sdjs
 
+## 0.2.0
+
+### Minor Changes
+
+- [#307](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/307) [`de552a4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/de552a4d741002a2aac110086c5898092a607843) Thanks [@xinaesthete](https://github.com/xinaesthete)! - The viewer keeps your layers when you switch stores in the picker, so runs with the same element names open with the same setup. Layers whose element a store lacks are marked unavailable and come back when you switch to a store that has them.
+
 ## 0.1.0
 
 ### Minor Changes
