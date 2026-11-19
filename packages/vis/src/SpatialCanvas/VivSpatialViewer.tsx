@@ -420,7 +420,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   }
 
   _renderLayers(): LayersList {
-    const { vivLayerProps, extraLayers, layerOrder, renderStack, deckProps, onHover } = this.props;
+    const { vivLayerProps, extraLayers, layerOrder, renderStack, deckProps } = this.props;
 
     // Shared by all paths: layerFilter requires layer IDs to include the Viv viewport token
     const vivId = getVivId(this.viewId);
@@ -442,7 +442,6 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       viewId: this.viewId,
       // As `DetailView` does: its tiles follow this view only.
       viewportId: this.viewId,
-      onHover,
     })) {
       orderedLayers.push(...layers.map((layer) => ({ layer, orderId })));
     }
