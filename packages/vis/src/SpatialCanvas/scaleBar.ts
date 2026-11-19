@@ -73,16 +73,20 @@ export function scaleBarSizeForUnit(unit: string | undefined): ScaleBarSize | un
 /**
  * The length unit of a coordinate system, from the spatial output axes of the transforms
  * into it. Axes without a length unit (none, or the `"unit"` placeholder) say nothing; if
- * the rest name more than one unit, there is no single unit and this returns `undefined`.
+ * the rest name more than one length (aliases such as `micrometer` and `µm` are one),
+ * there is no single unit and this returns `undefined`.
  */
 export function coordinateSystemUnitFromTransforms(
   transforms: Iterable<TransformationOutput>
 ): string | undefined {
-  const units = new Set<string>();
+  // Keyed by the size each unit maps to, so aliases agree; the value is the first name seen.
+  const units = new Map<string, string>();
   for (const transform of transforms) {
     for (const axis of transform.output?.axes ?? []) {
       if (axis.type !== 'space' || typeof axis.unit !== 'string') continue;
-      if (scaleBarSizeForUnit(axis.unit)) units.add(axis.unit);
+      const size = scaleBarSizeForUnit(axis.unit);
+      const key = size && `${size.size} ${size.unit}`;
+      if (key && !units.has(key)) units.set(key, axis.unit);
     }
   }
   return units.size === 1 ? units.values().next().value : undefined;

@@ -64,10 +64,20 @@ describe('coordinateSystemUnitFromTransforms', () => {
     expect(coordinateSystemUnitFromTransforms([into('unit', 'unit'), into('µm', 'µm')])).toBe('µm');
   });
 
+  it('treats aliases of one length as agreeing', () => {
+    const unit = coordinateSystemUnitFromTransforms([
+      into('micrometer', 'micrometer'),
+      into('µm', 'µm'),
+      into('um'),
+    ]);
+    expect(scaleBarSizeForUnit(unit)).toEqual({ size: 1, unit: 'µm' });
+  });
+
   it('has no unit when elements disagree', () => {
     expect(
       coordinateSystemUnitFromTransforms([into('micrometer', 'micrometer'), into('nanometer')])
     ).toBeUndefined();
+    expect(coordinateSystemUnitFromTransforms([into('µm'), into('nm')])).toBeUndefined();
   });
 });
 
