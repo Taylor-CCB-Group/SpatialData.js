@@ -51,4 +51,13 @@ describe('DeviceAdaptiveImageLayer on WebGL', () => {
     expect(second.props.extensions[1]).toBe(first.props.extensions[1]);
     expect(alphaExtensions(renderOnWebGL(first))).toHaveLength(1);
   });
+
+  // Viv's background image and overlapping parent tiles showed through the transparent pixels.
+  it('draws no background or overlapping tiles under a translucent image', () => {
+    const plain = renderOnWebGL(vivLikeLayer({})).props;
+    expect(plain).not.toHaveProperty('excludeBackground');
+
+    const props = renderOnWebGL(vivLikeLayer({ alphaFromIntensity: {} })).props;
+    expect(props).toMatchObject({ excludeBackground: true, refinementStrategy: 'no-overlap' });
+  });
 });
