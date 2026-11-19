@@ -41,6 +41,7 @@ import type {
   ZarrTree,
 } from '../types';
 import { Err, getArrayDtype, getChildGroup, getNodeAttrs, isTextDataType, Ok } from '../types';
+import { assessCoordinateUnits } from '../units';
 import { NULLABLE_ENCODING_KINDS } from './nullableArrays';
 import SpatialDataPointsSource from './VPointsSource';
 import SpatialDataShapesSource from './VShapesSource';
@@ -156,6 +157,14 @@ abstract class AbstractSpatialElement<
    * Different element types store transforms in different locations.
    */
   protected abstract get rawCoordinateTransformations(): CoordinateTransformation | undefined;
+
+  private unitIssues?: readonly ElementIssue[];
+
+  /** Transforms into a coordinate system without a length unit. Memoized, so the array identity is stable. */
+  override getIssues(): readonly ElementIssue[] {
+    this.unitIssues ??= assessCoordinateUnits(this.getAllTransformations());
+    return this.unitIssues;
+  }
 
   /**
    * Get the list of coordinate systems this element has transformations to.
@@ -545,11 +554,14 @@ abstract class RasterElement<T extends 'images' | 'labels'> extends AbstractSpat
   private issues?: readonly ElementIssue[];
 
   /**
-   * Layout problems that make this element slow however well the client behaves,
-   * judged from the consolidated metadata. Memoized, so the array identity is stable.
+   * Layout problems that make this element slow however well the client behaves, judged
+   * from the consolidated metadata, then the transform issues every spatial element has.
    */
   override getIssues(): readonly ElementIssue[] {
-    this.issues ??= assessRasterLevels(rasterLevelsFromTree(this.parsed, this.scaleLevels));
+    this.issues ??= [
+      ...assessRasterLevels(rasterLevelsFromTree(this.parsed, this.scaleLevels)),
+      ...super.getIssues(),
+    ];
     return this.issues;
   }
 

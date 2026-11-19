@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ATTRS_KEY, type ConsolidatedStore, ZARRAY_KEY } from 'zarrextra';
-import { elementIssuesNotice } from '../src/issues.js';
+import { describeElementIssue, elementIssuesNotice } from '../src/issues.js';
 import {
   assessRasterLevels,
   describeRasterLayoutIssue,
@@ -84,9 +84,9 @@ describe('parseArrayMetadata', () => {
 
 describe('elementIssuesNotice', () => {
   it('is undefined without issues and carries them otherwise', () => {
-    expect(elementIssuesNotice([], describeRasterLayoutIssue)).toBeUndefined();
+    expect(elementIssuesNotice([], describeElementIssue)).toBeUndefined();
     const issues = assessRasterLevels([level(8192, 512)]);
-    expect(elementIssuesNotice(issues, describeRasterLayoutIssue)).toMatchObject({
+    expect(elementIssuesNotice(issues, describeElementIssue)).toMatchObject({
       kind: 'element-issues',
       issues,
     });

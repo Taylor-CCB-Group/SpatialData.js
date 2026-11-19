@@ -31,6 +31,16 @@ Images and labels are checked for two layouts, from the array metadata of each l
 
 `assessRasterLevels(levels, budgets)` takes custom budgets, since what counts as slow depends on the host.
 
+## Coordinate system units
+
+Every spatial element is checked for one issue in its transforms:
+
+| Issue | Meaning |
+| --- | --- |
+| `no-length-unit` | The transform into `coordinateSystem` gives none of its output space axes a length unit (missing, or SpatialData's `"unit"` placeholder), so distances there have no physical scale and `SpatialCanvas` can't measure a scale bar from metadata. |
+
+SpatialData writes the placeholder by default, so most stores report this. `physicalLengthOfUnit(unit)` gives the length of an OME-NGFF unit name or symbol (`'micrometer'`, `'µm'`).
+
 ## Remedies
 
 Each issue carries a `remedy`: the operation that would move the data to a preferred form, described as data rather than as advice.
@@ -42,11 +52,12 @@ type Remedy =
       op: 'rechunk';
       chunkPixels: { min: number; max: number };
       decodedBytesAtMost: number; // over all dimensions, from the budget in use
-    };
+    }
+  | { op: 'declare-length-unit'; coordinateSystem: string };
 ```
 
 The set of issues and remedies is expected to grow with the spec and with other element types; treat both unions as open.
 
 ## In `SpatialCanvas`
 
-The image and labels resolvers surface an element's issues as an `element-issues` `EntryNotice` on its layer, alongside the other notices (see [Spatial canvas status](../vis/spatial-canvas-status)). A load is never failed because of an issue.
+The image and labels resolvers surface an element's issues as an `element-issues` `EntryNotice` on its layer, worded by `describeElementIssue`, alongside the other notices (see [Spatial canvas status](../vis/spatial-canvas-status)). A load is never failed because of an issue.

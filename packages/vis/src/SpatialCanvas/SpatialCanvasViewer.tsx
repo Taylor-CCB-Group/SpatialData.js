@@ -25,6 +25,7 @@ import {
 } from './renderStackAdapters';
 import type { SpatialCanvasTooltipRenderProps } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
+import { type CoordinateSystemUnit, resolveScaleBarSize } from './scaleBar';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import {
@@ -145,6 +146,12 @@ export interface SpatialCanvasViewerProps {
    * `FeatureColorResolver` for the stability contract.
    */
   featureColorResolver?: FeatureColorResolver;
+  /**
+   * What one unit of the coordinate system is: a length unit (`'micrometer'`, `'µm'`) or a
+   * size of one (`{ size: 0.2125, unit: 'µm' }`), overriding the dataset's metadata. The
+   * scale bar measures the coordinate system, so without a length there is no scale bar.
+   */
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 interface AutoFitInput {
@@ -216,6 +223,8 @@ export interface UseSpatialCanvasRendererOptions {
    * its own state instead of reading them on every render.
    */
   onEntryStatusChange?: (layerId: string, status: EntryStatus | undefined) => void;
+  /** See `SpatialCanvasViewerProps.coordinateSystemUnit`. */
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -245,6 +254,7 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
    * its own state instead of reading them on every render.
    */
   onEntryStatusChange?: (layerId: string, status: EntryStatus | undefined) => void;
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -264,6 +274,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
   featureColorResolver,
   pickingEnabled = true,
   onEntryStatusChange,
+  coordinateSystemUnit,
 }: UseSpatialCanvasRendererFromLayerInputsOptions) {
   ensureCodecWorkers();
 
@@ -273,6 +284,23 @@ export function useSpatialCanvasRendererFromLayerInputs({
     }
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
+
+  // Keyed on primitives so an inline `{ size, unit }` doesn't rebuild the bar every render.
+  const declaredUnit =
+    typeof coordinateSystemUnit === 'object' ? coordinateSystemUnit.unit : coordinateSystemUnit;
+  const declaredSize =
+    typeof coordinateSystemUnit === 'object' ? coordinateSystemUnit.size : undefined;
+  const scaleBar = useMemo(
+    () =>
+      resolveScaleBarSize(
+        spatialData,
+        coordinateSystem,
+        declaredSize === undefined || declaredUnit === undefined
+          ? declaredUnit
+          : { size: declaredSize, unit: declaredUnit }
+      ),
+    [spatialData, coordinateSystem, declaredUnit, declaredSize]
+  );
 
   const resolvedLayerOrder = renderOrder ?? layerInputs.layerOrder;
 
@@ -405,6 +433,7 @@ export function useSpatialCanvasRendererFromLayerInputs({
     hasLayersDrawn,
     hasRenderableInputs,
     layerOrder: resolvedLayerOrder,
+    scaleBar,
     vivLayerProps,
   };
 }
@@ -425,6 +454,7 @@ export function useSpatialCanvasRenderer({
   vivImagePropsResolver,
   featureColorResolver,
   onEntryStatusChange,
+  coordinateSystemUnit,
 }: UseSpatialCanvasRendererOptions) {
   const layerInputs = useMemo(() => renderStackToLayerInputs(renderStack), [renderStack]);
   const hostDeckLayers = useMemo(
@@ -459,6 +489,7 @@ export function useSpatialCanvasRenderer({
     vivPassthrough,
     featureColorResolver,
     onEntryStatusChange,
+    coordinateSystemUnit,
   });
 }
 
@@ -519,6 +550,7 @@ function SpatialCanvasViewerInner({
   vivImageExtensionResolver,
   vivImagePropsResolver,
   featureColorResolver,
+  coordinateSystemUnit,
 }: SpatialCanvasViewerProps) {
   const [measureRef, { width, height }] = useMeasure();
   const deckRef = useRef<DeckGLRef | null>(null);
@@ -568,6 +600,7 @@ function SpatialCanvasViewerInner({
     vivPassthrough,
     featureColorResolver,
     pickingEnabled,
+    coordinateSystemUnit,
   });
   const hoverPickLayerIds = useMemo(
     () => Array.from(renderer.enabledLayerIds),
@@ -733,6 +766,7 @@ function SpatialCanvasViewerInner({
               onClick={handleClick}
               deckProps={deckProps}
               deckRef={deckRef}
+              scaleBar={renderer.scaleBar}
             />
             {showLoadingOverlay && renderer.isBlocking && (
               <div style={overlayStyle}>Loading layer data...</div>

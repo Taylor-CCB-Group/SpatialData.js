@@ -6,7 +6,7 @@ import {
   type AxisAlignedBounds,
   anyIdIsLabelValue,
   boundsFromImagePixelExtents,
-  describeRasterLayoutIssue,
+  describeElementIssue,
   type EntryNotice,
   type EntryResources,
   elementIssuesNotice,
@@ -127,7 +127,7 @@ const NO_NOTICES: readonly EntryNotice[] = [];
 
 /** Issues with how the element is stored are a caveat on healthy data, so a notice, not a failure. */
 function issueNotices(element: ImageElement | LabelsElement): EntryNotice[] {
-  const notice = elementIssuesNotice(element.getIssues(), describeRasterLayoutIssue);
+  const notice = elementIssuesNotice(element.getIssues(), describeElementIssue);
   return notice ? [notice] : [];
 }
 

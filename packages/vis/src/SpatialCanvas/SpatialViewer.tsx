@@ -9,6 +9,7 @@ import type { Layer, PickingInfo } from '@deck.gl/core';
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
 import type { RenderStack } from '@spatialdata/layers';
 import type { RefObject } from 'react';
+import type { ScaleBarSize } from './scaleBar';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 import VivSpatialViewer from './VivSpatialViewer';
@@ -49,6 +50,8 @@ export interface SpatialViewerProps {
   deckProps?: Partial<DeckGLProps>;
   /** Ref to the underlying Deck instance (for multi-layer tooltip picking). */
   deckRef?: RefObject<DeckGLRef | null>;
+  /** Physical length of one view unit; draws a scale bar when given. */
+  scaleBar?: ScaleBarSize;
 }
 
 /**
@@ -70,6 +73,7 @@ export function SpatialViewer({
   onClick,
   deckProps,
   deckRef,
+  scaleBar,
 }: SpatialViewerProps) {
   return (
     <VivSpatialViewer
@@ -85,6 +89,7 @@ export function SpatialViewer({
       onClick={onClick}
       deckProps={deckProps}
       deckRef={deckRef}
+      scaleBar={scaleBar}
     />
   );
 }
