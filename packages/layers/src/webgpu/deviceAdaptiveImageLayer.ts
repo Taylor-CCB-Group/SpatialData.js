@@ -142,6 +142,20 @@ function webglExtensions(vivLayer: Layer): Layer['props']['extensions'] {
   return [...extensions, alphaFromIntensityExtension];
 }
 
+/**
+ * Viv draws a low-res background under the tiles and lets parent tiles overlap their
+ * children unless `opacity < 1`; with alpha from intensity both show through.
+ */
+function alphaTilingProps(vivLayer: Layer): Record<string, unknown> {
+  const { props } = vivLayer;
+  const option = 'alphaFromIntensity' in props ? props.alphaFromIntensity : undefined;
+  if (!resolveAlphaFromIntensity(option)) {
+    return {};
+  }
+  const strategy = 'refinementStrategy' in props ? props.refinementStrategy : undefined;
+  return { excludeBackground: true, refinementStrategy: strategy ?? 'no-overlap' };
+}
+
 type DeviceAdaptiveImageLayerProps = {
   id: string;
   /** A Viv image layer as built for WebGL (e.g. from `DetailView.getLayers`). */
@@ -171,13 +185,18 @@ export class DeviceAdaptiveImageLayer extends CompositeLayer<DeviceAdaptiveImage
     // so under Viv's id a regrouped image reuses its old instance and parent chain.
     const id = `${this.props.id}-viv`;
     if (this.context.device.type !== 'webgpu') {
-      return vivLayer.clone({ id, extensions: webglExtensions(vivLayer) });
+      return vivLayer.clone({
+        id,
+        extensions: webglExtensions(vivLayer),
+        ...alphaTilingProps(vivLayer),
+      });
     }
     if (vivLayer instanceof ImageLayer) {
       return new RasterImageLayer({ ...vivLayer.props, id, extensions: [] }) as unknown as Layer;
     }
     return vivLayer.clone({
       id,
+      ...alphaTilingProps(vivLayer),
       renderSubLayers: renderRasterImageTile,
       excludeBackground: true,
       extensions: [],
