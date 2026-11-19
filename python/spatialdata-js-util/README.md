@@ -64,6 +64,7 @@ POINTS   Write multiscale Points Parquet
 POINTS   Write index permutations derivative store
 TABLES   List table elements in a Zarr store
 TABLES   Convert table matrices to CSC
+STORE    Record coordinate systems' physical size
 CODECS   Show HTJ2K backend availability
 ```
 
@@ -353,6 +354,36 @@ from spatialdata_js_util import convert_store_tables_to_csc, to_csc
 convert_store_tables_to_csc("store.zarr")     # whole store
 csc = to_csc(adata.X)                         # or just a matrix
 ```
+
+## Physical size
+
+```bash
+# A Xenium store written before spatialdata-io 0.7.0: infer µm per `global` unit
+spatialdata-js-util physical-size ~/data/xenium.zarr --assume-reader xenium
+
+# Or state it
+spatialdata-js-util physical-size store.zarr --size global=0.2125 --unit micrometer
+```
+
+Records how long one unit of each coordinate system is, which spatialdata-io
+stores leave unstated (every axis carries the `"unit"` placeholder, and several
+readers make `global` an image's pixel grid). It writes the root attribute
+proposed in [scverse/spatialdata-io#441](https://github.com/scverse/spatialdata-io/issues/441),
+which SpatialData.js uses for its scale bar:
+
+```json
+"physical_size": {"global": {"size": 0.2125, "unit": "micrometer"}}
+```
+
+Without `--size`, a store from the `xenium` or `atera` reader gets 1/scale µm,
+where scale is the uniform scale its points and shapes share into the coordinate
+system; an `atera` store falls back to its `pixel_size` attr. The reader is read
+from `spatialdata_io_reader`, which stores written before spatialdata-io 0.7.0
+lack: pass `--assume-reader` for those. Existing entries are kept unless named by
+`--size` or replaced with `--overwrite`; `--dry-run` reports without writing.
+
+Only the root attributes change, in place. Why each size was chosen is recorded
+beside it under `spatialdata_js_util.physical_size`.
 
 ## Zip
 

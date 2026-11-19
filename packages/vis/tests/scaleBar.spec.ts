@@ -111,6 +111,36 @@ describe('resolveScaleBarSize', () => {
     ).toBeUndefined();
   });
 
+  it('reads the store’s physical_size attr for the coordinate system', () => {
+    const physical_size = { global: { size: 0.5, unit: 'micrometer' } };
+    expect(resolveScaleBarSize(readerStore({ physical_size }), 'global')).toEqual({
+      size: 0.5,
+      unit: 'µm',
+    });
+    expect(resolveScaleBarSize(readerStore({ physical_size }), 'aligned')).toBeUndefined();
+    expect(
+      resolveScaleBarSize(readerStore({ physical_size: { global: { size: 0.5 } } }), 'global')
+    ).toBeUndefined();
+  });
+
+  it('ranks physical_size between axis units and the reader convention', () => {
+    const physical_size = { global: { size: 0.5, unit: 'micrometer' } };
+    const reader = { spatialdata_io_reader: 'xenium', physical_size };
+    expect(resolveScaleBarSize(readerStore(reader), 'global')).toEqual({ size: 0.5, unit: 'µm' });
+    expect(resolveScaleBarSize(readerStore(reader, undefined, 'nanometer'), 'global')).toEqual({
+      size: 1,
+      unit: 'nm',
+    });
+    expect(resolveScaleBarSize(readerStore(reader), 'global', 'meter')).toEqual({
+      size: 1,
+      unit: 'm',
+    });    const conflicting = {
+      rootStore: { tree: { [ATTRS_KEY]: { physical_size } } },
+      shapes: { nuclei: scaledInto(1, 'µm'), cells: scaledInto(1, 'nm') },
+    };
+    expect(resolveScaleBarSize(conflicting, 'global')).toBeUndefined();
+  });
+
   it('prefers declared axis units to the reader convention', () => {
     const sdata = readerStore({ spatialdata_io_reader: 'xenium' }, undefined, 'nanometer');
     expect(resolveScaleBarSize(sdata, 'global')).toEqual({ size: 1, unit: 'nm' });

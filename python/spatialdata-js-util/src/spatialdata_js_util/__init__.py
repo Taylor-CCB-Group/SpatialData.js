@@ -37,6 +37,7 @@ from .images import (
     recompress_spatialdata,
     resolve_recompression_config,
 )
+from .physical_size import PhysicalSizeResult, record_physical_size
 from .pyramids import (
     PyramidResult,
     add_pyramids,
@@ -84,6 +85,7 @@ __all__ = [
     "POINTS_ZARR_VERSION",
     "ColumnEncodingPlan",
     "CscConversion",
+    "PhysicalSizeResult",
     "PyramidResult",
     "RecompressedSpatialData",
     "add_points_zarr_to_store",
@@ -102,6 +104,7 @@ __all__ = [
     "morton_sort_points",
     "needs_pyramid",
     "plan_column_encodings",
+    "record_physical_size",
     "recompress_spatialdata",
     "register_codecs",
     "remove_tree",

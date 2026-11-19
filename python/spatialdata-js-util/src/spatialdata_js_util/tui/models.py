@@ -20,6 +20,8 @@ class CommandId(str, Enum):
     # tables
     LIST_TABLES = "tables list"
     TABLES_TO_CSC = "tables to-csc"
+    # store
+    PHYSICAL_SIZE = "physical-size"
     # codecs
     CODECS_INFO = "codecs info"
 
