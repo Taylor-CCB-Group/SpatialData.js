@@ -31,25 +31,29 @@ export const IMAGE_VALUE = 200;
 /** World placement of the image: x 60..316, y -128..128, under the group's circles. */
 const IMAGE_ORIGIN: [number, number, number] = [60, -128, 0];
 
-/** A one-level, one-channel uint8 Viv pixel source filled with `IMAGE_VALUE`. Its tile
- *  arrives after `tileDelayMs`, to show a late tile reaching an already-drawn target. */
-export function syntheticImageLoader(tileDelayMs = 0) {
-  const filled = async () => {
+/** A one-channel uint8 Viv pixel source filled with `IMAGE_VALUE`, with `levels`
+ *  resolutions; more than one makes Viv tile it (`MultiscaleImageLayer`). Tiles arrive
+ *  after `tileDelayMs`, to show a late tile reaching an already-drawn target. */
+export function syntheticImageLoader(tileDelayMs = 0, levels = 1) {
+  const tileSize = levels > 1 ? IMAGE_SIZE / 2 : IMAGE_SIZE;
+  const filled = async (width: number, height: number) => {
     if (tileDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, tileDelayMs));
-    return new Uint8Array(IMAGE_SIZE * IMAGE_SIZE).fill(IMAGE_VALUE);
+    return { data: new Uint8Array(width * height).fill(IMAGE_VALUE), width, height };
   };
-  return [
-    {
-      shape: [1, IMAGE_SIZE, IMAGE_SIZE],
+  return Array.from({ length: levels }, (_, level) => {
+    const size = IMAGE_SIZE >> level;
+    const tile = Math.min(tileSize, size);
+    return {
+      shape: [1, size, size],
       labels: ['c', 'y', 'x'],
-      tileSize: IMAGE_SIZE,
+      tileSize,
       dtype: 'Uint8',
       meta: {},
-      getTile: async () => ({ data: await filled(), width: IMAGE_SIZE, height: IMAGE_SIZE }),
-      getRaster: async () => ({ data: await filled(), width: IMAGE_SIZE, height: IMAGE_SIZE }),
+      getTile: () => filled(tile, tile),
+      getRaster: () => filled(size, size),
       onTileError: (error: unknown) => console.error(error),
-    },
-  ];
+    };
+  });
 }
 
 /** The synthetic image as a `VivSpatialViewer` image config. */

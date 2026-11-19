@@ -440,6 +440,8 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const orderedLayers: OrderedLayerRecord[] = [...extraLayerRecords];
     for (const [orderId, layers] of vivImageLayers(vivLayerProps, {
       viewId: this.viewId,
+      // As `DetailView` does: its tiles follow this view only.
+      viewportId: this.viewId,
       onHover,
     })) {
       orderedLayers.push(...layers.map((layer) => ({ layer, orderId })));

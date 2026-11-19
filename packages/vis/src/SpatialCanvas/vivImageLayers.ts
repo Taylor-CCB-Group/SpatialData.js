@@ -15,6 +15,13 @@ export interface VivImageLayersOptions {
    * a view's id, or a token shared by several views.
    */
   viewId: string;
+  /**
+   * The view whose viewport selects a tiled image's tiles (Viv's `viewportId`). Unset,
+   * tiles follow whichever view draws the image: right for one set drawn in several
+   * views under one view state, as in a grid. Set it to a view's id when other views,
+   * with other view states, would otherwise move the tiles.
+   */
+  viewportId?: string;
   onHover?: (info: PickingInfo) => void;
 }
 
@@ -78,7 +85,7 @@ function vivLayerProps(
  */
 export function vivImageLayers(
   configs: readonly ImageLayerConfig[],
-  { viewId, onHover }: VivImageLayersOptions
+  { viewId, viewportId = '', onHover }: VivImageLayersOptions
 ): Map<string, Layer[]> {
   // getLayers reads only the view id; the size matters only to Viv's own views.
   const detailView = new DetailView({ id: viewId, width: 0, height: 0 });
@@ -93,7 +100,9 @@ export function vivImageLayers(
         continue;
       }
       // Viv's ids name the source class and view, so overlays need a per-image suffix.
-      const vivLayer = layer.clone({ id: `${layer.id}-${config.id}` });
+      // `DetailView` sets `viewportId` to the view token, which may name no view.
+      const overrides = { id: `${layer.id}-${config.id}`, viewportId };
+      const vivLayer = layer.clone(overrides);
       // Swaps Viv's GLSL tiles for WGSL ones when deck is on WebGPU.
       layers.push(new DeviceAdaptiveImageLayer({ id: `${vivLayer.id}-device`, vivLayer }));
     }

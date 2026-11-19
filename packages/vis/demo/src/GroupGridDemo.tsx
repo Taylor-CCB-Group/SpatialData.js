@@ -10,7 +10,8 @@
  * The group should be drawn once per frame for all cells, and not at all when only the
  * overlays change or a cell is added. The counters below show how often it is drawn and
  * why. `?device=webgl` switches backends (default webgpu); `?tileDelay=500` makes the
- * image's tile arrive late, which should cost exactly one `contents` draw.
+ * image's tile arrive late, which should cost exactly one `contents` draw. `?levels=2`
+ * gives the image two resolutions, which Viv tiles.
  *
  * `?canvases=1` gives each cell a canvas of its own, through deck's experimental
  * `_canvases` mode, as MDV's grid does: deck draws each canvas in a pass of its own, and
@@ -69,7 +70,9 @@ const OVERLAY_PALETTES: Rgb[][] = [
   ],
 ];
 
-const imageLoader = IMAGE ? syntheticImageLoader(Number(params.get('tileDelay') ?? 0)) : null;
+const imageLoader = IMAGE
+  ? syntheticImageLoader(Number(params.get('tileDelay') ?? 0), Number(params.get('levels') ?? 1))
+  : null;
 
 // The shared members keep stable data and layer identity across updates, as a real
 // producer must (see docs/docs/vis/layer-prop-flow.mdx). A fresh data array would make

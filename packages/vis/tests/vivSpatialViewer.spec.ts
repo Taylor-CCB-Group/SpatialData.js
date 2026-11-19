@@ -47,6 +47,33 @@ describe('vivImageLayers', () => {
     }
     expect(new Set(ids).size).toBe(2);
   });
+
+  // Viv selects a tiled image's tiles only while drawing the view named by its
+  // `viewportId`; a token that names no view (one set drawn in every cell) never loads.
+  const tiled = {
+    ...baseConfig,
+    loader: [
+      { labels: ['y', 'x'], shape: [64, 64], tileSize: 32 },
+      { labels: ['y', 'x'], shape: [32, 32], tileSize: 32 },
+    ],
+  } satisfies ImageLayerConfig;
+
+  it('lets a tiled image load in whichever view draws it, unless told which', () => {
+    const [shared] = vivImageLayers([tiled], { viewId: '@shared' }).get('image-1') ?? [];
+    expect(shared?.id).toContain(getVivId('@shared'));
+    expect(vivPropsOf(shared).viewportId).toBeFalsy();
+
+    const [own] =
+      vivImageLayers([tiled], { viewId: 'cell-0', viewportId: 'cell-0' }).get('image-1') ?? [];
+    expect(vivPropsOf(own).viewportId).toBe('cell-0');
+  });
+
+  it('keeps VivSpatialViewer’s tiles tied to its own view', () => {
+    const [layer] = renderViewer(tiled);
+    const viewId = layer?.id.match(/-#([^#]+)#/)?.[1];
+    expect(viewId).toBeTruthy();
+    expect(vivPropsOf(layer).viewportId).toBe(viewId);
+  });
 });
 
 describe('VivSpatialViewer passthrough', () => {
