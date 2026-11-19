@@ -1,5 +1,6 @@
 import type { EntryNotice } from './engine/errors.js';
-import type { RasterLayoutIssue } from './rasterLayout.js';
+import { describeRasterLayoutIssue, type RasterLayoutIssue } from './rasterLayout.js';
+import { type CoordinateUnitIssue, describeCoordinateUnitIssue } from './units.js';
 
 /**
  * What would fix an {@link ElementIssue}, as data: a host words it its own way, and a
@@ -12,7 +13,8 @@ export type Remedy =
       chunkPixels: { min: number; max: number };
       /** Over all dimensions, not just y and x, so channels and a wide dtype count. */
       decodedBytesAtMost: number;
-    };
+    }
+  | { op: 'declare-length-unit'; coordinateSystem: string };
 
 /**
  * A property of how an element is stored that will make it slow or awkward to use
@@ -24,12 +26,18 @@ export type Remedy =
  * {@link EntryNotice}, which a resolver raises about a layer. Resolvers wrap these in
  * one `element-issues` notice. Other element types add their members here.
  */
-export type ElementIssue = RasterLayoutIssue;
+export type ElementIssue = RasterLayoutIssue | CoordinateUnitIssue;
 
 /** An {@link ElementIssue} with the path of the element it is about, e.g. `images/he`. */
 export type StoreIssue = { readonly path: string; readonly issue: ElementIssue };
 
 export const NO_ISSUES: readonly ElementIssue[] = [];
+
+export function describeElementIssue(issue: ElementIssue): string {
+  return issue.kind === 'no-length-unit'
+    ? describeCoordinateUnitIssue(issue)
+    : describeRasterLayoutIssue(issue);
+}
 
 /** The notice for an element with issues, or `undefined` if there are none. */
 export function elementIssuesNotice(

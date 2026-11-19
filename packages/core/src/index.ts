@@ -114,6 +114,7 @@ export * from './tableAssociations.js';
 export * from './tooltip.js';
 // export * from './schemas/index.js';
 export * from './types.js';
+export * from './units.js';
 export {
   disableParquetWorker,
   type EnableParquetWorkerOptions,
