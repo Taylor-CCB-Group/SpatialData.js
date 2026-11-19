@@ -2,5 +2,6 @@
 // WebGL path never constructs these.
 export { DeviceAdaptiveImageLayer, renderRasterImageTile } from './deviceAdaptiveImageLayer';
 export { applyWebGPUPickingFix } from './pickingFix';
+export { applyWebGPUPresentationAlphaFix } from './presentationAlphaFix';
 export { RasterTileLayer } from './RasterTileLayer';
 export { applyWebGPUViewFix } from './viewFix';

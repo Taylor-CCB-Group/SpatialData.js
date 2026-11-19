@@ -260,6 +260,7 @@ export {
 } from './shapesLayer';
 export {
   applyWebGPUPickingFix,
+  applyWebGPUPresentationAlphaFix,
   applyWebGPUViewFix,
   DeviceAdaptiveImageLayer,
   RasterTileLayer,

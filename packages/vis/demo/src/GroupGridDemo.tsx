@@ -22,6 +22,7 @@ import { Deck, type Layer, OrthographicView, type OrthographicViewState } from '
 import { webgpuAdapter } from '@luma.gl/webgpu';
 import {
   applyWebGPUPickingFix,
+  applyWebGPUPresentationAlphaFix,
   applyWebGPUViewFix,
   getIsolatedGroupMemberId,
   IsolatedGroupLayer,
@@ -247,6 +248,7 @@ export default function GroupGridDemo() {
       onDeviceInitialized: (device) => {
         applyWebGPUViewFix(device);
         applyWebGPUPickingFix(device);
+        applyWebGPUPresentationAlphaFix(device);
       },
       // Viv's convention: a root layer draws in the view whose id its own id carries.
       layerFilter: ({ layer, viewport }) =>
