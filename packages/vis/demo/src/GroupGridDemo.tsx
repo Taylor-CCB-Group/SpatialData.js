@@ -11,6 +11,11 @@
  * overlays change or a cell is added. The counters below show how often it is drawn and
  * why. `?device=webgl` switches backends (default webgpu); `?tileDelay=500` makes the
  * image's tile arrive late, which should cost exactly one `contents` draw.
+ *
+ * `?canvases=1` gives each cell a canvas of its own, through deck's experimental
+ * `_canvases` mode, as MDV's grid does: deck draws each canvas in a pass of its own, and
+ * the cells should still share one target. `?ragged=1` makes the last cell narrower, so
+ * it needs a target of its own: two draws per pan, and still none for an overlay change.
  */
 
 import { Deck, type Layer, OrthographicView, type OrthographicViewState } from '@deck.gl/core';
@@ -40,6 +45,8 @@ const HEIGHT = 360;
 const params = new URLSearchParams(window.location.search);
 const DEVICE: 'webgl' | 'webgpu' = params.get('device') === 'webgl' ? 'webgl' : 'webgpu';
 const IMAGE = params.get('image') === '1';
+const CANVASES = params.get('canvases') === '1';
+const RAGGED = params.get('ragged') === '1';
 
 const CELL_W = 200;
 const CELL_H = 170;
@@ -82,17 +89,28 @@ function sharedGreenData(color: Rgb) {
   return data;
 }
 
-function cellRect(index: number) {
+/** Where cell `index` of `count` sits on the page. */
+function cellRect(index: number, count: number) {
   const col = index % COLUMNS;
   const row = Math.floor(index / COLUMNS);
-  return { x: col * (CELL_W + GAP), y: row * (CELL_H + GAP), width: CELL_W, height: CELL_H };
+  const narrow = RAGGED && count > 1 && index === count - 1;
+  return {
+    x: col * (CELL_W + GAP),
+    y: row * (CELL_H + GAP),
+    width: narrow ? CELL_W - 40 : CELL_W,
+    height: CELL_H,
+  };
 }
 
+const cellCanvasId = (index: number) => `group-grid-cell-${index}`;
+
 function cellViews(count: number): OrthographicView[] {
-  return Array.from(
-    { length: count },
-    (_, i) => new OrthographicView({ id: `cell-${i}`, ...cellRect(i), controller: true })
-  );
+  return Array.from({ length: count }, (_, i) => {
+    const rect = cellRect(i, count);
+    // With a canvas per cell, each view fills its own canvas.
+    const placement = CANVASES ? { ...rect, x: 0, y: 0, canvasId: cellCanvasId(i) } : rect;
+    return new OrthographicView({ id: `cell-${i}`, ...placement, controller: true });
+  });
 }
 
 interface Scene {
@@ -125,16 +143,29 @@ function buildLayers(scene: Scene, onTargetRender: (event: IsolationRenderEvent)
   return [backdrop, shared, ...overlays];
 }
 
-/** World point → canvas pixel in a cell. */
-function cellPixel(index: number, [x, y]: [number, number], viewState: OrthographicViewState) {
-  const rect = cellRect(index);
+/** World point → pixel in the canvas that draws cell `index`. */
+function cellPixel(
+  index: number,
+  count: number,
+  [x, y]: [number, number],
+  viewState: OrthographicViewState
+) {
+  const rect = cellRect(index, count);
+  const origin = CANVASES ? { x: 0, y: 0 } : rect;
   const zoom = typeof viewState.zoom === 'number' ? viewState.zoom : 0;
   const scale = 2 ** zoom;
   const [tx, ty] = viewState.target ?? [0, 0, 0];
   return [
-    Math.round(rect.x + rect.width / 2 + (x - tx) * scale),
-    Math.round(rect.y + rect.height / 2 + (y - ty) * scale),
+    Math.round(origin.x + rect.width / 2 + (x - tx) * scale),
+    Math.round(origin.y + rect.height / 2 + (y - ty) * scale),
   ];
+}
+
+/** This page's query, with the backend switched. */
+function withDevice(device: 'webgl' | 'webgpu'): string {
+  const next = new URLSearchParams(params);
+  next.set('device', device);
+  return `?${next}`;
 }
 
 type Counts = Record<IsolationRenderReason, number>;
@@ -157,13 +188,36 @@ export default function GroupGridDemo() {
   const applySceneRef = useRef(() => {});
 
   useEffect(() => {
-    if (!container.current) return;
+    const host = container.current;
+    if (!host) return;
+    const cellCanvases = CANVASES
+      ? Array.from({ length: MAX_CELLS }, (_, i) => {
+          const cellCanvas = document.createElement('canvas');
+          cellCanvas.id = cellCanvasId(i);
+          cellCanvas.style.position = 'absolute';
+          host.append(cellCanvas);
+          return cellCanvas;
+        })
+      : [];
+    const layoutCellCanvases = (cells: number) => {
+      cellCanvases.forEach((cellCanvas, i) => {
+        const rect = cellRect(i, cells);
+        cellCanvas.style.display = i < cells ? 'block' : 'none';
+        cellCanvas.style.left = `${rect.x}px`;
+        cellCanvas.style.top = `${rect.y}px`;
+        cellCanvas.style.width = `${rect.width}px`;
+        cellCanvas.style.height = `${rect.height}px`;
+      });
+    };
+    layoutCellCanvases(sceneRef.current.cells);
     const applyScene = () => {
       const deck = deckRef.current;
       if (!deck) return;
       const scene = sceneRef.current;
       const views = cellViews(scene.cells);
+      layoutCellCanvases(scene.cells);
       deck.setProps({
+        ...(CANVASES ? { _canvases: cellCanvases.slice(0, scene.cells) } : {}),
         views,
         viewState: Object.fromEntries(views.map((view) => [view.id, viewStateRef.current])),
         layers: buildLayers(scene, (event) => {
@@ -176,12 +230,14 @@ export default function GroupGridDemo() {
       });
     };
     applySceneRef.current = applyScene;
-    const canvas = document.createElement('canvas');
-    canvas.style.width = `${WIDTH}px`;
-    canvas.style.height = `${HEIGHT}px`;
-    container.current.prepend(canvas);
+    const canvas = CANVASES ? null : document.createElement('canvas');
+    if (canvas) {
+      canvas.style.width = `${WIDTH}px`;
+      canvas.style.height = `${HEIGHT}px`;
+      host.prepend(canvas);
+    }
     const deck = new Deck({
-      canvas,
+      ...(canvas ? { canvas } : { _canvases: cellCanvases.slice(0, sceneRef.current.cells) }),
       width: WIDTH,
       height: HEIGHT,
       useDevicePixels: false,
@@ -224,15 +280,17 @@ export default function GroupGridDemo() {
         frameDraws.current = emptyCounts();
         setLog(drawLog.current.slice(-6).join('\n'));
 
-        const readback = document.createElement('canvas');
-        readback.width = canvas.width;
-        readback.height = canvas.height;
-        const context = readback.getContext('2d', { willReadFrequently: true });
-        if (!context) return;
-        context.drawImage(canvas, 0, 0);
-        const lines = Array.from({ length: sceneRef.current.cells }, (_, i) => {
+        const cells = sceneRef.current.cells;
+        const lines = Array.from({ length: cells }, (_, i) => {
+          const source = canvas ?? cellCanvases[i];
+          const readback = document.createElement('canvas');
+          readback.width = source.width;
+          readback.height = source.height;
+          const context = readback.getContext('2d', { willReadFrequently: true });
+          if (!context) return `cell ${i}: no readback`;
+          context.drawImage(source, 0, 0);
           const pick = (point: [number, number]) => {
-            const [px, py] = cellPixel(i, point, viewStateRef.current);
+            const [px, py] = cellPixel(i, cells, point, viewStateRef.current);
             const d = context.getImageData(px, py, 1, 1).data;
             return `(${d[0]}, ${d[1]}, ${d[2]})`;
           };
@@ -246,7 +304,8 @@ export default function GroupGridDemo() {
     return () => {
       deck.finalize();
       deckRef.current = null;
-      canvas.remove();
+      canvas?.remove();
+      for (const cellCanvas of cellCanvases) cellCanvas.remove();
     };
   }, []);
 
@@ -265,10 +324,10 @@ export default function GroupGridDemo() {
     <div style={{ padding: 16, color: '#ddd', fontFamily: 'monospace', fontSize: 12 }}>
       <div style={{ marginBottom: 8 }}>
         device:{' '}
-        <a href={`?device=webgpu${IMAGE ? '&image=1' : ''}`} style={{ color: '#8af' }}>
+        <a href={withDevice('webgpu')} style={{ color: '#8af' }}>
           webgpu
         </a>{' '}
-        <a href={`?device=webgl${IMAGE ? '&image=1' : ''}`} style={{ color: '#8af' }}>
+        <a href={withDevice('webgl')} style={{ color: '#8af' }}>
           webgl
         </a>{' '}
         |{' '}

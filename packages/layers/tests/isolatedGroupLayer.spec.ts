@@ -1,10 +1,20 @@
-import { Layer, type PickingInfo } from '@deck.gl/core';
+import {
+  _LayersPass,
+  type EffectContext,
+  Layer,
+  OrthographicViewport,
+  type PickingInfo,
+  type PreRenderOptions,
+  type Viewport,
+} from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  GroupIsolationEffect,
   getIsolatedGroupMember,
   getIsolatedGroupMemberId,
   IsolatedGroupLayer,
+  type IsolationRenderEvent,
   isIsolatedGroupDescendant,
 } from '../src/groups/IsolatedGroupLayer';
 
@@ -148,5 +158,107 @@ describe('IsolatedGroupLayer membership', () => {
     expect(
       isIsolatedGroupDescendant(tile, new IsolatedGroupLayer({ id: 'other', layers: [] }))
     ).toBe(false);
+  });
+});
+
+describe('GroupIsolationEffect targets', () => {
+  type FakeResource = { width?: number; height?: number; destroy: () => void };
+
+  /** A stand-in for the luma device: the effect only creates and frees targets on it. */
+  function setUp() {
+    const created: FakeResource[] = [];
+    const resource = (props: { width?: number; height?: number }) => {
+      const r = { width: props.width, height: props.height, destroy: vi.fn() };
+      created.push(r);
+      return r;
+    };
+    const device = { createTexture: resource, createFramebuffer: resource };
+    const effect = new GroupIsolationEffect();
+    // Fakes at the deck/luma boundary: the effect reads only what is stubbed here.
+    effect.setup({ device } as unknown as EffectContext);
+    vi.spyOn(_LayersPass.prototype, 'render').mockImplementation(() => {});
+    const events: IsolationRenderEvent[] = [];
+    const layer = new IsolatedGroupLayer({
+      id: 'g',
+      layers: [],
+      onTargetRender: (event) => events.push(event),
+    });
+    layer.state = { contentsVersion: 0 };
+    return { effect, layer, events, created };
+  }
+
+  const cell = (id: string, width = 200, x = 0) =>
+    new OrthographicViewport({ id, x, width, height: 170, target: [x, 0, 0], zoom: 0 });
+
+  /** One deck pass, as deck draws one `_canvases` canvas: only that canvas's viewports. */
+  function pass(
+    effect: GroupIsolationEffect,
+    layer: IsolatedGroupLayer,
+    viewports: Viewport[],
+    hidden: string[] = []
+  ) {
+    const opts = {
+      isPicking: false,
+      layers: [layer],
+      viewports,
+      canvasContext: { cssToDeviceRatio: () => 1 },
+      layerFilter: ({ viewport }: { viewport: Viewport }) => !hidden.includes(viewport.id),
+    };
+    // Only the fields the effect reads; the rest go to the mocked pass.
+    effect.preRender(opts as unknown as PreRenderOptions);
+  }
+
+  const endFrame = () => Promise.resolve();
+  const reasons = (events: IsolationRenderEvent[]) => events.map((e) => e.reason);
+
+  it('shares one target between cells on separate canvases', async () => {
+    const { effect, layer, events } = setUp();
+    for (let frame = 0; frame < 2; frame++) {
+      for (const id of ['a', 'b', 'c']) pass(effect, layer, [cell(id)]);
+      await endFrame();
+    }
+    expect(reasons(events)).toEqual(['new']);
+  });
+
+  it('keeps targets of different sizes on separate canvases across frames', async () => {
+    const { effect, layer, events, created } = setUp();
+    for (let frame = 0; frame < 2; frame++) {
+      pass(effect, layer, [cell('a')]);
+      pass(effect, layer, [cell('b', 160)]);
+      await endFrame();
+    }
+    expect(reasons(events)).toEqual(['new', 'new']);
+    expect(created.every((r) => vi.mocked(r.destroy).mock.calls.length === 0)).toBe(true);
+
+    // A pan redraws each size once, into the target it already has.
+    pass(effect, layer, [cell('a', 200, 30)]);
+    pass(effect, layer, [cell('b', 160, 30)]);
+    await endFrame();
+    expect(reasons(events)).toEqual(['new', 'new', 'view', 'view']);
+  });
+
+  it('redraws for a contents change on a canvas drawn after one that hides the group', async () => {
+    const { effect, layer, events } = setUp();
+    pass(effect, layer, [cell('hidden')], ['hidden']);
+    pass(effect, layer, [cell('b')]);
+    await endFrame();
+    layer._markContentsChanged();
+    pass(effect, layer, [cell('hidden')], ['hidden']);
+    pass(effect, layer, [cell('b')]);
+    await endFrame();
+    expect(reasons(events)).toEqual(['new', 'contents']);
+  });
+
+  it('frees a target once a whole frame has passed without it', async () => {
+    const { effect, layer, created } = setUp();
+    pass(effect, layer, [cell('a')]);
+    pass(effect, layer, [cell('b', 160)]);
+    await endFrame();
+    pass(effect, layer, [cell('a')]);
+    await endFrame();
+    // A target is a texture and a framebuffer, both freed.
+    const freed = (r: FakeResource) => vi.mocked(r.destroy).mock.calls.length > 0;
+    expect(created.filter(freed).map((r) => r.width)).toEqual([160, 160]);
+    expect(created.filter((r) => r.width === 200).some(freed)).toBe(false);
   });
 });
