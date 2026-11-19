@@ -100,5 +100,7 @@ export type {
   LayerLoadState,
 } from './useLayerData';
 export { VivSpatialViewer } from './VivSpatialViewer';
+export type { VivImageLayersOptions } from './vivImageLayers';
+export { getVivId, vivImageLayers } from './vivImageLayers';
 export type { VivImagePassthroughOptions } from './vivImagePassthrough';
 export { mergeVivImagePassthroughProps } from './vivImagePassthrough';

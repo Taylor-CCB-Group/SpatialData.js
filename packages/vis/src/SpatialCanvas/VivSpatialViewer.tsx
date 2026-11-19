@@ -23,7 +23,7 @@ import {
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
 import { DeckGL } from '@deck.gl/react';
 import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
-import { DeviceAdaptiveImageLayer, type RenderStack } from '@spatialdata/layers';
+import type { RenderStack } from '@spatialdata/layers';
 import { DetailView } from '@vivjs/views';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
@@ -32,10 +32,7 @@ import { renderStackOrder, renderStackToDeckLayers } from './renderStackAdapters
 import type { ScaleBarSize } from './scaleBar';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
-
-export function getVivId(id: string): string {
-  return `-#${id}#`;
-}
+import { getVivId, normalizeVivLayers, vivImageLayers } from './vivImageLayers';
 
 export type VivViewState = (OrthographicViewState | OrbitViewState) & { id: string };
 export type VivViewStates = VivViewState[];
@@ -65,25 +62,6 @@ export function normalizeVivZoom(zoom: VivZoom): number {
     return zoom;
   }
   return 0;
-}
-
-function isLayerLike(value: unknown): value is Layer {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const id = Reflect.get(value, 'id');
-  const clone = Reflect.get(value, 'clone');
-  return typeof id === 'string' && typeof clone === 'function';
-}
-
-export function normalizeVivLayers(raw: unknown): Layer[] {
-  if (isLayerLike(raw)) {
-    return [raw];
-  }
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.flatMap((entry) => normalizeVivLayers(entry));
 }
 
 const areViewStatesEqual = (viewState: VivViewState, otherViewState?: VivViewState): boolean => {
@@ -442,7 +420,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
   }
 
   _renderLayers(): LayersList {
-    const { vivLayerProps, extraLayers, layerOrder, renderStack, deckProps, onHover } = this.props;
+    const { vivLayerProps, extraLayers, layerOrder, renderStack, deckProps } = this.props;
 
     // Shared by all paths: layerFilter requires layer IDs to include the Viv viewport token
     const vivId = getVivId(this.viewId);
@@ -460,59 +438,12 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const placement = renderStack ? { renderStack, withViewToken: withVivId } : undefined;
 
     const orderedLayers: OrderedLayerRecord[] = [...extraLayerRecords];
-    for (const imageLayerProps of vivLayerProps) {
-      const layerProps: Record<string, unknown> = {
-        loader: imageLayerProps.loader,
-        colors: imageLayerProps.colors,
-        contrastLimits: imageLayerProps.contrastLimits,
-        channelsVisible: imageLayerProps.channelsVisible,
-        selections: imageLayerProps.selections,
-        onHover,
-      };
-
-      // Let Viv/deck merge these with layer defaultProps (including `extensions`).
-      // Do not patch `layer.props` afterward with `{ ...layer.props, opacity }` — that spread
-      // drops non-enumerable props like `extensions` and breaks MultiscaleImageLayer._update.
-      if (imageLayerProps.opacity !== undefined) {
-        layerProps.opacity = imageLayerProps.opacity;
-      }
-      if (imageLayerProps.visible !== undefined) {
-        layerProps.visible = imageLayerProps.visible;
-      }
-      if (imageLayerProps.modelMatrix) {
-        layerProps.modelMatrix = imageLayerProps.modelMatrix;
-      }
-      if (imageLayerProps.alphaFromIntensity) {
-        layerProps.alphaFromIntensity = imageLayerProps.alphaFromIntensity;
-      }
-
-      const passthrough = imageLayerProps.vivProps;
-      if (passthrough) {
-        for (const [key, value] of Object.entries(passthrough)) {
-          layerProps[key] = value;
-        }
-      }
-
-      const vivLayersResult = this.detailView.getLayers({
-        props: layerProps,
-      });
-
-      const layersForImage = normalizeVivLayers(vivLayersResult);
-
-      for (const layer of layersForImage) {
-        // The scale bar measures the view, not an image; see getScaleBarLayer.
-        if (layer instanceof ScaleBarLayer) {
-          continue;
-        }
-
-        // Viv uses generic source-based ids here, so overlays need a stable per-image suffix.
-        const vivLayer = layer.clone({ id: `${layer.id}-${imageLayerProps.id}` });
-        orderedLayers.push({
-          // Swaps Viv's GLSL tiles for WGSL ones when deck is on WebGPU.
-          layer: new DeviceAdaptiveImageLayer({ id: `${vivLayer.id}-device`, vivLayer }),
-          orderId: imageLayerProps.id,
-        });
-      }
+    for (const [orderId, layers] of vivImageLayers(vivLayerProps, {
+      viewId: this.viewId,
+      // As `DetailView` does: its tiles follow this view only.
+      viewportId: this.viewId,
+    })) {
+      orderedLayers.push(...layers.map((layer) => ({ layer, orderId })));
     }
 
     return composeLayers(

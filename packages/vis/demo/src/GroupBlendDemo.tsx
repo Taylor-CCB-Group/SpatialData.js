@@ -43,13 +43,14 @@ import {
   IsolatedGroupLayer,
 } from '@spatialdata/layers';
 import { useEffect, useRef, useState } from 'react';
+import { getVivId, vivImageLayers } from '../../src/index';
 import {
   BACKDROP,
   circles,
   GREEN,
   RED,
+  syntheticImageConfig,
   syntheticImageLoader,
-  vivImageLayers,
 } from './groupDemoLayers';
 
 const WIDTH = 640;
@@ -71,7 +72,7 @@ const CLEAR_INSET = params.get('clear') !== '0';
 const GROUPED = params.get('group') !== '0';
 const IMAGE = params.get('image') === '1' || MASK !== null;
 const ALPHA = params.get('alpha');
-const ALPHA_PROPS = ALPHA
+const IMAGE_EXTRA = ALPHA
   ? {
       alphaFromIntensity: {
         threshold: Number(ALPHA.split(',')[0] ?? 0),
@@ -94,7 +95,9 @@ function flatChildren(group: IsolatedGroupLayer): Layer[] {
 const imageLoader = IMAGE ? syntheticImageLoader() : null;
 
 function imageLayers(view: ViewId): Layer[] {
-  return imageLoader ? vivImageLayers(imageLoader, `@${view}`, WIDTH, HEIGHT, ALPHA_PROPS) : [];
+  if (!imageLoader) return [];
+  const config = syntheticImageConfig(imageLoader, IMAGE_EXTRA);
+  return [...vivImageLayers([config], { viewId: view }).values()].flat();
 }
 
 /** A member drawn with its own blend mode, as `renderStackToDeckLayers` draws a leaf. */
@@ -223,7 +226,9 @@ export default function GroupBlendDemo() {
       },
       layers: [...buildLayers('main'), ...(VIEWS ? buildLayers('inset') : [])],
       // Viv's convention: a layer draws in the view whose id its own id carries.
-      layerFilter: ({ layer, viewport }) => layer.id.endsWith(`@${viewport.id}`),
+      // Circles end in `@<view>`; Viv image layers carry `getVivId(<view>)`.
+      layerFilter: ({ layer, viewport }) =>
+        layer.id.endsWith(`@${viewport.id}`) || layer.id.includes(getVivId(viewport.id)),
       onAfterRender: () => {
         const readback = document.createElement('canvas');
         readback.width = canvas.width;

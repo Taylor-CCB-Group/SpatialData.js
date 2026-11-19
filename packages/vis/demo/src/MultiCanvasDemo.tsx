@@ -17,7 +17,12 @@ import { MultiscaleImageLayer } from '@hms-dbmi/viv';
 import type { Device } from '@luma.gl/core';
 import { luma } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { applyWebGPUPickingFix, DeviceAdaptiveImageLayer, LabelsLayer } from '@spatialdata/layers';
+import {
+  applyWebGPUPickingFix,
+  applyWebGPUPresentationAlphaFix,
+  DeviceAdaptiveImageLayer,
+  LabelsLayer,
+} from '@spatialdata/layers';
 import { SpatialDataProvider, useSpatialData } from '@spatialdata/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadOmeZarrMultiscalesFromStore, type VivCompatiblePixelSource } from 'zarrextra';
@@ -253,8 +258,8 @@ function MultiCanvasViewer() {
           device.destroy();
           return;
         }
-        // Before the Deck, so the per-canvas presentation contexts it creates are covered.
         applyWebGPUPickingFix(device);
+        applyWebGPUPresentationAlphaFix(device);
         const deck = new Deck({
           device,
           _canvases: PANELS.map((p) => p.canvas),

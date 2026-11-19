@@ -95,7 +95,7 @@ Implementation status:
 - [x] Deprecated compatibility path for `layers`, `layerOrder`, and `deckLayers`.
 - [x] `showLoadingOverlay` and `renderTooltip={false}` for external tooltip ownership.
 - [x] `onFeatureHover` / `onFeatureClick` for shape, label and point picking, with `onShapeHover` / `onShapeClick` kept as compatibility callbacks.
-- [ ] Stable externally supplied Viv/deck view id or layer id suffix (`getVivId` compatibility).
+- [x] Host-supplied Viv view id: `vivImageLayers(vivLayerProps, { viewId })` builds image layers whose ids carry `getVivId(viewId)`, for a host that builds its own `Deck`.
 - [x] Viv extension passthrough: `ImageLayerConfig.vivLayerProps`, `vivImageExtensionResolver`, `vivImagePropsResolver` on `SpatialCanvasViewer` (see [Issue #56 APIs](#issue-56-channel-and-extension-apis) below).
 
 See [Headless viewer guide](./headless-viewer) for experimentation steps. The `/headless` demo (`packages/vis/demo`) wires MDV-style `ColorPaletteExtension` + `VivContrastExtension` through `vivImageExtensionResolver`; brightness/contrast sliders feed `vivImagePropsResolver` (or saved `vivLayerProps`).
@@ -551,7 +551,7 @@ Open questions:
 - **Image format/codecs uncertainty:** OME-TIFF, JP2K-compressed TIFF, OME-Zarr, SpatialData Zarr, and future Zarr image codecs may all matter. Avoid encoding one storage format too deeply into viewer props.
 - **Generic Zarr scope creep:** MDV may need GeoZarr/GIS/non-SpatialData Zarr support, but that should be modeled as normalized raster sources rather than by weakening the SpatialData-specific APIs.
 - **View state shape:** MDV's Viv chart uses Viv `DetailView` view states with view ids. `SpatialCanvas` uses a smaller `{ target, zoom }` shape. The adapter needs careful conversion so linked charts and saved configs do not drift.
-- **Layer ids:** MDV relies on `getVivId(...)` tokens for layer filtering. `VivSpatialViewer` has its own generated ids. MDV embedding may need a supplied `viewId` / `layerIdSuffix`.
+- **Layer ids:** MDV relies on `getVivId(...)` tokens for layer filtering. `VivSpatialViewer` generates its own view id; a host that builds its own `Deck` uses `vivImageLayers` with its own `viewId`.
 - **UI ownership:** current `SpatialCanvas` resets its local store when coordinate systems change. In controlled MDV mode this could wipe chart-driven layers if not separated.
 - **Tooltip ownership:** both libraries have tooltip systems. MDV should own tooltip portals for now.
 - **Feature ids:** shapes now carry stable `featureId` values in render data and layer picking; labels association and tests still need to catch up to the shapes path.
