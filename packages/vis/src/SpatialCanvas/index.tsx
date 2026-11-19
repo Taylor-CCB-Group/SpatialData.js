@@ -42,6 +42,7 @@ import {
 } from './SpatialCanvasViewer';
 import type { SpatialCanvasTooltipRenderProps } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
+import type { ScaleBarSize } from './scaleBar';
 import type { SpatialCanvasStoreApi } from './stores';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
@@ -249,6 +250,7 @@ interface ViewerSectionProps {
   coordinateSystem: string | null;
   deckRef: React.RefObject<DeckGLRef | null>;
   deckProps?: Partial<DeckGLProps>;
+  scaleBar?: ScaleBarSize;
 }
 
 function ViewerSection({
@@ -266,6 +268,7 @@ function ViewerSection({
   coordinateSystem,
   deckRef,
   deckProps,
+  scaleBar,
 }: ViewerSectionProps) {
   const viewState = useSpatialCanvasStore((s) => s.viewState);
   const actions = useSpatialCanvasActions();
@@ -345,6 +348,7 @@ function ViewerSection({
         onHover={onHover}
         deckRef={deckRef}
         deckProps={deckProps}
+        scaleBar={scaleBar}
       />
       {isBlocking && (
         <div
@@ -412,6 +416,7 @@ interface SpatialCanvasInnerProps {
   hoverTooltipMode?: HoverTooltipMode;
   deckProps?: Partial<DeckGLProps>;
   keepLayersOnSourceChange?: boolean;
+  coordinateSystemUnit?: string;
 }
 
 function SpatialCanvasInner({
@@ -420,6 +425,7 @@ function SpatialCanvasInner({
   hoverTooltipMode = DEFAULT_HOVER_TOOLTIP_MODE,
   deckProps,
   keepLayersOnSourceChange = false,
+  coordinateSystemUnit,
 }: SpatialCanvasInnerProps) {
   // Points reactivity now lives in <PointsFeatureStateProvider> (the panel
   // subscribes to the engine via useSyncExternalStore), so this component no
@@ -472,6 +478,7 @@ function SpatialCanvasInner({
     width: vw,
     height: vh,
     pickingEnabled,
+    coordinateSystemUnit,
   });
 
   const {
@@ -494,6 +501,7 @@ function SpatialCanvasInner({
     pointsEngine,
     resolvePointsTarget,
     retryEntry,
+    scaleBar,
     vivLayerProps,
   } = rendererProps;
   const hoverPickLayerIds = useMemo(() => Array.from(enabledLayerIds), [enabledLayerIds]);
@@ -787,6 +795,7 @@ function SpatialCanvasInner({
               coordinateSystem={coordinateSystem}
               deckRef={deckRef}
               deckProps={deckProps}
+              scaleBar={scaleBar}
             />
           </div>
 
@@ -1021,6 +1030,12 @@ export interface SpatialCanvasProps {
    * store has it again. Also stops a coordinate-system change from clearing the layers.
    */
   keepLayersOnSourceChange?: boolean;
+  /**
+   * The length unit of the coordinate system's spatial axes (e.g. `'micrometer'` or
+   * `'µm'`), overriding the dataset's metadata. The scale bar measures the coordinate
+   * system, so without a length unit from either there is no scale bar.
+   */
+  coordinateSystemUnit?: string;
 }
 
 /**
@@ -1078,6 +1093,7 @@ export default function SpatialCanvas({
   hoverTooltipMode,
   deckProps,
   keepLayersOnSourceChange,
+  coordinateSystemUnit,
 }: SpatialCanvasProps) {
   return (
     <VivLoaderRegistryProvider>
@@ -1088,6 +1104,7 @@ export default function SpatialCanvas({
           hoverTooltipMode={hoverTooltipMode}
           deckProps={deckProps}
           keepLayersOnSourceChange={keepLayersOnSourceChange}
+          coordinateSystemUnit={coordinateSystemUnit}
         />
       </SpatialCanvasProvider>
     </VivLoaderRegistryProvider>

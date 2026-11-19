@@ -12,22 +12,24 @@
  * Structured to allow gradual refactoring to hooks in the future.
  */
 
-import type {
-  Layer,
-  LayersList,
-  OrbitViewState,
-  OrthographicViewState,
-  PickingInfo,
+import {
+  type Layer,
+  type LayersList,
+  type OrbitViewState,
+  OrthographicView,
+  type OrthographicViewState,
+  type PickingInfo,
 } from '@deck.gl/core';
 import type { DeckGLProps, DeckGLRef } from '@deck.gl/react';
 import { DeckGL } from '@deck.gl/react';
 import { getDefaultInitialViewState, ScaleBarLayer } from '@hms-dbmi/viv';
 import { DeviceAdaptiveImageLayer, type RenderStack } from '@spatialdata/layers';
-import { DetailView, ScaleBarView } from '@vivjs/views';
+import { DetailView } from '@vivjs/views';
 import equal from 'fast-deep-equal';
 import * as React from 'react';
 import { withWebGPUFixes } from './deckDevice';
 import { renderStackOrder, renderStackToDeckLayers } from './renderStackAdapters';
+import type { ScaleBarSize } from './scaleBar';
 import type { ViewState } from './types';
 import type { ImageLayerConfig } from './useLayerData';
 
@@ -42,7 +44,6 @@ export type View = { id: string } & any; // Viv View type
 // biome-ignore lint/suspicious/noExplicitAny: tracked in #257
 export type VivPickInfo = PickingInfo<any, any> & { tile?: any };
 type VivZoom = number | readonly number[] | null | undefined;
-type VivLoader = { meta?: { physicalSizes?: { x?: { size: number; unit: string } } } };
 type VivDefaultInitialViewStateWithModelMatrix = (
   loader: object,
   viewSize: { width: number; height: number },
@@ -122,6 +123,8 @@ export interface VivSpatialViewerProps {
   deckProps?: Partial<DeckGLProps>;
   /** Ref to the underlying Deck instance (for multi-layer tooltip picking). */
   deckRef?: React.RefObject<DeckGLRef | null>;
+  /** Physical length of one view unit; draws a scale bar when given. */
+  scaleBar?: ScaleBarSize;
 }
 
 interface VivSpatialViewerState {
@@ -245,16 +248,6 @@ function fromVivViewState(vivViewState: VivViewState): ViewState {
   };
 }
 
-function getScaleBarLoader(vivLayerProps: ImageLayerConfig[]): VivLoader[] | undefined {
-  for (const layerProps of vivLayerProps) {
-    const loader = layerProps.loader;
-    if (Array.isArray(loader) && loader[0]?.meta?.physicalSizes?.x) {
-      return loader as VivLoader[];
-    }
-  }
-  return undefined;
-}
-
 function findLayerWithLoader(vivLayerProps: ImageLayerConfig[]): ImageLayerConfig | undefined {
   return vivLayerProps.find((layerProps) => layerProps.loader);
 }
@@ -342,18 +335,32 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     } as VivViewState;
   }
 
-  private getScaleBarView(): ScaleBarView | undefined {
-    const loader = getScaleBarLoader(this.props.vivLayerProps);
-    if (!loader) {
+  // What Viv's `ScaleBarView` builds, without its image loader: the bar measures
+  // the view's own units, so it doesn't need an image.
+  private getScaleBarDeckView(): OrthographicView | undefined {
+    if (!this.props.scaleBar) {
       return undefined;
     }
-    return new ScaleBarView({
-      id: this.scaleBarViewId,
-      width: this.props.width,
-      height: this.props.height,
-      loader,
+    const { width, height } = this.props;
+    return new OrthographicView({ id: this.scaleBarViewId, controller: false, width, height });
+  }
+
+  private getScaleBarLayer(): Layer | undefined {
+    const { scaleBar, width, height } = this.props;
+    const imageViewState = this.state.viewStates[this.viewId];
+    if (!scaleBar || !imageViewState) {
+      return undefined;
+    }
+    // Viv's declaration leaves out `width` and `height`, which the layer reads to
+    // place the bar; a spread passes them without an excess-property error.
+    const viewSize = { width, height };
+    return new ScaleBarLayer({
+      id: getVivId(this.scaleBarViewId),
+      unit: scaleBar.unit,
+      size: scaleBar.size,
+      imageViewState: { ...imageViewState },
       snap: true,
-      imageViewId: this.viewId,
+      ...viewSize,
     });
   }
 
@@ -436,7 +443,6 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
 
   _renderLayers(): LayersList {
     const { vivLayerProps, extraLayers, layerOrder, renderStack, deckProps, onHover } = this.props;
-    const { viewStates } = this.state;
 
     // Shared by all paths: layerFilter requires layer IDs to include the Viv viewport token
     const vivId = getVivId(this.viewId);
@@ -453,20 +459,7 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     const deckPropsLayersWithVivId = normalizeVivLayers(deckProps?.layers ?? []).map(withVivId);
     const placement = renderStack ? { renderStack, withViewToken: withVivId } : undefined;
 
-    if (vivLayerProps.length === 0) {
-      return composeLayers(
-        extraLayerRecords,
-        deckPropsLayersWithVivId,
-        undefined,
-        layerOrder,
-        placement
-      );
-    }
-
     const orderedLayers: OrderedLayerRecord[] = [...extraLayerRecords];
-    let scaleBarLayer: Layer | undefined;
-    const scaleBarView = this.getScaleBarView();
-
     for (const imageLayerProps of vivLayerProps) {
       const layerProps: Record<string, unknown> = {
         loader: imageLayerProps.loader,
@@ -507,10 +500,8 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       const layersForImage = normalizeVivLayers(vivLayersResult);
 
       for (const layer of layersForImage) {
+        // The scale bar measures the view, not an image; see getScaleBarLayer.
         if (layer instanceof ScaleBarLayer) {
-          if (!scaleBarLayer) {
-            scaleBarLayer = layer;
-          }
           continue;
         }
 
@@ -524,19 +515,10 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
       }
     }
 
-    if (!scaleBarLayer && scaleBarView) {
-      const scaleBarLayers = normalizeVivLayers(
-        scaleBarView.getLayers({
-          viewStates,
-        })
-      );
-      scaleBarLayer = scaleBarLayers.find((layer) => layer instanceof ScaleBarLayer);
-    }
-
     return composeLayers(
       orderedLayers,
       deckPropsLayersWithVivId,
-      scaleBarLayer,
+      this.getScaleBarLayer(),
       layerOrder,
       placement
     );
@@ -551,15 +533,13 @@ class VivSpatialViewer extends React.PureComponent<VivSpatialViewerProps, VivSpa
     }
 
     const layers = this._renderLayers();
-    const scaleBarView = this.getScaleBarView();
+    const scaleBarView = this.getScaleBarDeckView();
     // Viv's detail view hardcodes `controller: true`, and deck only applies a
     // top-level `controller` prop when it is truthy, so `false` must go on the view.
     const detailDeckView = this.detailView
       .getDeckGlView()
       .clone({ controller: deckProps?.controller ?? true });
-    const deckGLViews = scaleBarView
-      ? [detailDeckView, scaleBarView.getDeckGlView()]
-      : detailDeckView;
+    const deckGLViews = scaleBarView ? [detailDeckView, scaleBarView] : detailDeckView;
 
     return (
       <DeckGL
