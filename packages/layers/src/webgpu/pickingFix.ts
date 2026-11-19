@@ -1,9 +1,10 @@
-import type { CanvasContext, Device, PresentationContext } from '@luma.gl/core';
+import { type CanvasContext, type Device, PresentationContext } from '@luma.gl/core';
 
 type PixelConverter = Pick<CanvasContext | PresentationContext, 'cssToDevicePixels'>;
 
 const fixedContexts = new WeakSet<PixelConverter>();
 const fixedDevices = new WeakSet<Device>();
+let patched = false;
 
 /** Keep a context's CSS→device pixel conversion in WebGPU's top-left origin. */
 function useTopLeftOrigin(context: PixelConverter): void {
@@ -11,6 +12,21 @@ function useTopLeftOrigin(context: PixelConverter): void {
   const original = context.cssToDevicePixels.bind(context);
   context.cssToDevicePixels = (cssPixel, _yInvert) => original(cssPixel, false);
   fixedContexts.add(context);
+}
+
+/** Multi-canvas mode picks through per-canvas presentation contexts, which deck can
+ *  create before `onDeviceInitialized`, so they are fixed where they convert. */
+function patchPresentationContexts(): void {
+  if (patched) return;
+  patched = true;
+  const { cssToDevicePixels } = PresentationContext.prototype;
+  PresentationContext.prototype.cssToDevicePixels = function (
+    this: PresentationContext,
+    cssPixel,
+    yInvert
+  ) {
+    return cssToDevicePixels.call(this, cssPixel, fixedDevices.has(this.device) ? false : yInvert);
+  };
 }
 
 /**
@@ -29,11 +45,5 @@ export function applyWebGPUPickingFix(device: Device): void {
   if (device.canvasContext) {
     useTopLeftOrigin(device.getDefaultCanvasContext());
   }
-  // Multi-canvas mode picks through per-canvas presentation contexts made later.
-  const createPresentationContext = device.createPresentationContext.bind(device);
-  device.createPresentationContext = (props) => {
-    const context = createPresentationContext(props);
-    useTopLeftOrigin(context);
-    return context;
-  };
+  patchPresentationContexts();
 }

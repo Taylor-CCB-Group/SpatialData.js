@@ -258,7 +258,6 @@ function MultiCanvasViewer() {
           device.destroy();
           return;
         }
-        // Before the Deck, so the per-canvas presentation contexts it creates are covered.
         applyWebGPUPickingFix(device);
         applyWebGPUPresentationAlphaFix(device);
         const deck = new Deck({
