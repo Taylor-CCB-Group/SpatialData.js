@@ -1,5 +1,27 @@
 # @spatialdata/vis
 
+## 0.17.0
+
+### Minor Changes
+
+- [#317](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/317) [`b9c4a75`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b9c4a75bcc745d1bc371eca9d28a8cb2d3604d77) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `SpatialCanvas` and `SpatialCanvasViewer` draw a scale bar measured in the selected coordinate system, with or without an image layer. The length of one unit comes from the new `coordinateSystemUnit` prop (`'micrometer'`, or a size such as `{ size: 0.2125, unit: 'µm' }`), then the elements' axis units, then, for stores from spatialdata-io's `xenium` and `atera` readers, the µm scale of their points and shapes. Without any of these there is no bar. An image loader's `physicalSizes` no longer drives the bar. `SpatialViewer` and `VivSpatialViewer` take the resolved `scaleBar`, and `resolveScaleBarSize` is exported for hosts building their own `Deck`.
+
+- [#315](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/315) [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77) Thanks [@xinaesthete](https://github.com/xinaesthete)! - New `vivImageLayers(vivLayerProps, { viewId, viewportId })` builds image layers the way `VivSpatialViewer` does, for a host that builds its own `Deck` (for example a grid with a view per cell). It returns layers keyed by image config id for `renderStackToDeckLayers`' `entryLayers`; the configs must already carry their groups' opacity and visibility, as they do when the layer inputs come from `renderStackToLayerInputs`. Each layer id carries `getVivId(viewId)` for the host's `layerFilter`. A tiled image loads its tiles in whichever view draws it, so one set can be shared by every cell; pass `viewportId` to tie them to one view. `getVivId` and the `VivImageLayerConfig` type are now exported too.
+
+- [#309](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/309) [`d0e1821`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/d0e1821e07953d7320eb2f2dba1bb65b7031c703) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Image layers take an `alphaFromIntensity: { threshold, gain }` option that sets opacity from brightness, so a dark-background image such as fluorescence or IMC can be drawn over brightfield like H&E. It works on WebGL and WebGPU and is saved with the image's Render Stack entry props. SpatialCanvas's image panel has an "Opacity from brightness" control for it.
+
+- [#307](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/307) [`de552a4`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/de552a4d741002a2aac110086c5898092a607843) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `SpatialCanvas` takes `keepLayersOnSourceChange`: the layers survive a change of `SpatialDataProvider` source, so a store with the same element names opens with the same view. A layer whose element the new store lacks stays in the list, marked unavailable, and draws again when you switch to a store that has it. With it on, changing the coordinate system no longer clears the layers either.
+
+- [#310](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/310) [`dbfa1b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dbfa1b123eb5845017a5ab3b317a4b127929eb98) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Render Stack leaf `blendMode` is now drawn for members of isolated groups (outside one it is still saved but not drawn). New blend modes `intersect`, `cut-out`, `xor` and `clip` make a layer act as a mask on what is beneath it in its group, for example to show where two segmentations overlap or disagree.
+
+### Patch Changes
+
+- Updated dependencies [[`b9c4a75`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b9c4a75bcc745d1bc371eca9d28a8cb2d3604d77), [`d0e1821`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/d0e1821e07953d7320eb2f2dba1bb65b7031c703), [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77), [`dbfa1b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dbfa1b123eb5845017a5ab3b317a4b127929eb98), [`3db461c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3db461cd325bb41ddf4bfd650802c7b6f87df707), [`b288d99`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b288d99b747c555c826bc794dab28ca2553236fe), [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77), [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77)]:
+  - @spatialdata/core@0.17.0
+  - @spatialdata/layers@0.17.0
+  - @spatialdata/react@0.17.0
+  - @spatialdata/avivatorish@0.17.0
+
 ## 0.16.1
 
 ### Patch Changes

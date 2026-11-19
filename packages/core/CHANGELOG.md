@@ -1,5 +1,13 @@
 # @spatialdata/core
 
+## 0.17.0
+
+### Minor Changes
+
+- [#317](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/317) [`b9c4a75`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b9c4a75bcc745d1bc371eca9d28a8cb2d3604d77) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Spatial elements report a `no-length-unit` issue for each coordinate system their transform reaches without a length unit (including SpatialData's `"unit"` placeholder), with a `declare-length-unit` remedy. `ElementIssue` now includes it, so describe issues with the new `describeElementIssue` rather than `describeRasterLayoutIssue`. `physicalLengthOfUnit` maps OME-NGFF length names and symbols to a size in SI units.
+
+- [#310](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/310) [`dbfa1b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dbfa1b123eb5845017a5ab3b317a4b127929eb98) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Render Stack leaf `blendMode` is now drawn for members of isolated groups (outside one it is still saved but not drawn). New blend modes `intersect`, `cut-out`, `xor` and `clip` make a layer act as a mask on what is beneath it in its group, for example to show where two segmentations overlap or disagree.
+
 ## 0.16.1
 
 ### Patch Changes

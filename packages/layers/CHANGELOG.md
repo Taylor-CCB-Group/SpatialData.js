@@ -1,5 +1,27 @@
 # @spatialdata/layers
 
+## 0.17.0
+
+### Minor Changes
+
+- [#309](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/309) [`d0e1821`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/d0e1821e07953d7320eb2f2dba1bb65b7031c703) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Image layers take an `alphaFromIntensity: { threshold, gain }` option that sets opacity from brightness, so a dark-background image such as fluorescence or IMC can be drawn over brightfield like H&E. It works on WebGL and WebGPU and is saved with the image's Render Stack entry props. SpatialCanvas's image panel has an "Opacity from brightness" control for it.
+
+- [#310](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/310) [`dbfa1b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dbfa1b123eb5845017a5ab3b317a4b127929eb98) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Render Stack leaf `blendMode` is now drawn for members of isolated groups (outside one it is still saved but not drawn). New blend modes `intersect`, `cut-out`, `xor` and `clip` make a layer act as a mask on what is beneath it in its group, for example to show where two segmentations overlap or disagree.
+
+- [#315](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/315) [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77) Thanks [@xinaesthete](https://github.com/xinaesthete)! - New `applyWebGPUPresentationAlphaFix(device)`: with deck's experimental `_canvases` on WebGPU, each canvas is opaque, so empty or translucent parts of a view show black instead of the page behind. Call it from Deck's `onDeviceInitialized`, alongside `applyWebGPUViewFix`, to make them transparent as a single deck canvas is.
+
+### Patch Changes
+
+- [#315](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/315) [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Isolated groups now keep their offscreen targets across canvases with deck's experimental `_canvases`. Cells of different sizes no longer reallocate and redraw their targets every frame, and a canvas no longer misses a contents change because a canvas drawn before it doesn't show the group.
+
+- [#308](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/308) [`3db461c`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3db461cd325bb41ddf4bfd650802c7b6f87df707) Thanks [@xinaesthete](https://github.com/xinaesthete)! - An image layer moved into or out of an isolated group now draws inside it, with the group's blend mode and opacity. Before, it could draw unblended, or not at all, until something else made it rebuild.
+
+- [#313](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/313) [`b288d99`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b288d99b747c555c826bc794dab28ca2553236fe) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Circle radii and `common`-unit polygon stroke widths now scale with the element's transform, so Visium spots in a downscaled coordinate system draw as spots instead of one merged blob.
+
+- [#315](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/315) [`956beeb`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/956beeb3dafc08bf28fb2cea157c79a44d9ddc77) Thanks [@xinaesthete](https://github.com/xinaesthete)! - `applyWebGPUPickingFix` now also covers `_canvases` canvases that deck creates before `onDeviceInitialized` (those passed when the Deck is constructed), whose picks on WebGPU read the vertically mirrored point.
+- Updated dependencies [[`b9c4a75`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/b9c4a75bcc745d1bc371eca9d28a8cb2d3604d77), [`dbfa1b1`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/dbfa1b123eb5845017a5ab3b317a4b127929eb98)]:
+  - @spatialdata/core@0.17.0
+
 ## 0.16.1
 
 ### Patch Changes
