@@ -42,7 +42,7 @@ import {
 } from './SpatialCanvasViewer';
 import type { SpatialCanvasTooltipRenderProps } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
-import type { ScaleBarSize } from './scaleBar';
+import type { CoordinateSystemUnit, ScaleBarSize } from './scaleBar';
 import type { SpatialCanvasStoreApi } from './stores';
 import { TooltipFieldsPanel } from './TooltipFieldsPanel';
 import type { AvailableElement, ElementsByType, ViewState } from './types';
@@ -416,7 +416,7 @@ interface SpatialCanvasInnerProps {
   hoverTooltipMode?: HoverTooltipMode;
   deckProps?: Partial<DeckGLProps>;
   keepLayersOnSourceChange?: boolean;
-  coordinateSystemUnit?: string;
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 function SpatialCanvasInner({
@@ -1031,11 +1031,11 @@ export interface SpatialCanvasProps {
    */
   keepLayersOnSourceChange?: boolean;
   /**
-   * The length unit of the coordinate system's spatial axes (e.g. `'micrometer'` or
-   * `'µm'`), overriding the dataset's metadata. The scale bar measures the coordinate
-   * system, so without a length unit from either there is no scale bar.
+   * What one unit of the coordinate system is: a length unit (`'micrometer'`, `'µm'`) or a
+   * size of one (`{ size: 0.2125, unit: 'µm' }`), overriding the dataset's metadata. The
+   * scale bar measures the coordinate system, so without a length there is no scale bar.
    */
-  coordinateSystemUnit?: string;
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 /**

@@ -25,7 +25,7 @@ import {
 } from './renderStackAdapters';
 import type { SpatialCanvasTooltipRenderProps } from './SpatialFeatureTooltip';
 import { SpatialViewer } from './SpatialViewer';
-import { resolveScaleBarSize } from './scaleBar';
+import { type CoordinateSystemUnit, resolveScaleBarSize } from './scaleBar';
 import type { ElementsByType, LayerConfig, ShapesLayerPickEvent, ViewState } from './types';
 import { useHoverFeatureTooltip } from './useHoverFeatureTooltip';
 import {
@@ -147,11 +147,11 @@ export interface SpatialCanvasViewerProps {
    */
   featureColorResolver?: FeatureColorResolver;
   /**
-   * The length unit of the coordinate system's spatial axes (e.g. `'micrometer'` or
-   * `'µm'`), overriding the dataset's metadata. The scale bar measures the coordinate
-   * system, so without a length unit from either there is no scale bar.
+   * What one unit of the coordinate system is: a length unit (`'micrometer'`, `'µm'`) or a
+   * size of one (`{ size: 0.2125, unit: 'µm' }`), overriding the dataset's metadata. The
+   * scale bar measures the coordinate system, so without a length there is no scale bar.
    */
-  coordinateSystemUnit?: string;
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 interface AutoFitInput {
@@ -224,7 +224,7 @@ export interface UseSpatialCanvasRendererOptions {
    */
   onEntryStatusChange?: (layerId: string, status: EntryStatus | undefined) => void;
   /** See `SpatialCanvasViewerProps.coordinateSystemUnit`. */
-  coordinateSystemUnit?: string;
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 interface UseSpatialCanvasRendererFromLayerInputsOptions {
@@ -254,7 +254,7 @@ interface UseSpatialCanvasRendererFromLayerInputsOptions {
    * its own state instead of reading them on every render.
    */
   onEntryStatusChange?: (layerId: string, status: EntryStatus | undefined) => void;
-  coordinateSystemUnit?: string;
+  coordinateSystemUnit?: CoordinateSystemUnit;
 }
 
 export function useSpatialCanvasRendererFromLayerInputs({
@@ -285,9 +285,21 @@ export function useSpatialCanvasRendererFromLayerInputs({
     return getAvailableElements(spatialData, coordinateSystem);
   }, [spatialData, coordinateSystem]);
 
+  // Keyed on primitives so an inline `{ size, unit }` doesn't rebuild the bar every render.
+  const declaredUnit =
+    typeof coordinateSystemUnit === 'object' ? coordinateSystemUnit.unit : coordinateSystemUnit;
+  const declaredSize =
+    typeof coordinateSystemUnit === 'object' ? coordinateSystemUnit.size : undefined;
   const scaleBar = useMemo(
-    () => resolveScaleBarSize(spatialData, coordinateSystem, coordinateSystemUnit),
-    [spatialData, coordinateSystem, coordinateSystemUnit]
+    () =>
+      resolveScaleBarSize(
+        spatialData,
+        coordinateSystem,
+        declaredSize === undefined || declaredUnit === undefined
+          ? declaredUnit
+          : { size: declaredSize, unit: declaredUnit }
+      ),
+    [spatialData, coordinateSystem, declaredUnit, declaredSize]
   );
 
   const resolvedLayerOrder = renderOrder ?? layerInputs.layerOrder;

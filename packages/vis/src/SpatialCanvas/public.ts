@@ -86,7 +86,11 @@ export {
 } from './SpatialFeatureTooltip';
 export type { SpatialViewerProps } from './SpatialViewer';
 export { SpatialViewer } from './SpatialViewer';
-export { resolveScaleBarSize, type ScaleBarSize } from './scaleBar';
+export {
+  type CoordinateSystemUnit,
+  resolveScaleBarSize,
+  type ScaleBarSize,
+} from './scaleBar';
 export type { SpatialCanvasStoreApi } from './stores';
 export { createSpatialCanvasStore } from './stores';
 export type * from './types';

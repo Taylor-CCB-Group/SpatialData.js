@@ -1,12 +1,12 @@
 import { CompositeLayer } from '@deck.gl/core';
 import { LineLayer, TextLayer } from '@deck.gl/layers';
 import { ScaleBarLayer } from '@hms-dbmi/viv';
+import { ATTRS_KEY } from '@spatialdata/core';
 import { describe, expect, it } from 'vitest';
 import {
-  coordinateSystemUnitFromTransforms,
+  coordinateSystemLengthFromTransforms,
   resolveScaleBarSize,
   type ScaleBarSize,
-  scaleBarSizeForUnit,
 } from '../src/SpatialCanvas/scaleBar.js';
 import { VivSpatialViewer } from '../src/SpatialCanvas/VivSpatialViewer.js';
 
@@ -21,70 +21,99 @@ function into(...units: (string | undefined)[]) {
   };
 }
 
-describe('scaleBarSizeForUnit', () => {
-  it('maps OME-NGFF length names to the symbols Viv reads', () => {
-    expect(scaleBarSizeForUnit('micrometer')).toEqual({ size: 1, unit: 'µm' });
-    expect(scaleBarSizeForUnit('nanometer')).toEqual({ size: 1, unit: 'nm' });
-    expect(scaleBarSizeForUnit('millimeter')).toEqual({ size: 1, unit: 'mm' });
-    expect(scaleBarSizeForUnit('meter')).toEqual({ size: 1, unit: 'm' });
-    expect(scaleBarSizeForUnit('kilometer')).toEqual({ size: 1, unit: 'km' });
-  });
+const MICROMETRE = { size: 1, unit: 'µm' };
 
-  it('accepts symbols, reading u as µ', () => {
-    expect(scaleBarSizeForUnit('µm')).toEqual({ size: 1, unit: 'µm' });
-    expect(scaleBarSizeForUnit('um')).toEqual({ size: 1, unit: 'µm' });
-    expect(scaleBarSizeForUnit('nm')).toEqual({ size: 1, unit: 'nm' });
-  });
-
-  it('gives non-SI lengths in metres', () => {
-    expect(scaleBarSizeForUnit('angstrom')).toEqual({ size: 1e-10, unit: 'm' });
-    expect(scaleBarSizeForUnit('inch')).toEqual({ size: 0.0254, unit: 'm' });
-  });
-
-  it('has no size for the placeholder, non-lengths or nothing', () => {
-    for (const unit of ['unit', 'second', 'pixel', 'constructormeter', 'toString', '', undefined]) {
-      expect(scaleBarSizeForUnit(unit)).toBeUndefined();
-    }
-  });
-});
-
-describe('coordinateSystemUnitFromTransforms', () => {
+describe('coordinateSystemLengthFromTransforms', () => {
   it('reads the spatial output axes', () => {
-    expect(coordinateSystemUnitFromTransforms([into('micrometer', 'micrometer')])).toBe(
-      'micrometer'
+    expect(coordinateSystemLengthFromTransforms([into('micrometer', 'micrometer')])).toEqual(
+      MICROMETRE
     );
   });
 
-  it('has no unit when every element uses the placeholder or none', () => {
-    expect(coordinateSystemUnitFromTransforms([into('unit', 'unit'), into()])).toBeUndefined();
-    expect(coordinateSystemUnitFromTransforms([{}])).toBeUndefined();
+  it('has no length when every element uses the placeholder or none', () => {
+    expect(coordinateSystemLengthFromTransforms([into('unit', 'unit'), into()])).toBeUndefined();
+    expect(coordinateSystemLengthFromTransforms([{}])).toBeUndefined();
   });
 
   it('ignores elements without a length unit', () => {
-    expect(coordinateSystemUnitFromTransforms([into('unit', 'unit'), into('µm', 'µm')])).toBe('µm');
+    expect(coordinateSystemLengthFromTransforms([into('unit', 'unit'), into('µm', 'µm')])).toEqual(
+      MICROMETRE
+    );
   });
 
   it('treats aliases of one length as agreeing', () => {
-    const unit = coordinateSystemUnitFromTransforms([
-      into('micrometer', 'micrometer'),
-      into('µm', 'µm'),
-      into('um'),
-    ]);
-    expect(scaleBarSizeForUnit(unit)).toEqual({ size: 1, unit: 'µm' });
+    expect(
+      coordinateSystemLengthFromTransforms([
+        into('micrometer', 'micrometer'),
+        into('µm', 'µm'),
+        into('um'),
+      ])
+    ).toEqual(MICROMETRE);
   });
 
-  it('has no unit when elements disagree', () => {
+  it('has no length when elements disagree', () => {
     expect(
-      coordinateSystemUnitFromTransforms([into('micrometer', 'micrometer'), into('nanometer')])
+      coordinateSystemLengthFromTransforms([into('micrometer', 'micrometer'), into('nanometer')])
     ).toBeUndefined();
-    expect(coordinateSystemUnitFromTransforms([into('µm'), into('nm')])).toBeUndefined();
+    expect(coordinateSystemLengthFromTransforms([into('µm'), into('nm')])).toBeUndefined();
   });
 });
 
+/** A shapes element whose transform into `global` is a uniform scale. */
+const scaledInto = (scale: number, unit = 'unit') => ({
+  getTransformation: () => ({
+    ok: true as const,
+    value: {
+      output: { axes: [{ type: 'space', unit }] },
+      toArray: () => [scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    },
+  }),
+});
+
+/** The layout spatialdata-io's xenium and atera readers write: µm shapes scaled to pixels. */
+function readerStore(rootAttrs: Record<string, unknown>, cellsScale = 1 / 0.2125, unit?: string) {
+  return {
+    rootStore: { tree: { [ATTRS_KEY]: rootAttrs } },
+    shapes: { nuclei: scaledInto(1 / 0.2125, unit), cells: scaledInto(cellsScale, unit) },
+  };
+}
+
 describe('resolveScaleBarSize', () => {
-  it('uses the host-declared unit without metadata', () => {
-    expect(resolveScaleBarSize(null, 'global', 'micrometer')).toEqual({ size: 1, unit: 'µm' });
+  it('uses the host-declared unit or size without metadata', () => {
+    expect(resolveScaleBarSize(null, 'global', 'micrometer')).toEqual(MICROMETRE);
+    expect(resolveScaleBarSize(null, 'global', { size: 0.2125, unit: 'micrometer' })).toEqual({
+      size: 0.2125,
+      unit: 'µm',
+    });
+    expect(resolveScaleBarSize(null, 'global', { size: 2, unit: 'inch' })).toEqual({
+      size: 0.0508,
+      unit: 'm',
+    });
+    expect(resolveScaleBarSize(null, 'global', { size: 0, unit: 'µm' })).toBeUndefined();
     expect(resolveScaleBarSize(null, 'global')).toBeUndefined();
+  });
+
+  it('reads µm per unit from the xenium and atera readers’ shapes scale', () => {
+    for (const reader of ['xenium', 'atera']) {
+      const size = resolveScaleBarSize(readerStore({ spatialdata_io_reader: reader }), 'global');
+      expect(size?.unit).toBe('µm');
+      expect(size?.size).toBeCloseTo(0.2125);
+    }
+  });
+
+  it('assumes nothing for other readers or scales that disagree', () => {
+    expect(resolveScaleBarSize(readerStore({}), 'global')).toBeUndefined();
+    expect(
+      resolveScaleBarSize(readerStore({ spatialdata_io_reader: 'visium_hd' }), 'global')
+    ).toBeUndefined();
+    expect(
+      resolveScaleBarSize(readerStore({ spatialdata_io_reader: 'xenium' }, 2), 'global')
+    ).toBeUndefined();
+  });
+
+  it('prefers declared axis units to the reader convention', () => {
+    const sdata = readerStore({ spatialdata_io_reader: 'xenium' }, undefined, 'nanometer');
+    expect(resolveScaleBarSize(sdata, 'global')).toEqual({ size: 1, unit: 'nm' });
   });
 });
 
