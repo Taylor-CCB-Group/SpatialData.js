@@ -18,8 +18,10 @@ export interface VivImageLayersOptions {
   /**
    * The view whose viewport selects a tiled image's tiles (Viv's `viewportId`). Unset,
    * tiles follow whichever view draws the image: right for one set drawn in several
-   * views under one view state, as in a grid. Set it to a view's id when other views,
-   * with other view states, would otherwise move the tiles.
+   * same-size views under one view state, as in a grid. A layer keeps one tile
+   * selection, so give cells of another size their own `viewId` (and layers), or the
+   * last view drawn culls tiles only the others need. Set this to a view's id when
+   * other views, with other view states, would otherwise move the tiles.
    */
   viewportId?: string;
 }
