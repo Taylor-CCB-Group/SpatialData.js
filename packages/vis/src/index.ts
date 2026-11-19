@@ -107,7 +107,9 @@ export type {
   ViewState2D,
   ViewState3D,
   VivImageExtensionResolver,
+  VivImageLayerConfig,
   VivImageLayerContext,
+  VivImageLayersOptions,
   VivImagePassthroughOptions,
   VivImagePropsResolver,
 } from './SpatialCanvas/public';
@@ -116,6 +118,7 @@ export {
   createSpatialCanvasStore,
   describeFeatureRowState,
   featureRowOpacity,
+  getVivId,
   ImageLayerContextProvider,
   layerConfig,
   mergeLayerChannelState,
@@ -145,6 +148,7 @@ export {
   useSpatialCanvasStoreApi,
   useSpatialViewState,
   useViewStateUrl,
+  vivImageLayers,
 } from './SpatialCanvas/public';
 export { default as Table } from './Table';
 export { default as Transforms } from './Transforms';

@@ -1,11 +1,8 @@
 /** Layers shared by the isolated-group demos (`/groups`, `/groupgrid`). */
 
-import { Layer } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
-import { ScaleBarLayer } from '@hms-dbmi/viv';
 import { Matrix4 } from '@math.gl/core';
-import { DeviceAdaptiveImageLayer } from '@spatialdata/layers';
-import { DetailView } from '@vivjs/views';
+import type { VivImageLayerConfig } from '../../src/index';
 
 export type Rgb = [number, number, number];
 export type Circle = { position: [number, number]; radius: number; color: Rgb };
@@ -55,33 +52,19 @@ export function syntheticImageLoader(tileDelayMs = 0) {
   ];
 }
 
-/**
- * Viv image layers built the way `VivSpatialViewer` builds them: `DetailView.getLayers`,
- * each wrapped in `DeviceAdaptiveImageLayer`. `idSuffix` is appended to each id.
- */
-export function vivImageLayers(
+/** The synthetic image as a `VivSpatialViewer` image config. */
+export function syntheticImageConfig(
   loader: unknown,
-  idSuffix: string,
-  width: number,
-  height: number,
-  extraProps: Record<string, unknown> = {}
-): Layer[] {
-  const detail = new DetailView({ id: `image${idSuffix}`, width, height });
-  const result: unknown = detail.getLayers({
-    props: {
-      loader,
-      colors: [[255, 255, 255]],
-      contrastLimits: [[0, 255]],
-      channelsVisible: [true],
-      selections: [{ c: 0 }],
-      modelMatrix: new Matrix4().translate(IMAGE_ORIGIN),
-      ...extraProps,
-    },
-  });
-  const vivLayers = (Array.isArray(result) ? result.flat(Infinity) : [result]).filter(
-    (layer): layer is Layer => layer instanceof Layer && !(layer instanceof ScaleBarLayer)
-  );
-  return vivLayers.map(
-    (vivLayer) => new DeviceAdaptiveImageLayer({ id: `${vivLayer.id}-device${idSuffix}`, vivLayer })
-  );
+  extra: Partial<VivImageLayerConfig> = {}
+): VivImageLayerConfig {
+  return {
+    id: 'image',
+    loader,
+    colors: [[255, 255, 255]],
+    contrastLimits: [[0, 255]],
+    channelsVisible: [true],
+    selections: [{ c: 0 }],
+    modelMatrix: new Matrix4().translate(IMAGE_ORIGIN),
+    ...extra,
+  };
 }

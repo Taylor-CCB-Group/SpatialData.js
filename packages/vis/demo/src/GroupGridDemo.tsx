@@ -24,14 +24,15 @@ import {
   type IsolationRenderReason,
 } from '@spatialdata/layers';
 import { useEffect, useRef, useState } from 'react';
+import { vivImageLayers } from '../../src/index';
 import {
   BACKDROP,
   circles,
   GREEN,
   RED,
   type Rgb,
+  syntheticImageConfig,
   syntheticImageLoader,
-  vivImageLayers,
 } from './groupDemoLayers';
 
 const WIDTH = 640;
@@ -65,7 +66,9 @@ const imageLoader = IMAGE ? syntheticImageLoader(Number(params.get('tileDelay') 
 // The shared members keep stable data and layer identity across updates, as a real
 // producer must (see docs/docs/vis/layer-prop-flow.mdx). A fresh data array would make
 // deck redraw the member, and so the group, on every update.
-const sharedImageLayers = imageLoader ? vivImageLayers(imageLoader, '@shared', CELL_W, CELL_H) : [];
+const sharedImageLayers = imageLoader
+  ? [...vivImageLayers([syntheticImageConfig(imageLoader)], { viewId: '@shared' }).values()].flat()
+  : [];
 const BACKDROP_DATA = [{ position: [160, 0] as [number, number], radius: 150, color: BACKDROP }];
 const RED_DATA = [{ position: [120, 0] as [number, number], radius: 70, color: RED }];
 const greenData = new Map<string, { position: [number, number]; radius: number; color: Rgb }[]>();
