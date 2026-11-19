@@ -53,6 +53,12 @@ function lengthOfDeclared(declared: CoordinateSystemUnit): ScaleBarSize | undefi
 export function coordinateSystemLengthFromTransforms(
   transforms: Iterable<TransformationOutput>
 ): ScaleBarSize | undefined {
+  const lengths = declaredLengths(transforms);
+  return lengths.length === 1 ? lengths[0] : undefined;
+}
+
+/** The distinct lengths the spatial output axes declare; aliases of one length count once. */
+function declaredLengths(transforms: Iterable<TransformationOutput>): ScaleBarSize[] {
   const lengths = new Map<string, ScaleBarSize>();
   for (const transform of transforms) {
     for (const axis of transform.output?.axes ?? []) {
@@ -61,7 +67,7 @@ export function coordinateSystemLengthFromTransforms(
       if (length) lengths.set(`${length.size} ${length.unit}`, length);
     }
   }
-  return lengths.size === 1 ? lengths.values().next().value : undefined;
+  return [...lengths.values()];
 }
 
 const SPATIAL_ELEMENT_TYPES = ['images', 'labels', 'shapes', 'points'] as const;
@@ -113,7 +119,8 @@ function lengthFromReaderConvention(
 /**
  * The scale bar for a canvas drawing `coordinateSystem`: one view unit is one unit of the
  * coordinate system. `declared` (from the host) wins over the transforms' axis units, which
- * win over the xenium/atera reader convention.
+ * win over the xenium/atera reader convention. That convention is only a fallback for
+ * undeclared units: axis units that conflict give no bar.
  */
 export function resolveScaleBarSize(
   spatialData: ScaleBarSource | null | undefined,
@@ -122,8 +129,7 @@ export function resolveScaleBarSize(
 ): ScaleBarSize | undefined {
   if (declared !== undefined) return lengthOfDeclared(declared);
   if (!spatialData || !coordinateSystem) return undefined;
-  return (
-    coordinateSystemLengthFromTransforms(transformsInto(spatialData, coordinateSystem)) ??
-    lengthFromReaderConvention(spatialData, coordinateSystem)
-  );
+  const lengths = declaredLengths(transformsInto(spatialData, coordinateSystem));
+  if (lengths.length > 0) return lengths.length === 1 ? lengths[0] : undefined;
+  return lengthFromReaderConvention(spatialData, coordinateSystem);
 }

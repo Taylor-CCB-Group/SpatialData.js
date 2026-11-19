@@ -115,6 +115,16 @@ describe('resolveScaleBarSize', () => {
     const sdata = readerStore({ spatialdata_io_reader: 'xenium' }, undefined, 'nanometer');
     expect(resolveScaleBarSize(sdata, 'global')).toEqual({ size: 1, unit: 'nm' });
   });
+
+  it('infers from the reader convention only when no axis declares a length', () => {
+    const scale = 1 / 0.2125;
+    const store = (nucleiUnit: string, cellsUnit: string) => ({
+      rootStore: { tree: { [ATTRS_KEY]: { spatialdata_io_reader: 'xenium' } } },
+      shapes: { nuclei: scaledInto(scale, nucleiUnit), cells: scaledInto(scale, cellsUnit) },
+    });
+    expect(resolveScaleBarSize(store('unit', 'unit'), 'global')?.size).toBeCloseTo(0.2125);
+    expect(resolveScaleBarSize(store('µm', 'nm'), 'global')).toBeUndefined();
+  });
 });
 
 function renderScaleBar(scaleBar: ScaleBarSize | undefined, zoom: number) {
