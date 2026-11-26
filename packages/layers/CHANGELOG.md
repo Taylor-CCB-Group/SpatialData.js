@@ -1,5 +1,13 @@
 # @spatialdata/layers
 
+## 0.17.1
+
+### Patch Changes
+
+- [#323](https://github.com/Taylor-CCB-Group/SpatialData.js/pull/323) [`3fcfe78`](https://github.com/Taylor-CCB-Group/SpatialData.js/commit/3fcfe78874b071f04d5affc5e8fa54a918ca13b6) Thanks [@xinaesthete](https://github.com/xinaesthete)! - Shapes and labels layers no longer sort and serialise their `hiddenFeatureIds`, `fadedFeatureIds` and per-feature colour records on every render to check their caches, which made panning slow with several large filtered layers. Feature-state values are now compared by identity, then by content, so replace them rather than editing them in place.
+- Updated dependencies []:
+  - @spatialdata/core@0.17.1
+
 ## 0.17.0
 
 ### Minor Changes
