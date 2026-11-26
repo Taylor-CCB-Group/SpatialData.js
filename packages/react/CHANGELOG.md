@@ -1,5 +1,12 @@
 # @spatialdata/react
 
+## 0.17.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @spatialdata/core@0.17.1
+
 ## 0.17.0
 
 ### Patch Changes
