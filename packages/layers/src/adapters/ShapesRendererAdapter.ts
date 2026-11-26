@@ -21,6 +21,12 @@ import {
   type ShapeStrokeWidthUnits,
   type ShapesPrebuiltData,
 } from '../shapesLayer.js';
+import {
+  type FeatureStateInputs,
+  featureStateInputs,
+  sameFeatureStateInputs,
+  sameIdList,
+} from './featureStateInputs.js';
 
 /**
  * The deck Renderer Adapter for shapes: ADR 0004 §4’s `project()` and `render()`.
@@ -106,14 +112,14 @@ export interface ShapeFillColorEntry {
 
 interface ShapePrebuiltEntry {
   prebuilt: ShapesPrebuiltData;
-  /** Serialised, sorted `hiddenFeatureIds` — used to detect when a rebuild is needed. */
-  signature: string;
+  /** The `hiddenFeatureIds` it was built with (see {@link sameIdList}). */
+  hiddenFeatureIds: readonly string[] | undefined;
   /** The (merged) render data this prebuilt was built from. Rebuild on identity change. */
   source: ShapesRenderData;
 }
 
 interface FeatureStateEntry {
-  signature: string;
+  inputs: FeatureStateInputs;
   runtime: ShapeFeatureStateRuntime;
   fillColorEntry: ShapeFillColorEntry | undefined;
 }
@@ -127,27 +133,6 @@ interface MergedRenderDataEntry {
 /** Alpha for table-derived fills: a shapes layer's fill alpha is its only opacity control. */
 export function shapeFillColorAlpha(config: ShapesEntryProps): number {
   return config.fillColor?.[3] ?? 180;
-}
-
-/**
- * Stable serialisation of `hiddenFeatureIds` for cache-invalidation comparison.
- *
- * JSON rather than a delimiter join, matching {@link serializeColorByFeatureId}: a
- * feature id is an arbitrary table index, so a delimiter can appear inside one and let
- * two different hidden sets share a cache key. No slower — `JSON.stringify` over a
- * string array measures at or below `join` from 1k ids to 500k.
- */
-export function serializeHiddenIds(ids?: string[]): string {
-  if (!ids || ids.length === 0) return '';
-  return JSON.stringify(ids.slice().sort());
-}
-
-function serializeColorByFeatureId(
-  colors?: Record<string, readonly [number, number, number, number]>
-): string {
-  if (!colors || Object.keys(colors).length === 0) return '';
-  const entries = Object.entries(colors).sort(([a], [b]) => a.localeCompare(b));
-  return `\x02${entries.length}:${JSON.stringify(entries)}`;
 }
 
 function fillColorSignature(config: ShapesEntryProps): string {
@@ -183,21 +168,6 @@ function mergeFeatureStateForRender(
     // feature’s resolved fill at render time, so a same-colour outline would be invisible.
     // A caller’s explicit per-feature stroke (carried by the spread above) still wins.
   };
-}
-
-function featureStateSignature(
-  config: ShapesEntryProps,
-  fillColorEntry: ShapeFillColorEntry | undefined
-): string {
-  const featureState = config.featureState;
-  return [
-    serializeHiddenIds(featureState?.hiddenFeatureIds),
-    serializeHiddenIds(featureState?.fadedFeatureIds),
-    String(featureState?.filteredOpacityMultiplier ?? ''),
-    fillColorEntry?.signature ?? '',
-    serializeColorByFeatureId(featureState?.fillColorByFeatureId),
-    serializeColorByFeatureId(featureState?.strokeColorByFeatureId),
-  ].join('\x01');
 }
 
 /**
@@ -241,21 +211,26 @@ export class ShapesRendererAdapter {
 
   /**
    * The pre-filtered per-feature array deck draws from. Rebuilt only when the render data
-   * identity or the `hiddenFeatureIds` signature moves — an opacity or colour tweak must
-   * not re-run the O(n-features) filter.
+   * identity or the hidden ids move — an opacity or colour tweak must not re-run the
+   * O(n-features) filter, and nor must a camera move, which calls this for every layer.
    */
   getPrebuilt(
     layerId: string,
     renderData: ShapesRenderData,
     hiddenFeatureIds: string[] | undefined
   ): ShapesPrebuiltData {
-    const signature = serializeHiddenIds(hiddenFeatureIds);
     const cached = this.prebuilt.get(layerId);
-    if (cached && cached.signature === signature && cached.source === renderData) {
+    if (
+      cached &&
+      cached.source === renderData &&
+      sameIdList(cached.hiddenFeatureIds, hiddenFeatureIds)
+    ) {
+      // the same ids in a new array: compare by identity next time
+      cached.hiddenFeatureIds = hiddenFeatureIds;
       return cached.prebuilt;
     }
     const prebuilt = buildShapesPrebuiltData(renderData, hiddenFeatureIds);
-    this.prebuilt.set(layerId, { prebuilt, signature, source: renderData });
+    this.prebuilt.set(layerId, { prebuilt, hiddenFeatureIds, source: renderData });
     return prebuilt;
   }
 
@@ -331,25 +306,30 @@ export class ShapesRendererAdapter {
    * The Map/Set feature-state `renderShapesLayer` consumes, with an identity that changes
    * only when its contents do.
    *
-   * Keyed on the `fillColorEntry` identity as well as its signature: the signature is
-   * column-based, but a column change serves the PREVIOUS column’s rows until the new
-   * ones load, so keying on the signature alone leaves the runtime one column behind.
+   * Keyed on the `fillColorEntry` identity, not its column signature: a column change
+   * serves the PREVIOUS column’s rows until the new ones load, so keying on the signature
+   * would leave the runtime one column behind. A new signature is a new entry anyway. The
+   * caller's feature-state is compared as {@link sameFeatureStateInputs} does.
    */
   getFeatureStateRuntime(
     layerId: string,
     config: ShapesEntryProps,
     fillColorEntry: ShapeFillColorEntry | undefined
   ): ShapeFeatureStateRuntime {
-    const signature = featureStateSignature(config, fillColorEntry);
+    const inputs = featureStateInputs(config.featureState);
     const cached = this.featureStates.get(layerId);
-    if (cached?.signature === signature && cached.fillColorEntry === fillColorEntry) {
+    if (
+      cached &&
+      cached.fillColorEntry === fillColorEntry &&
+      sameFeatureStateInputs(cached.inputs, inputs)
+    ) {
       return cached.runtime;
     }
     const merged = mergeFeatureStateForRender(config, fillColorEntry);
     const runtime = merged
       ? buildShapeFeatureStateRuntime(merged)
       : EMPTY_SHAPE_FEATURE_STATE_RUNTIME;
-    this.featureStates.set(layerId, { signature, runtime, fillColorEntry });
+    this.featureStates.set(layerId, { inputs, runtime, fillColorEntry });
     return runtime;
   }
 

@@ -12,6 +12,11 @@ import {
   type LabelRgbaColor,
   type LabelRgbColor,
 } from '../labelColorEncoding.js';
+import {
+  type FeatureStateInputs,
+  featureStateInputs,
+  sameFeatureStateInputs,
+} from './featureStateInputs.js';
 
 /**
  * The deck Renderer Adapter for labels — the labels twin of {@link ShapesRendererAdapter}.
@@ -111,7 +116,9 @@ export interface LabelFillColorEntry {
 interface ColorLutEntry {
   /** `undefined` when the feature-state addresses nothing — draw the plain colour path. */
   lut: LabelColorLut | undefined;
-  signature: string;
+  inputs: FeatureStateInputs;
+  /** The channel colour, which is baked into every unannotated LUT entry. */
+  defaultColor: string;
   fillColorEntry: LabelFillColorEntry | undefined;
 }
 
@@ -147,20 +154,6 @@ function fillColorSignature(config: LabelsEntryProps): string {
   ].join('');
 }
 
-/** Stable serialisation of an id list for cache-invalidation comparison. */
-function serializeIds(ids?: string[]): string {
-  if (!ids || ids.length === 0) return '';
-  return ids.slice().sort().join('\x00');
-}
-
-function serializeColorByFeatureId(
-  colors?: Record<string, readonly [number, number, number, number]>
-): string {
-  if (!colors || Object.keys(colors).length === 0) return '';
-  const entries = Object.entries(colors).sort(([a], [b]) => a.localeCompare(b));
-  return `\x02${entries.length}:${JSON.stringify(entries)}`;
-}
-
 /**
  * The feature-state a labels layer actually renders: the caller’s own state with the
  * table-column colours merged in, where column colours lose to explicit per-label overrides.
@@ -185,24 +178,6 @@ function mergeFeatureStateForRender(
       ...config.featureState?.fillColorByFeatureId,
     },
   };
-}
-
-function featureStateSignature(
-  config: LabelsEntryProps,
-  fillColorEntry: LabelFillColorEntry | undefined,
-  defaultColor: LabelRgbColor
-): string {
-  const featureState = config.featureState;
-  return [
-    serializeIds(featureState?.hiddenFeatureIds),
-    serializeIds(featureState?.fadedFeatureIds),
-    String(featureState?.filteredOpacityMultiplier ?? ''),
-    fillColorEntry?.signature ?? '',
-    serializeColorByFeatureId(featureState?.fillColorByFeatureId),
-    // The default colour is baked into every unannotated LUT entry, so a channel
-    // colour change genuinely invalidates the table.
-    defaultColor.join(','),
-  ].join('\x01');
 }
 
 /**
@@ -299,7 +274,7 @@ export class LabelsRendererAdapter {
    * The layer’s per-label LUT, with an identity that changes only when its contents do, so
    * `LabelsLayer` re-uploads its texture exactly when it must.
    *
-   * Keyed on the `fillColorEntry` identity as well as its signature, for the reason
+   * Keyed on the `fillColorEntry` identity, for the reason
    * {@link ShapesRendererAdapter.getFeatureStateRuntime} gives.
    */
   getColorLut(
@@ -308,14 +283,20 @@ export class LabelsRendererAdapter {
     fillColorEntry: LabelFillColorEntry | undefined,
     defaultColor: LabelRgbColor
   ): LabelColorLut | undefined {
-    const signature = featureStateSignature(config, fillColorEntry, defaultColor);
+    const inputs = featureStateInputs(config.featureState);
+    const defaultColorKey = defaultColor.join(',');
     const cached = this.colorLuts.get(layerId);
-    if (cached?.signature === signature && cached.fillColorEntry === fillColorEntry) {
+    if (
+      cached &&
+      cached.fillColorEntry === fillColorEntry &&
+      cached.defaultColor === defaultColorKey &&
+      sameFeatureStateInputs(cached.inputs, inputs)
+    ) {
       return cached.lut;
     }
     const merged = mergeFeatureStateForRender(config, fillColorEntry);
     const lut = merged ? buildLabelColorLut({ featureState: merged, defaultColor }) : undefined;
-    this.colorLuts.set(layerId, { lut, signature, fillColorEntry });
+    this.colorLuts.set(layerId, { lut, inputs, defaultColor: defaultColorKey, fillColorEntry });
     return lut;
   }
 
