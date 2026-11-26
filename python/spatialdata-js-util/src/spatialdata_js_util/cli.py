@@ -5,6 +5,7 @@ Subcommands are grouped by what they act on:
     images   recompress rasters with browser-readable codecs
     points   Morton-index Points elements
     tables   convert table matrices to CSC
+    physical-size  record each coordinate system's physical size
     zip      pack a store into an uncompressed zip
     serve    browse local stores in the SpatialData.js viewer
     codecs   inspect codec backend availability
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from collections.abc import Callable
@@ -34,6 +36,9 @@ examples:
 
   # Convert table matrices to CSC for fast per-gene reads in the browser
   spatialdata-js-util tables to-csc ~/data/xenium.zarr
+
+  # Record µm per global unit in a Xenium store written before spatialdata-io 0.7.0
+  spatialdata-js-util physical-size ~/data/xenium.zarr --assume-reader xenium
 
   # Pack a store into a zip the browser can range-read
   spatialdata-js-util zip ~/data/xenium.zarr ~/data/xenium.zarr.zip
@@ -802,6 +807,83 @@ def _add_tables_commands(subparsers: argparse._SubParsersAction) -> None:
     to_csc.set_defaults(func=_tables_to_csc)
 
 
+# --------------------------------------------------------------------------- physical-size
+
+
+def _coordinate_system_size(value: str) -> tuple[str, float]:
+    name, sep, size = value.rpartition("=")
+    try:
+        parsed = float(size)
+    except ValueError:
+        parsed = math.nan
+    if not sep or not name or not (math.isfinite(parsed) and parsed > 0):
+        raise argparse.ArgumentTypeError(f"expected CS=SIZE with a positive SIZE, got {value!r}")
+    return name, parsed
+
+
+def _physical_size(args: argparse.Namespace) -> None:
+    from .runners import run_physical_size
+
+    _run_command(
+        lambda: run_physical_size(
+            args.zarr,
+            sizes=dict(args.size or []),
+            unit=args.unit,
+            assume_reader=args.assume_reader,
+            overwrite=args.overwrite,
+            dry_run=args.dry_run,
+        )
+    )
+
+
+def _add_physical_size_command(subparsers: argparse._SubParsersAction) -> None:
+    from .physical_size import MICRON_POINTS_READERS
+
+    parser = subparsers.add_parser(
+        "physical-size",
+        help="record each coordinate system's physical size",
+        description=(
+            "Record how long one unit of each coordinate system is, as the root "
+            "attribute proposed in scverse/spatialdata-io#441: "
+            '"physical_size": {"global": {"size": 0.2125, "unit": "micrometer"}}. '
+            "A size comes from --size, else from the xenium/atera reader convention "
+            "(1/scale of the uniform scale points and shapes share into the coordinate "
+            "system), else from atera's pixel_size attr. Only root attributes change, "
+            "in place; why each size was chosen is recorded under spatialdata_js_util."
+        ),
+    )
+    parser.add_argument("zarr", metavar="ZARR", help="SpatialData Zarr store, patched in place")
+    parser.add_argument(
+        "--size",
+        action="append",
+        type=_coordinate_system_size,
+        metavar="CS=SIZE",
+        help="Size of one unit of coordinate system CS, in --unit (repeatable)",
+    )
+    parser.add_argument(
+        "--unit",
+        default="micrometer",
+        help="Length unit of every --size: an OME-NGFF name or symbol (default: micrometer)",
+    )
+    parser.add_argument(
+        "--assume-reader",
+        choices=sorted(MICRON_POINTS_READERS),
+        help=(
+            "Apply this reader's convention to a store without a spatialdata_io_reader "
+            "attr (written before spatialdata-io 0.7.0)"
+        ),
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace existing physical_size entries with inferred ones",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Report what would be recorded; write nothing"
+    )
+    parser.set_defaults(func=_physical_size)
+
+
 # --------------------------------------------------------------------------- zip
 
 
@@ -918,6 +1000,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_images_commands(subparsers)
     _add_points_commands(subparsers)
     _add_tables_commands(subparsers)
+    _add_physical_size_command(subparsers)
     _add_zip_command(subparsers)
     _add_serve_command(subparsers)
     _add_codecs_commands(subparsers)

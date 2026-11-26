@@ -37,6 +37,7 @@ from ..runners import (
     run_morton_points,
     run_morton_points_from_zarr,
     run_multiscale_points,
+    run_physical_size,
     run_tables_to_csc,
     run_write_index_permutations,
 )
@@ -130,6 +131,9 @@ class HomeScreen(WriterScreen):
             ),
             ListItem(Label("TABLES   List table elements in a Zarr store"), id="cmd-list-tables"),
             ListItem(Label("TABLES   Convert table matrices to CSC"), id="cmd-tables-to-csc"),
+            ListItem(
+                Label("STORE    Record coordinate systems' physical size"), id="cmd-physical-size"
+            ),
             ListItem(Label("CODECS   Show HTJ2K backend availability"), id="cmd-codecs-info"),
             id="command-list",
         )
@@ -153,6 +157,8 @@ class HomeScreen(WriterScreen):
             self._start_list_tables()
         elif item_id == "cmd-tables-to-csc":
             self.app.push_screen(TablesToCscScreen())
+        elif item_id == "cmd-physical-size":
+            self.app.push_screen(PhysicalSizeScreen())
         elif item_id == "cmd-codecs-info":
             self.app.push_screen(RunScreen(codecs_info_task()))
 
@@ -1019,6 +1025,81 @@ class TablesToCscScreen(InputFormScreen):
         self.app.push_screen(ConfirmScreen(task) if needs_confirm else RunScreen(task))
 
 
+class PhysicalSizeScreen(InputFormScreen):
+    """Record each coordinate system's physical size — the `physical-size` command."""
+
+    INPUT_ORDER = ("store", "sizes", "unit", "assume-reader")
+
+    def compose(self) -> ComposeResult:
+        yield SafeHeader()
+        yield Static("Record physical size", classes="screen-title")
+        with VerticalScroll():
+            yield Static(
+                "Writes how long one unit of each coordinate system is to the store's "
+                "root attributes, so viewers can draw a scale bar. Arrays are not touched.",
+                classes="section-label",
+            )
+            yield Label("Store")
+            yield Input(
+                value=self.app.context.zarr_path or "",
+                placeholder="/path/to/store.zarr",
+                id="store",
+            )
+            yield Label("Sizes, CS=SIZE comma-separated (blank = infer)")
+            yield Input(placeholder="global=0.2125", id="sizes")
+            yield Label("Unit of those sizes")
+            yield Input(value="micrometer", id="unit")
+            yield Label("Reader that wrote a store without spatialdata_io_reader (xenium/atera)")
+            yield Input(placeholder="xenium", id="assume-reader")
+            yield Checkbox("Replace existing entries with inferred ones", id="overwrite")
+        with Horizontal():
+            yield Button("Run", variant="primary", id="run")
+            yield Button("Back", id="back")
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.action_go_back()
+            return
+        self._submit()
+
+    def _submit(self) -> None:
+        store = self.query_one("#store", Input).value.strip()
+        if not store or not Path(store).is_dir():
+            self.notify(f"Not a directory: {store or '(blank)'}", severity="error")
+            return
+        sizes: dict[str, float] = {}
+        for item in self.query_one("#sizes", Input).value.split(","):
+            if not item.strip():
+                continue
+            name, _, size = item.strip().rpartition("=")
+            try:
+                sizes[name] = float(size)
+            except ValueError:
+                name = ""
+            if not name:
+                self.notify(f"Expected CS=SIZE, got {item.strip()!r}", severity="error")
+                return
+        unit = self.query_one("#unit", Input).value.strip() or "micrometer"
+        reader = self.query_one("#assume-reader", Input).value.strip() or None
+        overwrite = self.query_one("#overwrite", Checkbox).value
+        self.app.context.zarr_path = store
+
+        def runner() -> dict[str, Any]:
+            return run_physical_size(
+                store, sizes=sizes, unit=unit, assume_reader=reader, overwrite=overwrite
+            )
+
+        task = TaskSpec(
+            command=CommandId.PHYSICAL_SIZE,
+            title="Physical size",
+            runner=runner,
+            requires_confirm=True,
+            confirm_message=f"Update the root attributes of:\n{store}\n\nProceed?",
+        )
+        self.app.push_screen(ConfirmScreen(task))
+
+
 class ConfirmScreen(WriterScreen):
     BINDINGS = [
         Binding("enter", "confirm", "Confirm overwrite"),
@@ -1221,6 +1302,16 @@ class VerifyReportScreen(WriterScreen):
                     f"{key} {value}" for key, value in (table.get("matrices") or {}).items()
                 )
                 yield Static(f"  {table.get('path')}: {matrices or '(no matrices)'}")
+        elif command == CommandId.PHYSICAL_SIZE:
+            for name, entry in (result.get("coordinate_systems") or {}).items():
+                if entry.get("action") == "skipped":
+                    yield Static(f"  {name}: skipped ({entry.get('reason')})")
+                else:
+                    detail = f" from {entry['source']}" if "source" in entry else ""
+                    yield Static(
+                        f"  {name}: {entry.get('size')} {entry.get('unit')} "
+                        f"({entry.get('action')}{detail})"
+                    )
         else:
             rows = result.get("rows")
             output = result.get("output")

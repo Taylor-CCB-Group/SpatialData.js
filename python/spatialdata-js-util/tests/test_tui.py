@@ -31,6 +31,7 @@ from spatialdata_js_util.tui.models import CommandId  # noqa: E402
 from spatialdata_js_util.tui.screens import (  # noqa: E402
     ConfirmScreen,
     HomeScreen,
+    PhysicalSizeScreen,
     RecompressImagesScreen,
     TablesToCscScreen,
     VerifyReportScreen,
@@ -110,6 +111,7 @@ class TestHome:
                 "cmd-index-permutations",
                 "cmd-list-tables",
                 "cmd-tables-to-csc",
+                "cmd-physical-size",
                 "cmd-codecs-info",
             ]
 
@@ -248,6 +250,37 @@ class TestTablesToCsc:
             await pilot.pause()
             # Stays on the form rather than launching a doomed run.
             assert isinstance(app.screen, TablesToCscScreen)
+
+
+class TestPhysicalSize:
+    @pytest.mark.asyncio
+    async def test_records_an_explicit_size_after_confirming(self, tmp_path: Path) -> None:
+        from geopandas import GeoDataFrame
+        from shapely.geometry import Point
+        from spatialdata.models import ShapesModel
+
+        store = tmp_path / "s.zarr"
+        shapes = ShapesModel.parse(GeoDataFrame({"radius": [1.0]}, geometry=[Point(0, 0)]))
+        sd.SpatialData(shapes={"cells": shapes}).write(store)
+
+        app = WriterApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _select(pilot, "cmd-physical-size")
+            assert isinstance(app.screen, PhysicalSizeScreen)
+            app.screen.query_one("#store", Input).value = str(store)
+            app.screen.query_one("#sizes", Input).value = "global=0.5"
+            await pilot.pause()
+            app.screen.query_one("#run", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            app.screen.query_one("#confirm", Button).press()
+            report = await _run_to_report(pilot)
+            assert report.error is None, report.error
+
+        assert sd.read_zarr(store).attrs["physical_size"] == {
+            "global": {"size": 0.5, "unit": "micrometer"}
+        }
 
 
 class TestRecompressImages:

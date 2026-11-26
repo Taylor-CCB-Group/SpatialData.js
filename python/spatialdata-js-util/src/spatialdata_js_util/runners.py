@@ -519,3 +519,25 @@ def run_list_tables(zarr: str | Path) -> dict[str, Any]:
     if not keys:
         raise WriterCommandError(f"No table elements found under {Path(zarr) / 'tables'}")
     return {"zarr": str(zarr), "table_keys": keys}
+
+
+def run_physical_size(
+    zarr: str | Path,
+    *,
+    sizes: dict[str, float] | None = None,
+    unit: str = "micrometer",
+    assume_reader: str | None = None,
+    overwrite: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    from .physical_size import record_physical_size
+
+    result = record_physical_size(
+        zarr,
+        sizes=sizes,
+        unit=unit,
+        assume_reader=assume_reader,
+        overwrite=overwrite,
+        dry_run=dry_run,
+    )
+    return {**result.manifest, "physical_size": result.physical_size}

@@ -88,6 +88,27 @@ function* transformsInto(spatialData: ScaleBarSource, coordinateSystem: string) 
   }
 }
 
+/**
+ * One coordinate-system unit as the store's root `physical_size` attr records it:
+ * `{"<coordinate system>": {"size": 0.2125, "unit": "micrometer"}}`, the shape proposed in
+ * scverse/spatialdata-io#441 and written by `spatialdata-js-util physical-size`.
+ */
+function lengthFromPhysicalSizeAttr(
+  spatialData: ScaleBarSource,
+  coordinateSystem: string
+): ScaleBarSize | undefined {
+  const physicalSize = getNodeAttrs(spatialData.rootStore?.tree)?.physical_size;
+  if (typeof physicalSize !== 'object' || physicalSize === null) return undefined;
+  if (!Object.hasOwn(physicalSize, coordinateSystem)) return undefined;
+  const entry: unknown = Reflect.get(physicalSize, coordinateSystem);
+  if (typeof entry !== 'object' || entry === null || !('size' in entry) || !('unit' in entry)) {
+    return undefined;
+  }
+  const { size, unit } = entry;
+  if (typeof size !== 'number' || typeof unit !== 'string') return undefined;
+  return lengthOfDeclared({ size, unit });
+}
+
 // spatialdata-io readers whose points and shapes are in µm, scaled by 1/pixel_size into
 // morphology-pixel `global`, with every axis left as the "unit" placeholder.
 const MICRON_POINTS_READERS = new Set(['xenium', 'atera']);
@@ -118,9 +139,9 @@ function lengthFromReaderConvention(
 
 /**
  * The scale bar for a canvas drawing `coordinateSystem`: one view unit is one unit of the
- * coordinate system. `declared` (from the host) wins over the transforms' axis units, which
- * win over the xenium/atera reader convention. That convention is only a fallback for
- * undeclared units: axis units that conflict give no bar.
+ * coordinate system. `declared` (from the host) wins over the transforms' axis units. Only
+ * when no axis declares a length does the store's `physical_size` attr apply, then the
+ * xenium/atera reader convention: axis units that conflict give no bar.
  */
 export function resolveScaleBarSize(
   spatialData: ScaleBarSource | null | undefined,
@@ -131,5 +152,8 @@ export function resolveScaleBarSize(
   if (!spatialData || !coordinateSystem) return undefined;
   const lengths = declaredLengths(transformsInto(spatialData, coordinateSystem));
   if (lengths.length > 0) return lengths.length === 1 ? lengths[0] : undefined;
-  return lengthFromReaderConvention(spatialData, coordinateSystem);
+  return (
+    lengthFromPhysicalSizeAttr(spatialData, coordinateSystem) ??
+    lengthFromReaderConvention(spatialData, coordinateSystem)
+  );
 }
