@@ -226,15 +226,19 @@ resources in and pushes layers out. `LabelsRendererAdapter` is its twin, and
 for points.
 
 - **`getPrebuilt`** (keyed by layer id): rebuilds when geometry identity or the
-  `hiddenFeatureIds` signature moves — not on opacity tweaks. The signature sorts
-  the ids, so a caller rebuilding that list per render costs nothing.
+  `hiddenFeatureIds` move — not on opacity tweaks or camera moves.
 - **`getFeatureStateRuntime`** (keyed by layer id): returns a
   `ShapeFeatureStateRuntime` (Maps/Sets) rebuilt only when the feature-state
-  signature changes (hidden/faded ids, opacity multiplier, manual colour record
-  identity, table fill-colour signature) **or** the fill-colour entry's identity
-  does. Both terms are needed: a column change serves the previous column's rows
-  until the new ones land, so the entry's data can change while its signature
-  cannot.
+  inputs change (hidden/faded ids, opacity multiplier, manual colour records) or
+  the fill-colour entry's identity does. The entry is compared by identity, not
+  its column signature: a column change serves the previous column's rows until
+  the new ones land, so the entry's data can change while its signature cannot.
+- **Feature-state inputs are compared by identity first** (`featureStateInputs.ts`).
+  These checks run for every layer on every `getLayers()`, camera moves included,
+  so they must not serialise the lists: an equal list in a new array is matched by
+  walking it, without sorting or building a string, and then held by reference.
+  Replace these values rather than editing them in place; an in-place edit is not
+  seen.
 - **Merged feature-state objects must not be allocated each frame** when only
   cosmetic props change. Table-driven fill colours are merged inside
   `getFeatureStateRuntime`, only when one of those two terms moves.

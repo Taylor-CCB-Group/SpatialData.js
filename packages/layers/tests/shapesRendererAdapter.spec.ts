@@ -9,6 +9,7 @@ import {
   type ShapesEntryProps,
   ShapesRendererAdapter,
 } from '../src/adapters/ShapesRendererAdapter';
+import { countingIds } from './countingIds';
 
 /**
  * The shapes Renderer Adapter's identity contract.
@@ -81,6 +82,37 @@ describe('ShapesRendererAdapter.getFeatureStateRuntime', () => {
     const a = adapter.getFeatureStateRuntime('layer-1', config, sameEntry);
     const b = adapter.getFeatureStateRuntime('layer-1', config, sameEntry);
     expect(b).toBe(a);
+  });
+
+  it('keeps the runtime for equal feature-state in new objects, and reads none of it next time', () => {
+    const adapter = new ShapesRendererAdapter();
+    const state = () => ({
+      hiddenFeatureIds: ['f2', 'f3'],
+      fillColorByFeatureId: { f1: [1, 2, 3, 255] as [number, number, number, number] },
+    });
+    const a = adapter.getFeatureStateRuntime('layer-1', { featureState: state() }, undefined);
+    const { list, reads } = countingIds(['f3', 'f2']);
+    const next = { ...state(), hiddenFeatureIds: list };
+    expect(adapter.getFeatureStateRuntime('layer-1', { featureState: next }, undefined)).toBe(a);
+    reads.count = 0;
+    expect(adapter.getFeatureStateRuntime('layer-1', { featureState: next }, undefined)).toBe(a);
+    expect(reads.count).toBe(0);
+  });
+
+  it('rebuilds the runtime when a per-feature colour changes', () => {
+    const adapter = new ShapesRendererAdapter();
+    const a = adapter.getFeatureStateRuntime(
+      'layer-1',
+      { featureState: { fillColorByFeatureId: { f1: [1, 2, 3, 255] } } },
+      undefined
+    );
+    const b = adapter.getFeatureStateRuntime(
+      'layer-1',
+      { featureState: { fillColorByFeatureId: { f1: [1, 2, 4, 255] } } },
+      undefined
+    );
+    expect(b).not.toBe(a);
+    expect(b.fillColorByFeatureId.get('f1')).toEqual([1, 2, 4, 255]);
   });
 
   it('keeps two layers over one element independent', () => {
@@ -201,12 +233,41 @@ describe('ShapesRendererAdapter.getPrebuilt', () => {
   });
 
   it('is unaffected by the order hidden ids are given in', () => {
-    // The signature sorts them: a caller rebuilding the list per render must not
-    // force an O(n-features) refilter.
+    // A caller rebuilding the list per render must not force an O(n-features) refilter.
     const adapter = new ShapesRendererAdapter();
     const data = renderData(['f1', 'f2', 'f3']);
     const a = adapter.getPrebuilt('layer-1', data, ['f1', 'f2']);
     expect(adapter.getPrebuilt('layer-1', data, ['f2', 'f1'])).toBe(a);
+  });
+
+  it('does not read the hidden ids again when the same list comes back', () => {
+    const adapter = new ShapesRendererAdapter();
+    const data = renderData(['f1', 'f2', 'f3']);
+    const { list, reads } = countingIds(['f1', 'f2']);
+    const a = adapter.getPrebuilt('layer-1', data, list);
+    reads.count = 0;
+    expect(adapter.getPrebuilt('layer-1', data, list)).toBe(a);
+    expect(reads.count).toBe(0);
+  });
+
+  it('holds an equal list in a new array, so the next call with it reads nothing', () => {
+    const adapter = new ShapesRendererAdapter();
+    const data = renderData(['f1', 'f2', 'f3']);
+    const a = adapter.getPrebuilt('layer-1', data, ['f1', 'f2']);
+    const { list, reads } = countingIds(['f2', 'f1']);
+    expect(adapter.getPrebuilt('layer-1', data, list)).toBe(a);
+    reads.count = 0;
+    expect(adapter.getPrebuilt('layer-1', data, list)).toBe(a);
+    expect(reads.count).toBe(0);
+  });
+
+  it('rebuilds for a different list of the same length', () => {
+    const adapter = new ShapesRendererAdapter();
+    const data = renderData(['f1', 'f2', 'f3']);
+    const a = adapter.getPrebuilt('layer-1', data, ['f1', 'f2']);
+    const b = adapter.getPrebuilt('layer-1', data, ['f1', 'f3']);
+    expect(b).not.toBe(a);
+    expect(b.data).toHaveLength(1);
   });
 
   it('distinguishes hidden sets whose ids contain the delimiter', () => {

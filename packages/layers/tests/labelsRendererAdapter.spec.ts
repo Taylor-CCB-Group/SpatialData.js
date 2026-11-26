@@ -6,6 +6,7 @@ import {
   type LabelsEntryProps,
   LabelsRendererAdapter,
 } from '../src/adapters/LabelsRendererAdapter';
+import { countingIds } from './countingIds';
 
 /**
  * The labels Renderer Adapter's identity contract.
@@ -123,6 +124,41 @@ describe('LabelsRendererAdapter.getColorLut', () => {
 
     const fresh = adapter.getColorLut('layer-1', cfg, entry({ '1': [200, 100, 50, 255] }), WHITE);
     expect(Array.from(fresh?.colors.subarray(4, 8) ?? [])).toEqual([200, 100, 50, 255]);
+  });
+
+  it('keeps the table for the same hidden labels in a new list, reading none next time', () => {
+    const adapter = new LabelsRendererAdapter();
+    const a = adapter.getColorLut(
+      'layer-1',
+      config({ featureState: { hiddenFeatureIds: ['1', '2'] } }),
+      undefined,
+      WHITE
+    );
+    const { list, reads } = countingIds(['2', '1']);
+    const cfg = config({ featureState: { hiddenFeatureIds: list } });
+    expect(adapter.getColorLut('layer-1', cfg, undefined, WHITE)).toBe(a);
+    reads.count = 0;
+    expect(adapter.getColorLut('layer-1', cfg, undefined, WHITE)).toBe(a);
+    expect(reads.count).toBe(0);
+  });
+
+  it('rebuilds when the hidden labels change', () => {
+    const adapter = new LabelsRendererAdapter();
+    const a = adapter.getColorLut(
+      'layer-1',
+      config({ featureState: { hiddenFeatureIds: ['1'] } }),
+      undefined,
+      WHITE
+    );
+    const b = adapter.getColorLut(
+      'layer-1',
+      config({ featureState: { hiddenFeatureIds: ['2'] } }),
+      undefined,
+      WHITE
+    );
+    expect(b).not.toBe(a);
+    expect(b?.colors[1 * 4 + 3]).toBe(255);
+    expect(b?.colors[2 * 4 + 3]).toBe(0);
   });
 
   it('rebuilds when the channel colour changes, since it is baked into the table', () => {
